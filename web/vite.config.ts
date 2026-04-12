@@ -10,7 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@codex-deck/api": resolve(__dirname, "../api/storage.ts"),
-      "@codex-deck/wire": resolve(__dirname, "../wire/src/index.ts"),
+      "@zuoyehaoduoa/wire": resolve(__dirname, "../wire/src/index.ts"),
     },
   },
   server: {

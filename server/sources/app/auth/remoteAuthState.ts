@@ -1,7 +1,7 @@
 import {
   createRemoteOpaqueServerSetup,
   getRemoteOpaqueServerPublicKey,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 import {
   createHash,
   randomBytes,

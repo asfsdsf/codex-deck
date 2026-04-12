@@ -56,7 +56,7 @@ import type {
   SendCodexMessageRequest,
   SendCodexMessageResponse,
 } from "@codex-deck/api";
-import { getRemoteAuthHint } from "@codex-deck/wire";
+import { getRemoteAuthHint } from "@zuoyehaoduoa/wire";
 import type {
   RemoteMachineDescription,
   RemoteServerTrustPins,

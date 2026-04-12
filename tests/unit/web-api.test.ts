@@ -7,7 +7,7 @@ import type {
   WorkflowDetailResponse,
   WorkflowSummary,
 } from "@codex-deck/api";
-import { encodeBase64 } from "@codex-deck/wire";
+import { encodeBase64 } from "@zuoyehaoduoa/wire";
 import {
   applyWorkflowMerge,
   bindWorkflowSession,

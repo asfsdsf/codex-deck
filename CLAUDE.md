@@ -26,7 +26,7 @@ Run a single test file: `pnpm exec tsx --tsconfig tsconfig.test.json --test test
 
 ### Remote packages
 
-- `pnpm --dir wire build` / `pnpm --dir wire test` — build/test the shared `@codex-deck/wire` package
+- `pnpm --dir wire build` / `pnpm --dir wire test` — build/test the shared `@zuoyehaoduoa/wire` package
 - `pnpm --dir server dev` — start the remote server with `.env` + `.env.dev`
 - `pnpm --dir server build` — typecheck the remote server package
 - `pnpm --dir server test` — run remote server tests
@@ -78,7 +78,7 @@ React 19 SPA built with Vite 6 + Tailwind CSS 4.
 
 Both backend and frontend import local app types from `api/storage.ts` via the path alias `@codex-deck/api` (configured in Vite and tsconfig). This is the single source of truth for interfaces like `Session`, `ConversationMessage`, `CodexThreadStateResponse`, etc.
 
-Remote protocol/auth contracts live in `@codex-deck/wire`; keep encrypted payload schemas and OPAQUE helpers there instead of duplicating route-local shapes.
+Remote protocol/auth contracts live in `@zuoyehaoduoa/wire`; keep encrypted payload schemas and OPAQUE helpers there instead of duplicating route-local shapes.
 
 ### Tests (`tests/unit/`)
 

@@ -1,4 +1,4 @@
-# @codex-deck/wire
+# @zuoyehaoduoa/wire
 
 Canonical wire specification package for codex-deck clients and services.
 
@@ -70,7 +70,7 @@ Wire-level encrypted container:
 
 ## Purpose
 
-`@codex-deck/wire` centralizes definitions for:
+`@zuoyehaoduoa/wire` centralizes definitions for:
 
 - encrypted message/update payloads
 - session protocol envelope and event stream
@@ -80,7 +80,7 @@ The goal is to keep CLI/app/server/agent on the same wire contract and avoid sch
 
 ## Package Identity
 
-- Name: `@codex-deck/wire`
+- Name: `@zuoyehaoduoa/wire`
 - Workspace path: `wire`
 - Entry: `src/index.ts`
 - Runtime deps: `zod`, `@paralleldrive/cuid2`
@@ -587,7 +587,7 @@ Clients emit only the modern payload (`role = "session"` with `content.role = "u
 import {
   CoreUpdateContainerSchema,
   sessionEnvelopeSchema,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 
 const maybeUpdate = CoreUpdateContainerSchema.safeParse(input);
 if (!maybeUpdate.success) {
@@ -629,7 +629,7 @@ Published files:
 
 ## Monorepo Build Dependency Behavior
 
-In this repository, consumer workspaces import `@codex-deck/wire` through the local workspace package.
+In this repository, consumer workspaces import `@zuoyehaoduoa/wire` through the local workspace package.
 
 That means on a clean checkout:
 

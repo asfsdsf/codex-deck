@@ -18,7 +18,7 @@
     "baseUrl": ".",
     "paths": {
       "@codex-deck/api": ["../api/storage.ts"],
-      "@codex-deck/wire": ["../wire/src/index.ts"]
+      "@zuoyehaoduoa/wire": ["../wire/src/index.ts"]
     }
   },
   "include": [".", "../api/storage.ts", "../wire/src/index.ts"]

@@ -104,8 +104,8 @@ Todo:
   - Root packaging includes a repo-level [`Dockerfile.server`](../Dockerfile.server) scaffold that builds `server/` and `wire/` through the root workspace.
 - [x] Keep one repo-level package wiring approach for `server` + `wire` and apply it consistently.
   - Chosen approach: root `pnpm` workspace wiring via [`pnpm-workspace.yaml`](../pnpm-workspace.yaml).
-  - `server/package.json` depends on `@codex-deck/wire` through `workspace:*`.
-  - `server/tsconfig.json` adds a local source path for `@codex-deck/wire` so TypeScript resolves the local package cleanly during development.
+  - `server/package.json` depends on `@zuoyehaoduoa/wire` through `workspace:*`.
+  - `server/tsconfig.json` adds a local source path for `@zuoyehaoduoa/wire` so TypeScript resolves the local package cleanly during development.
   - `server/package.json` prebuild/prestart/predev/prestandalone scripts build `wire` first so the server runtime consumes the local package consistently.
 - [x] Keep naming, package metadata, and deploy artifacts aligned with codex-deck.
   - `server/deploy/codexdeck.yaml`, `server/deploy/codexdeck-redis.yaml`, and the runtime identifiers use codex-deck naming.
@@ -221,7 +221,7 @@ Todo:
 - [x] Preserve `wire` as the single source of truth for encrypted message/update containers.
   - Step 2 reuses the existing encrypted wire envelopes without moving payload crypto into ad hoc route shapes.
 - [x] Define how browser and `cli` recover encryption keys after login.
-  - Browser and CLI both derive auth/content/relay material from the same password through the shared `@codex-deck/wire` remote crypto helper.
+  - Browser and CLI both derive auth/content/relay material from the same password through the shared `@zuoyehaoduoa/wire` remote crypto helper.
   - The server does not participate in plaintext key recovery beyond validating the password-derived account identity.
 - [x] Keep server-side encryption only for server-owned secrets.
   - Step 2 keeps `server/sources/modules/encrypt.ts` scoped to server-owned secret storage.

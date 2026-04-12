@@ -19,7 +19,7 @@ import {
   startRemoteOpaqueRegistration,
   type RemoteMachineMetadata,
   type RemoteMachineState,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "./internal-proxy";
 
 const __filename = fileURLToPath(import.meta.url);

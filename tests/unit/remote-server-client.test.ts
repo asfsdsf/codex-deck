@@ -12,7 +12,7 @@ import {
   verifyRemoteRpcResultSignature,
   startRemoteOpaqueRegistration,
   startRemoteOpaqueServerLogin,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../../api/remote/internal-proxy";
 import { RemoteServerClient } from "../../api/remote/remote-server-client";
 

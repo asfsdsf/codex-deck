@@ -108,7 +108,7 @@ pnpm build >/dev/null
 create_app_template() {
   local template_dir="$1"
   rm -rf "$template_dir"
-  mkdir -p "$template_dir/vendor/codex-deck-wire"
+  mkdir -p "$template_dir/vendor/zuoyehaoduoa-wire"
 
   node - "$template_dir/package.json" <<'NODE'
 const fs = require("fs");
@@ -137,8 +137,8 @@ function resolveInstalledVersion(name) {
 
 const exactDependencies = {};
 for (const name of depNames) {
-  if (name === "@codex-deck/wire") {
-    exactDependencies[name] = "file:vendor/codex-deck-wire";
+  if (name === "@zuoyehaoduoa/wire") {
+    exactDependencies[name] = "file:vendor/zuoyehaoduoa-wire";
     continue;
   }
   exactDependencies[name] = resolveInstalledVersion(name);
@@ -175,9 +175,9 @@ EOF
   cp -R dist "$template_dir/dist"
   cp LICENSE "$template_dir/LICENSE"
   cp README.md "$template_dir/README.md"
-  cp -R wire/dist "$template_dir/vendor/codex-deck-wire/dist"
-  cp wire/package.json "$template_dir/vendor/codex-deck-wire/package.json"
-  cp wire/README.md "$template_dir/vendor/codex-deck-wire/README.md"
+  cp -R wire/dist "$template_dir/vendor/zuoyehaoduoa-wire/dist"
+  cp wire/package.json "$template_dir/vendor/zuoyehaoduoa-wire/package.json"
+  cp wire/README.md "$template_dir/vendor/zuoyehaoduoa-wire/README.md"
 }
 
 install_template_deps() {
@@ -190,8 +190,8 @@ install_template_deps() {
 
 materialize_workspace_packages() {
   local template_dir="$1"
-  local node_modules_scope_dir="$template_dir/node_modules/@codex-deck"
-  local wire_source_dir="$template_dir/vendor/codex-deck-wire"
+  local node_modules_scope_dir="$template_dir/node_modules/@zuoyehaoduoa"
+  local wire_source_dir="$template_dir/vendor/zuoyehaoduoa-wire"
   local wire_target_dir="$node_modules_scope_dir/wire"
 
   rm -rf "$wire_target_dir"

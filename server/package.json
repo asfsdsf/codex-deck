@@ -47,7 +47,7 @@
     "@octokit/webhooks": "^14.2.0",
     "@prisma/client": "^6.11.1",
     "@socket.io/redis-streams-adapter": "^0.2.2",
-    "@codex-deck/wire": "workspace:*",
+    "@zuoyehaoduoa/wire": "workspace:*",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/semver": "^7.7.0",
     "axios": "^1.6.8",

@@ -13,7 +13,7 @@ import {
   RemoteAuthErrorCode,
   startRemoteOpaqueLogin,
   startRemoteOpaqueRegistration,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 
 type AccountRecord = {
   id: string;

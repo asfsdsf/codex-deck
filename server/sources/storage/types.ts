@@ -3,7 +3,7 @@ import {
   GitHubOrg as GitHubOrgType,
 } from "../app/api/types";
 import { ImageRef as ImageRefType } from "./files";
-import type { SessionMessageContent as WireSessionMessageContent } from "@codex-deck/wire";
+import type { SessionMessageContent as WireSessionMessageContent } from "@zuoyehaoduoa/wire";
 declare global {
   namespace PrismaJson {
     // Session message content types

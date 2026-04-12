@@ -1,5 +1,5 @@
 {
-  "name": "@codex-deck/wire",
+  "name": "@zuoyehaoduoa/wire",
   "version": "0.1.0",
   "description": "Shared message wire types and Zod schemas for codex-deck clients and services",
   "author": "Kirill Dubovitskiy",

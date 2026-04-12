@@ -7,7 +7,7 @@ import type {
   WorkflowDetailResponse,
   WorkflowSummary,
 } from "@codex-deck/api";
-import { decodeBase64 } from "@codex-deck/wire";
+import { decodeBase64 } from "@zuoyehaoduoa/wire";
 import { parseConversationTextChunk } from "../../api/conversation-parser";
 import type { RemoteClient } from "../remote-client";
 import {

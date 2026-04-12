@@ -11,7 +11,7 @@ import {
   signRemoteRpcResult,
   startRemoteOpaqueRegistration,
   startRemoteOpaqueServerLogin,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 import { RemoteClient } from "../../web/remote-client";
 
 function jsonResponse(body: unknown, status: number = 200): Response {

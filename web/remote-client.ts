@@ -11,7 +11,7 @@ import {
   type RemoteMachineMetadata,
   type RemoteMachineState,
   verifyRemoteRpcResultSignature,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 
 interface BootstrapResponse {
   remoteAuthVersion: 2;

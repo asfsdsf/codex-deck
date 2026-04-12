@@ -5,7 +5,7 @@ import {
   finishRemoteOpaqueServerLogin,
   RemoteAuthErrorCode,
   startRemoteOpaqueServerLogin,
-} from "@codex-deck/wire";
+} from "@zuoyehaoduoa/wire";
 import { type Fastify } from "../types";
 import { db } from "@/storage/db";
 import {

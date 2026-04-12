@@ -1,6 +1,6 @@
 {
   "name": "codex-deck",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browse and interact with Codex more easily, and orchestrate multiple tasks from a dedicated workflow board.",
   "type": "module",
   "bin": {
@@ -29,7 +29,7 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
-    "@codex-deck/wire": "workspace:*",
+    "@zuoyehaoduoa/wire": "workspace:*",
     "@hono/node-server": "^1.13.7",
     "@tanstack/react-virtual": "^3.13.14",
     "@xterm/addon-fit": "^0.11.0",

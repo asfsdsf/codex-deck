@@ -10,7 +10,7 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@codex-deck/wire": ["./wire/src/index.ts"]
+      "@zuoyehaoduoa/wire": ["./wire/src/index.ts"]
     },
     "declaration": true,
     "declarationMap": true,
