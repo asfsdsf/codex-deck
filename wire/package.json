@@ -7,7 +7,11 @@
   "type": "module",
   "homepage": "https://github.com/asfsdsf/codex-deck/tree/main/wire",
   "bugs": "https://github.com/asfsdsf/codex-deck/issues",
-  "repository": "asfsdsf/codex-deck",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asfsdsf/codex-deck.git",
+    "directory": "wire"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.cts",
@@ -51,7 +55,8 @@
     "vitest": "^3.2.4"
   },
   "publishConfig": {
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "packageManager": "pnpm@10.32.1"
 }
