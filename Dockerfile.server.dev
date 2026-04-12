@@ -1,0 +1,68 @@
+ARG BASE_IMAGE=node:20
+
+FROM ${BASE_IMAGE} AS deps
+
+RUN corepack enable \
+  && corepack prepare pnpm@10.32.1 --activate \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends python3 ffmpeg make g++ build-essential \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV npm_config_nodedir=/usr/local
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY tsconfig.json tsconfig.test.json ./
+COPY server/package.json server/package.json
+COPY wire/package.json wire/package.json
+COPY server/prisma server/prisma
+
+# Reuse bundled workspace dependencies from the base image when available so
+# dev rebuilds do not depend on a fresh network install every time.
+RUN set -eux; \
+  if [ -d /app/node_modules ] && [ ! -e /app/node_modules/.modules.yaml ]; then \
+    rm -rf /app/node_modules; \
+  fi; \
+  if [ -d /repo/node_modules ] && [ ! -d /app/node_modules ]; then \
+    cp -a /repo/node_modules /app/node_modules; \
+  fi; \
+  if [ -d /repo/server/node_modules ] && [ ! -d /app/server/node_modules ]; then \
+    mkdir -p /app/server; \
+    cp -a /repo/server/node_modules /app/server/node_modules; \
+  fi; \
+  if [ -d /repo/wire/node_modules ] && [ ! -d /app/wire/node_modules ]; then \
+    mkdir -p /app/wire; \
+    cp -a /repo/wire/node_modules /app/wire/node_modules; \
+  fi; \
+  if [ ! -d /app/node_modules ]; then \
+    pnpm install --frozen-lockfile; \
+  fi
+
+FROM deps AS builder
+
+COPY api /app/api
+COPY server /app/server
+COPY wire /app/wire
+COPY web /app/web
+
+RUN pnpm --dir wire build \
+  && pnpm build:web
+
+FROM ${BASE_IMAGE} AS runner
+
+RUN corepack enable \
+  && corepack prepare pnpm@10.32.1 --activate \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends python3 ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV DATA_DIR=/data
+
+COPY --from=builder /app /app
+
+EXPOSE 3005
+
+CMD ["sh", "-lc", "pnpm --dir server exec tsx ./sources/standalone.ts init && exec pnpm --dir server exec tsx ./sources/standalone.ts serve"]

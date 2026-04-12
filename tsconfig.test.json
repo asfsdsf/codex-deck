@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@codex-deck/api": ["./api/storage.ts"],
+      "@codex-deck/wire": ["./wire/src/index.ts"]
+    }
+  },
+  "include": ["api/**/*", "web/**/*", "tests/unit/**/*"]
+}

@@ -1,0 +1,6 @@
+packages:
+  - "server"
+  - "wire"
+
+onlyBuiltDependencies:
+  - "node-pty"

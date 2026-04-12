@@ -1,0 +1,92 @@
+{
+  "name": "codex-deck",
+  "version": "0.1.0",
+  "description": "Browse and interact with Codex more easily, and orchestrate multiple tasks from a dedicated workflow board.",
+  "type": "module",
+  "bin": {
+    "codex-deck": "dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build:wire": "pnpm --dir wire build",
+    "dev": "concurrently \"pnpm dev:web\" \"pnpm dev:server\"",
+    "dev:server": "tsx watch api/index.ts --dev",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "pnpm build:server && pnpm build:web",
+    "build:packages": "./scripts/build-packages.sh",
+    "prebuild:server": "pnpm build:wire",
+    "build:web": "vite build --config web/vite.config.ts",
+    "build:server": "tsup api/index.ts --format esm --dts",
+    "test": "pnpm test:unit",
+    "test:unit": "node scripts/run-unit-tests.mjs",
+    "pretest:integration": "pnpm build",
+    "test:integration": "playwright test",
+    "prestart": "pnpm build:server",
+    "start": "node dist/index.js",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@codex-deck/wire": "workspace:*",
+    "@hono/node-server": "^1.13.7",
+    "@tanstack/react-virtual": "^3.13.14",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "chokidar": "^4.0.3",
+    "commander": "^13.1.0",
+    "diff": "^8.0.2",
+    "highlight.js": "^11.11.1",
+    "hono": "^4.7.8",
+    "lucide-react": "^0.562.0",
+    "node-pty": "^1.1.0",
+    "open": "^10.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.0.2",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/vite": "^4.0.7",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "playwright": "^1.58.2",
+    "prettier": "^3.7.4",
+    "tailwindcss": "^4.0.7",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "codex",
+    "codex-cli",
+    "cli",
+    "conversation",
+    "viewer",
+    "agent",
+    "streaming",
+    "ai",
+    "openai"
+  ],
+  "author": "zzami",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asfsdsf/codex-deck.git"
+  },
+  "homepage": "https://github.com/asfsdsf/codex-deck#readme",
+  "bugs": {
+    "url": "https://github.com/asfsdsf/codex-deck/issues"
+  }
+}

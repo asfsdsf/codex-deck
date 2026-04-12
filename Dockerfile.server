@@ -1,0 +1,51 @@
+# Stage 1: install dependencies with workspace context
+FROM node:20 AS deps
+
+RUN corepack enable
+RUN apt-get update && apt-get install -y python3 ffmpeg make g++ build-essential && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY tsconfig.json tsconfig.test.json ./
+COPY server/package.json server/package.json
+COPY wire/package.json wire/package.json
+COPY server/prisma server/prisma
+
+RUN pnpm install --frozen-lockfile
+
+# Stage 2: build web + server artifacts
+FROM deps AS builder
+
+COPY api /repo/api
+COPY server /repo/server
+COPY wire /repo/wire
+COPY web /repo/web
+
+RUN pnpm --dir wire build
+RUN pnpm build:web
+RUN pnpm --dir server build
+
+# Stage 3: runtime
+FROM node:20 AS runner
+
+RUN corepack enable
+RUN apt-get update && apt-get install -y python3 ffmpeg && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+
+ENV NODE_ENV=production
+
+COPY --from=deps /repo/node_modules /repo/node_modules
+COPY --from=deps /repo/server/node_modules /repo/server/node_modules
+COPY --from=deps /repo/wire/node_modules /repo/wire/node_modules
+COPY --from=deps /repo/package.json /repo/package.json
+COPY --from=deps /repo/pnpm-lock.yaml /repo/pnpm-lock.yaml
+COPY --from=deps /repo/pnpm-workspace.yaml /repo/pnpm-workspace.yaml
+COPY --from=builder /repo/server /repo/server
+COPY --from=builder /repo/wire /repo/wire
+COPY --from=builder /repo/dist /repo/dist
+
+EXPOSE 3005
+
+CMD ["sh", "-lc", "pnpm --dir server exec tsx ./sources/standalone.ts init && pnpm --dir server exec tsx ./sources/standalone.ts serve"]

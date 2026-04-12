@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>Codex Deck</title>
+    <script>
+      (function () {
+        function fallbackUuid() {
+          const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
+          return template.replace(/[xy]/g, function (char) {
+            const random = Math.floor(Math.random() * 16);
+            const value = char === "x" ? random : (random & 0x3) | 0x8;
+            return value.toString(16);
+          });
+        }
+
+        const cryptoObject = window.crypto || window.msCrypto;
+        if (!cryptoObject) {
+          window.crypto = { randomUUID: fallbackUuid };
+          return;
+        }
+
+        if (typeof cryptoObject.randomUUID !== "function") {
+          cryptoObject.randomUUID = function () {
+            if (typeof cryptoObject.getRandomValues === "function") {
+              const bytes = new Uint8Array(16);
+              cryptoObject.getRandomValues(bytes);
+              bytes[6] = (bytes[6] & 0x0f) | 0x40;
+              bytes[8] = (bytes[8] & 0x3f) | 0x80;
+              const hex = Array.from(bytes, function (b) {
+                return b.toString(16).padStart(2, "0");
+              }).join("");
+              return [
+                hex.slice(0, 8),
+                hex.slice(8, 12),
+                hex.slice(12, 16),
+                hex.slice(16, 20),
+                hex.slice(20),
+              ].join("-");
+            }
+            return fallbackUuid();
+          };
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-zinc-900 text-zinc-100">
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

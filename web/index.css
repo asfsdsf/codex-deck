@@ -1,0 +1,325 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-Regular.woff2")
+    format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-Medium.woff2")
+    format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-SemiBold.woff2")
+    format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Fira Code Variable Font (same asset naming as VibeTunnel) */
+@font-face {
+  font-family: "Fira Code";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src:
+    url("/fonts/FiraCode-VF.woff2") format("woff2-variations"),
+    url("/fonts/FiraCode-VF.ttf") format("truetype-variations");
+  font-variation-settings: "wght" 400;
+}
+
+/* Hack Nerd Font Mono (same asset naming as VibeTunnel) */
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/HackNerdFontMono-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/HackNerdFontMono-Bold.ttf") format("truetype");
+}
+
+:root {
+  color-scheme: dark;
+  --app-viewport-height: 100vh;
+  --app-viewport-offset-top: 0px;
+  --app-viewport-offset-bottom: 0px;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-viewport-height: 100dvh;
+  }
+}
+
+.app-viewport-height {
+  height: var(--app-viewport-height);
+}
+
+.app-viewport-min-height {
+  min-height: var(--app-viewport-height);
+}
+
+.app-viewport-safe-area {
+  padding-top: max(
+    env(safe-area-inset-top, 0px),
+    var(--app-viewport-offset-top, 0px)
+  );
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: max(
+    env(safe-area-inset-bottom, 0px),
+    var(--app-viewport-offset-bottom, 0px)
+  );
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+body {
+  font-family:
+    "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+  background: #09090b;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #27272a transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+pre {
+  background: #18181b;
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+code {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 0.875rem;
+}
+
+/*
+ * Show the trailing segment of long placeholder paths while the input is empty.
+ * Keep normal LTR behavior once the user starts typing.
+ */
+.project-path-placeholder-tail:placeholder-shown {
+  direction: rtl;
+  text-align: left;
+}
+
+.project-path-placeholder-tail:placeholder-shown::placeholder {
+  direction: rtl;
+}
+
+.patch-syntax {
+  color: #d4d4d8;
+}
+
+.command-syntax {
+  color: #dbdee5;
+}
+
+.command-syntax .line {
+  display: block;
+}
+
+.command-syntax-inline .line {
+  display: inline;
+}
+
+.command-syntax .line span {
+  color: inherit;
+}
+
+.patch-syntax .hljs-comment,
+.patch-syntax .hljs-quote {
+  color: #71717a;
+  font-style: italic;
+}
+
+.patch-syntax .hljs-keyword,
+.patch-syntax .hljs-selector-tag,
+.patch-syntax .hljs-built_in,
+.patch-syntax .hljs-type,
+.patch-syntax .hljs-name {
+  color: #60a5fa;
+}
+
+.patch-syntax .hljs-title,
+.patch-syntax .hljs-title.class_,
+.patch-syntax .hljs-title.class_.inherited__,
+.patch-syntax .hljs-title.function_ {
+  color: #22d3ee;
+}
+
+.patch-syntax .hljs-string,
+.patch-syntax .hljs-regexp,
+.patch-syntax .hljs-template-tag,
+.patch-syntax .hljs-template-variable,
+.patch-syntax .hljs-subst {
+  color: #86efac;
+}
+
+.patch-syntax .hljs-number,
+.patch-syntax .hljs-literal,
+.patch-syntax .hljs-symbol,
+.patch-syntax .hljs-bullet {
+  color: #fbbf24;
+}
+
+.patch-syntax .hljs-attr,
+.patch-syntax .hljs-attribute,
+.patch-syntax .hljs-property,
+.patch-syntax .hljs-params,
+.patch-syntax .hljs-variable,
+.patch-syntax .hljs-link {
+  color: #f472b6;
+}
+
+.patch-syntax .hljs-meta,
+.patch-syntax .hljs-meta .hljs-keyword,
+.patch-syntax .hljs-doctag {
+  color: #c4b5fd;
+}
+
+.patch-syntax .hljs-addition {
+  color: #86efac;
+}
+
+.patch-syntax .hljs-deletion {
+  color: #fda4af;
+}
+
+.patch-syntax-markdown .hljs-section {
+  color: #67e8f9;
+  font-weight: 600;
+}
+
+.conversation-search-match {
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, #facc15 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #facc15 20%, transparent);
+  color: inherit;
+  padding: 0 0.05rem;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.conversation-search-match-active {
+  background: color-mix(in srgb, #22d3ee 38%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #22d3ee 45%, transparent),
+    0 0 0 0.4rem color-mix(in srgb, #22d3ee 12%, transparent);
+  transform: scale(1.05);
+}
+
+.patch-syntax-markdown .hljs-strong {
+  color: #f4f4f5;
+  font-weight: 650;
+}
+
+.patch-syntax-markdown .hljs-emphasis {
+  color: #d8b4fe;
+  font-style: italic;
+}
+
+.patch-syntax-markdown .hljs-code {
+  color: #fcd34d;
+  background: rgba(63, 63, 70, 0.45);
+  border-radius: 3px;
+  padding: 0 0.2em;
+}
+
+.patch-syntax-markdown .hljs-link {
+  color: #22d3ee;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+select option {
+  background: #18181b;
+  color: #e4e4e7;
+}
+
+@keyframes thinking-pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 0.45;
+  }
+}
+
+@keyframes workflow-create-waiting-fade {
+  0% {
+    opacity: 0.42;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.42;
+  }
+}
+
+.thinking-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);
+  box-shadow: 0 0 0.45rem rgba(34, 211, 238, 0.55);
+  animation: thinking-pulse 1.1s ease-in-out infinite;
+}
+
+.thinking-label {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.workflow-create-waiting-content {
+  animation: workflow-create-waiting-fade 1.2s ease-in-out infinite;
+}
