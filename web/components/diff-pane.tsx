@@ -507,15 +507,18 @@ function renderFileContent(
     return <EmptyState text="Select a file to preview its content." />;
   }
 
-  if (loading) {
+  const hasMatchingFileContent =
+    fileContent !== null && fileContent.path === selectedFilePath;
+
+  if (loading && !hasMatchingFileContent) {
     return <EmptyState text="Loading file content..." />;
   }
 
-  if (error) {
+  if (error && !hasMatchingFileContent) {
     return <EmptyState text={error} />;
   }
 
-  if (!fileContent || fileContent.path !== selectedFilePath) {
+  if (!hasMatchingFileContent || !fileContent) {
     return <EmptyState text="File content is unavailable." />;
   }
 
@@ -926,6 +929,11 @@ export default function DiffPane(props: DiffPaneProps) {
 
     return selectedFilePath;
   })();
+  const hasLoadedPaneData = isFileTreeMode
+    ? fileTreeNodesData !== null
+    : diffData !== null;
+  const showBlockingPaneLoading = loading && !hasLoadedPaneData;
+  const showBlockingPaneError = error !== null && !hasLoadedPaneData;
 
   return (
     <aside
@@ -1149,11 +1157,11 @@ export default function DiffPane(props: DiffPaneProps) {
             </div>
           </div>
         )
-      ) : loading ? (
+      ) : showBlockingPaneLoading ? (
         <EmptyState
           text={isFileTreeMode ? "Loading file tree..." : "Loading diffs..."}
         />
-      ) : error ? (
+      ) : showBlockingPaneError ? (
         <EmptyState text={error} />
       ) : isFileTreeMode && fileTreeNodesData?.unavailableReason ? (
         <EmptyState text={fileTreeNodesData.unavailableReason} />

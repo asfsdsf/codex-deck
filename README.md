@@ -58,12 +58,6 @@ Terminal:
 - **Terminal workspace** - Create and manage multiple live terminals with shared read and ownership-based write control.
 - **Background terminal runs** - Inspect per-session terminal run history/output with real-time updates.
 
-## Documentation
-
-- [`docs/START_GUIDE.md`](docs/START_GUIDE.md) - quick local and remote startup walkthrough
-- [`docs/WORKFLOW_UI.md`](docs/WORKFLOW_UI.md) - Workflow pane button-to-command mapping
-- [`docs/SERVER_IMPLEMENTATION.md`](docs/SERVER_IMPLEMENTATION.md) - staged remote server architecture and implementation plan
-
 ### Feature previews:
 
 - Terminal & Workflow & Codex

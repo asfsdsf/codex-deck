@@ -4570,6 +4570,15 @@ export default function CodexDeckApp() {
       : (selectedWorkflowSummary?.updatedAt ??
         workflowDetail?.summary.updatedAt ??
         null);
+  const rightPaneDataKey =
+    rightPaneTarget === null
+      ? null
+      : `${rightPaneTarget.kind}:${
+          rightPaneTarget.kind === "session"
+            ? rightPaneTarget.sessionId
+            : rightPaneTarget.workflowKey
+        }:${selectedPaneMode}`;
+  const previousRightPaneDataKeyRef = useRef<string | null>(null);
 
   const handleChangePaneMode = useCallback((mode: RightPaneMode) => {
     pendingFilePathLinkTargetRef.current = null;
@@ -4735,6 +4744,7 @@ export default function CodexDeckApp() {
 
   useEffect(() => {
     if (!rightPaneTarget) {
+      previousRightPaneDataKeyRef.current = null;
       setSessionDiff(null);
       setSessionFileTreeNodes(null);
       setSessionFileTreeLoadingMore(false);
@@ -4763,20 +4773,27 @@ export default function CodexDeckApp() {
     }
 
     if (selectedPaneMode === "terminal-flow" || selectedPaneMode === "skills") {
+      previousRightPaneDataKeyRef.current = null;
       return;
     }
 
     if (diffPaneCollapsed) {
+      previousRightPaneDataKeyRef.current = null;
       return;
     }
 
+    const isHardRightPaneReload =
+      previousRightPaneDataKeyRef.current !== rightPaneDataKey;
+    previousRightPaneDataKeyRef.current = rightPaneDataKey;
     let cancelled = false;
     setLoadingSessionDiff(true);
     setSessionDiffError(null);
-    setSessionFileContent(null);
-    setSessionFileContentError(null);
-    setSelectedFileContentPage(1);
-    if (selectedPaneMode !== "file-tree") {
+    if (isHardRightPaneReload) {
+      setSessionFileContent(null);
+      setSessionFileContentError(null);
+      setSelectedFileContentPage(1);
+    }
+    if (isHardRightPaneReload && selectedPaneMode !== "file-tree") {
       setSelectedFileTargetLine(null);
     }
 
@@ -4851,12 +4868,14 @@ export default function CodexDeckApp() {
           return;
         }
 
-        setSessionDiff(null);
-        setSessionFileTreeNodes(null);
-        setSelectedDiffFilePath(null);
-        setSessionDiffError(
-          error instanceof Error ? error.message : String(error),
-        );
+        if (isHardRightPaneReload) {
+          setSessionDiff(null);
+          setSessionFileTreeNodes(null);
+          setSelectedDiffFilePath(null);
+          setSessionDiffError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       })
       .finally(() => {
         if (!cancelled) {
@@ -4872,6 +4891,7 @@ export default function CodexDeckApp() {
     selectedPaneMode,
     diffPaneCollapsed,
     rightPaneRefreshToken,
+    rightPaneDataKey,
   ]);
 
   useEffect(() => {
@@ -4887,6 +4907,8 @@ export default function CodexDeckApp() {
       return;
     }
 
+    const shouldPreserveExistingFileContent =
+      sessionFileContent?.path === selectedDiffFilePath;
     let cancelled = false;
     setLoadingSessionFileContent(true);
     setSessionFileContentError(null);
@@ -4946,10 +4968,12 @@ export default function CodexDeckApp() {
         if (pendingFilePathLinkTargetRef.current === selectedDiffFilePath) {
           pendingFilePathLinkTargetRef.current = null;
         }
-        setSessionFileContent(null);
-        setSessionFileContentError(
-          error instanceof Error ? error.message : String(error),
-        );
+        if (!shouldPreserveExistingFileContent) {
+          setSessionFileContent(null);
+          setSessionFileContentError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       })
       .finally(() => {
         if (!cancelled) {
