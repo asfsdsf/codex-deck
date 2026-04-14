@@ -539,7 +539,10 @@ function renderFileContent(
     }
 
     return (
-      <div className="h-full overflow-auto bg-[radial-gradient(circle_at_top,_rgba(244,244,245,0.12),_rgba(9,9,11,0.96)_60%)] p-4">
+      <div
+        className="h-full overflow-auto p-4"
+        style={{ background: "var(--app-artifact-preview-backdrop)" }}
+      >
         <img
           src={fileContent.previewDataUrl}
           alt={selectedFilePath}
@@ -669,14 +672,17 @@ function FileContentPager(props: {
           type="button"
           onClick={() => canGoPrev && onChangePage(page - 1)}
           disabled={!canGoPrev}
-          className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-white hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-white disabled:opacity-100 disabled:cursor-not-allowed"
-          style={{ WebkitTextFillColor: "#ffffff", color: "#ffffff" }}
+          className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-zinc-50 hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-zinc-50 disabled:opacity-100 disabled:cursor-not-allowed"
+          style={{
+            WebkitTextFillColor: "var(--app-page-control-foreground)",
+            color: "var(--app-page-control-foreground)",
+          }}
           aria-label="Previous page"
         >
           <span
             style={{
-              color: "#ffffff",
-              WebkitTextFillColor: "#ffffff",
+              color: "var(--app-page-control-foreground)",
+              WebkitTextFillColor: "var(--app-page-control-foreground)",
               opacity: canGoPrev ? 1 : 0.45,
             }}
           >
@@ -684,7 +690,7 @@ function FileContentPager(props: {
           </span>
         </button>
         <div
-          className="h-7 px-3 inline-flex items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/60 text-[11px] font-mono font-bold text-white tabular-nums"
+          className="h-7 px-3 inline-flex items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/60 text-[11px] font-mono font-bold text-zinc-50 tabular-nums"
           style={{ minWidth: `${pageDigits * 2 + 6}ch` }}
         >
           <input
@@ -702,7 +708,7 @@ function FileContentPager(props: {
                 applyManualPageInput();
               }
             }}
-            className="border-0 bg-transparent p-0 text-right text-white outline-none"
+            className="border-0 bg-transparent p-0 text-right text-zinc-50 outline-none"
             style={{ width: `${pageDigits}ch` }}
             aria-label="Current page"
           />
@@ -715,14 +721,17 @@ function FileContentPager(props: {
           type="button"
           onClick={() => canGoNext && onChangePage(page + 1)}
           disabled={!canGoNext}
-          className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-white hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-white disabled:opacity-100 disabled:cursor-not-allowed"
-          style={{ WebkitTextFillColor: "#ffffff", color: "#ffffff" }}
+          className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-zinc-50 hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-zinc-50 disabled:opacity-100 disabled:cursor-not-allowed"
+          style={{
+            WebkitTextFillColor: "var(--app-page-control-foreground)",
+            color: "var(--app-page-control-foreground)",
+          }}
           aria-label="Next page"
         >
           <span
             style={{
-              color: "#ffffff",
-              WebkitTextFillColor: "#ffffff",
+              color: "var(--app-page-control-foreground)",
+              WebkitTextFillColor: "var(--app-page-control-foreground)",
               opacity: canGoNext ? 1 : 0.45,
             }}
           >
@@ -937,7 +946,7 @@ export default function DiffPane(props: DiffPaneProps) {
 
   return (
     <aside
-      className="relative shrink-0 border-l border-zinc-800/60 bg-zinc-950 flex flex-col"
+      className="pane-right relative shrink-0 border-l border-zinc-800/60 bg-zinc-950 flex flex-col"
       style={{ width: `${width}px` }}
     >
       <div
@@ -957,7 +966,7 @@ export default function DiffPane(props: DiffPaneProps) {
           </div>
         )}
       </div>
-      <div className="h-[50px] border-b border-zinc-800/60 px-3 flex items-center gap-2 overflow-hidden">
+      <div className="pane-header-right h-[50px] border-b border-zinc-800/60 px-3 flex items-center gap-2 overflow-hidden">
         <div className="min-w-0 flex flex-1 items-center gap-2">
           <button
             type="button"

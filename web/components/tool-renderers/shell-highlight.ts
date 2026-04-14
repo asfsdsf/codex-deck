@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { getSingletonHighlighter } from "shiki";
+import { useResolvedTheme } from "../../hooks/use-resolved-theme";
+import type { ResolvedTheme } from "../../theme";
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
   "&": "&amp;",
@@ -13,9 +15,19 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => HTML_ESCAPE_MAP[char] ?? char);
 }
 
-const SHIKI_THEME = "vitesse-dark";
+const SHIKI_THEME_DARK = "vitesse-dark";
+const SHIKI_THEME_LIGHT = "github-light-high-contrast";
 const SHIKI_LANGS = ["bash", "json"] as const;
 type SupportedShikiLanguage = (typeof SHIKI_LANGS)[number];
+type SupportedShikiTheme = typeof SHIKI_THEME_DARK | typeof SHIKI_THEME_LIGHT;
+
+const SHIKI_THEME_BY_RESOLVED_THEME: Record<
+  ResolvedTheme,
+  SupportedShikiTheme
+> = {
+  dark: SHIKI_THEME_DARK,
+  light: SHIKI_THEME_LIGHT,
+};
 
 let highlighterPromise: ReturnType<typeof getSingletonHighlighter> | null =
   null;
@@ -29,27 +41,27 @@ function extractCodeInnerHtml(html: string): string {
 async function highlightCodeHtml(
   code: string,
   language: SupportedShikiLanguage,
+  theme: SupportedShikiTheme,
 ): Promise<string> {
   if (!code) {
     return "";
   }
 
-  const cacheKey = `${language}\u0000${code}`;
+  const cacheKey = `${theme}\u0000${language}\u0000${code}`;
   let cached = highlightedCodeCache.get(cacheKey);
   if (!cached) {
     cached = (async () => {
       try {
-        const highlighter =
-          highlighterPromise ??
-          getSingletonHighlighter({
-            themes: [SHIKI_THEME],
+        if (!highlighterPromise) {
+          highlighterPromise = getSingletonHighlighter({
+            themes: [SHIKI_THEME_DARK, SHIKI_THEME_LIGHT],
             langs: [...SHIKI_LANGS],
           });
-        highlighterPromise = highlighter;
-        const instance = await highlighter;
+        }
+        const instance = await highlighterPromise;
         const html = instance.codeToHtml(code, {
           lang: language,
-          theme: SHIKI_THEME,
+          theme,
         });
         return extractCodeInnerHtml(html);
       } catch {
@@ -66,6 +78,8 @@ export function useHighlightedCode(
   code: string,
   language: SupportedShikiLanguage,
 ): string {
+  const resolvedTheme = useResolvedTheme();
+  const shikiTheme = SHIKI_THEME_BY_RESOLVED_THEME[resolvedTheme];
   const [highlightedHtml, setHighlightedHtml] = useState(() =>
     escapeHtml(code),
   );
@@ -74,7 +88,7 @@ export function useHighlightedCode(
     let cancelled = false;
     setHighlightedHtml(escapeHtml(code));
 
-    void highlightCodeHtml(code, language).then((html) => {
+    void highlightCodeHtml(code, language, shikiTheme).then((html) => {
       if (!cancelled) {
         setHighlightedHtml(html);
       }
@@ -83,7 +97,7 @@ export function useHighlightedCode(
     return () => {
       cancelled = true;
     };
-  }, [code, language]);
+  }, [code, language, shikiTheme]);
 
   return highlightedHtml;
 }

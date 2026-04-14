@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -47,6 +47,47 @@
             return fallbackUuid();
           };
         }
+      })();
+    </script>
+    <script>
+      (function () {
+        var storageKey = "codex-deck:theme:v1";
+        var themeAttribute = "data-theme";
+
+        function readStoredThemePreference() {
+          try {
+            var stored = window.localStorage.getItem(storageKey);
+            if (
+              stored === "light" ||
+              stored === "dark" ||
+              stored === "system"
+            ) {
+              return stored;
+            }
+          } catch {}
+          return "system";
+        }
+
+        function resolveTheme(preference) {
+          if (preference === "light" || preference === "dark") {
+            return preference;
+          }
+          try {
+            if (
+              typeof window.matchMedia === "function" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches
+            ) {
+              return "dark";
+            }
+          } catch {}
+          return "light";
+        }
+
+        var root = document.documentElement;
+        var theme = resolveTheme(readStoredThemePreference());
+        root.setAttribute(themeAttribute, theme);
+        root.style.colorScheme = theme;
+        root.classList.toggle("dark", theme === "dark");
       })();
     </script>
   </head>

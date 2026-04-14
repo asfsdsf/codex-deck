@@ -2608,14 +2608,17 @@ const SessionView = memo(
                   type="button"
                   onClick={() => handleChangePage(safeCurrentPage - 1)}
                   disabled={safeCurrentPage <= 1}
-                  className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-white hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-white disabled:opacity-100 disabled:cursor-not-allowed"
-                  style={{ WebkitTextFillColor: "#ffffff", color: "#ffffff" }}
+                  className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-zinc-50 hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-zinc-50 disabled:opacity-100 disabled:cursor-not-allowed"
+                  style={{
+                    WebkitTextFillColor: "var(--app-page-control-foreground)",
+                    color: "var(--app-page-control-foreground)",
+                  }}
                   aria-label="Previous page"
                 >
                   <span
                     style={{
-                      color: "#ffffff",
-                      WebkitTextFillColor: "#ffffff",
+                      color: "var(--app-page-control-foreground)",
+                      WebkitTextFillColor: "var(--app-page-control-foreground)",
                       opacity: safeCurrentPage <= 1 ? 0.45 : 1,
                     }}
                   >
@@ -2623,7 +2626,7 @@ const SessionView = memo(
                   </span>
                 </button>
                 <div
-                  className="h-7 px-3 inline-flex items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/60 text-[11px] font-mono font-bold text-white tabular-nums"
+                  className="h-7 px-3 inline-flex items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/60 text-[11px] font-mono font-bold text-zinc-50 tabular-nums"
                   style={{ minWidth: `${pageDigits * 2 + 6}ch` }}
                 >
                   <input
@@ -2641,7 +2644,7 @@ const SessionView = memo(
                         applyManualPageInput();
                       }
                     }}
-                    className="border-0 bg-transparent p-0 text-right text-white outline-none"
+                    className="border-0 bg-transparent p-0 text-right text-zinc-50 outline-none"
                     style={{ width: `${pageDigits}ch` }}
                     aria-label="Current page"
                   />
@@ -2657,14 +2660,17 @@ const SessionView = memo(
                   type="button"
                   onClick={() => handleChangePage(safeCurrentPage + 1)}
                   disabled={safeCurrentPage >= totalPages}
-                  className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-white hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-white disabled:opacity-100 disabled:cursor-not-allowed"
-                  style={{ WebkitTextFillColor: "#ffffff", color: "#ffffff" }}
+                  className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-zinc-50 hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-zinc-50 disabled:opacity-100 disabled:cursor-not-allowed"
+                  style={{
+                    WebkitTextFillColor: "var(--app-page-control-foreground)",
+                    color: "var(--app-page-control-foreground)",
+                  }}
                   aria-label="Next page"
                 >
                   <span
                     style={{
-                      color: "#ffffff",
-                      WebkitTextFillColor: "#ffffff",
+                      color: "var(--app-page-control-foreground)",
+                      WebkitTextFillColor: "var(--app-page-control-foreground)",
                       opacity: safeCurrentPage >= totalPages ? 0.45 : 1,
                     }}
                   >

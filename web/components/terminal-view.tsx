@@ -14,6 +14,7 @@ import {
   subscribeTerminalStream,
 } from "../api";
 import { TERMINAL_FONT_FAMILY } from "../terminal-font";
+import type { ResolvedTheme } from "../theme";
 
 function generateClientId(): string {
   if (
@@ -39,10 +40,31 @@ function generateClientId(): string {
 
 interface TerminalViewProps {
   terminalId: string;
+  resolvedTheme: ResolvedTheme;
+}
+
+function getTerminalTheme(resolvedTheme: ResolvedTheme): {
+  background: string;
+  foreground: string;
+  cursor: string;
+} {
+  if (resolvedTheme === "light") {
+    return {
+      background: "#f8fafc",
+      foreground: "#1f2937",
+      cursor: "#0f172a",
+    };
+  }
+
+  return {
+    background: "#09090b",
+    foreground: "#e4e4e7",
+    cursor: "#d4d4d8",
+  };
 }
 
 const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
-  const { terminalId } = props;
+  const { terminalId, resolvedTheme } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -65,6 +87,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [writeOwnerId, setWriteOwnerId] = useState<string | null>(null);
   const [showReadOnlyWarning, setShowReadOnlyWarning] = useState(false);
+  const terminalTheme = useMemo(
+    () => getTerminalTheme(resolvedTheme),
+    [resolvedTheme],
+  );
 
   const isReadOnly =
     writeOwnerId !== null && writeOwnerId !== clientIdRef.current;
@@ -81,6 +107,14 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   useEffect(() => {
     writeOwnerIdRef.current = writeOwnerId;
   }, [writeOwnerId]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    terminal.options.theme = terminalTheme;
+  }, [terminalTheme]);
 
   useEffect(() => {
     if (!isReadOnly) {
@@ -336,11 +370,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: TERMINAL_FONT_FAMILY,
-      theme: {
-        background: "#09090b",
-        foreground: "#e4e4e7",
-        cursor: "#d4d4d8",
-      },
+      theme: terminalTheme,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -412,7 +442,14 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       }
       void releaseTerminalWrite(terminalId, capturedClientId).catch(() => {});
     };
-  }, [bootstrap, closeStream, queueInput, sendResize, terminalId]);
+  }, [
+    bootstrap,
+    closeStream,
+    queueInput,
+    sendResize,
+    terminalId,
+    terminalTheme,
+  ]);
 
   const statusText = useMemo(() => {
     if (!connected) {

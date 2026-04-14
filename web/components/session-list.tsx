@@ -71,7 +71,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
   });
 
   return (
-    <div className="h-full overflow-hidden bg-zinc-950 flex flex-col">
+    <div className="session-list-surface h-full overflow-hidden bg-zinc-950 flex flex-col">
       <div className="px-3 py-2 border-b border-zinc-800/60 space-y-2">
         <div className="flex min-w-0 items-center gap-2 text-zinc-500">
           {searchControls ? (

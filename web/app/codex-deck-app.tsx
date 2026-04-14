@@ -53,6 +53,8 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
 import SessionList from "../components/session-list";
@@ -218,6 +220,17 @@ import {
   type PendingUserMessage,
 } from "../pending-user-messages";
 import { mergeDisplayConversationMessages } from "../conversation-message-merge";
+import {
+  applyResolvedTheme,
+  getNextThemePreference,
+  getSystemPrefersDark,
+  persistThemePreference,
+  readStoredThemePreference,
+  resolveThemePreference,
+  THEME_STORAGE_KEY,
+  type ResolvedTheme,
+  type ThemePreference,
+} from "../theme";
 
 interface SessionHeaderProps {
   session: Session;
@@ -225,10 +238,49 @@ interface SessionHeaderProps {
   isMobilePhone: boolean;
   railCollapsedByDefault: boolean;
   conversationSearchOpen: boolean;
+  resolvedTheme: ResolvedTheme;
   onCopySessionId: (sessionId: string) => void;
   onCopyProjectPath: (projectPath: string) => void;
   onToggleConversationSearch: () => void;
   onToggleRailCollapsedByDefault: () => void;
+  onToggleTheme: () => void;
+}
+
+interface ThemeToggleButtonProps {
+  resolvedTheme: ResolvedTheme;
+  onToggleTheme: () => void;
+}
+
+function ThemeToggleButton(props: ThemeToggleButtonProps) {
+  const { resolvedTheme, onToggleTheme } = props;
+  const switchingTo = resolvedTheme === "dark" ? "light" : "dark";
+
+  return (
+    <button
+      type="button"
+      onClick={onToggleTheme}
+      className="group relative h-8 w-8 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 transition-colors hover:bg-zinc-800/80"
+      title={`Switch to ${switchingTo} theme`}
+      aria-label={`Switch to ${switchingTo} theme`}
+    >
+      <span className="relative mx-auto block h-4 w-4">
+        <Sun
+          className={`absolute inset-0 h-4 w-4 transition-all duration-200 ${
+            resolvedTheme === "dark"
+              ? "scale-100 rotate-0 opacity-100"
+              : "scale-75 -rotate-90 opacity-0"
+          }`}
+        />
+        <Moon
+          className={`absolute inset-0 h-4 w-4 transition-all duration-200 ${
+            resolvedTheme === "light"
+              ? "scale-100 rotate-0 opacity-100"
+              : "scale-75 rotate-90 opacity-0"
+          }`}
+        />
+      </span>
+    </button>
+  );
 }
 
 function getWorkflowSessionRoleLabel(
@@ -621,8 +673,8 @@ function detectMobilePhone(): boolean {
   const mobileNavigator = window.navigator as Navigator & {
     userAgentData?: { mobile?: boolean };
   };
-  if (typeof mobileNavigator.userAgentData?.mobile === "boolean") {
-    return mobileNavigator.userAgentData.mobile;
+  if (mobileNavigator.userAgentData?.mobile === true) {
+    return true;
   }
 
   const userAgent = mobileNavigator.userAgent || "";
@@ -3069,6 +3121,82 @@ export default function CodexDeckApp() {
     }
     return window.location.pathname.startsWith("/admin");
   }, []);
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
+    typeof window === "undefined"
+      ? "system"
+      : readStoredThemePreference(window.localStorage),
+  );
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() =>
+    getSystemPrefersDark(),
+  );
+  const resolvedTheme = useMemo(
+    () => resolveThemePreference(themePreference, systemPrefersDark),
+    [systemPrefersDark, themePreference],
+  );
+
+  useEffect(() => {
+    applyResolvedTheme(resolvedTheme);
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    persistThemePreference(window.localStorage, themePreference);
+  }, [themePreference]);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleThemeMediaChange = (
+      event?: MediaQueryListEvent | MediaQueryList,
+    ) => {
+      setSystemPrefersDark(event ? event.matches : mediaQuery.matches);
+    };
+
+    handleThemeMediaChange(mediaQuery);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleThemeMediaChange);
+      return () => {
+        mediaQuery.removeEventListener("change", handleThemeMediaChange);
+      };
+    }
+
+    mediaQuery.addListener(handleThemeMediaChange);
+    return () => {
+      mediaQuery.removeListener(handleThemeMediaChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== THEME_STORAGE_KEY) {
+        return;
+      }
+      setThemePreference(readStoredThemePreference(window.localStorage));
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  const handleToggleTheme = useCallback(() => {
+    setThemePreference((currentPreference) =>
+      getNextThemePreference(currentPreference, systemPrefersDark),
+    );
+  }, [systemPrefersDark]);
 
   if (isAdminRoute) {
     return (
@@ -7129,12 +7257,15 @@ export default function CodexDeckApp() {
             ? entry.details.source.trim()
             : "daemon";
         const commandText = daemonCommandText(entry.details);
-        console.info(`[codex-deck-flow daemon command] ${source}: ${commandText}`, {
-          workflowKey,
-          at: entry.at,
-          details: entry.details,
-          toggle: `window.${DAEMON_COMMAND_CONSOLE_LOG_GLOBAL_KEY}`,
-        });
+        console.info(
+          `[codex-deck-flow daemon command] ${source}: ${commandText}`,
+          {
+            workflowKey,
+            at: entry.at,
+            details: entry.details,
+            toggle: `window.${DAEMON_COMMAND_CONSOLE_LOG_GLOBAL_KEY}`,
+          },
+        );
       }
     },
     [],
@@ -9742,10 +9873,12 @@ export default function CodexDeckApp() {
       isMobilePhone,
       railCollapsedByDefault,
       conversationSearchOpen,
+      resolvedTheme,
       onCopySessionId,
       onCopyProjectPath,
       onToggleConversationSearch,
       onToggleRailCollapsedByDefault,
+      onToggleTheme,
     } = props;
 
     return (
@@ -9811,6 +9944,10 @@ export default function CodexDeckApp() {
           >
             <Search className="mx-auto h-3.5 w-3.5" />
           </button>
+          <ThemeToggleButton
+            resolvedTheme={resolvedTheme}
+            onToggleTheme={onToggleTheme}
+          />
           {!isMobilePhone && (
             <button
               onClick={() => onCopySessionId(session.id)}
@@ -9839,10 +9976,10 @@ export default function CodexDeckApp() {
     <div className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100">
       {!sidebarCollapsed && (
         <aside
-          className="relative shrink-0 border-r border-zinc-800/60 flex flex-col bg-zinc-950"
+          className="pane-left relative shrink-0 border-r border-zinc-800/60 flex flex-col bg-zinc-950"
           style={{ width: `${leftPaneWidth}px` }}
         >
-          <div className="border-b border-zinc-800/60">
+          <div className="pane-header-left border-b border-zinc-800/60">
             <div className="flex min-h-[50px] items-center gap-2 px-4 py-2">
               <button
                 type="button"
@@ -10151,7 +10288,7 @@ export default function CodexDeckApp() {
       )}
 
       <main className="flex-1 overflow-hidden bg-zinc-950 flex flex-col">
-        <div className="border-b border-zinc-800/60 px-4 py-2">
+        <div className="pane-header-center border-b border-zinc-800/60 px-4 py-2">
           <div className="flex min-h-[34px] items-center gap-3">
             {sidebarCollapsed && (
               <button
@@ -10165,56 +10302,68 @@ export default function CodexDeckApp() {
               </button>
             )}
             {centerView === "terminal" ? (
-              <div className="min-w-0 flex-1 text-sm text-zinc-300">
-                {selectedTerminalData?.cwd?.trim() ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopyProjectPath(selectedTerminalData.cwd)
-                    }
-                    className="max-w-full truncate text-left text-sm text-zinc-300 transition-colors hover:text-zinc-100"
-                    title={`Copy project path: ${selectedTerminalData.cwd}`}
-                    aria-label="Copy project path"
-                  >
-                    {selectedTerminalData.display || "Terminal"}
-                  </button>
-                ) : (
-                  selectedTerminalData?.display || "Terminal"
-                )}
-              </div>
-            ) : centerView === "workflow" ? (
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-zinc-100">
-                  {selectedWorkflowSummary?.title || "Workflow"}
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
-                  {workflowRightPaneProjectPath ? (
+              <>
+                <div className="min-w-0 flex-1 text-sm text-zinc-300">
+                  {selectedTerminalData?.cwd?.trim() ? (
                     <button
                       type="button"
                       onClick={() =>
-                        handleCopyProjectPath(workflowRightPaneProjectPath)
+                        handleCopyProjectPath(selectedTerminalData.cwd)
                       }
-                      className="max-w-[18rem] truncate text-left transition-colors hover:text-zinc-300"
-                      title={`Copy project path: ${workflowRightPaneProjectPath}`}
+                      className="max-w-full truncate text-left text-sm text-zinc-300 transition-colors hover:text-zinc-100"
+                      title={`Copy project path: ${selectedTerminalData.cwd}`}
                       aria-label="Copy project path"
                     >
-                      {selectedWorkflowSummary?.projectName ||
-                        getPathBaseName(workflowRightPaneProjectPath)}
+                      {selectedTerminalData.display || "Terminal"}
                     </button>
                   ) : (
-                    <span>
-                      {selectedWorkflowSummary?.projectName ||
-                        "No workflow selected"}
-                    </span>
+                    selectedTerminalData?.display || "Terminal"
                   )}
-                  {selectedWorkflowSummary ? (
-                    <span>{selectedWorkflowSummary.status}</span>
-                  ) : null}
-                  {workflowDaemonStatus?.state ? (
-                    <span>{`daemon ${workflowDaemonStatus.state}`}</span>
-                  ) : null}
                 </div>
-              </div>
+                <ThemeToggleButton
+                  resolvedTheme={resolvedTheme}
+                  onToggleTheme={handleToggleTheme}
+                />
+              </>
+            ) : centerView === "workflow" ? (
+              <>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm text-zinc-100">
+                    {selectedWorkflowSummary?.title || "Workflow"}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+                    {workflowRightPaneProjectPath ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleCopyProjectPath(workflowRightPaneProjectPath)
+                        }
+                        className="max-w-[18rem] truncate text-left transition-colors hover:text-zinc-300"
+                        title={`Copy project path: ${workflowRightPaneProjectPath}`}
+                        aria-label="Copy project path"
+                      >
+                        {selectedWorkflowSummary?.projectName ||
+                          getPathBaseName(workflowRightPaneProjectPath)}
+                      </button>
+                    ) : (
+                      <span>
+                        {selectedWorkflowSummary?.projectName ||
+                          "No workflow selected"}
+                      </span>
+                    )}
+                    {selectedWorkflowSummary ? (
+                      <span>{selectedWorkflowSummary.status}</span>
+                    ) : null}
+                    {workflowDaemonStatus?.state ? (
+                      <span>{`daemon ${workflowDaemonStatus.state}`}</span>
+                    ) : null}
+                  </div>
+                </div>
+                <ThemeToggleButton
+                  resolvedTheme={resolvedTheme}
+                  onToggleTheme={handleToggleTheme}
+                />
+              </>
             ) : selectedSessionData ? (
               <SessionHeader
                 session={selectedSessionData}
@@ -10222,15 +10371,23 @@ export default function CodexDeckApp() {
                 isMobilePhone={isMobilePhone}
                 railCollapsedByDefault={railCollapsedByDefault}
                 conversationSearchOpen={conversationSearchOpen}
+                resolvedTheme={resolvedTheme}
                 onCopySessionId={handleCopySessionId}
                 onCopyProjectPath={handleCopyProjectPath}
                 onToggleConversationSearch={handleToggleConversationSearch}
                 onToggleRailCollapsedByDefault={() =>
                   setRailCollapsedByDefault((current) => !current)
                 }
+                onToggleTheme={handleToggleTheme}
               />
             ) : (
-              <div className="flex-1" />
+              <>
+                <div className="flex-1" />
+                <ThemeToggleButton
+                  resolvedTheme={resolvedTheme}
+                  onToggleTheme={handleToggleTheme}
+                />
+              </>
             )}
             {diffPaneCollapsed && (
               <button
@@ -10832,8 +10989,8 @@ export default function CodexDeckApp() {
                   Install codex-deck-flow skill?
                 </div>
                 <div className="mt-1 text-xs text-zinc-400">
-                  This workflow needs the `codex-deck-flow` skill before creating and
-                  binding its first chat session.
+                  This workflow needs the `codex-deck-flow` skill before
+                  creating and binding its first chat session.
                 </div>
               </div>
               <div className="space-y-3 p-4">
@@ -11294,7 +11451,10 @@ export default function CodexDeckApp() {
           ) : centerView === "terminal" ? (
             <div className="h-full">
               {selectedTerminalId ? (
-                <TerminalView terminalId={selectedTerminalId} />
+                <TerminalView
+                  terminalId={selectedTerminalId}
+                  resolvedTheme={resolvedTheme}
+                />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-zinc-500">
                   No active terminal selected.
