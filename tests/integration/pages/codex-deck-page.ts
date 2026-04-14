@@ -17,11 +17,7 @@ export class CodexDeckPage {
 
   async goto(baseURL: string): Promise<void> {
     await this.page.goto(baseURL, { waitUntil: "domcontentloaded" });
-    await expect(
-      this.page.getByText(
-        "Choose a session from the list to view the conversation",
-      ),
-    ).toBeVisible();
+    await expect(this.page.getByPlaceholder("Search...")).toBeVisible();
   }
 
   async selectProject(projectName: string): Promise<void> {

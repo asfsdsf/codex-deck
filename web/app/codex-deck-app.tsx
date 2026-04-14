@@ -251,6 +251,15 @@ interface ThemeToggleButtonProps {
   onToggleTheme: () => void;
 }
 
+interface SessionSearchBarProps {
+  query: string;
+  status: SessionSearchStatus;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChangeQuery: (value: string) => void;
+  onClose: () => void;
+  onNavigate: (direction: "previous" | "next") => void;
+}
+
 function ThemeToggleButton(props: ThemeToggleButtonProps) {
   const { resolvedTheme, onToggleTheme } = props;
   const switchingTo = resolvedTheme === "dark" ? "light" : "dark";
@@ -280,6 +289,85 @@ function ThemeToggleButton(props: ThemeToggleButtonProps) {
         />
       </span>
     </button>
+  );
+}
+
+function SessionSearchBar(props: SessionSearchBarProps) {
+  const { query, status, inputRef, onChangeQuery, onClose, onNavigate } = props;
+  const hasMatches = status.totalMatches > 0;
+  const hasQuery = query.trim().length > 0;
+  const activeLabel =
+    hasMatches && status.activeMatchIndex !== null
+      ? `${status.activeMatchIndex + 1}/${status.totalMatches}`
+      : hasQuery
+        ? `0/${status.totalMatches}`
+        : "0/0";
+
+  return (
+    <div className="rounded-xl border border-zinc-700/60 bg-zinc-950/45 px-3 py-2 shadow-lg shadow-black/20 backdrop-blur-md">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-900/20 px-3 py-2">
+          <Search className="h-4 w-4 shrink-0 text-zinc-400" />
+          <input
+            ref={inputRef}
+            type="search"
+            value={query}
+            onChange={(event) => onChangeQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onNavigate(event.shiftKey ? "previous" : "next");
+                return;
+              }
+
+              if (event.key === "Escape") {
+                event.preventDefault();
+                inputRef.current?.blur();
+                onClose();
+              }
+            }}
+            placeholder="Search this conversation view"
+            className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
+            aria-label="Search conversation"
+          />
+          <span className="shrink-0 text-[11px] font-mono text-zinc-400">
+            {activeLabel}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => onNavigate("previous")}
+            disabled={!hasMatches}
+            className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Previous search result"
+            title="Previous search result"
+          >
+            <ChevronUp className="mx-auto h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigate("next")}
+            disabled={!hasMatches}
+            className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Next search result"
+            title="Next search result"
+          >
+            <ChevronDown className="mx-auto h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55"
+            aria-label="Close search"
+            title="Close search"
+          >
+            <X className="mx-auto h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3546,7 +3634,8 @@ export default function CodexDeckApp() {
   const toolbarMeasureRef = useRef<HTMLDivElement | null>(null);
   const modelSelectRef = useRef<HTMLSelectElement | null>(null);
   const compactModelSelectRef = useRef<HTMLSelectElement | null>(null);
-  const sessionSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const sessionListSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
   const sessionViewRef = useRef<SessionViewHandle | null>(null);
   const commandNoticeTimeoutRef = useRef<number | null>(null);
   const waitStateSyncTimeoutRef = useRef<number | null>(null);
@@ -3586,8 +3675,8 @@ export default function CodexDeckApp() {
     }
 
     const animationFrameId = requestAnimationFrame(() => {
-      sessionSearchInputRef.current?.focus();
-      sessionSearchInputRef.current?.select();
+      conversationSearchInputRef.current?.focus();
+      conversationSearchInputRef.current?.select();
     });
 
     return () => {
@@ -8111,7 +8200,7 @@ export default function CodexDeckApp() {
 
   const focusSessionSearchInput = useCallback(() => {
     const focusSearchInput = () => {
-      const input = sessionSearchInputRef.current;
+      const input = sessionListSearchInputRef.current;
       if (!input) {
         return false;
       }
@@ -9779,93 +9868,6 @@ export default function CodexDeckApp() {
     </>
   );
 
-  function SessionSearchBar(props: {
-    query: string;
-    status: SessionSearchStatus;
-    inputRef: RefObject<HTMLInputElement | null>;
-    onChangeQuery: (value: string) => void;
-    onClose: () => void;
-    onNavigate: (direction: "previous" | "next") => void;
-  }) {
-    const { query, status, inputRef, onChangeQuery, onClose, onNavigate } =
-      props;
-    const hasMatches = status.totalMatches > 0;
-    const hasQuery = query.trim().length > 0;
-    const activeLabel =
-      hasMatches && status.activeMatchIndex !== null
-        ? `${status.activeMatchIndex + 1}/${status.totalMatches}`
-        : hasQuery
-          ? `0/${status.totalMatches}`
-          : "0/0";
-
-    return (
-      <div className="rounded-xl border border-zinc-700/60 bg-zinc-950/45 px-3 py-2 shadow-lg shadow-black/20 backdrop-blur-md">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-900/20 px-3 py-2">
-            <Search className="h-4 w-4 shrink-0 text-zinc-400" />
-            <input
-              ref={inputRef}
-              type="search"
-              value={query}
-              onChange={(event) => onChangeQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  onNavigate(event.shiftKey ? "previous" : "next");
-                  return;
-                }
-
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  inputRef.current?.blur();
-                  onClose();
-                }
-              }}
-              placeholder="Search this conversation view"
-              className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
-              aria-label="Search conversation"
-            />
-            <span className="shrink-0 text-[11px] font-mono text-zinc-400">
-              {activeLabel}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => onNavigate("previous")}
-              disabled={!hasMatches}
-              className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Previous search result"
-              title="Previous search result"
-            >
-              <ChevronUp className="mx-auto h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate("next")}
-              disabled={!hasMatches}
-              className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Next search result"
-              title="Next search result"
-            >
-              <ChevronDown className="mx-auto h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55"
-              aria-label="Close search"
-              title="Close search"
-            >
-              <X className="mx-auto h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   function SessionHeader(props: SessionHeaderProps) {
     const {
       session,
@@ -10236,7 +10238,7 @@ export default function CodexDeckApp() {
                   ? loadingWorkflows
                   : loading
             }
-            searchInputRef={sessionSearchInputRef}
+            searchInputRef={sessionListSearchInputRef}
             emptyLabel={
               centerView === "terminal"
                 ? "No active terminals found"
@@ -10408,7 +10410,7 @@ export default function CodexDeckApp() {
                 <SessionSearchBar
                   query={conversationSearchQuery}
                   status={conversationSearchStatus}
-                  inputRef={sessionSearchInputRef}
+                  inputRef={conversationSearchInputRef}
                   onChangeQuery={setConversationSearchQuery}
                   onClose={hideConversationSearch}
                   onNavigate={handleNavigateConversationSearch}

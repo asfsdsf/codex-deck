@@ -31,6 +31,9 @@ test.describe("codex-deck integration", () => {
 
     await codexDeckPage.goto(app.baseURL);
     await codexDeckPage.selectSession("Review the launch checklist");
+    await expect(
+      page.getByText("Search launch references before shipping."),
+    ).toBeVisible();
     await codexDeckPage.openConversationSearch();
     await codexDeckPage.searchConversation("launch");
 
@@ -43,6 +46,33 @@ test.describe("codex-deck integration", () => {
     await expect(page.getByText("2/2", { exact: true })).toBeVisible();
   });
 
+  test("keeps conversation search focused while typing", async ({
+    page,
+    app,
+  }) => {
+    const codexDeckPage = new CodexDeckPage(page);
+
+    await codexDeckPage.goto(app.baseURL);
+    await codexDeckPage.selectSession("Review the launch checklist");
+    await expect(
+      page.getByText("Search launch references before shipping."),
+    ).toBeVisible();
+    await codexDeckPage.openConversationSearch();
+
+    const searchInput = page.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    await searchInput.click();
+    await page.keyboard.type("l");
+    await expect(searchInput).toBeFocused();
+
+    await page.keyboard.type("aunch");
+
+    await expect(searchInput).toBeFocused();
+    await expect(searchInput).toHaveValue("launch");
+    await expect(page.getByText("1/2", { exact: true })).toBeVisible();
+  });
+
   test("resets conversation search when switching sessions", async ({
     page,
     app,
@@ -51,6 +81,9 @@ test.describe("codex-deck integration", () => {
 
     await codexDeckPage.goto(app.baseURL);
     await codexDeckPage.selectSession("Review the launch checklist");
+    await expect(
+      page.getByText("Search launch references before shipping."),
+    ).toBeVisible();
     await codexDeckPage.openConversationSearch();
     await codexDeckPage.searchConversation("launch");
 
