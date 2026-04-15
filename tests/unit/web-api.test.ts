@@ -11,6 +11,7 @@ import { encodeBase64 } from "@zuoyehaoduoa/wire";
 import {
   applyWorkflowMerge,
   bindWorkflowSession,
+  bindTerminalSession,
   cleanSessionBackgroundTerminalRuns,
   compactCodexThread,
   createCodexThread,
@@ -22,6 +23,7 @@ import {
   fixDanglingSession,
   forkCodexThread,
   getCodexConfigDefaults,
+  getSystemContext,
   getCodexThreadState,
   getCodexThreadSummaries,
   getConversation,
@@ -36,6 +38,8 @@ import {
   getWorkflowProjectSkills,
   getSessionTerminalRunOutput,
   getSessionTerminalRuns,
+  getTerminalBinding,
+  getTerminalSessionRoles,
   getSessionSkills,
   getTerminalSnapshot,
   getWorkflowDaemonStatus,
@@ -61,6 +65,7 @@ import {
   resizeTerminal,
   respondCodexApprovalRequest,
   respondCodexUserInputRequest,
+  runInTerminal,
   searchSessionFiles,
   sendTerminalInput,
   sendCodexMessage,
@@ -2844,6 +2849,31 @@ test("terminal helper routes request expected endpoints", async () => {
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${String(input)}:${init?.method ?? "GET"}`);
 
+    if (String(input).endsWith(`/api/terminals/${terminalId}/binding`)) {
+      if (init?.method === "POST") {
+        return jsonResponse({
+          terminalId,
+          boundSessionId: "session-1",
+        });
+      }
+      return jsonResponse({
+        terminalId,
+        boundSessionId: null,
+      });
+    }
+
+    if (String(input).endsWith("/api/terminals/session-roles")) {
+      return jsonResponse({
+        sessions: [
+          {
+            sessionId: "session-1",
+            role: "terminal",
+            terminalId,
+          },
+        ],
+      });
+    }
+
     if (String(input).endsWith("/api/terminals") && init?.method === "POST") {
       return jsonResponse({
         id: terminalId,
@@ -2955,6 +2985,9 @@ test("terminal helper routes request expected endpoints", async () => {
 
   const created = await createTerminal({ cwd: "/repo" });
   const list = await listActiveTerminals();
+  const binding = await getTerminalBinding(terminalId);
+  const bound = await bindTerminalSession(terminalId, { sessionId: "session-1" });
+  const sessionRoles = await getTerminalSessionRoles(["session-1"]);
   const snapshot = await getTerminalSnapshot(terminalId);
   const inputResult = await sendTerminalInput(terminalId, { input: "ls\\n" });
   const resizeResult = await resizeTerminal(terminalId, {
@@ -2967,6 +3000,9 @@ test("terminal helper routes request expected endpoints", async () => {
 
   assert.equal(created.running, true);
   assert.equal(list.length, 1);
+  assert.equal(binding.boundSessionId, null);
+  assert.equal(bound.boundSessionId, "session-1");
+  assert.equal(sessionRoles[0]?.terminalId, terminalId);
   assert.equal(snapshot.running, true);
   assert.equal(snapshot.shell, "zsh");
   assert.equal(inputResult.seq, 7);
@@ -2977,12 +3013,203 @@ test("terminal helper routes request expected endpoints", async () => {
   assert.deepEqual(calls, [
     "/api/terminals:POST",
     "/api/terminals:GET",
+    `/api/terminals/${terminalId}/binding:GET`,
+    `/api/terminals/${terminalId}/binding:POST`,
+    "/api/terminals/session-roles:POST",
     `/api/terminals/${terminalId}:GET`,
     `/api/terminals/${terminalId}/input:POST`,
     `/api/terminals/${terminalId}/resize:POST`,
     `/api/terminals/${terminalId}/interrupt:POST`,
     `/api/terminals/${terminalId}/restart:POST`,
     `/api/terminals/${terminalId}:DELETE`,
+  ]);
+});
+
+test("getSystemContext requests expected endpoint", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(`${String(input)}:${init?.method ?? "GET"}`);
+    return jsonResponse({
+      osName: "macOS",
+      osRelease: "macOS 15.4.1",
+      osVersion: "15.4.1",
+      architecture: "arm64",
+      platform: "darwin",
+      hostname: "host",
+      defaultShell: "/bin/zsh",
+    });
+  };
+
+  const result = await getSystemContext();
+  assert.equal(result.osRelease, "macOS 15.4.1");
+  assert.equal(result.defaultShell, "/bin/zsh");
+  assert.deepEqual(calls, ["/api/system/context:GET"]);
+});
+
+test("runInTerminal sends command and returns incremental output", async () => {
+  const terminalId = "terminal-1";
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    calls.push(`${path}:${init?.method ?? "GET"}`);
+
+    if (path === `/api/terminals/${terminalId}`) {
+      return jsonResponse({
+        id: terminalId,
+        terminalId,
+        running: true,
+        cwd: "/repo",
+        shell: "zsh",
+        output: "$ ",
+        seq: 10,
+        writeOwnerId: null,
+      });
+    }
+
+    if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 11,
+        writeOwnerId: null,
+      });
+    }
+
+    if (
+      path === `/api/terminals/${terminalId}/events?fromSeq=10&waitMs=2000`
+    ) {
+      return jsonResponse({
+        events: [
+          {
+            terminalId,
+            seq: 11,
+            type: "output",
+            chunk: "\u001b[32mpwd\u001b[0m\n/repo\n",
+          },
+        ],
+        requiresReset: false,
+        snapshot: null,
+      });
+    }
+
+    if (
+      path === `/api/terminals/${terminalId}/events?fromSeq=11&waitMs=2000`
+    ) {
+      return jsonResponse({
+        events: [],
+        requiresReset: false,
+        snapshot: null,
+      });
+    }
+
+    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
+  };
+
+  const result = await runInTerminal("pwd", {
+    terminalId,
+    clientId: "client-a",
+    waitMs: 2000,
+    timeoutMs: 6000,
+  });
+
+  assert.equal(result.terminalId, terminalId);
+  assert.equal(result.clientId, "client-a");
+  assert.equal(result.startSeq, 10);
+  assert.equal(result.endSeq, 11);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.output, "\u001b[32mpwd\u001b[0m\n/repo\n");
+  assert.equal(result.rawOutput, "pwd\n/repo\n");
+  assert.deepEqual(calls, [
+    `/api/terminals/${terminalId}:GET`,
+    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
+    `/api/terminals/${terminalId}/events?fromSeq=10&waitMs=2000:GET`,
+    `/api/terminals/${terminalId}/events?fromSeq=11&waitMs=2000:GET`,
+  ]);
+});
+
+test("runInTerminal claims write when current owner blocks input", async () => {
+  const terminalId = "terminal-1";
+  const calls: string[] = [];
+  let inputAttempts = 0;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    calls.push(`${path}:${init?.method ?? "GET"}`);
+
+    if (path === `/api/terminals/${terminalId}`) {
+      return jsonResponse({
+        id: terminalId,
+        terminalId,
+        running: true,
+        cwd: "/repo",
+        shell: "zsh",
+        output: "$ ",
+        seq: 3,
+        writeOwnerId: "other-client",
+      });
+    }
+
+    if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
+      inputAttempts += 1;
+      if (inputAttempts === 1) {
+        return jsonResponse({ error: "another client owns terminal write" }, 403);
+      }
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 4,
+        writeOwnerId: "client-a",
+      });
+    }
+
+    if (path === `/api/terminals/${terminalId}/claim-write`) {
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 4,
+        writeOwnerId: "client-a",
+      });
+    }
+
+    if (path === `/api/terminals/${terminalId}/events?fromSeq=3&waitMs=1000`) {
+      return jsonResponse({
+        events: [{ terminalId, seq: 4, type: "output", chunk: "ok\n" }],
+        requiresReset: false,
+        snapshot: null,
+      });
+    }
+
+    if (path === `/api/terminals/${terminalId}/events?fromSeq=4&waitMs=1000`) {
+      return jsonResponse({
+        events: [],
+        requiresReset: false,
+        snapshot: null,
+      });
+    }
+
+    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
+  };
+
+  const result = await runInTerminal("echo ok", {
+    terminalId,
+    clientId: "client-a",
+  });
+
+  assert.equal(result.output, "ok\n");
+  assert.equal(result.rawOutput, "ok\n");
+  assert.equal(inputAttempts, 2);
+  assert.deepEqual(calls, [
+    `/api/terminals/${terminalId}:GET`,
+    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
+    `/api/terminals/${terminalId}/claim-write:POST`,
+    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
+    `/api/terminals/${terminalId}/events?fromSeq=3&waitMs=1000:GET`,
+    `/api/terminals/${terminalId}/events?fromSeq=4&waitMs=1000:GET`,
   ]);
 });
 

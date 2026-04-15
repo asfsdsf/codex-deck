@@ -254,6 +254,16 @@ export interface CodexSessionTokenUsage {
   outputTokens: number;
 }
 
+export interface SystemContextResponse {
+  osName: string;
+  osRelease: string;
+  osVersion: string | null;
+  architecture: string;
+  platform: string;
+  hostname: string;
+  defaultShell: string | null;
+}
+
 export interface CodexConfigDefaultsResponse {
   model: string | null;
   reasoningEffort: CodexReasoningEffort | null;
@@ -343,6 +353,7 @@ export interface SessionTerminalRunOutputResponse {
 export interface TerminalSummary {
   id: string;
   terminalId: string;
+  boundSessionId?: string | null;
   display: string;
   firstCommand: string | null;
   timestamp: number;
@@ -355,6 +366,31 @@ export interface TerminalSummary {
 
 export interface TerminalListResponse {
   terminals: TerminalSummary[];
+}
+
+export interface TerminalBindingResponse {
+  terminalId: string;
+  boundSessionId: string | null;
+}
+
+export interface TerminalBindSessionRequest {
+  sessionId?: string | null;
+}
+
+export type TerminalSessionRole = "terminal";
+
+export interface TerminalSessionRoleSummary {
+  sessionId: string;
+  role: TerminalSessionRole;
+  terminalId: string;
+}
+
+export interface TerminalSessionRolesRequest {
+  sessionIds: string[];
+}
+
+export interface TerminalSessionRolesResponse {
+  sessions: TerminalSessionRoleSummary[];
 }
 
 export interface CreateTerminalRequest {

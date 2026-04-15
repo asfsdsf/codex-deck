@@ -118,6 +118,7 @@ import { closeLocalTerminalManager } from "../local-terminal";
 import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../remote/internal-proxy";
 import { RemoteServerClient } from "../remote/remote-server-client";
 import { registerTerminalRoutes } from "./terminal-routes";
+import { registerSystemRoutes } from "./system-routes";
 import {
   MAX_LONG_POLL_WAIT_MS,
   parseNonNegativeInteger,
@@ -2052,6 +2053,7 @@ export function createServer(options: ServerOptions) {
     return c.json(projects);
   });
   registerWorkflowRoutes(app, { workflowRouteUnavailable });
+  registerSystemRoutes(app);
   registerTerminalRoutes(app);
 
   app.get("/api/sessions/stream", async (c) => {

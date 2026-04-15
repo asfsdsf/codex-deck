@@ -27,6 +27,7 @@ import type {
   SessionFileTreeNodesResponse,
   SessionSkillsResponse,
   SessionTerminalRunSummary,
+  TerminalSessionRoleSummary,
   TerminalSummary,
   WorkflowDaemonStatusResponse,
   WorkflowDetailResponse,
@@ -66,6 +67,7 @@ import SessionView, {
 import MessageBlock from "../components/message-block";
 import LatestSessionMessageBox from "../components/latest-session-message-box";
 import TerminalView from "../components/terminal-view";
+import AiTerminalPanel from "../components/ai-terminal-panel";
 import WorkflowView from "../components/workflow-view";
 import DiffPane, { type RightPaneMode } from "../components/diff-pane";
 import ProjectSelector from "../components/project-selector";
@@ -105,6 +107,11 @@ import {
   getWorkflowSkillAvailability,
   type WorkflowSkillInstallChoice,
 } from "../workflow-skill-install";
+import {
+  buildTerminalSkillInstallMessagePrefix,
+  getTerminalSkillAvailability,
+  type TerminalSkillInstallChoice,
+} from "../terminal-skill-install";
 import {
   resolveSelectedWorkflowSummary,
   resolveWorkflowSelection,
@@ -154,6 +161,7 @@ import {
   createWorkflow as createWorkflowRequest,
   launchWorkflowTask as launchWorkflowTaskRequest,
   bindWorkflowSession as bindWorkflowSessionRequest,
+  bindTerminalSession as bindTerminalSessionRequest,
   sendWorkflowControlMessage as sendWorkflowControlMessageRequest,
   startWorkflowDaemon as startWorkflowDaemonRequest,
   stopWorkflowProcesses as stopWorkflowProcessesRequest,
@@ -198,11 +206,15 @@ import {
   setSessionSkillEnabled,
   setWorkflowProjectSkillEnabled,
   cleanSessionBackgroundTerminalRuns,
+  runInTerminal as runInTerminalRequest,
+  type RunInTerminalOptions,
+  type RunInTerminalResult,
   setCodexThreadName,
   forkCodexThread,
   compactCodexThread,
   listCodexAgentThreads,
   getCodexThreadSummaries,
+  getTerminalSessionRoles as getTerminalSessionRolesRequest,
 } from "../api";
 import {
   getCollaborationModeRequestValue,
@@ -386,6 +398,15 @@ function getWorkflowSessionRoleLabel(
   return null;
 }
 
+function getTerminalSessionRoleLabel(
+  role: TerminalSessionRoleSummary | null | undefined,
+): string | null {
+  if (role?.role === "terminal") {
+    return "terminal chat";
+  }
+  return null;
+}
+
 function formatWorkflowStopHint(output: string | null | undefined): string {
   const text = output?.trim() ?? "";
   const match = /\bStopped\s+(\d+)\s+process(?:es)?\b/i.exec(text);
@@ -482,6 +503,10 @@ const DAEMON_COMMAND_CONSOLE_LOG_GLOBAL_KEY =
 
 interface CodexDeckDebugWindow extends Window {
   __CODEX_DECK_DAEMON_COMMAND_LOG_ENABLED__?: boolean;
+  runInTerminal?: (
+    command: string,
+    options?: RunInTerminalOptions,
+  ) => Promise<RunInTerminalResult>;
 }
 
 function isDaemonCommandConsoleLogEnabled(): boolean {
@@ -687,6 +712,37 @@ function buildWorkflowChatBootstrapMessage(input: {
   const parts = [baseMessage];
   parts.push(
     "After loading workflow context, treat the next section as the user's first request in this session.",
+  );
+  if (input.imageCount > 0) {
+    parts.push(
+      `The user also attached ${input.imageCount} image${input.imageCount === 1 ? "" : "s"} in this same message. Use them as context for the first request.`,
+    );
+  }
+  if (normalizedUserMessage) {
+    parts.push(
+      `User first request:\n<user-request>\n${normalizedUserMessage}\n</user-request>`,
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
+function buildTerminalChatBootstrapMessage(input: {
+  terminalId: string;
+  cwd: string;
+  shell: string;
+  initialUserMessage: string;
+  imageCount: number;
+}): string {
+  const baseMessage = `(Use skill codex-deck-terminal) This chat is bound to terminal ${input.terminalId}. Terminal cwd is ${input.cwd}. Terminal shell is ${input.shell}. Propose one non-interactive shell command per step, ask for approval before execution, and use <requirement_finished>...</requirement_finished> when complete.`;
+  const normalizedUserMessage = input.initialUserMessage.trim();
+  if (!normalizedUserMessage && input.imageCount === 0) {
+    return baseMessage;
+  }
+
+  const parts = [baseMessage];
+  parts.push(
+    "Treat the next section as the user's first request for this terminal chat session.",
   );
   if (input.imageCount > 0) {
     parts.push(
@@ -3348,6 +3404,9 @@ export default function CodexDeckApp() {
   const [sessionWorkflowRolesById, setSessionWorkflowRolesById] = useState<
     Record<string, WorkflowSessionRole | null>
   >({});
+  const [sessionTerminalRolesById, setSessionTerminalRolesById] = useState<
+    Record<string, TerminalSessionRoleSummary | null>
+  >({});
   const [workflowDetail, setWorkflowDetail] =
     useState<WorkflowDetailResponse | null>(null);
   const [workflowDetailLoading, setWorkflowDetailLoading] = useState(false);
@@ -3378,6 +3437,10 @@ export default function CodexDeckApp() {
   const [workflowSkillInstallPrompt, setWorkflowSkillInstallPrompt] = useState<{
     projectRoot: string;
   } | null>(null);
+  const [terminalSkillInstallPrompt, setTerminalSkillInstallPrompt] = useState<{
+    projectRoot: string;
+  } | null>(null);
+  const [terminalBindingBusy, setTerminalBindingBusy] = useState(false);
   const [workflowIdPromptDraft, setWorkflowIdPromptDraft] = useState("");
   const [workflowCreateProjectRoot, setWorkflowCreateProjectRoot] =
     useState("");
@@ -3421,6 +3484,18 @@ export default function CodexDeckApp() {
   const [
     workflowLatestSessionPreviewLoading,
     setWorkflowLatestSessionPreviewLoading,
+  ] = useState(false);
+  const [terminalLatestSessionPreview, setTerminalLatestSessionPreview] =
+    useState<{
+      sessionId: string | null;
+      message: ConversationMessage | null;
+    }>({
+      sessionId: null,
+      message: null,
+    });
+  const [
+    terminalLatestSessionPreviewLoading,
+    setTerminalLatestSessionPreviewLoading,
   ] = useState(false);
   const [centerView, setCenterView] = useState<CenterViewMode>("session");
   const [loading, setLoading] = useState(true);
@@ -3611,6 +3686,9 @@ export default function CodexDeckApp() {
   const workflowCreateChatActiveSessionIdRef = useRef<string | null>(null);
   const workflowSkillInstallPromptResolveRef = useRef<
     ((choice: WorkflowSkillInstallChoice) => void) | null
+  >(null);
+  const terminalSkillInstallPromptResolveRef = useRef<
+    ((choice: TerminalSkillInstallChoice) => void) | null
   >(null);
   const resizeStateRef = useRef<ResizeState | null>(null);
   const paneResizeStateRef = useRef<PaneResizeState | null>(null);
@@ -4576,15 +4654,23 @@ export default function CodexDeckApp() {
     () =>
       sessions.map((session) => {
         const override = threadNameOverrides[session.id]?.trim();
+        const terminalRole = sessionTerminalRolesById[session.id] ?? null;
         return {
           ...session,
           display: override || session.display,
-          workflowRoleLabel: getWorkflowSessionRoleLabel(
-            sessionWorkflowRolesById[session.id] ?? null,
-          ),
+          workflowRoleLabel:
+            getTerminalSessionRoleLabel(terminalRole) ??
+            getWorkflowSessionRoleLabel(
+              sessionWorkflowRolesById[session.id] ?? null,
+            ),
         };
       }),
-    [sessionWorkflowRolesById, sessions, threadNameOverrides],
+    [
+      sessionTerminalRolesById,
+      sessionWorkflowRolesById,
+      sessions,
+      threadNameOverrides,
+    ],
   );
 
   const selectedSessionData = useMemo(() => {
@@ -4712,10 +4798,20 @@ export default function CodexDeckApp() {
     workflowDetail?.boundSessionId ??
     selectedWorkflowSummary?.boundSessionId ??
     null;
+  const terminalComposerSessionId =
+    selectedTerminalData?.boundSessionId?.trim() || null;
   const activeComposerSessionId =
-    centerView === "workflow" ? workflowComposerSessionId : selectedSession;
+    centerView === "workflow"
+      ? workflowComposerSessionId
+      : centerView === "terminal"
+        ? terminalComposerSessionId
+        : selectedSession;
   const activeWaitSessionId =
-    centerView === "workflow" ? workflowComposerSessionId : selectedSession;
+    centerView === "workflow"
+      ? workflowComposerSessionId
+      : centerView === "terminal"
+        ? terminalComposerSessionId
+        : selectedSession;
   const activeComposerSessionData = useMemo(() => {
     if (!activeComposerSessionId) {
       return null;
@@ -6075,6 +6171,41 @@ export default function CodexDeckApp() {
     workflowSessionRolesRefreshKey,
   ]);
 
+  useEffect(() => {
+    if (sessionIdsKey.length === 0) {
+      setSessionTerminalRolesById({});
+      return;
+    }
+
+    if (!apiReady || !isPageVisible) {
+      return;
+    }
+
+    let cancelled = false;
+    getTerminalSessionRolesRequest(sessionIds)
+      .then((roles) => {
+        if (cancelled) {
+          return;
+        }
+
+        const next: Record<string, TerminalSessionRoleSummary | null> = {};
+        for (const role of roles) {
+          next[role.sessionId] = role;
+        }
+        setSessionTerminalRolesById(next);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setSessionTerminalRolesById({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiReady, isPageVisible, sessionIds, sessionIdsKey, terminals]);
+
   const filteredSessions = useMemo(() => {
     if (!selectedProject) {
       return sessionsWithThreadNames;
@@ -7299,6 +7430,34 @@ export default function CodexDeckApp() {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const debugWindow = window as CodexDeckDebugWindow;
+    const boundRunInTerminal = (
+      command: string,
+      options: RunInTerminalOptions = {},
+    ) => {
+      const mergedTerminalId =
+        typeof options.terminalId === "string" && options.terminalId.trim()
+          ? options.terminalId.trim()
+          : selectedTerminalId ?? undefined;
+      return runInTerminalRequest(command, {
+        ...options,
+        terminalId: mergedTerminalId,
+      });
+    };
+
+    debugWindow.runInTerminal = boundRunInTerminal;
+    return () => {
+      if (debugWindow.runInTerminal === boundRunInTerminal) {
+        delete debugWindow.runInTerminal;
+      }
+    };
+  }, [selectedTerminalId]);
+
   const logDaemonCommandHistoryEntries = useCallback(
     (
       workflowKey: string,
@@ -7580,6 +7739,60 @@ export default function CodexDeckApp() {
     [promptForWorkflowSkillInstall],
   );
 
+  const resolveTerminalSkillInstallPrompt = useCallback(
+    (choice: TerminalSkillInstallChoice) => {
+      const resolve = terminalSkillInstallPromptResolveRef.current;
+      terminalSkillInstallPromptResolveRef.current = null;
+      setTerminalSkillInstallPrompt(null);
+      resolve?.(choice);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      const resolve = terminalSkillInstallPromptResolveRef.current;
+      terminalSkillInstallPromptResolveRef.current = null;
+      resolve?.("cancel");
+    };
+  }, []);
+
+  const promptForTerminalSkillInstall = useCallback(
+    (projectRoot: string): Promise<TerminalSkillInstallChoice> =>
+      new Promise((resolve) => {
+        terminalSkillInstallPromptResolveRef.current?.("cancel");
+        terminalSkillInstallPromptResolveRef.current = resolve;
+        setTerminalSkillInstallPrompt({
+          projectRoot,
+        });
+      }),
+    [],
+  );
+
+  const resolveTerminalSkillInstallMessagePrefix = useCallback(
+    async (sessionId: string, projectRoot: string): Promise<string | null> => {
+      const response = await getSessionSkills(sessionId);
+      if (response.unavailableReason) {
+        throw new Error(response.unavailableReason);
+      }
+
+      const availability = getTerminalSkillAvailability(
+        response.skills,
+        projectRoot,
+      );
+      if (availability.isInstalled) {
+        return "";
+      }
+
+      const choice = await promptForTerminalSkillInstall(projectRoot);
+      if (choice === "cancel") {
+        return null;
+      }
+      return buildTerminalSkillInstallMessagePrefix(choice);
+    },
+    [promptForTerminalSkillInstall],
+  );
+
   const initializeWorkflowChatSession = useCallback(
     async (options?: {
       openInSessionView?: boolean;
@@ -7716,6 +7929,138 @@ export default function CodexDeckApp() {
       openInSessionView: true,
     });
   }, [initializeWorkflowChatSession]);
+
+  const initializeTerminalChatSession = useCallback(
+    async (options?: {
+      openInSessionView?: boolean;
+      initialMessagePayload?: MessageComposerSubmitPayload;
+    }): Promise<string | null> => {
+      if (!selectedTerminalData) {
+        return null;
+      }
+
+      const terminalId = selectedTerminalData.terminalId;
+      const projectRoot = selectedTerminalData.cwd.trim();
+      const shell = selectedTerminalData.shell.trim() || "sh";
+      const existingSessionId =
+        selectedTerminalData.boundSessionId?.trim() || null;
+
+      const openTerminalSession = (sessionId: string) => {
+        selectSessionIfAvailable(sessionId);
+      };
+
+      setInteractionError(null);
+
+      if (existingSessionId) {
+        await ensureSessionVisibleInLocalState(existingSessionId, projectRoot);
+        if (options?.openInSessionView) {
+          openTerminalSession(existingSessionId);
+        }
+        return existingSessionId;
+      }
+
+      const initialMessagePayload = options?.initialMessagePayload;
+      const normalizedUserFirstMessage =
+        initialMessagePayload?.text.trim() ?? "";
+      const normalizedImages = (initialMessagePayload?.images ?? []).filter(
+        (imageUrl) => imageUrl.trim().length > 0,
+      );
+
+      setTerminalBindingBusy(true);
+      try {
+        const created = await createCodexThread({
+          cwd: projectRoot,
+          ...(selectedModelId ? { model: selectedModelId } : {}),
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+        });
+        await ensureSessionVisibleInLocalState(created.threadId, projectRoot);
+
+        const skillInstallPrefix = await resolveTerminalSkillInstallMessagePrefix(
+          created.threadId,
+          projectRoot,
+        );
+        if (skillInstallPrefix === null) {
+          return null;
+        }
+
+        const bootstrapMessage = buildTerminalChatBootstrapMessage({
+          terminalId,
+          cwd: projectRoot,
+          shell,
+          initialUserMessage: normalizedUserFirstMessage,
+          imageCount: normalizedImages.length,
+        });
+
+        const bootstrapMessageWithSkillInstall = `${skillInstallPrefix}${bootstrapMessage}`;
+        const response = await sendCodexMessage(created.threadId, {
+          input: [
+            {
+              type: "text",
+              text: bootstrapMessageWithSkillInstall,
+            },
+            ...normalizedImages.map((url) => ({ type: "image", url }) as const),
+          ],
+          cwd: projectRoot,
+          ...(selectedModelId ? { model: selectedModelId } : {}),
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+        });
+        waitSuppressSessionsRef.current.delete(created.threadId);
+        if (response.turnId) {
+          setPendingTurn({
+            sessionId: created.threadId,
+            turnId: response.turnId,
+          });
+        }
+
+        const binding = await bindTerminalSessionRequest(terminalId, {
+          sessionId: created.threadId,
+        });
+        if (binding.boundSessionId) {
+          setSessionMode(
+            binding.boundSessionId,
+            normalizeModeKey(selectedModeKey),
+          );
+        }
+
+        setTerminals((current) =>
+          current.map((terminal) =>
+            terminal.terminalId === terminalId
+              ? { ...terminal, boundSessionId: binding.boundSessionId }
+              : terminal,
+          ),
+        );
+
+        if (options?.openInSessionView) {
+          openTerminalSession(created.threadId);
+        }
+        return created.threadId;
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return null;
+      } finally {
+        setTerminalBindingBusy(false);
+      }
+    },
+    [
+      ensureSessionVisibleInLocalState,
+      normalizeModeKey,
+      resolveTerminalSkillInstallMessagePrefix,
+      selectedEffort,
+      selectedModelId,
+      selectedModeKey,
+      selectedTerminalData,
+      selectSessionIfAvailable,
+      setSessionMode,
+    ],
+  );
+
+  const handleChatInTerminalSession = useCallback(async () => {
+    await initializeTerminalChatSession({
+      openInSessionView: true,
+    });
+  }, [initializeTerminalChatSession]);
 
   const handleCreateEmptyWorkflowFromPrompt = useCallback(async () => {
     const workflowId = workflowIdPromptDraft.trim();
@@ -8889,6 +9234,10 @@ export default function CodexDeckApp() {
     !!workflowComposerSessionId &&
     pendingTurn?.sessionId === workflowComposerSessionId;
   const isWorkflowComposerLocked = sendingMessage || workflowActionBusy;
+  const isGeneratingForTerminalComposer =
+    !!terminalComposerSessionId &&
+    pendingTurn?.sessionId === terminalComposerSessionId;
+  const isTerminalComposerLocked = sendingMessage || terminalBindingBusy;
 
   const handleWorkflowComposerSendMessage = useCallback(
     async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
@@ -8921,6 +9270,37 @@ export default function CodexDeckApp() {
     [sendMessageText, workflowComposerProjectRoot, workflowComposerSessionId],
   );
 
+  const handleTerminalComposerSendMessage = useCallback(
+    async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
+      if (!terminalComposerSessionId || !selectedTerminalData) {
+        return false;
+      }
+
+      const sent = await sendMessageText(payload, {
+        sessionIdOverride: terminalComposerSessionId,
+        cwdOverride: selectedTerminalData.cwd,
+      });
+      if (!sent) {
+        return false;
+      }
+
+      const normalizedText = payload.text.trim();
+      if (!normalizedText) {
+        return true;
+      }
+
+      setMessageHistoryBySession((current) => {
+        const sessionHistory = current[terminalComposerSessionId] ?? [];
+        return {
+          ...current,
+          [terminalComposerSessionId]: [...sessionHistory, normalizedText],
+        };
+      });
+      return true;
+    },
+    [selectedTerminalData, sendMessageText, terminalComposerSessionId],
+  );
+
   const handleWorkflowComposerInit = useCallback(
     async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
       const sessionId = await initializeWorkflowChatSession({
@@ -8932,9 +9312,24 @@ export default function CodexDeckApp() {
     [initializeWorkflowChatSession],
   );
 
+  const handleTerminalComposerInit = useCallback(
+    async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
+      const sessionId = await initializeTerminalChatSession({
+        openInSessionView: false,
+        initialMessagePayload: payload,
+      });
+      return Boolean(sessionId);
+    },
+    [initializeTerminalChatSession],
+  );
+
   const handleStopWorkflowComposerConversation = useCallback(async () => {
     await stopConversationForSession(workflowComposerSessionId);
   }, [stopConversationForSession, workflowComposerSessionId]);
+
+  const handleStopTerminalComposerConversation = useCallback(async () => {
+    await stopConversationForSession(terminalComposerSessionId);
+  }, [stopConversationForSession, terminalComposerSessionId]);
 
   useEffect(() => {
     if (!selectedSession || !isGeneratingForSelectedSession) {
@@ -9111,6 +9506,82 @@ export default function CodexDeckApp() {
     isPageVisible,
     syncSessionWaitState,
     workflowComposerSessionId,
+  ]);
+
+  useEffect(() => {
+    const normalizedSessionId = terminalComposerSessionId?.trim() ?? "";
+    if (centerView !== "terminal" || !normalizedSessionId) {
+      setTerminalLatestSessionPreview({
+        sessionId: null,
+        message: null,
+      });
+      setTerminalLatestSessionPreviewLoading(false);
+      return;
+    }
+
+    if (!isPageVisible) {
+      setTerminalLatestSessionPreviewLoading(false);
+      return;
+    }
+
+    let mergedMessages: ConversationMessage[] = [];
+    setTerminalLatestSessionPreviewLoading(true);
+    setTerminalLatestSessionPreview((current) =>
+      current.sessionId === normalizedSessionId
+        ? current
+        : {
+            sessionId: normalizedSessionId,
+            message: null,
+          },
+    );
+
+    const requestedTurnId =
+      pendingTurnRef.current?.sessionId === normalizedSessionId
+        ? pendingTurnRef.current.turnId
+        : null;
+    void syncSessionWaitState(normalizedSessionId, requestedTurnId);
+
+    return subscribeConversationStream(
+      normalizedSessionId,
+      {
+        onMessages: (newMessages, batch) => {
+          mergedMessages = mergeDisplayConversationMessages(
+            mergedMessages,
+            newMessages,
+            batch?.insertion ?? "append",
+          );
+          setTerminalLatestSessionPreview({
+            sessionId: normalizedSessionId,
+            message: getLatestWorkflowCreatePreviewMessage(mergedMessages),
+          });
+          setTerminalLatestSessionPreviewLoading(false);
+          handleConversationActivity(normalizedSessionId, {
+            ...getConversationActivityDetails(
+              newMessages,
+              batch?.phase ?? "incremental",
+              batch?.insertion ?? "append",
+            ),
+            phase: batch?.phase ?? "incremental",
+            done: batch?.done ?? true,
+          });
+        },
+        onHeartbeat: () => {
+          setTerminalLatestSessionPreviewLoading(false);
+        },
+        onError: () => {
+          setTerminalLatestSessionPreviewLoading(false);
+        },
+      },
+      {
+        initialOffset: 0,
+      },
+    );
+  }, [
+    centerView,
+    handleConversationActivity,
+    isPageVisible,
+    syncSessionWaitState,
+    terminalComposerSessionId,
   ]);
 
   const handleMessageHistoryChange = useCallback(
@@ -11038,6 +11509,69 @@ export default function CodexDeckApp() {
           </div>
         )}
 
+        {terminalSkillInstallPrompt && (
+          <div
+            className="fixed inset-0 z-40 flex items-end justify-center bg-black/55 p-4 sm:items-center"
+            onClick={(event) => {
+              if (event.target !== event.currentTarget) {
+                return;
+              }
+              resolveTerminalSkillInstallPrompt("cancel");
+            }}
+          >
+            <div className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-2xl backdrop-blur">
+              <div className="border-b border-zinc-800 px-4 py-3">
+                <div className="text-sm font-semibold text-zinc-100">
+                  Install codex-deck-terminal skill?
+                </div>
+                <div className="mt-1 text-xs text-zinc-400">
+                  Terminal chat init needs the `codex-deck-terminal` skill before
+                  sending the first bound-session message.
+                </div>
+              </div>
+              <div className="space-y-3 p-4">
+                <label className="space-y-1 text-xs text-zinc-400">
+                  <span>Project Path</span>
+                  <textarea
+                    value={terminalSkillInstallPrompt.projectRoot}
+                    readOnly
+                    rows={1}
+                    wrap="off"
+                    className="w-full resize-none overflow-x-auto overflow-y-hidden rounded border border-dashed border-zinc-800/70 bg-zinc-950/40 px-3 py-1.5 text-xs text-zinc-400 focus:outline-none font-mono cursor-default caret-transparent"
+                  />
+                </label>
+                <div className="text-xs leading-relaxed text-zinc-300">
+                  Choose where to install the skill before sending the terminal
+                  bootstrap message.
+                </div>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => resolveTerminalSkillInstallPrompt("cancel")}
+                  className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80"
+                >
+                  Cancel init
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveTerminalSkillInstallPrompt("global")}
+                  className="h-8 rounded border border-amber-600/70 bg-amber-600/15 px-3 text-xs text-amber-100 transition-colors hover:bg-amber-600/25"
+                >
+                  Install globally
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveTerminalSkillInstallPrompt("local")}
+                  className="h-8 rounded border border-cyan-600/70 bg-cyan-600/20 px-3 text-xs text-cyan-100 transition-colors hover:bg-cyan-600/30"
+                >
+                  Install locally
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showWorkflowCreateModal && (
           <div
             className="fixed inset-0 z-40 flex items-end justify-center bg-black/55 p-4 sm:items-center"
@@ -11451,17 +11985,73 @@ export default function CodexDeckApp() {
                 : null}
             </div>
           ) : centerView === "terminal" ? (
-            <div className="h-full">
-              {selectedTerminalId ? (
-                <TerminalView
-                  terminalId={selectedTerminalId}
-                  resolvedTheme={resolvedTheme}
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center text-sm text-zinc-500">
-                  No active terminal selected.
-                </div>
-              )}
+            <div className="h-full min-h-0 flex flex-col">
+              <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+                {selectedTerminalId ? (
+                  <>
+                    <div className="min-h-0 flex-1">
+                      <TerminalView
+                        terminalId={selectedTerminalId}
+                        resolvedTheme={resolvedTheme}
+                      />
+                    </div>
+                    {selectedTerminalData ? (
+                      <AiTerminalPanel
+                        terminal={selectedTerminalData}
+                        boundSessionId={terminalComposerSessionId}
+                        latestSessionMessage={
+                          terminalLatestSessionPreview.sessionId ===
+                          terminalComposerSessionId
+                            ? terminalLatestSessionPreview.message
+                            : null
+                        }
+                        latestSessionMessageLoading={
+                          terminalLatestSessionPreviewLoading
+                        }
+                        chatBusy={terminalBindingBusy}
+                        resolvedTheme={resolvedTheme}
+                        onChatInSession={() => {
+                          void handleChatInTerminalSession();
+                        }}
+                        onOpenSession={handleSelectSession}
+                        onFilePathLinkClick={handleFilePathLinkClick}
+                      />
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+                    No active terminal selected.
+                  </div>
+                )}
+              </div>
+              {selectedTerminalData
+                ? renderComposerFooter({
+                    sessionId: terminalComposerSessionId,
+                    draftResetKey: selectedTerminalId ?? undefined,
+                    history: terminalComposerSessionId
+                      ? (messageHistoryBySession[terminalComposerSessionId] ??
+                        [])
+                      : [],
+                    slashCommands: SESSION_COMPOSER_SLASH_COMMANDS,
+                    isGeneratingForSession: isGeneratingForTerminalComposer,
+                    isSendingLocked: isTerminalComposerLocked,
+                    sendingMessage,
+                    stoppingTurn,
+                    idlePrimaryActionLabel: terminalComposerSessionId
+                      ? undefined
+                      : "Init",
+                    idlePrimaryActionBusy: terminalBindingBusy,
+                    idlePrimaryActionBusyLabel: "Initializing...",
+                    allowIdlePrimaryActionWithoutContent:
+                      !terminalComposerSessionId,
+                    onIdlePrimaryAction: terminalComposerSessionId
+                      ? null
+                      : handleTerminalComposerInit,
+                    onSendMessage: handleTerminalComposerSendMessage,
+                    onRunSlashCommand: handleRunSlashCommand,
+                    onStopConversation: handleStopTerminalComposerConversation,
+                  })
+                : null}
             </div>
           ) : selectedSession ? (
             <div className="h-full flex flex-col">

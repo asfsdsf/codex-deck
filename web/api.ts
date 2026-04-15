@@ -22,6 +22,7 @@ import type {
   SessionFileTreeNodesResponse,
   SessionSkillConfigWriteRequest,
   CreateWorkflowRequest,
+  SystemContextResponse,
   WorkflowActionResponse,
   WorkflowBindSessionRequest,
   WorkflowControlMessageRequest,
@@ -36,8 +37,13 @@ import type {
   WorkflowSummary,
   SessionSkillConfigWriteResponse,
   SessionSkillsResponse,
+  TerminalEventsResponse,
   TerminalListResponse,
   TerminalSummary,
+  TerminalBindingResponse,
+  TerminalBindSessionRequest,
+  TerminalSessionRoleSummary,
+  TerminalSessionRolesResponse,
   CreateTerminalRequest,
   TerminalCommandResponse,
   TerminalInputRequest,
@@ -134,6 +140,69 @@ interface CodexUserInputRequestsResponse {
 
 interface CodexApprovalRequestsResponse {
   requests: CodexApprovalRequest[];
+}
+
+export async function getSystemContext(): Promise<SystemContextResponse> {
+  return requestJson<SystemContextResponse>("/api/system/context");
+}
+
+const DEFAULT_RUN_IN_TERMINAL_TIMEOUT_MS = 15_000;
+const DEFAULT_RUN_IN_TERMINAL_WAIT_MS = 1_000;
+const ANSI_CSI_SEQUENCE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
+const ANSI_OSC_SEQUENCE_PATTERN = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
+const ANSI_SINGLE_CHAR_SEQUENCE_PATTERN = /\u001B[@-Z\\-_]/g;
+
+let runInTerminalClientId: string | null = null;
+
+function getRunInTerminalClientId(): string {
+  if (runInTerminalClientId) {
+    return runInTerminalClientId;
+  }
+
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    runInTerminalClientId = crypto.randomUUID();
+    return runInTerminalClientId;
+  }
+
+  runInTerminalClientId = `run-terminal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return runInTerminalClientId;
+}
+
+function toPositiveIntegerOrDefault(value: number | undefined, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  const normalized = Math.floor(value ?? fallback);
+  return normalized > 0 ? normalized : fallback;
+}
+
+export interface RunInTerminalOptions {
+  terminalId?: string;
+  clientId?: string;
+  waitMs?: number;
+  timeoutMs?: number;
+  appendNewline?: boolean;
+}
+
+export interface RunInTerminalResult {
+  terminalId: string;
+  clientId: string;
+  command: string;
+  output: string;
+  rawOutput: string;
+  startSeq: number;
+  endSeq: number;
+  timedOut: boolean;
+}
+
+function stripTerminalAnsiCodes(value: string): string {
+  return value
+    .replace(ANSI_OSC_SEQUENCE_PATTERN, "")
+    .replace(ANSI_CSI_SEQUENCE_PATTERN, "")
+    .replace(ANSI_SINGLE_CHAR_SEQUENCE_PATTERN, "");
 }
 
 async function requestJsonAndNotifyConversation<T>(
@@ -1035,6 +1104,46 @@ export async function listActiveTerminals(): Promise<TerminalSummary[]> {
   return response.terminals;
 }
 
+export async function getTerminalBinding(
+  terminalId: string,
+): Promise<TerminalBindingResponse> {
+  return requestJson<TerminalBindingResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/binding`,
+  );
+}
+
+export async function bindTerminalSession(
+  terminalId: string,
+  input: TerminalBindSessionRequest,
+): Promise<TerminalBindingResponse> {
+  return requestJson<TerminalBindingResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/binding`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function getTerminalSessionRoles(
+  sessionIds: string[],
+): Promise<TerminalSessionRoleSummary[]> {
+  const response = await requestJson<TerminalSessionRolesResponse>(
+    "/api/terminals/session-roles",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ sessionIds }),
+    },
+  );
+  return Array.isArray(response.sessions) ? response.sessions : [];
+}
+
 export async function createTerminal(
   input: CreateTerminalRequest,
 ): Promise<TerminalSnapshotResponse> {
@@ -1158,6 +1267,137 @@ export async function releaseTerminalWrite(
       body: JSON.stringify({ clientId }),
     },
   );
+}
+
+export async function runInTerminal(
+  command: string,
+  options: RunInTerminalOptions = {},
+): Promise<RunInTerminalResult> {
+  const normalizedCommand = command.trim();
+  if (!normalizedCommand) {
+    throw new Error("command must be a non-empty string");
+  }
+
+  const requestedTerminalId = options.terminalId?.trim();
+  const terminalId =
+    requestedTerminalId && requestedTerminalId.length > 0
+      ? requestedTerminalId
+      : (await listActiveTerminals())[0]?.terminalId;
+  if (!terminalId) {
+    throw new Error("No active terminal available.");
+  }
+
+  const clientId = options.clientId?.trim() || getRunInTerminalClientId();
+  const timeoutMs = toPositiveIntegerOrDefault(
+    options.timeoutMs,
+    DEFAULT_RUN_IN_TERMINAL_TIMEOUT_MS,
+  );
+  const waitMs = toPositiveIntegerOrDefault(
+    options.waitMs,
+    DEFAULT_RUN_IN_TERMINAL_WAIT_MS,
+  );
+  const input =
+    options.appendNewline === false || command.endsWith("\n")
+      ? command
+      : `${command}\n`;
+
+  const initialSnapshot = await getTerminalSnapshot(terminalId);
+  const initialSeq = initialSnapshot.seq;
+  const initialOutput = initialSnapshot.output;
+
+  const sendInput = async () => {
+    await sendTerminalInput(terminalId, { input }, clientId);
+  };
+
+  try {
+    await sendInput();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.toLowerCase().includes("owns terminal write")) {
+      throw error;
+    }
+    await claimTerminalWrite(terminalId, clientId);
+    await sendInput();
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let fromSeq = initialSeq;
+  let output = "";
+  let sawEvent = false;
+  let timedOut = false;
+  let terminalStopped = false;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(0, deadline - Date.now());
+    const waitForThisPoll = Math.min(waitMs, remainingMs);
+    const params = new URLSearchParams({
+      fromSeq: String(fromSeq),
+      waitMs: String(waitForThisPoll),
+    });
+    const batch = await requestJson<TerminalEventsResponse>(
+      `/api/terminals/${encodeURIComponent(terminalId)}/events?${params.toString()}`,
+    );
+
+    let batchHadEvent = false;
+    if (batch.requiresReset && batch.snapshot) {
+      const resetOutput = batch.snapshot.output;
+      if (typeof resetOutput === "string") {
+        output = resetOutput.startsWith(initialOutput)
+          ? resetOutput.slice(initialOutput.length)
+          : resetOutput;
+      }
+      fromSeq = Math.max(fromSeq, batch.snapshot.seq);
+      batchHadEvent = true;
+      sawEvent = true;
+      terminalStopped = batch.snapshot.running === false;
+    }
+
+    for (const event of batch.events) {
+      if (!event || typeof event !== "object" || event.seq <= fromSeq) {
+        continue;
+      }
+      fromSeq = event.seq;
+      batchHadEvent = true;
+      sawEvent = true;
+      if (event.type === "output" && typeof event.chunk === "string") {
+        output += event.chunk;
+      }
+      if (event.type === "state" && event.running === false) {
+        terminalStopped = true;
+      }
+      if (event.type === "reset" && typeof event.output === "string") {
+        output = event.output.startsWith(initialOutput)
+          ? event.output.slice(initialOutput.length)
+          : event.output;
+        terminalStopped = event.running === false;
+      }
+    }
+
+    if (terminalStopped) {
+      break;
+    }
+    if (batchHadEvent) {
+      continue;
+    }
+    if (sawEvent) {
+      break;
+    }
+  }
+
+  if (!sawEvent && Date.now() >= deadline) {
+    timedOut = true;
+  }
+
+  return {
+    terminalId,
+    clientId,
+    command,
+    output,
+    rawOutput: stripTerminalAnsiCodes(output),
+    startSeq: initialSeq,
+    endSeq: fromSeq,
+    timedOut,
+  };
 }
 
 export function subscribeTerminalsStream(

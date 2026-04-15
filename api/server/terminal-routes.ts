@@ -1,8 +1,19 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { getLocalTerminalManager } from "../local-terminal";
+import {
+  clearTerminalBinding,
+  getTerminalBinding,
+  getTerminalBindingsByTerminalIds,
+  getTerminalSessionRoles,
+  onTerminalBindingChange,
+  setTerminalBinding,
+  TerminalBindingConflictError,
+} from "../terminal-bindings";
 import type {
   CreateTerminalRequest,
+  TerminalBindSessionRequest,
+  TerminalBindingResponse,
   TerminalClaimWriteRequest,
   TerminalCommandResponse,
   TerminalEventsResponse,
@@ -10,6 +21,8 @@ import type {
   TerminalListResponse,
   TerminalReleaseWriteRequest,
   TerminalResizeRequest,
+  TerminalSessionRolesRequest,
+  TerminalSessionRolesResponse,
   TerminalSnapshotResponse,
   TerminalStreamEvent,
   TerminalSummary,
@@ -39,12 +52,34 @@ function toTerminalCommandResponse(
   };
 }
 
+async function withTerminalBindings(
+  terminals: TerminalSummary[],
+): Promise<TerminalSummary[]> {
+  if (terminals.length === 0) {
+    return [];
+  }
+  const bindings = await getTerminalBindingsByTerminalIds(
+    terminals.map((terminal) => terminal.terminalId),
+  );
+  return terminals.map((terminal) => ({
+    ...terminal,
+    boundSessionId: bindings[terminal.terminalId] ?? null,
+  }));
+}
+
 export function registerTerminalRoutes(app: Hono): void {
   app.get("/api/terminals", async (c) => {
-    const manager = getLocalTerminalManager();
-    return c.json({
-      terminals: manager.listTerminals(),
-    } satisfies TerminalListResponse);
+    try {
+      const manager = getLocalTerminalManager();
+      return c.json({
+        terminals: await withTerminalBindings(manager.listTerminals()),
+      } satisfies TerminalListResponse);
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
   });
 
   app.post("/api/terminals", async (c) => {
@@ -69,13 +104,18 @@ export function registerTerminalRoutes(app: Hono): void {
     return streamSSE(c, async (stream) => {
       const manager = getLocalTerminalManager();
       let isConnected = true;
-      let unsubscribe: (() => void) | null = null;
+      let unsubscribeTerminals: (() => void) | null = null;
+      let unsubscribeBindings: (() => void) | null = null;
 
       const cleanup = () => {
         isConnected = false;
-        if (unsubscribe) {
-          unsubscribe();
-          unsubscribe = null;
+        if (unsubscribeTerminals) {
+          unsubscribeTerminals();
+          unsubscribeTerminals = null;
+        }
+        if (unsubscribeBindings) {
+          unsubscribeBindings();
+          unsubscribeBindings = null;
         }
       };
 
@@ -86,7 +126,7 @@ export function registerTerminalRoutes(app: Hono): void {
         try {
           await stream.writeSSE({
             event: "terminals",
-            data: JSON.stringify(terminals),
+            data: JSON.stringify(await withTerminalBindings(terminals)),
           });
         } catch {
           cleanup();
@@ -94,8 +134,11 @@ export function registerTerminalRoutes(app: Hono): void {
       };
 
       await writeTerminals(manager.listTerminals());
-      unsubscribe = manager.subscribeTerminals((terminals) => {
+      unsubscribeTerminals = manager.subscribeTerminals((terminals) => {
         void writeTerminals(terminals);
+      });
+      unsubscribeBindings = onTerminalBindingChange(() => {
+        void writeTerminals(manager.listTerminals());
       });
       c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
     });
@@ -110,13 +153,103 @@ export function registerTerminalRoutes(app: Hono): void {
     return c.json(snapshot satisfies TerminalSnapshotResponse);
   });
 
+  app.get("/api/terminals/:terminalId/binding", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId")?.trim();
+      if (!terminalId) {
+        return c.json({ error: "terminal id is required" }, 400);
+      }
+
+      const manager = getLocalTerminalManager();
+      if (!manager.getSnapshot(terminalId)) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+
+      return c.json(
+        (await getTerminalBinding(terminalId)) satisfies TerminalBindingResponse,
+      );
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/terminals/:terminalId/binding", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId")?.trim();
+      if (!terminalId) {
+        return c.json({ error: "terminal id is required" }, 400);
+      }
+
+      const manager = getLocalTerminalManager();
+      if (!manager.getSnapshot(terminalId)) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+
+      const body = (await c.req
+        .json()
+        .catch(() => ({}))) as Partial<TerminalBindSessionRequest>;
+      const rawSessionId = body.sessionId;
+      if (
+        rawSessionId !== undefined &&
+        rawSessionId !== null &&
+        typeof rawSessionId !== "string"
+      ) {
+        return c.json({ error: "sessionId must be a string or null" }, 400);
+      }
+
+      return c.json(
+        (
+          await setTerminalBinding(
+            terminalId,
+            typeof rawSessionId === "string" ? rawSessionId : null,
+          )
+        ) satisfies TerminalBindingResponse,
+      );
+    } catch (error) {
+      if (error instanceof TerminalBindingConflictError) {
+        return c.json({ error: error.message }, 409);
+      }
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/terminals/session-roles", async (c) => {
+    try {
+      const body = (await c.req
+        .json()
+        .catch(() => ({}))) as Partial<TerminalSessionRolesRequest>;
+      const sessionIds = Array.isArray(body.sessionIds)
+        ? body.sessionIds.filter(
+            (sessionId): sessionId is string => typeof sessionId === "string",
+          )
+        : [];
+
+      return c.json({
+        sessions: await getTerminalSessionRoles(sessionIds),
+      } satisfies TerminalSessionRolesResponse);
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
   app.delete("/api/terminals/:terminalId", async (c) => {
     try {
+      const terminalId = c.req.param("terminalId");
       const manager = getLocalTerminalManager();
-      const closed = await manager.closeTerminal(c.req.param("terminalId"));
+      const closed = await manager.closeTerminal(terminalId);
       if (!closed) {
         return c.json({ error: "terminal not found" }, 404);
       }
+      await clearTerminalBinding(terminalId);
       return c.json({ ok: true });
     } catch (error) {
       return c.json(

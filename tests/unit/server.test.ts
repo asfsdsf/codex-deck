@@ -2782,6 +2782,208 @@ test("terminal routes return snapshot, control responses, and stream events", as
   }
 });
 
+test("terminal binding routes persist bindings and expose terminal session roles", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-binding",
+  );
+  const server = createServer({ port: 13016, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-binding-1";
+  let terminalExists = true;
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () =>
+      terminalExists
+        ? [
+            {
+              id: terminalId,
+              terminalId,
+              display: "repo",
+              firstCommand: null,
+              timestamp: 1,
+              project: "/repo/app",
+              projectName: "app",
+              cwd: "/repo/app",
+              shell: "zsh",
+              running: true,
+            },
+          ]
+        : [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: true,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "",
+      seq: 1,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async (requestedTerminalId: string) => {
+      if (requestedTerminalId !== terminalId || !terminalExists) {
+        return false;
+      }
+      terminalExists = false;
+      return true;
+    },
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId && terminalExists
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+  };
+
+  const workflowSessionId = "workflow-session-1";
+  const terminalSessionId = "terminal-session-1";
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    await loadStorage();
+
+    const initialBinding = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/binding`,
+    );
+    assert.equal(initialBinding.status, 200);
+    assert.equal(
+      (initialBinding.body as { boundSessionId?: string | null })
+        .boundSessionId,
+      null,
+    );
+
+    const bindResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/binding`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: terminalSessionId }),
+      },
+    );
+    assert.equal(bindResponse.status, 200);
+    assert.equal(
+      (bindResponse.body as { boundSessionId?: string | null }).boundSessionId,
+      terminalSessionId,
+    );
+
+    const listResponse = await requestJson(server, "/api/terminals");
+    assert.equal(listResponse.status, 200);
+    assert.equal(
+      (
+        listResponse.body as {
+          terminals?: Array<{ boundSessionId?: string | null }>;
+        }
+      ).terminals?.[0]?.boundSessionId,
+      terminalSessionId,
+    );
+
+    const roleResponse = await requestJson(server, "/api/terminals/session-roles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionIds: [terminalSessionId, "missing-session"] }),
+    });
+    assert.equal(roleResponse.status, 200);
+    assert.deepEqual(
+      (roleResponse.body as { sessions?: unknown[] }).sessions,
+      [
+        {
+          sessionId: terminalSessionId,
+          role: "terminal",
+          terminalId,
+        },
+      ],
+    );
+
+    const workflowSessionIndexDir = join(
+      rootDir,
+      "codex-deck",
+      "workflows",
+      "session-index",
+    );
+    await mkdir(workflowSessionIndexDir, { recursive: true });
+    await writeFile(
+      join(workflowSessionIndexDir, `${workflowSessionId}.json`),
+      JSON.stringify({
+        sessionId: workflowSessionId,
+        type: "bound",
+      }),
+      "utf-8",
+    );
+
+    const conflictResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/binding`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: workflowSessionId }),
+      },
+    );
+    assert.equal(conflictResponse.status, 409);
+
+    const storedBindingText = await readFile(
+      join(rootDir, "codex-deck", "terminal", "bindings", `${terminalId}.json`),
+      "utf-8",
+    );
+    assert.match(storedBindingText, /terminal-session-1/);
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("system context route returns host release metadata", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir("server-system-context");
+  const server = createServer({ port: 13007, codexDir: rootDir, open: false });
+
+  try {
+    await loadStorage();
+    const response = await requestJson(server, "/api/system/context");
+    assert.equal(response.status, 200);
+    assert.equal(typeof (response.body as { osName?: unknown }).osName, "string");
+    assert.equal(
+      typeof (response.body as { osRelease?: unknown }).osRelease,
+      "string",
+    );
+    assert.equal(
+      typeof (response.body as { architecture?: unknown }).architecture,
+      "string",
+    );
+    assert.equal(
+      typeof (response.body as { platform?: unknown }).platform,
+      "string",
+    );
+    assert.equal(
+      typeof (response.body as { hostname?: unknown }).hostname,
+      "string",
+    );
+  } finally {
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("codex thread creation and message endpoints validate payloads", async () => {
   const { rootDir, cleanup } = await createTempCodexDir("server-validation");
   const server = createServer({ port: 13003, codexDir: rootDir, open: false });
