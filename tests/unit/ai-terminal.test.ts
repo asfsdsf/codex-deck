@@ -8,8 +8,10 @@ import {
   buildAiTerminalExecutionWrapper,
   buildAiTerminalRejectionFeedback,
   buildAiTerminalTurnPrompt,
+  deriveAiTerminalStepStatesByMessageKey,
   parseAiTerminalExecutionResult,
   parseAiTerminalMessage,
+  parseAiTerminalPersistedStepState,
   shouldAttachAiTerminalOutputReference,
   summarizeAiTerminalOutput,
 } from "../../web/ai-terminal";
@@ -69,7 +71,10 @@ Task complete.
   if (!parsed || parsed.directive.kind !== "finished") {
     assert.fail("expected finished directive");
   }
-  assert.equal(parsed.directive.message, "Review the output before continuing.");
+  assert.equal(
+    parsed.directive.message,
+    "Review the output before continuing.",
+  );
 });
 
 test("parseAiTerminalMessage rejects multiple actionable blocks", () => {
@@ -178,8 +183,45 @@ test("buildAiTerminalExecutionFeedback and rejection feedback stay machine-reada
   });
 
   assert.match(feedback, /<ai-terminal-execution>/);
-  assert.match(feedback, /<output_reference>terminal:t1:seq:10-20<\/output_reference>/);
+  assert.match(
+    feedback,
+    /<output_reference>terminal:t1:seq:10-20<\/output_reference>/,
+  );
   assert.match(rejection, /<decision>rejected<\/decision>/);
+});
+
+test("parseAiTerminalPersistedStepState normalizes execution and rejection feedback", () => {
+  const completed = parseAiTerminalPersistedStepState(`
+<ai-terminal-execution>
+  <step_id>check-mem</step_id>
+  <status>success</status>
+</ai-terminal-execution>
+  `);
+  const rejected = parseAiTerminalPersistedStepState(`
+<ai-terminal-feedback>
+  <step_id>check-mem</step_id>
+  <decision>rejected</decision>
+</ai-terminal-feedback>
+  `);
+  const failed = parseAiTerminalPersistedStepState(`
+<ai-terminal-execution>
+  <step_id>check-mem</step_id>
+  <status>timed_out</status>
+</ai-terminal-execution>
+  `);
+
+  assert.deepEqual(completed, {
+    stepId: "check-mem",
+    state: "completed",
+  });
+  assert.deepEqual(rejected, {
+    stepId: "check-mem",
+    state: "rejected",
+  });
+  assert.deepEqual(failed, {
+    stepId: "check-mem",
+    state: "failed",
+  });
 });
 
 test("buildAiTerminalExecutionFeedback marks unknown exit code as completed_unknown", () => {
@@ -225,6 +267,75 @@ test("summarizeAiTerminalOutput compacts large output and extracts errors", () =
   assert.match(summary.outputSummary, /more lines omitted/);
   assert.equal(summary.errorSummary, "ERROR: missing file");
   assert.equal(shouldAttachAiTerminalOutputReference(output), true);
+});
+
+test("deriveAiTerminalStepStatesByMessageKey reconstructs terminal card state from conversation history", () => {
+  const messages = [
+    {
+      type: "assistant",
+      uuid: "plan-1",
+      message: {
+        role: "assistant",
+        content: `<ai-terminal-plan>
+  <ai-terminal-step>
+    <step_id>check-mem</step_id>
+    <command><![CDATA[free -m]]></command>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+  </ai-terminal-step>
+</ai-terminal-plan>`,
+      },
+    },
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: `<ai-terminal-feedback>
+  <step_id>check-mem</step_id>
+  <decision>rejected</decision>
+</ai-terminal-feedback>`,
+      },
+    },
+    {
+      type: "assistant",
+      uuid: "plan-2",
+      message: {
+        role: "assistant",
+        content: `<ai-terminal-plan>
+  <ai-terminal-step>
+    <step_id>check-mem</step_id>
+    <command><![CDATA[free -m]]></command>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+  </ai-terminal-step>
+</ai-terminal-plan>`,
+      },
+    },
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: `<ai-terminal-execution>
+  <step_id>check-mem</step_id>
+  <status>success</status>
+</ai-terminal-execution>`,
+      },
+    },
+  ] as const;
+
+  const statesByMessageKey = deriveAiTerminalStepStatesByMessageKey(messages, {
+    getMessage: (message) => message,
+    getMessageKey: (message) => message.uuid,
+  });
+
+  assert.deepEqual(statesByMessageKey, {
+    "plan-1": {
+      "check-mem": "rejected",
+    },
+    "plan-2": {
+      "check-mem": "completed",
+    },
+  });
 });
 
 test("ai terminal developer instructions enforce tagged plan contract", () => {

@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { getCodexDir } from "./storage";
@@ -240,6 +240,35 @@ export async function getTerminalBindingsByTerminalIds(
       return [terminalId, binding?.sessionId ?? null] as const;
     }),
   );
+
+  return Object.fromEntries(mappings);
+}
+
+export function getAllTerminalBindingsSync(
+  codexHome?: string | null,
+): Record<string, string> {
+  const bindingsDir = getTerminalBindingsDir(codexHome);
+  if (!existsSync(bindingsDir)) {
+    return {};
+  }
+
+  const mappings: Array<readonly [string, string]> = [];
+  for (const entry of readdirSync(bindingsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    try {
+      const record = normalizeTerminalBindingRecord(
+        JSON.parse(readFileSync(join(bindingsDir, entry.name), "utf-8")),
+      );
+      if (record) {
+        mappings.push([record.terminalId, record.sessionId] as const);
+      }
+    } catch {
+      // Ignore unreadable binding files during startup reconciliation.
+    }
+  }
 
   return Object.fromEntries(mappings);
 }

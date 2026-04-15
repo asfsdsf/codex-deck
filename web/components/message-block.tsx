@@ -538,16 +538,17 @@ function AiTerminalPlanRenderer(props: {
               state,
               aiTerminalContext?.isActionable === true,
             );
+            const hasChosenAction =
+              state === "running" ||
+              state === "completed" ||
+              state === "failed" ||
+              state === "rejected";
             const canApprove =
               aiTerminalContext?.isActionable === true &&
               step.nextAction !== "provide_input" &&
-              state !== "running" &&
-              state !== "completed";
+              !hasChosenAction;
             const canReject =
-              aiTerminalContext?.isActionable === true &&
-              state !== "running" &&
-              state !== "completed" &&
-              state !== "rejected";
+              aiTerminalContext?.isActionable === true && !hasChosenAction;
 
             return (
               <div
@@ -620,7 +621,8 @@ function AiTerminalPlanRenderer(props: {
 
                 {step.nextAction === "provide_input" ? (
                   <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
-                    This step needs more user input. Reply in the chat composer to continue.
+                    This step needs more user input. Reply in the chat composer
+                    to continue.
                   </div>
                 ) : null}
 
@@ -707,7 +709,9 @@ function AiTerminalDirectiveRenderer(props: {
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100/90">
             AI Terminal Needs Input
           </div>
-          <div className="mt-2 text-sm text-zinc-100">{props.directive.question}</div>
+          <div className="mt-2 text-sm text-zinc-100">
+            {props.directive.question}
+          </div>
           {props.directive.contextNote ? (
             <div className="mt-2 text-xs text-zinc-300">
               <MarkdownRenderer
@@ -739,7 +743,9 @@ function AiTerminalDirectiveRenderer(props: {
         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100/90">
           AI Terminal Complete
         </div>
-        <div className="mt-2 text-sm text-zinc-100">{props.directive.message}</div>
+        <div className="mt-2 text-sm text-zinc-100">
+          {props.directive.message}
+        </div>
       </div>
       {props.trailingMarkdown ? (
         <MarkdownRenderer

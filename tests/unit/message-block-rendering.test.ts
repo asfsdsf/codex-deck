@@ -12,7 +12,9 @@ function renderMessageBlock(
   options: {
     isAgentsBootstrap?: boolean;
     searchForcePrimaryExpanded?: boolean;
-    aiTerminalContext?: React.ComponentProps<typeof MessageBlock>["aiTerminalContext"];
+    aiTerminalContext?: React.ComponentProps<
+      typeof MessageBlock
+    >["aiTerminalContext"];
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -209,4 +211,43 @@ test("MessageBlock renders ai terminal action buttons when the plan is actionabl
   assert.match(html, /Approve and run/);
   assert.match(html, /Reject/);
   assert.match(html, /Pending/);
+});
+
+test("MessageBlock hides ai terminal action buttons after a terminal step is decided", () => {
+  const message: ConversationMessage = {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: `<ai-terminal-plan>
+  <ai-terminal-step>
+    <step_id>check-mem</step_id>
+    <step_goal>Check memory</step_goal>
+    <command><![CDATA[free -m]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+    <explanation>Summarize memory usage.</explanation>
+  </ai-terminal-step>
+</ai-terminal-plan>`,
+    },
+  };
+
+  const html = renderMessageBlock(message, {
+    aiTerminalContext: {
+      sessionId: "session-1",
+      terminalId: "terminal-1",
+      messageKey: "msg-1",
+      isActionable: true,
+      stepStates: {
+        "check-mem": "failed",
+      },
+      onApproveStep: () => undefined,
+      onRejectStep: () => undefined,
+    },
+  });
+
+  assert.doesNotMatch(html, /Approve and run/);
+  assert.doesNotMatch(html, /Reject/);
+  assert.match(html, /Failed/);
 });

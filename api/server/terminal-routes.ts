@@ -200,14 +200,18 @@ export function registerTerminalRoutes(app: Hono): void {
         return c.json({ error: "sessionId must be a string or null" }, 400);
       }
 
-      return c.json(
-        (
-          await setTerminalBinding(
-            terminalId,
-            typeof rawSessionId === "string" ? rawSessionId : null,
-          )
-        ) satisfies TerminalBindingResponse,
+      const binding = await setTerminalBinding(
+        terminalId,
+        typeof rawSessionId === "string" ? rawSessionId : null,
       );
+      if (!binding.boundSessionId) {
+        const snapshot = manager.getSnapshot(terminalId);
+        if (snapshot && !snapshot.running) {
+          await manager.closeTerminal(terminalId);
+        }
+      }
+
+      return c.json(binding satisfies TerminalBindingResponse);
     } catch (error) {
       if (error instanceof TerminalBindingConflictError) {
         return c.json({ error: error.message }, 409);

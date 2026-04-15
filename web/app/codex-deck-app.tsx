@@ -219,8 +219,10 @@ import {
   buildAiTerminalEnvironment,
   buildAiTerminalExecutionFeedback,
   buildAiTerminalRejectionFeedback,
+  deriveAiTerminalStepStatesByMessageKey,
   extractConversationMessageText,
   getAiTerminalMessageKey,
+  mergeAiTerminalStepStates,
   parseAiTerminalExecutionResult,
   parseAiTerminalMessage,
   shouldAttachAiTerminalOutputReference,
@@ -3421,6 +3423,9 @@ export default function CodexDeckApp() {
   const [selectedTerminalProject, setSelectedTerminalProject] = useState<
     string | null
   >(null);
+  const [pendingTerminalSelectionId, setPendingTerminalSelectionId] = useState<
+    string | null
+  >(null);
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(
     null,
   );
@@ -3528,14 +3533,17 @@ export default function CodexDeckApp() {
       messageKey: string;
       message: ConversationMessage;
     }>;
+    persistedStepStatesByMessageKey: Record<
+      string,
+      Record<string, AiTerminalStepState | undefined>
+    >;
   }>({
     sessionId: null,
     messages: [],
+    persistedStepStatesByMessageKey: {},
   });
-  const [
-    terminalEmbeddedMessagesLoading,
-    setTerminalEmbeddedMessagesLoading,
-  ] = useState(false);
+  const [terminalEmbeddedMessagesLoading, setTerminalEmbeddedMessagesLoading] =
+    useState(false);
   const [aiTerminalStepStatesBySession, setAiTerminalStepStatesBySession] =
     useState<
       Record<
@@ -4892,19 +4900,26 @@ export default function CodexDeckApp() {
   }, [terminalEmbeddedMessages]);
   const terminalEmbeddedMessageCards = useMemo(() => {
     const sessionId = terminalComposerSessionId ?? "";
-    const lockedMessageKey = aiTerminalLockedMessageKeyBySession[sessionId] ?? null;
+    const lockedMessageKey =
+      aiTerminalLockedMessageKeyBySession[sessionId] ?? null;
     const sessionStates = aiTerminalStepStatesBySession[sessionId] ?? {};
     return terminalEmbeddedMessages.messages.map((item) => ({
       ...item,
       isActionable:
         item.messageKey === latestTerminalPlanMessageKey &&
         lockedMessageKey !== item.messageKey,
-      stepStates: sessionStates[item.messageKey],
+      stepStates: mergeAiTerminalStepStates(
+        terminalEmbeddedMessages.persistedStepStatesByMessageKey[
+          item.messageKey
+        ],
+        sessionStates[item.messageKey],
+      ),
     }));
   }, [
     aiTerminalLockedMessageKeyBySession,
     aiTerminalStepStatesBySession,
     latestTerminalPlanMessageKey,
+    mergeAiTerminalStepStates,
     terminalComposerSessionId,
     terminalEmbeddedMessages,
   ]);
@@ -6358,9 +6373,25 @@ export default function CodexDeckApp() {
   );
 
   useEffect(() => {
+    const hasPendingSelectedTerminal =
+      !!pendingTerminalSelectionId &&
+      terminals.some(
+        (terminal) =>
+          terminal.id === pendingTerminalSelectionId ||
+          terminal.terminalId === pendingTerminalSelectionId,
+      );
+
+    if (pendingTerminalSelectionId && !hasPendingSelectedTerminal) {
+      return;
+    }
+
     if (terminals.length === 0) {
       setSelectedTerminalId(null);
       return;
+    }
+
+    if (pendingTerminalSelectionId && hasPendingSelectedTerminal) {
+      setPendingTerminalSelectionId(null);
     }
 
     if (
@@ -6371,7 +6402,7 @@ export default function CodexDeckApp() {
     }
 
     setSelectedTerminalId(terminals[0]?.id ?? null);
-  }, [selectedTerminalId, terminals]);
+  }, [pendingTerminalSelectionId, selectedTerminalId, terminals]);
 
   useEffect(() => {
     if (!pendingWorkflowSelectionKey) {
@@ -6721,6 +6752,7 @@ export default function CodexDeckApp() {
 
   const handleSelectTerminal = useCallback(
     (terminalId?: string) => {
+      setPendingTerminalSelectionId(null);
       if (terminalId) {
         setSelectedTerminalId(terminalId);
       } else if (!selectedTerminalId && terminals.length > 0) {
@@ -6804,6 +6836,8 @@ export default function CodexDeckApp() {
 
       try {
         const created = await createTerminal({ cwd });
+        setPendingTerminalSelectionId(created.terminalId);
+        setSelectedTerminalProject(created.cwd);
         setSelectedTerminalId(created.terminalId);
         setCenterView("terminal");
         if (isMobilePhone) {
@@ -7568,7 +7602,7 @@ export default function CodexDeckApp() {
       const mergedTerminalId =
         typeof options.terminalId === "string" && options.terminalId.trim()
           ? options.terminalId.trim()
-          : selectedTerminalId ?? undefined;
+          : (selectedTerminalId ?? undefined);
       return runInTerminalRequest(command, {
         ...options,
         terminalId: mergedTerminalId,
@@ -8127,10 +8161,11 @@ export default function CodexDeckApp() {
         });
         await ensureSessionVisibleInLocalState(created.threadId, projectRoot);
 
-        const skillInstallPrefix = await resolveTerminalSkillInstallMessagePrefix(
-          created.threadId,
-          projectRoot,
-        );
+        const skillInstallPrefix =
+          await resolveTerminalSkillInstallMessagePrefix(
+            created.threadId,
+            projectRoot,
+          );
         if (skillInstallPrefix === null) {
           return null;
         }
@@ -9505,12 +9540,9 @@ export default function CodexDeckApp() {
       setInteractionError(null);
 
       try {
-        const runResult = await runInTerminalRequest(
-          input.step.command,
-          {
-            terminalId: input.terminalId,
-          },
-        );
+        const runResult = await runInTerminalRequest(input.step.command, {
+          terminalId: input.terminalId,
+        });
         const parsedResult = parseAiTerminalExecutionResult({
           stepId: input.step.stepId,
           rawOutput: runResult.rawOutput,
@@ -9604,11 +9636,7 @@ export default function CodexDeckApp() {
         );
       }
     },
-    [
-      selectedSessionData?.project,
-      sendMessageText,
-      setAiTerminalStepState,
-    ],
+    [selectedSessionData?.project, sendMessageText, setAiTerminalStepState],
   );
 
   useEffect(() => {
@@ -9705,10 +9733,7 @@ export default function CodexDeckApp() {
         setShowFixDangling(false);
       }
     },
-    [
-      activeWaitSessionId,
-      scheduleSettledWaitStateSync,
-    ],
+    [activeWaitSessionId, scheduleSettledWaitStateSync],
   );
 
   useEffect(() => {
@@ -9811,6 +9836,7 @@ export default function CodexDeckApp() {
         : {
             sessionId: normalizedSessionId,
             messages: [],
+            persistedStepStatesByMessageKey: {},
           },
     );
 
@@ -9829,6 +9855,13 @@ export default function CodexDeckApp() {
             newMessages,
             batch?.insertion ?? "append",
           );
+          const persistedStepStatesByMessageKey =
+            deriveAiTerminalStepStatesByMessageKey(mergedMessages, {
+              getMessage: (message) => message,
+              getMessageKey: (message, _messageIndex, planIndex) =>
+                getAiTerminalMessageKey(message) ??
+                `terminal-ai:${normalizedSessionId}:${planIndex}`,
+            });
           setTerminalEmbeddedMessages({
             sessionId: normalizedSessionId,
             messages: mergedMessages
@@ -9848,6 +9881,7 @@ export default function CodexDeckApp() {
                   `terminal-ai:${normalizedSessionId}:${index}`,
                 message,
               })),
+            persistedStepStatesByMessageKey,
           });
           setTerminalEmbeddedMessagesLoading(false);
           handleConversationActivity(normalizedSessionId, {
@@ -11827,8 +11861,8 @@ export default function CodexDeckApp() {
                   Install codex-deck-terminal skill?
                 </div>
                 <div className="mt-1 text-xs text-zinc-400">
-                  Terminal chat init needs the `codex-deck-terminal` skill before
-                  sending the first bound-session message.
+                  Terminal chat init needs the `codex-deck-terminal` skill
+                  before sending the first bound-session message.
                 </div>
               </div>
               <div className="space-y-3 p-4">
@@ -12306,7 +12340,6 @@ export default function CodexDeckApp() {
                       onChatInSession={() => {
                         void handleChatInTerminalSession();
                       }}
-                      onOpenSession={handleSelectSession}
                       onFilePathLinkClick={handleFilePathLinkClick}
                       onApproveAiTerminalStep={handleApproveAiTerminalStep}
                       onRejectAiTerminalStep={handleRejectAiTerminalStep}

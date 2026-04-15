@@ -1,4 +1,7 @@
-import type { ConversationMessage, SystemContextResponse } from "@codex-deck/api";
+import type {
+  ConversationMessage,
+  SystemContextResponse,
+} from "@codex-deck/api";
 
 export const AI_TERMINAL_DEVELOPER_INSTRUCTIONS = `You are an AI terminal planning assistant.
 
@@ -126,6 +129,11 @@ export interface AiTerminalExecutionResult {
   markerFound: boolean;
 }
 
+interface AiTerminalPersistedStepState {
+  stepId: string;
+  state: AiTerminalStepState;
+}
+
 function normalizeText(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -157,11 +165,7 @@ function pickRisk(value: string | null): AiTerminalRisk {
 }
 
 function pickNextAction(value: string | null): AiTerminalNextAction | null {
-  if (
-    value === "approve" ||
-    value === "reject" ||
-    value === "provide_input"
-  ) {
+  if (value === "approve" || value === "reject" || value === "provide_input") {
     return value;
   }
   return null;
@@ -188,7 +192,9 @@ function parseAiTerminalStep(text: string): AiTerminalStepDirective | null {
   };
 }
 
-function parseAiTerminalDirective(rawBlock: string): AiTerminalDirective | null {
+function parseAiTerminalDirective(
+  rawBlock: string,
+): AiTerminalDirective | null {
   const normalized = rawBlock.replace(/\r\n/g, "\n").trim();
   if (!normalized) {
     return null;
@@ -252,7 +258,9 @@ export function parseAiTerminalMessage(
     return null;
   }
 
-  const matches = Array.from(normalized.matchAll(AI_TERMINAL_PLAN_BLOCK_PATTERN));
+  const matches = Array.from(
+    normalized.matchAll(AI_TERMINAL_PLAN_BLOCK_PATTERN),
+  );
   if (matches.length !== 1) {
     return null;
   }
@@ -275,6 +283,144 @@ export function parseAiTerminalMessage(
     directive,
     trailingMarkdown,
     rawBlock,
+  };
+}
+
+export function parseAiTerminalPersistedStepState(
+  text: string,
+): AiTerminalPersistedStepState | null {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const executionBlock = normalized.match(
+    /<ai-terminal-execution>\s*([\s\S]*?)\s*<\/ai-terminal-execution>/i,
+  );
+  if (executionBlock) {
+    const block = executionBlock[1] ?? "";
+    const stepId = extractTagValue(block, "step_id");
+    const status = extractTagValue(block, "status");
+    if (!stepId || !status) {
+      return null;
+    }
+    if (status === "failed" || status === "timed_out") {
+      return {
+        stepId,
+        state: "failed",
+      };
+    }
+    if (status === "success" || status === "completed_unknown") {
+      return {
+        stepId,
+        state: "completed",
+      };
+    }
+    return null;
+  }
+
+  const feedbackBlock = normalized.match(
+    /<ai-terminal-feedback>\s*([\s\S]*?)\s*<\/ai-terminal-feedback>/i,
+  );
+  if (!feedbackBlock) {
+    return null;
+  }
+
+  const block = feedbackBlock[1] ?? "";
+  const stepId = extractTagValue(block, "step_id");
+  const decision = extractTagValue(block, "decision");
+  if (!stepId || decision !== "rejected") {
+    return null;
+  }
+
+  return {
+    stepId,
+    state: "rejected",
+  };
+}
+
+export function deriveAiTerminalStepStatesByMessageKey<T>(
+  items: T[],
+  input: {
+    getMessage: (item: T) => ConversationMessage | null | undefined;
+    getMessageKey: (
+      item: T,
+      index: number,
+      planIndex: number,
+    ) => string | null | undefined;
+  },
+): Record<string, Record<string, AiTerminalStepState | undefined>> {
+  const stepStatesByMessageKey: Record<
+    string,
+    Record<string, AiTerminalStepState | undefined>
+  > = {};
+  const plans: Array<{ messageKey: string; stepIds: Set<string> }> = [];
+  let planIndex = 0;
+
+  items.forEach((item, index) => {
+    const message = input.getMessage(item);
+    if (!message) {
+      return;
+    }
+
+    const text = extractConversationMessageText(message);
+    if (!text) {
+      return;
+    }
+
+    const parsedPlan = parseAiTerminalMessage(text);
+    if (message.type === "assistant" && parsedPlan?.directive.kind === "plan") {
+      const messageKey = input.getMessageKey(item, index, planIndex)?.trim();
+      planIndex += 1;
+      if (!messageKey) {
+        return;
+      }
+
+      plans.push({
+        messageKey,
+        stepIds: new Set(parsedPlan.directive.steps.map((step) => step.stepId)),
+      });
+      return;
+    }
+
+    const persistedState = parseAiTerminalPersistedStepState(text);
+    if (!persistedState) {
+      return;
+    }
+
+    for (
+      let currentPlanIndex = plans.length - 1;
+      currentPlanIndex >= 0;
+      currentPlanIndex -= 1
+    ) {
+      const plan = plans[currentPlanIndex];
+      if (!plan?.stepIds.has(persistedState.stepId)) {
+        continue;
+      }
+
+      stepStatesByMessageKey[plan.messageKey] = {
+        ...(stepStatesByMessageKey[plan.messageKey] ?? {}),
+        [persistedState.stepId]: persistedState.state,
+      };
+      break;
+    }
+  });
+
+  return stepStatesByMessageKey;
+}
+
+export function mergeAiTerminalStepStates(
+  persistedStates?: Record<string, AiTerminalStepState | undefined> | null,
+  overlayStates?: Record<string, AiTerminalStepState | undefined> | null,
+): Record<string, AiTerminalStepState | undefined> | undefined {
+  const normalizedPersisted = persistedStates ?? undefined;
+  const normalizedOverlay = overlayStates ?? undefined;
+  if (!normalizedPersisted && !normalizedOverlay) {
+    return undefined;
+  }
+  return {
+    ...(normalizedOverlay ?? {}),
+    ...(normalizedPersisted ?? {}),
   };
 }
 
@@ -333,7 +479,8 @@ export function summarizeAiTerminalOutput(output: string): {
 
   return {
     outputSummary: summarizedLines.join("\n").trim(),
-    errorSummary: errorLines.length > 0 ? errorLines.slice(0, 6).join("\n") : null,
+    errorSummary:
+      errorLines.length > 0 ? errorLines.slice(0, 6).join("\n") : null,
   };
 }
 
@@ -349,7 +496,7 @@ export function buildAiTerminalExecutionWrapper(input: {
     input.command.trim(),
     "}",
     "__CODEX_DECK_AI_EXIT_CODE=$?",
-    "__CODEX_DECK_AI_CWD=\"$(pwd)\"",
+    '__CODEX_DECK_AI_CWD="$(pwd)"',
     `printf '\\n${RESULT_MARKER_PREFIX} step=%s exit=%s cwd=%s\\n' ${shellQuote(
       input.stepId,
     )} \"$__CODEX_DECK_AI_EXIT_CODE\" \"$__CODEX_DECK_AI_CWD\"`,
@@ -531,7 +678,9 @@ export function buildAiTerminalRejectionFeedback(input: {
   return parts.join("\n");
 }
 
-export function shouldAttachAiTerminalOutputReference(rawOutput: string): boolean {
+export function shouldAttachAiTerminalOutputReference(
+  rawOutput: string,
+): boolean {
   const normalized = trimMarkerLine(rawOutput);
   if (!normalized) {
     return false;
@@ -569,12 +718,16 @@ export function buildAiTerminalTurnPrompt(input: {
     sections.push("<current_step>");
     sections.push(`<step_id>${input.currentStep.stepId}</step_id>`);
     sections.push(`<step_goal>${input.currentStep.stepGoal ?? ""}</step_goal>`);
-    sections.push(`<command><![CDATA[${input.currentStep.command}]]></command>`);
+    sections.push(
+      `<command><![CDATA[${input.currentStep.command}]]></command>`,
+    );
     sections.push("</current_step>");
   }
 
   if (input.latestExecution) {
-    sections.push(buildAiTerminalExecutionFeedback({ result: input.latestExecution }));
+    sections.push(
+      buildAiTerminalExecutionFeedback({ result: input.latestExecution }),
+    );
   }
 
   if (normalizeText(input.userRequest)) {

@@ -51,8 +51,10 @@ import { shouldToggleCollapsedSegmentFromContentClick } from "../segment-toggle-
 import { findConversationSearchMatches } from "../conversation-search";
 import { shouldShowTokenLimitNotice } from "../token-limit-notices";
 import {
+  deriveAiTerminalStepStatesByMessageKey,
   extractConversationMessageText,
   getAiTerminalMessageKey,
+  mergeAiTerminalStepStates,
   parseAiTerminalMessage,
   type AiTerminalStepDirective,
   type AiTerminalStepState,
@@ -1656,7 +1658,11 @@ const SessionView = memo(
         });
       }, [visibleMessages]);
       const latestAiTerminalPlanEntryKey = useMemo(() => {
-        for (let index = visibleMessageEntries.length - 1; index >= 0; index -= 1) {
+        for (
+          let index = visibleMessageEntries.length - 1;
+          index >= 0;
+          index -= 1
+        ) {
           const entry = visibleMessageEntries[index];
           const parsed = parseAiTerminalMessage(
             extractConversationMessageText(entry.message),
@@ -1667,6 +1673,15 @@ const SessionView = memo(
         }
         return null;
       }, [visibleMessageEntries]);
+      const persistedAiTerminalStepStatesByMessageKey = useMemo(
+        () =>
+          deriveAiTerminalStepStatesByMessageKey(visibleMessageEntries, {
+            getMessage: (entry) => entry.message,
+            getMessageKey: (entry) =>
+              getAiTerminalMessageKey(entry.message) ?? entry.entryKey,
+          }),
+        [visibleMessageEntries],
+      );
       const chatMessages = visibleMessages.filter(
         (m) => m.type === "user" || m.type === "assistant",
       );
@@ -1993,8 +2008,12 @@ const SessionView = memo(
                   terminalId: aiTerminalTerminalId,
                   messageKey: aiTerminalMessageKey,
                   isActionable: true,
-                  stepStates:
+                  stepStates: mergeAiTerminalStepStates(
+                    persistedAiTerminalStepStatesByMessageKey[
+                      aiTerminalMessageKey
+                    ],
                     aiTerminalStepStatesByMessageKey[aiTerminalMessageKey],
+                  ),
                   onApproveStep: onApproveAiTerminalStep,
                   onRejectStep: onRejectAiTerminalStep,
                 }

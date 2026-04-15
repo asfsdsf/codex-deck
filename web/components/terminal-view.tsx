@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { Bot, Link2, MessageSquarePlus, RefreshCw } from "lucide-react";
+import { Bot, MessageSquarePlus, RefreshCw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ConversationMessage, TerminalSnapshotResponse } from "@codex-deck/api";
 import {
@@ -60,7 +60,6 @@ interface TerminalViewProps {
   embeddedMessagesLoading?: boolean;
   chatBusy?: boolean;
   onChatInSession?: () => void;
-  onOpenSession?: (sessionId: string) => void;
   onFilePathLinkClick?: (href: string) => boolean;
   onApproveAiTerminalStep?: (input: {
     sessionId: string;
@@ -120,7 +119,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     embeddedMessagesLoading = false,
     chatBusy = false,
     onChatInSession,
-    onOpenSession,
     onFilePathLinkClick,
     onApproveAiTerminalStep,
     onRejectAiTerminalStep,
@@ -574,6 +572,9 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     [embeddedMessages, terminalOutput, timelineAnchors],
   );
   const hasEmbeddedTimelineEntries = terminalTimeline.entries.length > 0;
+  const hasLiveTerminalOutput = terminalTimeline.liveOutput.trim().length > 0;
+  const shouldShowActivateTerminalCta =
+    !running && !hasLiveTerminalOutput && !embeddedMessagesLoading;
   const liveTerminalContextKey = useMemo(
     () =>
       [
@@ -723,16 +724,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
           <MessageSquarePlus className="h-3.5 w-3.5" />
           Chat in session
         </button>
-        {boundSessionId && onOpenSession ? (
-          <button
-            type="button"
-            onClick={() => onOpenSession(boundSessionId)}
-            className="inline-flex h-7 items-center gap-1.5 rounded border border-zinc-700 bg-zinc-900/60 px-2.5 text-[11px] text-zinc-200 transition-colors hover:bg-zinc-800/70"
-          >
-            <Link2 className="h-3.5 w-3.5" />
-            Open session
-          </button>
-        ) : null}
       </div>
       <div className="flex-1 min-h-0 relative overflow-hidden">
         <div ref={timelineViewportRef} className="h-full overflow-y-auto">
@@ -818,6 +809,32 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
             <div className="rounded-lg border border-zinc-600/50 bg-zinc-800/90 px-5 py-3 text-sm text-zinc-200 shadow-lg">
               Read-only mode — press{" "}
               <strong className="text-amber-300">Take Over</strong> to type
+            </div>
+          </div>
+        )}
+        {shouldShowActivateTerminalCta && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-6">
+            <div className="pointer-events-auto w-full max-w-lg rounded-[28px] border border-zinc-800 bg-zinc-950 px-8 py-9 text-center shadow-[0_30px_80px_-52px_rgba(0,0,0,0.95)]">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-700 bg-zinc-900 text-cyan-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <RefreshCw className="h-6 w-6" />
+              </div>
+              <div className="mt-5 text-lg font-semibold tracking-tight text-zinc-100">
+                Activate terminal emulator
+              </div>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-400">
+                This terminal is inactive. Restart it to bring back live input
+                and output in this pane.
+              </p>
+              <button
+                type="button"
+                onClick={handleRestart}
+                className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-5 text-sm font-medium text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:border-cyan-400/55 hover:bg-cyan-500/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                aria-label="Activate terminal emulator"
+                title="Activate terminal emulator"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Activate terminal
+              </button>
             </div>
           </div>
         )}

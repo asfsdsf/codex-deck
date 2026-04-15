@@ -10,6 +10,13 @@ import type {
   TerminalStreamEvent,
   TerminalSummary,
 } from "./storage";
+import { getAllTerminalBindingsSync } from "./terminal-bindings";
+import {
+  listPersistedTerminalStatesSync,
+  persistTerminalState,
+  removeTerminalState,
+  removeTerminalStateSync,
+} from "./terminal-state";
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -70,15 +77,10 @@ interface CreatedTerminalProcess {
   startupNotice: string | null;
 }
 
-interface TerminalInstanceSnapshot {
-  terminalId: string;
-  cwd: string;
-  shell: string;
-  output: string;
-  seq: number;
-  running: boolean;
-  writeOwnerId: string | null;
-  timestamp: number;
+interface TerminalInstanceOptions {
+  start?: boolean;
+  shell?: string | null;
+  firstCommand?: string | null;
 }
 
 class TerminalInstance {
@@ -101,10 +103,15 @@ class TerminalInstance {
     private readonly timestamp: number,
     private readonly onStateChange: () => void,
     private readonly onExitCleanup: (terminalId: string) => void,
+    private readonly onMetadataChange: () => void,
+    options?: TerminalInstanceOptions,
   ) {
-    this.shell = resolveShell();
+    this.shell = options?.shell?.trim() || resolveShell();
+    this.firstCommand = options?.firstCommand?.trim() || null;
     this.env = normalizeEnv(process.env);
-    this.start();
+    if (options?.start !== false) {
+      this.start();
+    }
   }
 
   public getSummary(): TerminalSummary {
@@ -167,6 +174,10 @@ class TerminalInstance {
     this.start();
     this.onStateChange();
     return this.getSnapshot();
+  }
+
+  public isRunning(): boolean {
+    return this.running;
   }
 
   public writeInput(input: string): void {
@@ -278,11 +289,20 @@ class TerminalInstance {
       }
       this.terminalProcess = null;
       this.running = false;
+      const previousWriteOwnerId = this.writeOwnerId;
+      this.writeOwnerId = null;
       this.publish({
         terminalId: this.terminalId,
         type: "state",
         running: false,
       });
+      if (previousWriteOwnerId !== null) {
+        this.publish({
+          terminalId: this.terminalId,
+          type: "ownership",
+          writeOwnerId: null,
+        });
+      }
       this.onStateChange();
       this.onExitCleanup(this.terminalId);
     });
@@ -296,6 +316,7 @@ class TerminalInstance {
     if (created.startupNotice) {
       this.pushOutput(`${created.startupNotice}\r\n`);
     }
+    this.onMetadataChange();
   }
 
   private pushOutput(chunk: string): void {
@@ -350,6 +371,7 @@ class TerminalInstance {
         if (candidate) {
           this.firstCommand = candidate;
           this.onStateChange();
+          this.onMetadataChange();
           return;
         }
         continue;
@@ -379,6 +401,10 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
   private readonly terminals = new Map<string, TerminalInstance>();
   private readonly summaryListeners = new Set<TerminalSummaryListener>();
 
+  public constructor() {
+    this.rehydrateBoundTerminals();
+  }
+
   public listTerminals(): TerminalSummary[] {
     return [...this.terminals.values()]
       .map((terminal) => terminal.getSummary())
@@ -388,16 +414,14 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
   public createTerminal(cwd?: string): TerminalSnapshotResponse {
     const normalizedCwd = resolve((cwd?.trim() || process.cwd()).trim());
     const terminalId = createTerminalId();
-    const terminal = new TerminalInstance(
+    const terminal = this.createTerminalInstance({
       terminalId,
-      normalizedCwd,
-      Date.now(),
-      () => this.notifySummaries(),
-      (id) => {
-        void this.removeTerminal(id);
-      },
-    );
+      cwd: normalizedCwd,
+      timestamp: Date.now(),
+      start: true,
+    });
     this.terminals.set(terminalId, terminal);
+    void persistTerminalState(terminal.getSummary());
     this.notifySummaries();
     return terminal.getSnapshot();
   }
@@ -498,7 +522,82 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
     }
     this.terminals.delete(terminalId);
     await terminal.dispose();
+    await removeTerminalState(terminalId);
     this.notifySummaries();
+  }
+
+  private createTerminalInstance(
+    input: {
+      terminalId: string;
+      cwd: string;
+      timestamp: number;
+      start: boolean;
+      shell?: string | null;
+      firstCommand?: string | null;
+    },
+  ): TerminalInstance {
+    return new TerminalInstance(
+      input.terminalId,
+      input.cwd,
+      input.timestamp,
+      () => this.notifySummaries(),
+      (terminalId) => {
+        void this.handleTerminalExit(terminalId);
+      },
+      () => {
+        const terminal = this.terminals.get(input.terminalId);
+        if (!terminal) {
+          return;
+        }
+        void persistTerminalState(terminal.getSummary());
+      },
+      {
+        start: input.start,
+        shell: input.shell,
+        firstCommand: input.firstCommand,
+      },
+    );
+  }
+
+  private async handleTerminalExit(terminalId: string): Promise<void> {
+    const terminal = this.terminals.get(terminalId);
+    if (!terminal || terminal.isRunning()) {
+      return;
+    }
+
+    const bindings = getAllTerminalBindingsSync();
+    if (bindings[terminalId]) {
+      this.notifySummaries();
+      return;
+    }
+
+    await this.removeTerminal(terminalId);
+  }
+
+  private rehydrateBoundTerminals(): void {
+    const bindings = getAllTerminalBindingsSync();
+    if (Object.keys(bindings).length === 0) {
+      return;
+    }
+
+    for (const record of listPersistedTerminalStatesSync()) {
+      if (!bindings[record.terminalId]) {
+        removeTerminalStateSync(record.terminalId);
+        continue;
+      }
+      if (this.terminals.has(record.terminalId)) {
+        continue;
+      }
+      const terminal = this.createTerminalInstance({
+        terminalId: record.terminalId,
+        cwd: record.cwd,
+        timestamp: record.timestamp,
+        start: false,
+        shell: record.shell,
+        firstCommand: record.firstCommand,
+      });
+      this.terminals.set(record.terminalId, terminal);
+    }
   }
 }
 
@@ -584,6 +683,9 @@ type PtySpawn = (
 
 let cachedPtySpawn: PtySpawn | null = null;
 let ptyUnavailableReason: string | null = null;
+let terminalProcessFactoryOverride:
+  | ((cwd: string, env: Record<string, string>) => CreatedTerminalProcess)
+  | null = null;
 
 function summarizePtyUnavailableReason(reason: string | null): string {
   const normalized = reason?.trim();
@@ -659,6 +761,10 @@ function createTerminalProcess(
   cwd: string,
   env: Record<string, string>,
 ): CreatedTerminalProcess {
+  if (terminalProcessFactoryOverride) {
+    return terminalProcessFactoryOverride(cwd, env);
+  }
+
   const shellCandidates = resolveShellCandidates();
   const shellForPty = shellCandidates[0] ?? resolveShell();
   const ptySpawn = getNodePtySpawn();
@@ -858,6 +964,14 @@ export function setLocalTerminalManagerForTests(
   override: LocalTerminalManager | null,
 ): void {
   terminalManagerOverride = override;
+}
+
+export function setTerminalProcessFactoryForTests(
+  override:
+    | ((cwd: string, env: Record<string, string>) => CreatedTerminalProcess)
+    | null,
+): void {
+  terminalProcessFactoryOverride = override;
 }
 
 export async function closeLocalTerminalManager(): Promise<void> {
