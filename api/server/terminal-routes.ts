@@ -16,6 +16,8 @@ import type {
   TerminalBindingResponse,
   TerminalClaimWriteRequest,
   TerminalCommandResponse,
+  TerminalExecuteCommandRequest,
+  TerminalExecuteCommandResponse,
   TerminalEventsResponse,
   TerminalInputRequest,
   TerminalListResponse,
@@ -166,7 +168,9 @@ export function registerTerminalRoutes(app: Hono): void {
       }
 
       return c.json(
-        (await getTerminalBinding(terminalId)) satisfies TerminalBindingResponse,
+        (await getTerminalBinding(
+          terminalId,
+        )) satisfies TerminalBindingResponse,
       );
     } catch (error) {
       return c.json(
@@ -295,6 +299,85 @@ export function registerTerminalRoutes(app: Hono): void {
         { error: toErrorMessage(error) },
         responseStatusForError(error),
       );
+    }
+  });
+
+  app.post("/api/terminals/:terminalId/execute", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId");
+      const body = (await c.req
+        .json()
+        .catch(() => ({}))) as Partial<TerminalExecuteCommandRequest>;
+      if (typeof body.command !== "string" || !body.command.trim()) {
+        return c.json({ error: "command must be a non-empty string" }, 400);
+      }
+      if (
+        body.cwd !== undefined &&
+        body.cwd !== null &&
+        typeof body.cwd !== "string"
+      ) {
+        return c.json({ error: "cwd must be a string or null" }, 400);
+      }
+      if (
+        body.displayCommand !== undefined &&
+        body.displayCommand !== null &&
+        typeof body.displayCommand !== "string"
+      ) {
+        return c.json(
+          { error: "displayCommand must be a string or null" },
+          400,
+        );
+      }
+      if (
+        body.timeoutMs !== undefined &&
+        (!Number.isFinite(body.timeoutMs) || body.timeoutMs <= 0)
+      ) {
+        return c.json({ error: "timeoutMs must be a positive number" }, 400);
+      }
+
+      const clientId = c.req.query("clientId");
+      const manager = getLocalTerminalManager();
+      const snapshot = manager.getSnapshot(terminalId);
+      if (!snapshot) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+      const currentOwner = manager.getWriteOwnerId(terminalId);
+      if (currentOwner && clientId !== currentOwner) {
+        return c.json({ error: "another client owns terminal write" }, 403);
+      }
+
+      const result = await manager.executeCommand(terminalId, {
+        command: body.command,
+        cwd: body.cwd,
+        timeoutMs:
+          typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
+        displayCommand: body.displayCommand,
+      });
+      if (!result) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+      const nextSnapshot = manager.getSnapshot(terminalId);
+      if (!nextSnapshot) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+      return c.json({
+        ...toTerminalCommandResponse(nextSnapshot.terminalId, nextSnapshot),
+        startSeq: result.startSeq,
+        endSeq: result.endSeq,
+        exitCode: result.exitCode,
+        cwdAfter: result.cwdAfter,
+        rawOutput: result.rawOutput,
+        timedOut: result.timedOut,
+      } satisfies TerminalExecuteCommandResponse);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      const lowerMessage = message.toLowerCase();
+      const status = lowerMessage.includes("not running")
+        ? 409
+        : lowerMessage.includes("active command")
+          ? 409
+          : responseStatusForError(error);
+      return c.json({ error: message }, status);
     }
   });
 

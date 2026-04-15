@@ -226,7 +226,11 @@ function sanitizeWorkflowId(value: string): string {
 }
 
 function workflowFile(projectRoot: string, workflowId: string): string {
-  return join(projectRoot, ".codex-deck", `${sanitizeWorkflowId(workflowId)}.json`);
+  return join(
+    projectRoot,
+    ".codex-deck",
+    `${sanitizeWorkflowId(workflowId)}.json`,
+  );
 }
 
 function workflowRegistryKey(projectRoot: string, workflowId: string): string {
@@ -426,7 +430,9 @@ function buildCreateConflictPayload(
     conflictingPath,
     suggestedIds,
     suggestedPath:
-      suggestedIds.length > 0 ? workflowFile(projectRoot, suggestedIds[0]) : null,
+      suggestedIds.length > 0
+        ? workflowFile(projectRoot, suggestedIds[0])
+        : null,
   };
 }
 
@@ -1623,7 +1629,9 @@ export async function createWorkflow(
   codexHome?: string | null,
 ): Promise<WorkflowCreateResponse> {
   const projectRoot = resolve(input.projectRoot?.trim() || process.cwd());
-  const workflowId = sanitizeWorkflowId(input.workflowId?.trim() || input.title);
+  const workflowId = sanitizeWorkflowId(
+    input.workflowId?.trim() || input.title,
+  );
   const workflowPath = workflowFile(projectRoot, workflowId);
   const workflowDir = dirname(workflowPath);
   const workflowLockPath = `${workflowPath.slice(0, -".json".length)}.lock`;
@@ -1672,7 +1680,8 @@ export async function createWorkflow(
       codexHome: codexHomeValue,
       codexCliPath: defaultCodexCliPath(),
       maxParallel:
-        typeof input.maxParallel === "number" && Number.isFinite(input.maxParallel)
+        typeof input.maxParallel === "number" &&
+        Number.isFinite(input.maxParallel)
           ? Math.max(1, Math.floor(input.maxParallel))
           : 1,
       mergePolicy: DEFAULT_WORKFLOW_MERGE_POLICY,
@@ -1689,11 +1698,12 @@ export async function createWorkflow(
       },
     ],
   };
-  const sessionIndexEntries = buildWorkflowSessionIndexRecordsFromWorkflowPayload(
-    registryKey,
-    workflowPath,
-    payload,
-  );
+  const sessionIndexEntries =
+    buildWorkflowSessionIndexRecordsFromWorkflowPayload(
+      registryKey,
+      workflowPath,
+      payload,
+    );
   const registryPayload = buildRegistryRecordFromWorkflowPayload(
     registryKey,
     workflowPath,

@@ -110,10 +110,17 @@ import {
   getTerminalSkillAvailability,
   type TerminalSkillInstallChoice,
 } from "../terminal-skill-install";
+import { sendTerminalRestartNoticeToBoundSession } from "../terminal-session-notices";
 import {
   resolveSelectedWorkflowSummary,
   resolveWorkflowSelection,
 } from "../workflow-selection";
+import {
+  resolvePaneSlashCommandNavigation,
+  resolveRightPaneTarget,
+  type CenterViewMode,
+  type RightPaneTarget,
+} from "../right-pane-routing";
 import { findActiveFileMentionToken } from "../file-mentions";
 import {
   findActiveSkillSelectorToken,
@@ -205,6 +212,7 @@ import {
   setSessionSkillEnabled,
   setWorkflowProjectSkillEnabled,
   cleanSessionBackgroundTerminalRuns,
+  executeTerminalCommand as executeTerminalCommandRequest,
   runInTerminal as runInTerminalRequest,
   type RunInTerminalOptions,
   type RunInTerminalResult,
@@ -559,18 +567,6 @@ function daemonCommandText(details: Record<string, unknown>): string {
 }
 
 type CollaborationModeKey = string;
-type CenterViewMode = "session" | "terminal" | "workflow";
-type RightPaneTarget =
-  | {
-      kind: "session";
-      sessionId: string;
-    }
-  | {
-      kind: "workflow-project";
-      workflowKey: string;
-      projectPath: string;
-    }
-  | null;
 
 interface TokenUsageSummary {
   inputTokens: number;
@@ -4955,28 +4951,17 @@ export default function CodexDeckApp() {
   );
 
   const rightPaneTarget = useMemo<RightPaneTarget>(() => {
-    if (centerView === "workflow") {
-      if (!workflowRightPaneProjectPath || !workflowRightPaneWorkflowKey) {
-        return null;
-      }
-      return {
-        kind: "workflow-project",
-        workflowKey: workflowRightPaneWorkflowKey,
-        projectPath: workflowRightPaneProjectPath,
-      };
-    }
-
-    if (!selectedSession) {
-      return null;
-    }
-
-    return {
-      kind: "session",
-      sessionId: selectedSession,
-    };
+    return resolveRightPaneTarget({
+      centerView,
+      selectedSessionId: selectedSession,
+      terminalSessionId: terminalComposerSessionId,
+      workflowProjectPath: workflowRightPaneProjectPath,
+      workflowKey: workflowRightPaneWorkflowKey,
+    });
   }, [
     centerView,
     selectedSession,
+    terminalComposerSessionId,
     workflowRightPaneProjectPath,
     workflowRightPaneWorkflowKey,
   ]);
@@ -8838,16 +8823,20 @@ export default function CodexDeckApp() {
       const normalizedArgs = args.trim();
       const commandSessionId = activeComposerSessionId;
       const commandSessionData = activeComposerSessionData;
-      const keepWorkflowViewForPaneCommand =
-        centerView === "workflow" &&
-        !!workflowComposerSessionId &&
-        commandSessionId === workflowComposerSessionId;
       const openPaneForCommand = (
         mode: RightPaneMode,
         refresh?: () => void,
       ) => {
-        if (keepWorkflowViewForPaneCommand) {
-          setSelectedWorkflowTaskId(null);
+        const navigation = resolvePaneSlashCommandNavigation({
+          centerView,
+          commandSessionId,
+          paneSessionId: activeComposerSessionId,
+        });
+
+        if (navigation.preserveCenterView) {
+          if (navigation.shouldClearWorkflowTaskSelection) {
+            setSelectedWorkflowTaskId(null);
+          }
           openRightPane();
           setSelectedPaneMode(mode);
           if (refresh && typeof window !== "undefined") {
@@ -8858,7 +8847,7 @@ export default function CodexDeckApp() {
           return;
         }
 
-        if (commandSessionId) {
+        if (navigation.shouldSelectCommandSession && commandSessionId) {
           setSelectedSession(commandSessionId);
         }
         setCenterView("session");
@@ -9184,7 +9173,6 @@ export default function CodexDeckApp() {
       centerView,
       activeComposerSessionData,
       activeComposerSessionId,
-      workflowComposerSessionId,
       openModelSelectorFromCommand,
       hasPlanMode,
       handleTogglePlanMode,
@@ -9494,6 +9482,18 @@ export default function CodexDeckApp() {
     [selectedTerminalData, sendMessageText, terminalComposerSessionId],
   );
 
+  const handleTerminalRestarted = useCallback(() => {
+    void sendTerminalRestartNoticeToBoundSession({
+      boundSessionId: terminalComposerSessionId,
+      cwd: selectedTerminalData?.cwd ?? null,
+      sendMessage: sendMessageText,
+    }).catch((error) => {
+      setInteractionError(
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+  }, [selectedTerminalData?.cwd, sendMessageText, terminalComposerSessionId]);
+
   const handleWorkflowComposerInit = useCallback(
     async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
       const sessionId = await initializeWorkflowChatSession({
@@ -9540,19 +9540,38 @@ export default function CodexDeckApp() {
       setInteractionError(null);
 
       try {
-        const runResult = await runInTerminalRequest(input.step.command, {
-          terminalId: input.terminalId,
-        });
-        const parsedResult = parseAiTerminalExecutionResult({
+        const runResult = await executeTerminalCommandRequest(
+          input.terminalId,
+          {
+            command: input.step.command,
+            cwd: input.step.cwd?.trim() || null,
+            displayCommand: input.step.command,
+          },
+          undefined,
+        );
+        const parsedResult = {
           stepId: input.step.stepId,
-          rawOutput: runResult.rawOutput,
+          exitCode: runResult.exitCode,
           timedOut: runResult.timedOut,
-          fallbackCwd:
+          cwdAfter:
+            runResult.cwdAfter.trim() ||
             input.step.cwd?.trim() ||
             selectedTerminalData?.cwd?.trim() ||
             selectedSessionData?.project ||
             ".",
+          outputSummary: "",
+          errorSummary: null as string | null,
+          rawOutput: runResult.rawOutput,
+          markerFound: true,
+        };
+        const summarizedResult = parseAiTerminalExecutionResult({
+          stepId: input.step.stepId,
+          rawOutput: runResult.rawOutput,
+          timedOut: runResult.timedOut,
+          fallbackCwd: parsedResult.cwdAfter,
         });
+        parsedResult.outputSummary = summarizedResult.outputSummary;
+        parsedResult.errorSummary = summarizedResult.errorSummary;
         const stepFailed =
           parsedResult.timedOut ||
           (parsedResult.exitCode !== null && parsedResult.exitCode !== 0);
@@ -9594,6 +9613,7 @@ export default function CodexDeckApp() {
       }
     },
     [
+      executeTerminalCommandRequest,
       selectedTerminalData?.cwd,
       selectedSessionData?.project,
       sendMessageText,
@@ -9607,6 +9627,7 @@ export default function CodexDeckApp() {
       terminalId: string;
       messageKey: string;
       step: AiTerminalStepDirective;
+      reason: string;
     }) => {
       setAiTerminalStepState(
         input.sessionId,
@@ -9620,7 +9641,7 @@ export default function CodexDeckApp() {
         {
           text: buildAiTerminalRejectionFeedback({
             stepId: input.step.stepId,
-            reason: "User rejected this step in the terminal UI.",
+            reason: input.reason,
           }),
           images: [],
         },
@@ -9818,6 +9839,7 @@ export default function CodexDeckApp() {
       setTerminalEmbeddedMessages({
         sessionId: null,
         messages: [],
+        persistedStepStatesByMessageKey: {},
       });
       setTerminalEmbeddedMessagesLoading(false);
       return;
@@ -12340,6 +12362,7 @@ export default function CodexDeckApp() {
                       onChatInSession={() => {
                         void handleChatInTerminalSession();
                       }}
+                      onTerminalRestarted={handleTerminalRestarted}
                       onFilePathLinkClick={handleFilePathLinkClick}
                       onApproveAiTerminalStep={handleApproveAiTerminalStep}
                       onRejectAiTerminalStep={handleRejectAiTerminalStep}

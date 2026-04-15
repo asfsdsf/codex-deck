@@ -210,6 +210,8 @@ test("MessageBlock renders ai terminal action buttons when the plan is actionabl
 
   assert.match(html, /Approve and run/);
   assert.match(html, /Reject/);
+  assert.match(html, /Tell the bound session why this step should change/);
+  assert.match(html, /aria-label="Reject reason"/);
   assert.match(html, /Pending/);
 });
 

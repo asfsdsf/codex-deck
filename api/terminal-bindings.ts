@@ -88,7 +88,9 @@ function getWorkflowSessionIndexPath(
   return join(getWorkflowSessionIndexDir(codexHome), `${sessionId}.json`);
 }
 
-function normalizeTerminalBindingRecord(value: unknown): TerminalBindingRecord | null {
+function normalizeTerminalBindingRecord(
+  value: unknown,
+): TerminalBindingRecord | null {
   const record = asRecord(value);
   const terminalId = asString(record.terminalId);
   const sessionId = asString(record.sessionId);
@@ -108,7 +110,9 @@ async function readJsonFile(path: string): Promise<JsonObject> {
   return asRecord(JSON.parse(text));
 }
 
-async function readOptionalBindingRecord(path: string): Promise<TerminalBindingRecord | null> {
+async function readOptionalBindingRecord(
+  path: string,
+): Promise<TerminalBindingRecord | null> {
   try {
     return normalizeTerminalBindingRecord(await readJsonFile(path));
   } catch (error) {
@@ -131,7 +135,9 @@ async function writeTextFileAtomic(path: string, text: string): Promise<void> {
   await rename(tempPath, path);
 }
 
-async function ensureTerminalBindingDirs(codexHome?: string | null): Promise<void> {
+async function ensureTerminalBindingDirs(
+  codexHome?: string | null,
+): Promise<void> {
   await Promise.all([
     mkdir(getTerminalBindingsDir(codexHome), { recursive: true }),
     mkdir(getTerminalSessionIndexDir(codexHome), { recursive: true }),
@@ -407,7 +413,7 @@ export async function getTerminalSessionRoles(
     }),
   );
 
-  return roles.filter(
-    (entry): entry is TerminalSessionRoleSummary => Boolean(entry),
+  return roles.filter((entry): entry is TerminalSessionRoleSummary =>
+    Boolean(entry),
   );
 }

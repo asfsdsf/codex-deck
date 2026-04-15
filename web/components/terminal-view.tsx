@@ -3,7 +3,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { Bot, MessageSquarePlus, RefreshCw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
-import type { ConversationMessage, TerminalSnapshotResponse } from "@codex-deck/api";
+import type {
+  ConversationMessage,
+  TerminalSnapshotResponse,
+} from "@codex-deck/api";
 import {
   claimTerminalWrite,
   getTerminalSnapshot,
@@ -15,10 +18,17 @@ import {
 } from "../api";
 import { TERMINAL_FONT_FAMILY } from "../terminal-font";
 import type { ResolvedTheme } from "../theme";
-import type { AiTerminalStepDirective, AiTerminalStepState } from "../ai-terminal";
+import {
+  extractConversationMessageText,
+  parseAiTerminalMessage,
+  type AiTerminalStepDirective,
+  type AiTerminalStepState,
+} from "../ai-terminal";
 import {
   buildTerminalTimeline,
   getTerminalInlineAnchorOffset,
+  getTerminalTranscriptStartOffset,
+  normalizeFrozenTerminalOutputsInOrder,
   sanitizeTerminalTranscriptChunk,
   type TerminalTimelineAnchor,
 } from "../terminal-timeline";
@@ -60,6 +70,7 @@ interface TerminalViewProps {
   embeddedMessagesLoading?: boolean;
   chatBusy?: boolean;
   onChatInSession?: () => void;
+  onTerminalRestarted?: () => void;
   onFilePathLinkClick?: (href: string) => boolean;
   onApproveAiTerminalStep?: (input: {
     sessionId: string;
@@ -72,6 +83,7 @@ interface TerminalViewProps {
     terminalId: string;
     messageKey: string;
     step: AiTerminalStepDirective;
+    reason: string;
   }) => void;
 }
 
@@ -110,6 +122,39 @@ function TerminalTranscriptOutput(props: { text: string }) {
   );
 }
 
+function shouldFreezeTerminalTranscript(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const lines = normalized
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0);
+  if (lines.length === 0) {
+    return false;
+  }
+
+  if (lines.length > 1) {
+    return true;
+  }
+
+  return !(
+    /[#$%>»]$/.test(normalized) &&
+    (normalized.includes("/") ||
+      normalized.includes("~") ||
+      normalized.startsWith("(") ||
+      normalized.startsWith("["))
+  );
+}
+
+function isTerminalCompletionMessage(message: ConversationMessage): boolean {
+  const parsed = parseAiTerminalMessage(
+    extractConversationMessageText(message),
+  );
+  return parsed?.directive.kind === "finished";
+}
+
 const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const {
     terminalId,
@@ -119,6 +164,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     embeddedMessagesLoading = false,
     chatBusy = false,
     onChatInSession,
+    onTerminalRestarted,
     onFilePathLinkClick,
     onApproveAiTerminalStep,
     onRejectAiTerminalStep,
@@ -145,6 +191,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const anchorOrderRef = useRef(0);
   const renderedLiveOutputRef = useRef("");
   const renderedContextKeyRef = useRef("");
+  const restoredFrozenOutputsInOrderRef = useRef<string[]>([]);
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,10 +202,22 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const [timelineAnchors, setTimelineAnchors] = useState<
     Record<string, TerminalTimelineAnchor | undefined>
   >({});
+  const [frozenOutputByMessageKey, setFrozenOutputByMessageKey] = useState<
+    Record<string, string | undefined>
+  >({});
+  const [timelinePersistenceLoadedKey, setTimelinePersistenceLoadedKey] =
+    useState<string | null>(null);
   const terminalTheme = useMemo(
     () => getTerminalTheme(resolvedTheme),
     [resolvedTheme],
   );
+  const timelinePersistenceKey = useMemo(() => {
+    const normalizedSessionId = boundSessionId?.trim();
+    if (!normalizedSessionId) {
+      return null;
+    }
+    return `codex-deck:terminal-timeline:${terminalId}:${normalizedSessionId}`;
+  }, [boundSessionId, terminalId]);
 
   const isReadOnly =
     writeOwnerId !== null && writeOwnerId !== clientIdRef.current;
@@ -195,9 +254,86 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [isReadOnly, dismissReadOnlyWarning]);
 
   useEffect(() => {
-    const visibleMessageKeys = new Set(
-      embeddedMessages.map((item) => item.messageKey),
-    );
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!timelinePersistenceKey) {
+      restoredFrozenOutputsInOrderRef.current = [];
+      setFrozenOutputByMessageKey({});
+      setTimelinePersistenceLoadedKey(null);
+      return;
+    }
+
+    try {
+      const stored = window.localStorage.getItem(timelinePersistenceKey);
+      if (!stored) {
+        restoredFrozenOutputsInOrderRef.current = [];
+        setFrozenOutputByMessageKey({});
+        setTimelinePersistenceLoadedKey(timelinePersistenceKey);
+        return;
+      }
+      const parsed = JSON.parse(stored) as {
+        frozenOutputByMessageKey?: Record<string, string | undefined>;
+        frozenOutputsInOrder?: string[];
+      };
+      const restoredOutputsInOrder = Array.isArray(parsed.frozenOutputsInOrder)
+        ? parsed.frozenOutputsInOrder
+        : Object.values(parsed.frozenOutputByMessageKey ?? {});
+      restoredFrozenOutputsInOrderRef.current =
+        normalizeFrozenTerminalOutputsInOrder(
+          restoredOutputsInOrder.filter(
+            (value): value is string => typeof value === "string" && !!value,
+          ),
+        );
+      setFrozenOutputByMessageKey(parsed.frozenOutputByMessageKey ?? {});
+      setTimelinePersistenceLoadedKey(timelinePersistenceKey);
+    } catch {
+      restoredFrozenOutputsInOrderRef.current = [];
+      setFrozenOutputByMessageKey({});
+      setTimelinePersistenceLoadedKey(timelinePersistenceKey);
+    }
+  }, [timelinePersistenceKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !timelinePersistenceKey) {
+      return;
+    }
+    if (timelinePersistenceLoadedKey !== timelinePersistenceKey) {
+      return;
+    }
+
+    try {
+      const hasFrozenOutput = Object.values(frozenOutputByMessageKey).some(
+        (value) => typeof value === "string" && value.length > 0,
+      );
+      if (!hasFrozenOutput && embeddedMessages.length === 0) {
+        return;
+      }
+
+      const frozenOutputsInOrder = embeddedMessages
+        .filter((item) => isTerminalCompletionMessage(item.message))
+        .map((item) => frozenOutputByMessageKey[item.messageKey])
+        .filter(
+          (value): value is string => typeof value === "string" && !!value,
+        );
+      window.localStorage.setItem(
+        timelinePersistenceKey,
+        JSON.stringify({ frozenOutputByMessageKey, frozenOutputsInOrder }),
+      );
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [
+    embeddedMessages,
+    frozenOutputByMessageKey,
+    timelinePersistenceKey,
+    timelinePersistenceLoadedKey,
+  ]);
+
+  useEffect(() => {
+    const messageKeys = embeddedMessages.map((item) => item.messageKey);
+    const visibleMessageKeys = new Set(messageKeys);
+    const currentTerminalOutput = terminalOutputRef.current;
 
     setTimelineAnchors((current) => {
       let changed = false;
@@ -225,7 +361,84 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
       return changed ? next : current;
     });
-  }, [embeddedMessages, timelineResetVersion]);
+
+    setFrozenOutputByMessageKey((current) => {
+      let changed = false;
+      const next: Record<string, string | undefined> = {};
+      const completionItems = embeddedMessages.filter((item) =>
+        isTerminalCompletionMessage(item.message),
+      );
+      const normalizedCurrentOutputs = normalizeFrozenTerminalOutputsInOrder(
+        completionItems
+          .map((item) => current[item.messageKey])
+          .filter(
+            (value): value is string => typeof value === "string" && !!value,
+          ),
+      );
+      const normalizedCurrentByMessageKey = new Map<string, string>();
+      let normalizedIndex = 0;
+      for (const item of completionItems) {
+        const currentOutput = current[item.messageKey];
+        if (!currentOutput) {
+          continue;
+        }
+        const normalizedOutput = normalizedCurrentOutputs[normalizedIndex];
+        normalizedIndex += 1;
+        if (normalizedOutput) {
+          normalizedCurrentByMessageKey.set(item.messageKey, normalizedOutput);
+        }
+      }
+
+      for (const [messageKey, output] of Object.entries(current)) {
+        if (visibleMessageKeys.has(messageKey) && output) {
+          next[messageKey] =
+            normalizedCurrentByMessageKey.get(messageKey) ?? output;
+          if (next[messageKey] !== output) {
+            changed = true;
+          }
+        } else {
+          changed = true;
+        }
+      }
+
+      const firstMissingItem = embeddedMessages.find(
+        (item) =>
+          !timelineAnchors[item.messageKey] &&
+          isTerminalCompletionMessage(item.message),
+      );
+      if (firstMissingItem && !next[firstMissingItem.messageKey]) {
+        const transcriptStartOffset = getTerminalTranscriptStartOffset({
+          messageKeys,
+          anchors: timelineAnchors,
+          messageKey: firstMissingItem.messageKey,
+        });
+        const frozenSnapshot = currentTerminalOutput.slice(
+          transcriptStartOffset,
+        );
+        if (shouldFreezeTerminalTranscript(frozenSnapshot)) {
+          next[firstMissingItem.messageKey] = frozenSnapshot;
+          changed = true;
+        }
+      }
+
+      const restoredOutputs = restoredFrozenOutputsInOrderRef.current;
+      if (restoredOutputs.length > 0) {
+        let completionIndex = 0;
+        for (const item of completionItems) {
+          if (!next[item.messageKey]) {
+            const restoredOutput = restoredOutputs[completionIndex];
+            if (restoredOutput) {
+              next[item.messageKey] = restoredOutput;
+              changed = true;
+            }
+          }
+          completionIndex += 1;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [embeddedMessages, timelineAnchors, timelineResetVersion]);
 
   const applyFullSnapshot = useCallback(
     (snapshot: TerminalSnapshotResponse) => {
@@ -568,8 +781,14 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         output: terminalOutput,
         messageKeys: embeddedMessages.map((item) => item.messageKey),
         anchors: timelineAnchors,
+        frozenOutputByMessageKey,
       }),
-    [embeddedMessages, terminalOutput, timelineAnchors],
+    [
+      embeddedMessages,
+      frozenOutputByMessageKey,
+      terminalOutput,
+      timelineAnchors,
+    ],
   );
   const hasEmbeddedTimelineEntries = terminalTimeline.entries.length > 0;
   const hasLiveTerminalOutput = terminalTimeline.liveOutput.trim().length > 0;
@@ -646,6 +865,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         }
 
         applyFullSnapshot(snapshot);
+        onTerminalRestarted?.();
       } catch (reconnectError) {
         setError(
           reconnectError instanceof Error
@@ -654,7 +874,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         );
       }
     })();
-  }, [applyFullSnapshot, terminalId]);
+  }, [applyFullSnapshot, onTerminalRestarted, terminalId]);
 
   const handleTakeOver = useCallback(() => {
     void (async () => {
@@ -729,9 +949,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         <div ref={timelineViewportRef} className="h-full overflow-y-auto">
           <div
             className={`flex min-h-full flex-col ${
-              hasEmbeddedTimelineEntries
-                ? "gap-3 px-2 py-1"
-                : "px-2 py-1"
+              hasEmbeddedTimelineEntries ? "gap-3 px-2 py-1" : "px-2 py-1"
             }`}
           >
             {hasEmbeddedTimelineEntries ? (

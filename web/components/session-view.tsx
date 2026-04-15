@@ -264,6 +264,7 @@ interface SessionViewProps {
     terminalId: string;
     messageKey: string;
     step: AiTerminalStepDirective;
+    reason: string;
   }) => void;
 }
 

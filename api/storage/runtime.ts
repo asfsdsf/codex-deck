@@ -412,6 +412,13 @@ export interface TerminalInputRequest {
   input: string;
 }
 
+export interface TerminalExecuteCommandRequest {
+  command: string;
+  cwd?: string | null;
+  timeoutMs?: number;
+  displayCommand?: string | null;
+}
+
 export interface TerminalResizeRequest {
   cols: number;
   rows: number;
@@ -432,6 +439,15 @@ export interface TerminalCommandResponse {
   running: boolean;
   seq: number;
   writeOwnerId: string | null;
+}
+
+export interface TerminalExecuteCommandResponse extends TerminalCommandResponse {
+  startSeq: number;
+  endSeq: number;
+  exitCode: number | null;
+  cwdAfter: string;
+  rawOutput: string;
+  timedOut: boolean;
 }
 
 export type TerminalStreamEvent =

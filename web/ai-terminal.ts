@@ -2,6 +2,7 @@ import type {
   ConversationMessage,
   SystemContextResponse,
 } from "@codex-deck/api";
+import { sanitizeTerminalTranscriptChunk } from "./terminal-timeline";
 
 export const AI_TERMINAL_DEVELOPER_INSTRUCTIONS = `You are an AI terminal planning assistant.
 
@@ -43,7 +44,7 @@ Need-input block:
 Completion:
 <requirement_finished>further suggestions or precautions</requirement_finished>`;
 
-const RESULT_MARKER_PREFIX = "__CODEX_DECK_AI_RESULT__";
+export const AI_TERMINAL_RESULT_MARKER_PREFIX = "__CODEX_DECK_AI_RESULT__";
 const AI_TERMINAL_PLAN_BLOCK_PATTERN =
   /<ai-terminal-plan>\s*[\s\S]*?<\/ai-terminal-plan>|<ai-terminal-need-input>\s*[\s\S]*?<\/ai-terminal-need-input>|<requirement_finished>\s*[\s\S]*?<\/requirement_finished>/gi;
 const AI_TERMINAL_STEP_PATTERN =
@@ -142,19 +143,36 @@ function normalizeText(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-function extractTagValue(text: string, tag: string): string | null {
-  const cdataPattern = new RegExp(
-    `<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\\/${tag}>`,
-    "i",
-  );
-  const cdataMatch = text.match(cdataPattern);
-  if (cdataMatch) {
-    return normalizeText(cdataMatch[1]);
-  }
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
 
+function extractTagValue(text: string, tag: string): string | null {
   const pattern = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*<\\/${tag}>`, "i");
   const match = text.match(pattern);
-  return normalizeText(match?.[1]);
+  if (!match) {
+    return null;
+  }
+
+  const rawValue = match[1] ?? "";
+  if (/^(?:\s*<!\[CDATA\[[\s\S]*?\]\]>\s*)+$/.test(rawValue)) {
+    const cdataSegments = Array.from(
+      rawValue.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g),
+      (segment) => segment[1] ?? "",
+    );
+    return normalizeText(cdataSegments.join(""));
+  }
+
+  return normalizeText(decodeXmlText(rawValue));
+}
+
+function wrapCdata(value: string): string {
+  return `<![CDATA[${value.replace(/\]\]>/g, "]]]]><![CDATA[>")}]]>`;
 }
 
 function pickRisk(value: string | null): AiTerminalRisk {
@@ -438,9 +456,38 @@ function shellQuote(value: string): string {
 function trimMarkerLine(output: string): string {
   return output
     .split(/\r?\n/u)
-    .filter((line) => !line.includes(RESULT_MARKER_PREFIX))
+    .filter((line) => !line.includes(AI_TERMINAL_RESULT_MARKER_PREFIX))
     .join("\n")
     .trim();
+}
+
+function stripTerminalPromptNoise(output: string): string {
+  const lines = output.split(/\r?\n/u);
+
+  while (lines.length > 0) {
+    const trimmed = (lines[lines.length - 1] ?? "").trim();
+    if (!trimmed) {
+      lines.pop();
+      continue;
+    }
+    if (/^[%=><]$/.test(trimmed)) {
+      lines.pop();
+      continue;
+    }
+    if (
+      /[#$%>»]$/.test(trimmed) &&
+      (trimmed.includes("/") ||
+        trimmed.includes("~") ||
+        trimmed.startsWith("(") ||
+        trimmed.startsWith("["))
+    ) {
+      lines.pop();
+      continue;
+    }
+    break;
+  }
+
+  return lines.join("\n").trim();
 }
 
 function summarizeLines(lines: string[], limit: number): string[] {
@@ -458,7 +505,9 @@ export function summarizeAiTerminalOutput(output: string): {
   outputSummary: string;
   errorSummary: string | null;
 } {
-  const normalized = trimMarkerLine(output);
+  const normalized = stripTerminalPromptNoise(
+    sanitizeTerminalTranscriptChunk(trimMarkerLine(output)),
+  );
   if (!normalized) {
     return {
       outputSummary: "Command produced no visible output.",
@@ -497,10 +546,18 @@ export function buildAiTerminalExecutionWrapper(input: {
     "}",
     "__CODEX_DECK_AI_EXIT_CODE=$?",
     '__CODEX_DECK_AI_CWD="$(pwd)"',
-    `printf '\\n${RESULT_MARKER_PREFIX} step=%s exit=%s cwd=%s\\n' ${shellQuote(
+    `printf '\\n${AI_TERMINAL_RESULT_MARKER_PREFIX} step=%s exit=%s cwd=%s\\n' ${shellQuote(
       input.stepId,
     )} \"$__CODEX_DECK_AI_EXIT_CODE\" \"$__CODEX_DECK_AI_CWD\"`,
   ].join("\n");
+}
+
+export function buildAiTerminalExecutionMarkerPrefix(stepId: string): string {
+  return `${AI_TERMINAL_RESULT_MARKER_PREFIX} step=${stepId} `;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function parseAiTerminalExecutionResult(input: {
@@ -511,11 +568,14 @@ export function parseAiTerminalExecutionResult(input: {
 }): AiTerminalExecutionResult {
   const normalizedOutput = input.rawOutput.replace(/\r\n/g, "\n");
   const pattern = new RegExp(
-    `${RESULT_MARKER_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} step=${input.stepId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} exit=(\\d+) cwd=(.+)$`,
+    `${escapeRegExp(AI_TERMINAL_RESULT_MARKER_PREFIX)} step=${escapeRegExp(input.stepId)} exit=(\\d+) cwd=(.+)$`,
     "m",
   );
   const match = normalizedOutput.match(pattern);
   const summary = summarizeAiTerminalOutput(normalizedOutput);
+  const sanitizedRawOutput = stripTerminalPromptNoise(
+    sanitizeTerminalTranscriptChunk(trimMarkerLine(normalizedOutput)),
+  );
 
   return {
     stepId: input.stepId,
@@ -524,7 +584,7 @@ export function parseAiTerminalExecutionResult(input: {
     cwdAfter: match?.[2]?.trim() || input.fallbackCwd,
     outputSummary: summary.outputSummary,
     errorSummary: summary.errorSummary,
-    rawOutput: trimMarkerLine(normalizedOutput),
+    rawOutput: sanitizedRawOutput,
     markerFound: !!match,
   };
 }
@@ -672,7 +732,7 @@ export function buildAiTerminalRejectionFeedback(input: {
   ];
   const reason = normalizeText(input.reason);
   if (reason) {
-    parts.push(`<reason>${reason}</reason>`);
+    parts.push(`<reason>${wrapCdata(reason)}</reason>`);
   }
   parts.push("</ai-terminal-feedback>");
   return parts.join("\n");

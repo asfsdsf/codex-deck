@@ -112,6 +112,7 @@ interface MessageBlockProps {
       terminalId: string;
       messageKey: string;
       step: AiTerminalStepDirective;
+      reason: string;
     }) => void;
   };
   resolvedUserInputAnswersByItemId?: Map<
@@ -497,6 +498,48 @@ function getAiTerminalStepStateClasses(
   return "border-zinc-600/35 bg-zinc-800/55 text-zinc-300";
 }
 
+function AiTerminalRejectControl(props: {
+  sessionId: string;
+  terminalId: string;
+  messageKey: string;
+  step: AiTerminalStepDirective;
+  onRejectStep: NonNullable<
+    NonNullable<MessageBlockProps["aiTerminalContext"]>["onRejectStep"]
+  >;
+}) {
+  const [reason, setReason] = useState("");
+  const normalizedReason = reason.trim();
+
+  return (
+    <div className="relative min-h-12 w-full min-w-0 flex-1 rounded-lg border border-zinc-500/35 bg-zinc-950/70 focus-within:border-zinc-400/60 focus-within:ring-1 focus-within:ring-zinc-400/20 sm:min-w-[16rem]">
+      <textarea
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+        rows={2}
+        aria-label="Reject reason"
+        placeholder="Tell the bound session why this step should change..."
+        className="block min-h-12 w-full resize-none bg-transparent py-2 pl-24 pr-2.5 text-[11px] leading-4 text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+      />
+      <button
+        type="button"
+        onClick={() =>
+          props.onRejectStep({
+            sessionId: props.sessionId,
+            terminalId: props.terminalId,
+            messageKey: props.messageKey,
+            step: props.step,
+            reason: normalizedReason,
+          })
+        }
+        disabled={!normalizedReason}
+        className="absolute left-1.5 top-1.5 rounded-lg border border-rose-500/45 bg-rose-500/15 px-3 py-1.5 text-[11px] text-rose-100 transition-colors hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-45"
+      >
+        Reject
+      </button>
+    </div>
+  );
+}
+
 function AiTerminalPlanRenderer(props: {
   plan: AiTerminalPlanDirective;
   trailingMarkdown: string;
@@ -627,7 +670,7 @@ function AiTerminalPlanRenderer(props: {
                 ) : null}
 
                 {(canApprove || canReject) && (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-3 flex flex-wrap items-start gap-2">
                     {canApprove ? (
                       <button
                         type="button"
@@ -641,24 +684,17 @@ function AiTerminalPlanRenderer(props: {
                         }
                         className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-500/25"
                       >
-                        {state === "running" ? "Running..." : "Approve and run"}
+                        Approve and run
                       </button>
                     ) : null}
-                    {canReject ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          aiTerminalContext?.onRejectStep?.({
-                            sessionId: aiTerminalContext.sessionId,
-                            terminalId: aiTerminalContext.terminalId,
-                            messageKey: aiTerminalContext.messageKey,
-                            step,
-                          })
-                        }
-                        className="rounded-lg border border-zinc-500/35 bg-zinc-500/10 px-3 py-1.5 text-[11px] text-zinc-100 transition-colors hover:bg-zinc-500/20"
-                      >
-                        Reject
-                      </button>
+                    {canReject && aiTerminalContext?.onRejectStep ? (
+                      <AiTerminalRejectControl
+                        sessionId={aiTerminalContext.sessionId}
+                        terminalId={aiTerminalContext.terminalId}
+                        messageKey={aiTerminalContext.messageKey}
+                        step={step}
+                        onRejectStep={aiTerminalContext.onRejectStep}
+                      />
                     ) : null}
                   </div>
                 )}

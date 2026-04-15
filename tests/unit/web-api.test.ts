@@ -16,6 +16,7 @@ import {
   compactCodexThread,
   createCodexThread,
   createTerminal,
+  executeTerminalCommand,
   createWorkflow,
   deleteWorkflow,
   deleteSession,
@@ -2986,7 +2987,9 @@ test("terminal helper routes request expected endpoints", async () => {
   const created = await createTerminal({ cwd: "/repo" });
   const list = await listActiveTerminals();
   const binding = await getTerminalBinding(terminalId);
-  const bound = await bindTerminalSession(terminalId, { sessionId: "session-1" });
+  const bound = await bindTerminalSession(terminalId, {
+    sessionId: "session-1",
+  });
   const sessionRoles = await getTerminalSessionRoles(["session-1"]);
   const snapshot = await getTerminalSnapshot(terminalId);
   const inputResult = await sendTerminalInput(terminalId, { input: "ls\\n" });
@@ -3077,9 +3080,7 @@ test("runInTerminal sends command and returns incremental output", async () => {
       });
     }
 
-    if (
-      path === `/api/terminals/${terminalId}/events?fromSeq=10&waitMs=2000`
-    ) {
+    if (path === `/api/terminals/${terminalId}/events?fromSeq=10&waitMs=2000`) {
       return jsonResponse({
         events: [
           {
@@ -3094,9 +3095,7 @@ test("runInTerminal sends command and returns incremental output", async () => {
       });
     }
 
-    if (
-      path === `/api/terminals/${terminalId}/events?fromSeq=11&waitMs=2000`
-    ) {
+    if (path === `/api/terminals/${terminalId}/events?fromSeq=11&waitMs=2000`) {
       return jsonResponse({
         events: [],
         requiresReset: false,
@@ -3153,7 +3152,10 @@ test("runInTerminal claims write when current owner blocks input", async () => {
     if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
       inputAttempts += 1;
       if (inputAttempts === 1) {
-        return jsonResponse({ error: "another client owns terminal write" }, 403);
+        return jsonResponse(
+          { error: "another client owns terminal write" },
+          403,
+        );
       }
       return jsonResponse({
         ok: true,
@@ -3173,6 +3175,17 @@ test("runInTerminal claims write when current owner blocks input", async () => {
         running: true,
         seq: 4,
         writeOwnerId: "client-a",
+      });
+    }
+
+    if (path === `/api/terminals/${terminalId}/release-write`) {
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 4,
+        writeOwnerId: null,
       });
     }
 
@@ -3210,6 +3223,186 @@ test("runInTerminal claims write when current owner blocks input", async () => {
     `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
     `/api/terminals/${terminalId}/events?fromSeq=3&waitMs=1000:GET`,
     `/api/terminals/${terminalId}/events?fromSeq=4&waitMs=1000:GET`,
+    `/api/terminals/${terminalId}/release-write:POST`,
+  ]);
+});
+
+test("executeTerminalCommand claims write when current owner blocks execution", async () => {
+  const terminalId = "terminal-1";
+  const calls: string[] = [];
+  let executeAttempts = 0;
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    calls.push(`${path}:${init?.method ?? "GET"}`);
+
+    if (path.includes(`/api/terminals/${terminalId}/execute?clientId=`)) {
+      executeAttempts += 1;
+      if (executeAttempts === 1) {
+        return jsonResponse(
+          { error: "another client owns terminal write" },
+          403,
+        );
+      }
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 9,
+        writeOwnerId: "client-a",
+        startSeq: 4,
+        endSeq: 9,
+        exitCode: 0,
+        cwdAfter: "/repo",
+        rawOutput: "0 ./a\n0 ./b\n",
+        timedOut: false,
+      });
+    }
+
+    if (path === `/api/terminals/${terminalId}/claim-write`) {
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 5,
+        writeOwnerId: "client-a",
+      });
+    }
+
+    if (path === `/api/terminals/${terminalId}/release-write`) {
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 9,
+        writeOwnerId: null,
+      });
+    }
+
+    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
+  };
+
+  const result = await executeTerminalCommand(
+    terminalId,
+    {
+      command:
+        "find . -type f -print0 | xargs -0 stat -f '%z %N' | sort -n | head -n 4",
+      cwd: "/repo",
+      displayCommand:
+        "find . -type f -print0 | xargs -0 stat -f '%z %N' | sort -n | head -n 4",
+    },
+    "client-a",
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.cwdAfter, "/repo");
+  assert.equal(result.rawOutput, "0 ./a\n0 ./b\n");
+  assert.equal(result.timedOut, false);
+  assert.deepEqual(calls, [
+    `/api/terminals/${terminalId}/execute?clientId=client-a:POST`,
+    `/api/terminals/${terminalId}/claim-write:POST`,
+    `/api/terminals/${terminalId}/execute?clientId=client-a:POST`,
+    `/api/terminals/${terminalId}/release-write:POST`,
+  ]);
+});
+
+test("runInTerminal can wait for an explicit completion marker across quiet polls", async () => {
+  const terminalId = "terminal-2";
+  const calls: string[] = [];
+  let eventsCallCount = 0;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    calls.push(`${path}:${init?.method ?? "GET"}`);
+
+    if (path === `/api/terminals/${terminalId}`) {
+      return jsonResponse({
+        id: terminalId,
+        terminalId,
+        running: true,
+        cwd: "/repo",
+        shell: "zsh",
+        output: "$ ",
+        seq: 20,
+        writeOwnerId: "client-a",
+      });
+    }
+
+    if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
+      return jsonResponse({
+        ok: true,
+        id: terminalId,
+        terminalId,
+        running: true,
+        seq: 21,
+        writeOwnerId: "client-a",
+      });
+    }
+
+    if (path.startsWith(`/api/terminals/${terminalId}/events?fromSeq=21&`)) {
+      eventsCallCount += 1;
+      if (eventsCallCount === 1) {
+        return jsonResponse({
+          events: [],
+          requiresReset: false,
+          snapshot: null,
+        });
+      }
+      return jsonResponse({
+        events: [
+          {
+            terminalId,
+            seq: 22,
+            type: "output",
+            chunk:
+              "__CODEX_DECK_AI_RESULT__ step=largest-files exit=0 cwd=/repo\n",
+          },
+        ],
+        requiresReset: false,
+        snapshot: null,
+      });
+    }
+
+    if (path === `/api/terminals/${terminalId}/events?fromSeq=20&waitMs=1000`) {
+      return jsonResponse({
+        events: [
+          {
+            terminalId,
+            seq: 21,
+            type: "output",
+            chunk: "find . -type f\n",
+          },
+        ],
+        requiresReset: false,
+        snapshot: null,
+      });
+    }
+
+    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
+  };
+
+  const result = await runInTerminal("find . -type f", {
+    terminalId,
+    clientId: "client-a",
+    waitMs: 1000,
+    timeoutMs: 5000,
+    untilPattern: "__CODEX_DECK_AI_RESULT__ step=largest-files ",
+  });
+
+  assert.equal(result.endSeq, 22);
+  assert.equal(result.timedOut, false);
+  assert.equal(
+    result.rawOutput,
+    "find . -type f\n__CODEX_DECK_AI_RESULT__ step=largest-files exit=0 cwd=/repo\n",
+  );
+  assert.deepEqual(calls, [
+    `/api/terminals/${terminalId}:GET`,
+    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
+    `/api/terminals/${terminalId}/events?fromSeq=20&waitMs=1000:GET`,
+    `/api/terminals/${terminalId}/events?fromSeq=21&waitMs=1000:GET`,
+    `/api/terminals/${terminalId}/events?fromSeq=21&waitMs=1000:GET`,
   ]);
 });
 

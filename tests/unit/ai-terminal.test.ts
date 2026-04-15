@@ -163,6 +163,32 @@ test("parseAiTerminalExecutionResult extracts exit code and cwd", () => {
   assert.match(result.outputSummary, /pwd/);
 });
 
+test("parseAiTerminalExecutionResult strips terminal prompt noise around wrapped output", () => {
+  const result = parseAiTerminalExecutionResult({
+    stepId: "largest-files",
+    rawOutput: [
+      "\u001b[1m\u001b[7m%\u001b[27m\u001b[1m\u001b[0m",
+      'g\bgit ls-files -z | xargs -0 stat -f "%z %N" | sort -nr | head -n 5',
+      "3164935 docs/img/blocks/stacked/all-stacked-vertical.png",
+      "\r(base) Project/codex-deck » ",
+      "__CODEX_DECK_AI_RESULT__ step=largest-files exit=0 cwd=/repo",
+    ].join("\n"),
+    timedOut: false,
+    fallbackCwd: "/fallback",
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.cwdAfter, "/repo");
+  assert.equal(result.markerFound, true);
+  assert.equal(result.rawOutput.includes("\n%\n"), false);
+  assert.equal(result.rawOutput.includes("Project/codex-deck »"), false);
+  assert.match(result.outputSummary, /git ls-files -z/);
+  assert.match(
+    result.outputSummary,
+    /docs\/img\/blocks\/stacked\/all-stacked-vertical\.png/,
+  );
+});
+
 test("buildAiTerminalExecutionFeedback and rejection feedback stay machine-readable", () => {
   const feedback = buildAiTerminalExecutionFeedback({
     result: {
@@ -179,7 +205,7 @@ test("buildAiTerminalExecutionFeedback and rejection feedback stay machine-reada
   });
   const rejection = buildAiTerminalRejectionFeedback({
     stepId: "check-mem",
-    reason: "User chose a different command.",
+    reason: "User chose pnpm <test> & avoid ]]> markers.",
   });
 
   assert.match(feedback, /<ai-terminal-execution>/);
@@ -188,6 +214,10 @@ test("buildAiTerminalExecutionFeedback and rejection feedback stay machine-reada
     /<output_reference>terminal:t1:seq:10-20<\/output_reference>/,
   );
   assert.match(rejection, /<decision>rejected<\/decision>/);
+  assert.match(
+    rejection,
+    /<reason><!\[CDATA\[User chose pnpm <test> & avoid \]\]\]\]><!\[CDATA\[> markers\.\]\]><\/reason>/,
+  );
 });
 
 test("parseAiTerminalPersistedStepState normalizes execution and rejection feedback", () => {

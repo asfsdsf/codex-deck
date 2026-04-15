@@ -485,8 +485,9 @@ test("workflow create route creates an empty workflow without requiring the code
     const listResponse = await requestJson(server, "/api/workflows");
     assert.equal(listResponse.status, 200);
     assert.equal(
-      ((listResponse.body as { workflows?: Array<{ key?: string }> }).workflows ??
-        []
+      (
+        (listResponse.body as { workflows?: Array<{ key?: string }> })
+          .workflows ?? []
       ).some((workflow) => workflow.key === created.workflowKey),
       true,
     );
@@ -2897,22 +2898,25 @@ test("terminal binding routes persist bindings and expose terminal session roles
       terminalSessionId,
     );
 
-    const roleResponse = await requestJson(server, "/api/terminals/session-roles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionIds: [terminalSessionId, "missing-session"] }),
-    });
-    assert.equal(roleResponse.status, 200);
-    assert.deepEqual(
-      (roleResponse.body as { sessions?: unknown[] }).sessions,
-      [
-        {
-          sessionId: terminalSessionId,
-          role: "terminal",
-          terminalId,
-        },
-      ],
+    const roleResponse = await requestJson(
+      server,
+      "/api/terminals/session-roles",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionIds: [terminalSessionId, "missing-session"],
+        }),
+      },
     );
+    assert.equal(roleResponse.status, 200);
+    assert.deepEqual((roleResponse.body as { sessions?: unknown[] }).sessions, [
+      {
+        sessionId: terminalSessionId,
+        role: "terminal",
+        terminalId,
+      },
+    ]);
 
     const workflowSessionIndexDir = join(
       rootDir,
@@ -2954,14 +2958,19 @@ test("terminal binding routes persist bindings and expose terminal session roles
 });
 
 test("system context route returns host release metadata", async () => {
-  const { rootDir, cleanup } = await createTempCodexDir("server-system-context");
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-system-context",
+  );
   const server = createServer({ port: 13007, codexDir: rootDir, open: false });
 
   try {
     await loadStorage();
     const response = await requestJson(server, "/api/system/context");
     assert.equal(response.status, 200);
-    assert.equal(typeof (response.body as { osName?: unknown }).osName, "string");
+    assert.equal(
+      typeof (response.body as { osName?: unknown }).osName,
+      "string",
+    );
     assert.equal(
       typeof (response.body as { osRelease?: unknown }).osRelease,
       "string",

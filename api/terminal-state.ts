@@ -99,10 +99,9 @@ function queueTerminalStateOperation(
   terminalId: string,
   operation: () => Promise<void>,
 ): Promise<void> {
-  const previous = terminalStateOperationQueues.get(terminalId) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(operation);
+  const previous =
+    terminalStateOperationQueues.get(terminalId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
   const cleanupPromise = next.finally(() => {
     if (terminalStateOperationQueues.get(terminalId) === cleanupPromise) {
       terminalStateOperationQueues.delete(terminalId);

@@ -164,9 +164,7 @@ test.describe("codex-deck integration", () => {
       page.getByText("Search launch references before shipping."),
     ).toBeVisible();
     await expect(
-      page.getByText(
-        "Choose a session from the list to view the conversation",
-      ),
+      page.getByText("Choose a session from the list to view the conversation"),
     ).toBeHidden();
   });
 

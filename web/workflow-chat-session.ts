@@ -5,7 +5,8 @@ import type {
 } from "@codex-deck/api";
 import { getViewportMessageGroup } from "./message-viewport-groups";
 
-const STRICT_TASK_CREATE_QUESTION_SUFFIX = "<codex-deck-flow>Question<codex-deck-flow/>";
+const STRICT_TASK_CREATE_QUESTION_SUFFIX =
+  "<codex-deck-flow>Question<codex-deck-flow/>";
 const STRICT_TASK_CREATE_REQUEST_APPROVE_REGEX =
   /<codex-deck-flow>Request approve:?(.+?)<codex-deck-flow\/>\s*$/s;
 

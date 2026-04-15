@@ -46,6 +46,8 @@ import type {
   TerminalSessionRolesResponse,
   CreateTerminalRequest,
   TerminalCommandResponse,
+  TerminalExecuteCommandRequest,
+  TerminalExecuteCommandResponse,
   TerminalInputRequest,
   TerminalResizeRequest,
   TerminalSnapshotResponse,
@@ -171,7 +173,10 @@ function getRunInTerminalClientId(): string {
   return runInTerminalClientId;
 }
 
-function toPositiveIntegerOrDefault(value: number | undefined, fallback: number) {
+function toPositiveIntegerOrDefault(
+  value: number | undefined,
+  fallback: number,
+) {
   if (!Number.isFinite(value)) {
     return fallback;
   }
@@ -185,6 +190,7 @@ export interface RunInTerminalOptions {
   waitMs?: number;
   timeoutMs?: number;
   appendNewline?: boolean;
+  untilPattern?: string;
 }
 
 export interface RunInTerminalResult {
@@ -1193,6 +1199,44 @@ export async function sendTerminalInput(
   );
 }
 
+export async function executeTerminalCommand(
+  terminalId: string,
+  input: TerminalExecuteCommandRequest,
+  clientId?: string,
+): Promise<TerminalExecuteCommandResponse> {
+  const resolvedClientId = clientId?.trim() || getRunInTerminalClientId();
+  const params = `?clientId=${encodeURIComponent(resolvedClientId)}`;
+
+  const sendRequest = () =>
+    requestJson<TerminalExecuteCommandResponse>(
+      `/api/terminals/${encodeURIComponent(terminalId)}/execute${params}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      },
+    );
+
+  let claimedWrite = false;
+  try {
+    return await sendRequest();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.toLowerCase().includes("owns terminal write")) {
+      throw error;
+    }
+    await claimTerminalWrite(terminalId, resolvedClientId);
+    claimedWrite = true;
+    return await sendRequest();
+  } finally {
+    if (claimedWrite) {
+      void releaseTerminalWrite(terminalId, resolvedClientId).catch(() => {});
+    }
+  }
+}
+
 export async function resizeTerminal(
   terminalId: string,
   input: TerminalResizeRequest,
@@ -1296,6 +1340,7 @@ export async function runInTerminal(
     options.waitMs,
     DEFAULT_RUN_IN_TERMINAL_WAIT_MS,
   );
+  const untilPattern = options.untilPattern?.trim() || null;
   const input =
     options.appendNewline === false || command.endsWith("\n")
       ? command
@@ -1309,6 +1354,7 @@ export async function runInTerminal(
     await sendTerminalInput(terminalId, { input }, clientId);
   };
 
+  let claimedWrite = false;
   try {
     await sendInput();
   } catch (error) {
@@ -1317,6 +1363,7 @@ export async function runInTerminal(
       throw error;
     }
     await claimTerminalWrite(terminalId, clientId);
+    claimedWrite = true;
     await sendInput();
   }
 
@@ -1326,66 +1373,85 @@ export async function runInTerminal(
   let sawEvent = false;
   let timedOut = false;
   let terminalStopped = false;
+  let matchedUntilPattern = false;
 
-  while (Date.now() < deadline) {
-    const remainingMs = Math.max(0, deadline - Date.now());
-    const waitForThisPoll = Math.min(waitMs, remainingMs);
-    const params = new URLSearchParams({
-      fromSeq: String(fromSeq),
-      waitMs: String(waitForThisPoll),
-    });
-    const batch = await requestJson<TerminalEventsResponse>(
-      `/api/terminals/${encodeURIComponent(terminalId)}/events?${params.toString()}`,
-    );
+  try {
+    while (Date.now() < deadline) {
+      const remainingMs = Math.max(0, deadline - Date.now());
+      const waitForThisPoll = Math.min(waitMs, remainingMs);
+      const params = new URLSearchParams({
+        fromSeq: String(fromSeq),
+        waitMs: String(waitForThisPoll),
+      });
+      const batch = await requestJson<TerminalEventsResponse>(
+        `/api/terminals/${encodeURIComponent(terminalId)}/events?${params.toString()}`,
+      );
 
-    let batchHadEvent = false;
-    if (batch.requiresReset && batch.snapshot) {
-      const resetOutput = batch.snapshot.output;
-      if (typeof resetOutput === "string") {
-        output = resetOutput.startsWith(initialOutput)
-          ? resetOutput.slice(initialOutput.length)
-          : resetOutput;
+      let batchHadEvent = false;
+      if (batch.requiresReset && batch.snapshot) {
+        const resetOutput = batch.snapshot.output;
+        if (typeof resetOutput === "string") {
+          output = resetOutput.startsWith(initialOutput)
+            ? resetOutput.slice(initialOutput.length)
+            : resetOutput;
+          matchedUntilPattern =
+            untilPattern !== null && output.includes(untilPattern);
+        }
+        fromSeq = Math.max(fromSeq, batch.snapshot.seq);
+        batchHadEvent = true;
+        sawEvent = true;
+        terminalStopped = batch.snapshot.running === false;
       }
-      fromSeq = Math.max(fromSeq, batch.snapshot.seq);
-      batchHadEvent = true;
-      sawEvent = true;
-      terminalStopped = batch.snapshot.running === false;
-    }
 
-    for (const event of batch.events) {
-      if (!event || typeof event !== "object" || event.seq <= fromSeq) {
+      for (const event of batch.events) {
+        if (!event || typeof event !== "object" || event.seq <= fromSeq) {
+          continue;
+        }
+        fromSeq = event.seq;
+        batchHadEvent = true;
+        sawEvent = true;
+        if (event.type === "output" && typeof event.chunk === "string") {
+          output += event.chunk;
+          matchedUntilPattern =
+            untilPattern !== null && output.includes(untilPattern);
+        }
+        if (event.type === "state" && event.running === false) {
+          terminalStopped = true;
+        }
+        if (event.type === "reset" && typeof event.output === "string") {
+          output = event.output.startsWith(initialOutput)
+            ? event.output.slice(initialOutput.length)
+            : event.output;
+          terminalStopped = event.running === false;
+          matchedUntilPattern =
+            untilPattern !== null && output.includes(untilPattern);
+        }
+      }
+
+      if (terminalStopped || matchedUntilPattern) {
+        break;
+      }
+      if (batchHadEvent) {
         continue;
       }
-      fromSeq = event.seq;
-      batchHadEvent = true;
-      sawEvent = true;
-      if (event.type === "output" && typeof event.chunk === "string") {
-        output += event.chunk;
+      if (untilPattern !== null) {
+        continue;
       }
-      if (event.type === "state" && event.running === false) {
-        terminalStopped = true;
-      }
-      if (event.type === "reset" && typeof event.output === "string") {
-        output = event.output.startsWith(initialOutput)
-          ? event.output.slice(initialOutput.length)
-          : event.output;
-        terminalStopped = event.running === false;
+      if (sawEvent) {
+        break;
       }
     }
 
-    if (terminalStopped) {
-      break;
+    if (
+      Date.now() >= deadline &&
+      (!sawEvent || (untilPattern !== null && !matchedUntilPattern))
+    ) {
+      timedOut = true;
     }
-    if (batchHadEvent) {
-      continue;
+  } finally {
+    if (claimedWrite) {
+      void releaseTerminalWrite(terminalId, clientId).catch(() => {});
     }
-    if (sawEvent) {
-      break;
-    }
-  }
-
-  if (!sawEvent && Date.now() >= deadline) {
-    timedOut = true;
   }
 
   return {

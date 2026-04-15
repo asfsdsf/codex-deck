@@ -3,7 +3,8 @@ import type { CodexSkillMetadata } from "@codex-deck/api";
 export const TERMINAL_REQUIRED_SKILL_NAME = "codex-deck-terminal";
 export const TERMINAL_REQUIRED_SKILL_INSTALL_REPO = "asfsdsf/codex-deck";
 export const TERMINAL_REQUIRED_SKILL_INSTALL_BRANCH = "main";
-export const TERMINAL_REQUIRED_SKILL_INSTALL_PATH = "skills/codex-deck-terminal";
+export const TERMINAL_REQUIRED_SKILL_INSTALL_PATH =
+  "skills/codex-deck-terminal";
 
 export type TerminalSkillInstallChoice = "local" | "global" | "cancel";
 
