@@ -487,7 +487,9 @@ export function buildAiTerminalExecutionFeedback(input: {
     ? "timed_out"
     : input.result.exitCode === 0
       ? "success"
-      : "failed";
+      : input.result.exitCode === null
+        ? "completed_unknown"
+        : "failed";
 
   const parts = [
     "<ai-terminal-execution>",

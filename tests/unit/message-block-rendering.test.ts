@@ -12,6 +12,7 @@ function renderMessageBlock(
   options: {
     isAgentsBootstrap?: boolean;
     searchForcePrimaryExpanded?: boolean;
+    aiTerminalContext?: React.ComponentProps<typeof MessageBlock>["aiTerminalContext"];
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -19,6 +20,7 @@ function renderMessageBlock(
       message,
       isAgentsBootstrap: options.isAgentsBootstrap,
       searchForcePrimaryExpanded: options.searchForcePrimaryExpanded,
+      aiTerminalContext: options.aiTerminalContext,
     }),
   );
 }
@@ -134,4 +136,77 @@ test("MessageBlock hides a single token limit notice", () => {
 
   const html = renderMessageBlock(message);
   assert.equal(html, "");
+});
+
+test("MessageBlock renders ai terminal plan cards and hides raw tags", () => {
+  const message: ConversationMessage = {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: `We should inspect memory next.
+
+<ai-terminal-plan>
+  <context_note>Run these steps in order.</context_note>
+  <ai-terminal-step>
+    <step_id>check-load</step_id>
+    <step_goal>Check system load</step_goal>
+    <command><![CDATA[uptime]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+    <explanation>Shows current load average.</explanation>
+  </ai-terminal-step>
+</ai-terminal-plan>
+
+Then continue.`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /AI Terminal Plan/);
+  assert.match(html, /Check system load/);
+  assert.match(html, /uptime/);
+  assert.match(html, /We should inspect memory next\./);
+  assert.match(html, /Then continue\./);
+  assert.doesNotMatch(html, /&lt;ai-terminal-plan&gt;/);
+});
+
+test("MessageBlock renders ai terminal action buttons when the plan is actionable", () => {
+  const message: ConversationMessage = {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: `<ai-terminal-plan>
+  <ai-terminal-step>
+    <step_id>check-mem</step_id>
+    <step_goal>Check memory</step_goal>
+    <command><![CDATA[free -m]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+    <explanation>Summarize memory usage.</explanation>
+  </ai-terminal-step>
+</ai-terminal-plan>`,
+    },
+  };
+
+  const html = renderMessageBlock(message, {
+    aiTerminalContext: {
+      sessionId: "session-1",
+      terminalId: "terminal-1",
+      messageKey: "msg-1",
+      isActionable: true,
+      stepStates: {
+        "check-mem": "pending",
+      },
+      onApproveStep: () => undefined,
+      onRejectStep: () => undefined,
+    },
+  });
+
+  assert.match(html, /Approve and run/);
+  assert.match(html, /Reject/);
+  assert.match(html, /Pending/);
 });

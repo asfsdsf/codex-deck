@@ -4,46 +4,89 @@ import type { SystemContextResponse } from "@codex-deck/api";
 import {
   AI_TERMINAL_DEVELOPER_INSTRUCTIONS,
   buildAiTerminalEnvironment,
+  buildAiTerminalExecutionFeedback,
   buildAiTerminalExecutionWrapper,
+  buildAiTerminalRejectionFeedback,
   buildAiTerminalTurnPrompt,
   parseAiTerminalExecutionResult,
-  parseAiTerminalResponse,
+  parseAiTerminalMessage,
+  shouldAttachAiTerminalOutputReference,
   summarizeAiTerminalOutput,
 } from "../../web/ai-terminal";
 
-test("parseAiTerminalResponse accepts command proposals", () => {
-  const parsed = parseAiTerminalResponse(`
-<state>await_approval</state>
-<command><![CDATA[pnpm test]]></command>
-<explanation>Run the unit test suite.</explanation>
-<cwd>/repo</cwd>
-<shell>zsh</shell>
-<risk>low</risk>
-<step_id>step-1</step_id>
-<step_goal>Verify current behavior.</step_goal>
-<next_action>approve</next_action>
+test("parseAiTerminalMessage accepts markdown plus a multi-step plan block", () => {
+  const parsed = parseAiTerminalMessage(`
+We should inspect memory next.
+
+<ai-terminal-plan>
+  <context_note>Run these steps in order.</context_note>
+  <ai-terminal-step>
+    <step_id>check-load</step_id>
+    <step_goal>Check system load</step_goal>
+    <command><![CDATA[uptime]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+    <explanation>Shows current load average.</explanation>
+  </ai-terminal-step>
+  <ai-terminal-step>
+    <step_id>check-mem</step_id>
+    <step_goal>Check memory</step_goal>
+    <command><![CDATA[free -m]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+    <explanation>Summarizes memory usage in MiB.</explanation>
+  </ai-terminal-step>
+</ai-terminal-plan>
+
+Then we can continue.
   `);
 
   assert.ok(parsed);
-  assert.equal(parsed?.state, "await_approval");
-  assert.equal(parsed?.command, "pnpm test");
-  assert.equal(parsed?.stepId, "step-1");
-  assert.equal(parsed?.risk, "low");
+  assert.equal(parsed?.leadingMarkdown, "We should inspect memory next.");
+  assert.equal(parsed?.directive.kind, "plan");
+  if (!parsed || parsed.directive.kind !== "plan") {
+    assert.fail("expected ai terminal plan");
+  }
+  assert.equal(parsed.directive.steps.length, 2);
+  assert.equal(parsed.directive.steps[0]?.command, "uptime");
+  assert.equal(parsed.directive.steps[1]?.stepId, "check-mem");
+  assert.equal(parsed.trailingMarkdown, "Then we can continue.");
 });
 
-test("parseAiTerminalResponse accepts completion tags without command", () => {
-  const parsed = parseAiTerminalResponse(`
-<state>finished</state>
+test("parseAiTerminalMessage accepts requirement_finished blocks", () => {
+  const parsed = parseAiTerminalMessage(`
+Task complete.
+
 <requirement_finished>Review the output before continuing.</requirement_finished>
   `);
 
   assert.ok(parsed);
-  assert.equal(parsed?.state, "finished");
-  assert.equal(parsed?.command, null);
-  assert.equal(
-    parsed?.requirementFinished,
-    "Review the output before continuing.",
-  );
+  assert.equal(parsed?.directive.kind, "finished");
+  if (!parsed || parsed.directive.kind !== "finished") {
+    assert.fail("expected finished directive");
+  }
+  assert.equal(parsed.directive.message, "Review the output before continuing.");
+});
+
+test("parseAiTerminalMessage rejects multiple actionable blocks", () => {
+  const parsed = parseAiTerminalMessage(`
+<ai-terminal-plan>
+  <ai-terminal-step>
+    <step_id>one</step_id>
+    <command><![CDATA[pwd]]></command>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+  </ai-terminal-step>
+</ai-terminal-plan>
+
+<requirement_finished>Done.</requirement_finished>
+  `);
+
+  assert.equal(parsed, null);
 });
 
 test("buildAiTerminalTurnPrompt includes live environment facts", () => {
@@ -68,21 +111,33 @@ test("buildAiTerminalTurnPrompt includes live environment facts", () => {
     userFollowup: null,
     latestExecution: null,
     history: [],
-    currentStep: null,
+    currentStep: {
+      stepId: "step-1",
+      stepGoal: "Inspect files",
+      command: "find . -type f | head",
+      explanation: null,
+      cwd: "/repo",
+      shell: "zsh",
+      risk: "low",
+      nextAction: "approve",
+      contextNote: null,
+    },
   });
 
   assert.match(prompt, /<os_release>macOS 15\.4\.1<\/os_release>/);
   assert.match(prompt, /<shell>zsh<\/shell>/);
   assert.match(prompt, /<cwd>\/repo<\/cwd>/);
-  assert.match(prompt, /List the largest files here\./);
+  assert.match(prompt, /<ai-terminal-context>|<ai_terminal_context>/);
 });
 
-test("buildAiTerminalExecutionWrapper appends controller marker", () => {
+test("buildAiTerminalExecutionWrapper appends controller marker and optional cwd change", () => {
   const wrapped = buildAiTerminalExecutionWrapper({
     command: "pwd",
     stepId: "step-7",
+    cwd: "/repo",
   });
 
+  assert.match(wrapped, /cd '\/repo'/);
   assert.match(wrapped, /pwd/);
   assert.match(wrapped, /__CODEX_DECK_AI_RESULT__/);
   assert.match(wrapped, /step-7/);
@@ -101,6 +156,47 @@ test("parseAiTerminalExecutionResult extracts exit code and cwd", () => {
   assert.equal(result.cwdAfter, "/repo");
   assert.equal(result.markerFound, true);
   assert.match(result.outputSummary, /pwd/);
+});
+
+test("buildAiTerminalExecutionFeedback and rejection feedback stay machine-readable", () => {
+  const feedback = buildAiTerminalExecutionFeedback({
+    result: {
+      stepId: "check-mem",
+      exitCode: 0,
+      timedOut: false,
+      cwdAfter: "/repo",
+      outputSummary: "Mem: ok",
+      errorSummary: null,
+      rawOutput: "Mem: ok",
+      markerFound: true,
+    },
+    outputReference: "terminal:t1:seq:10-20",
+  });
+  const rejection = buildAiTerminalRejectionFeedback({
+    stepId: "check-mem",
+    reason: "User chose a different command.",
+  });
+
+  assert.match(feedback, /<ai-terminal-execution>/);
+  assert.match(feedback, /<output_reference>terminal:t1:seq:10-20<\/output_reference>/);
+  assert.match(rejection, /<decision>rejected<\/decision>/);
+});
+
+test("buildAiTerminalExecutionFeedback marks unknown exit code as completed_unknown", () => {
+  const feedback = buildAiTerminalExecutionFeedback({
+    result: {
+      stepId: "check-files",
+      exitCode: null,
+      timedOut: false,
+      cwdAfter: "/repo",
+      outputSummary: "Output captured without explicit shell exit code.",
+      errorSummary: null,
+      rawOutput: "Output captured without explicit shell exit code.",
+      markerFound: false,
+    },
+  });
+
+  assert.match(feedback, /<status>completed_unknown<\/status>/);
 });
 
 test("summarizeAiTerminalOutput compacts large output and extracts errors", () => {
@@ -128,12 +224,13 @@ test("summarizeAiTerminalOutput compacts large output and extracts errors", () =
   const summary = summarizeAiTerminalOutput(output);
   assert.match(summary.outputSummary, /more lines omitted/);
   assert.equal(summary.errorSummary, "ERROR: missing file");
+  assert.equal(shouldAttachAiTerminalOutputReference(output), true);
 });
 
-test("ai terminal developer instructions enforce XML-only contract", () => {
-  assert.match(AI_TERMINAL_DEVELOPER_INSTRUCTIONS, /<requirement_finished>/);
+test("ai terminal developer instructions enforce tagged plan contract", () => {
+  assert.match(AI_TERMINAL_DEVELOPER_INSTRUCTIONS, /<ai-terminal-plan>/);
   assert.match(
     AI_TERMINAL_DEVELOPER_INSTRUCTIONS,
-    /Output machine-readable XML-like tags only/,
+    /markdown plus exactly one machine-readable action block/i,
   );
 });

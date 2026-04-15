@@ -50,6 +50,13 @@ import { computeRailScrollDelta } from "../rail-scroll-utils";
 import { shouldToggleCollapsedSegmentFromContentClick } from "../segment-toggle-click";
 import { findConversationSearchMatches } from "../conversation-search";
 import { shouldShowTokenLimitNotice } from "../token-limit-notices";
+import {
+  extractConversationMessageText,
+  getAiTerminalMessageKey,
+  parseAiTerminalMessage,
+  type AiTerminalStepDirective,
+  type AiTerminalStepState,
+} from "../ai-terminal";
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
 
@@ -215,6 +222,11 @@ interface SessionViewProps {
     title?: string;
     onClick: () => void;
   } | null;
+  terminalShortcut?: {
+    label: string;
+    title?: string;
+    onClick: () => void;
+  } | null;
   onPlanAction?: (sessionId: string, action: "implement" | "stay") => void;
   onFilePathLinkClick?: (href: string) => boolean;
   onMessageHistoryChange?: (
@@ -233,6 +245,24 @@ interface SessionViewProps {
   ) => void;
   onConversationSearchStatusChange?: (status: SessionSearchStatus) => void;
   onStreamConnect?: (sessionId: string) => void;
+  aiTerminalTerminalId?: string | null;
+  aiTerminalLockedMessageKey?: string | null;
+  aiTerminalStepStatesByMessageKey?: Record<
+    string,
+    Record<string, AiTerminalStepState | undefined>
+  >;
+  onApproveAiTerminalStep?: (input: {
+    sessionId: string;
+    terminalId: string;
+    messageKey: string;
+    step: AiTerminalStepDirective;
+  }) => void;
+  onRejectAiTerminalStep?: (input: {
+    sessionId: string;
+    terminalId: string;
+    messageKey: string;
+    step: AiTerminalStepDirective;
+  }) => void;
 }
 
 function clearConversationSearchHighlights(root: ParentNode): void {
@@ -709,12 +739,18 @@ const SessionView = memo(
         conversationSearchOpen = false,
         conversationSearchQuery = "",
         workflowShortcut = null,
+        terminalShortcut = null,
         onPlanAction,
         onFilePathLinkClick,
         onMessageHistoryChange,
         onConversationActivity,
         onConversationSearchStatusChange,
         onStreamConnect,
+        aiTerminalTerminalId = null,
+        aiTerminalLockedMessageKey = null,
+        aiTerminalStepStatesByMessageKey = {},
+        onApproveAiTerminalStep,
+        onRejectAiTerminalStep,
       } = props;
 
       const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -1619,6 +1655,18 @@ const SessionView = memo(
           };
         });
       }, [visibleMessages]);
+      const latestAiTerminalPlanEntryKey = useMemo(() => {
+        for (let index = visibleMessageEntries.length - 1; index >= 0; index -= 1) {
+          const entry = visibleMessageEntries[index];
+          const parsed = parseAiTerminalMessage(
+            extractConversationMessageText(entry.message),
+          );
+          if (parsed?.directive.kind === "plan") {
+            return entry.entryKey;
+          }
+        }
+        return null;
+      }, [visibleMessageEntries]);
       const chatMessages = visibleMessages.filter(
         (m) => m.type === "user" || m.type === "assistant",
       );
@@ -1933,11 +1981,30 @@ const SessionView = memo(
           } = entry;
           const isActiveSearchEntry =
             activeSearchMatch?.entryKey === entry.entryKey;
+          const aiTerminalMessageKey =
+            getAiTerminalMessageKey(message) ?? entry.entryKey;
+          const aiTerminalContext =
+            message.type === "assistant" &&
+            aiTerminalTerminalId &&
+            entry.entryKey === latestAiTerminalPlanEntryKey &&
+            aiTerminalLockedMessageKey !== aiTerminalMessageKey
+              ? {
+                  sessionId,
+                  terminalId: aiTerminalTerminalId,
+                  messageKey: aiTerminalMessageKey,
+                  isActionable: true,
+                  stepStates:
+                    aiTerminalStepStatesByMessageKey[aiTerminalMessageKey],
+                  onApproveStep: onApproveAiTerminalStep,
+                  onRejectStep: onRejectAiTerminalStep,
+                }
+              : undefined;
 
           return (
             <div key={entry.entryKey} data-search-entry={entry.entryKey}>
               <MessageBlock
                 message={message}
+                aiTerminalContext={aiTerminalContext}
                 isAgentsBootstrap={message === agentsBootstrapMessage}
                 searchForcePrimaryExpanded={
                   isActiveSearchEntry &&
@@ -2007,16 +2074,23 @@ const SessionView = memo(
         },
         [
           activeSearchMatch,
+          aiTerminalLockedMessageKey,
+          aiTerminalStepStatesByMessageKey,
+          aiTerminalTerminalId,
           agentsBootstrapMessage,
           handleChangeUserInputOtherText,
           handlePlanAction,
           handleSelectUserInputOption,
           handleSubmitUserInputAnswers,
+          latestAiTerminalPlanEntryKey,
+          onApproveAiTerminalStep,
           onFilePathLinkClick,
           onPlanAction,
+          onRejectAiTerminalStep,
           pendingUserInputRequests,
           pendingApprovalRequests,
           resolvedUserInputAnswersByItemId,
+          sessionId,
           submitApprovalResponse,
           selectedUserInputAnswers,
           submittingApprovalRequestIds,
@@ -2368,6 +2442,8 @@ const SessionView = memo(
           };
         });
       }, [isLatestPage, pendingUserMessages]);
+      const hasSessionShortcut =
+        workflowShortcut !== null || terminalShortcut !== null;
 
       if (loading) {
         return (
@@ -2384,32 +2460,52 @@ const SessionView = memo(
             onScroll={handleScroll}
             className="h-full overflow-y-auto bg-zinc-950"
           >
-            {workflowShortcut ? (
+            {hasSessionShortcut ? (
               <div className="sticky top-0 z-20 px-4 pt-3">
-                <div className="mx-auto flex max-w-[96rem] items-start justify-start">
-                  <button
-                    type="button"
-                    onClick={workflowShortcut.onClick}
-                    title={workflowShortcut.title ?? workflowShortcut.label}
-                    className="group inline-flex max-w-full items-center gap-3 rounded-full border border-emerald-400/20 bg-zinc-900/30 px-4 py-2 text-left shadow-lg shadow-black/30 ring-1 ring-black/30 transition-all hover:-translate-y-0.5 hover:border-emerald-300/35 hover:bg-zinc-900/40"
-                  >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-400/12 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
-                      WF
-                    </span>
-                    <span className="min-w-0 truncate text-sm font-medium text-zinc-100">
-                      Workflow
-                    </span>
-                    <span className="shrink-0 text-sm text-emerald-200 transition-transform group-hover:translate-x-0.5">
-                      &gt;
-                    </span>
-                  </button>
+                <div className="mx-auto flex max-w-[96rem] items-start justify-start gap-2">
+                  {workflowShortcut ? (
+                    <button
+                      type="button"
+                      onClick={workflowShortcut.onClick}
+                      title={workflowShortcut.title ?? workflowShortcut.label}
+                      className="group inline-flex max-w-full items-center gap-3 rounded-full border border-emerald-400/20 bg-zinc-900/30 px-4 py-2 text-left shadow-lg shadow-black/30 ring-1 ring-black/30 transition-all hover:-translate-y-0.5 hover:border-emerald-300/35 hover:bg-zinc-900/40"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-400/12 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                        WF
+                      </span>
+                      <span className="min-w-0 truncate text-sm font-medium text-zinc-100">
+                        Workflow
+                      </span>
+                      <span className="shrink-0 text-sm text-emerald-200 transition-transform group-hover:translate-x-0.5">
+                        &gt;
+                      </span>
+                    </button>
+                  ) : null}
+                  {terminalShortcut ? (
+                    <button
+                      type="button"
+                      onClick={terminalShortcut.onClick}
+                      title={terminalShortcut.title ?? terminalShortcut.label}
+                      className="group inline-flex max-w-full items-center gap-3 rounded-full border border-cyan-400/25 bg-zinc-900/30 px-4 py-2 text-left shadow-lg shadow-black/30 ring-1 ring-black/30 transition-all hover:-translate-y-0.5 hover:border-cyan-300/40 hover:bg-zinc-900/40"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+                        TM
+                      </span>
+                      <span className="min-w-0 truncate text-sm font-medium text-zinc-100">
+                        Terminal
+                      </span>
+                      <span className="shrink-0 text-sm text-cyan-200 transition-transform group-hover:translate-x-0.5">
+                        &gt;
+                      </span>
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ) : null}
             <div
               ref={contentRef}
               className={`mx-auto max-w-[96rem] px-4 pb-12 ${
-                workflowShortcut ? "pt-3" : "pt-4"
+                hasSessionShortcut ? "pt-3" : "pt-4"
               }`}
             >
               {summary && (

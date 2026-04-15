@@ -1,4 +1,4 @@
 interface:
   display_name: "AI Terminal"
-  short_description: "Approval-first shell planning with XML contract"
-  default_prompt: "Plan shell tasks one non-interactive command at a time, use XML-like response tags, wait for approval before execution, recover cleanly from failures, and finish with <requirement_finished>...</requirement_finished> when the request is done."
+  short_description: "Approval-first terminal planning with reactive tagged step cards"
+  default_prompt: "Plan terminal work as markdown plus one <ai-terminal-plan> block containing ordered single-command steps, wait for approval before execution, adapt to structured execution feedback, and finish with <requirement_finished>...</requirement_finished> when the request is done."

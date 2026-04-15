@@ -1,9 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { RefreshCw } from "lucide-react";
+import { Bot, Link2, MessageSquarePlus, RefreshCw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
-import type { TerminalSnapshotResponse } from "@codex-deck/api";
+import type { ConversationMessage, TerminalSnapshotResponse } from "@codex-deck/api";
 import {
   claimTerminalWrite,
   getTerminalSnapshot,
@@ -15,6 +15,15 @@ import {
 } from "../api";
 import { TERMINAL_FONT_FAMILY } from "../terminal-font";
 import type { ResolvedTheme } from "../theme";
+import type { AiTerminalStepDirective, AiTerminalStepState } from "../ai-terminal";
+import {
+  buildTerminalTimeline,
+  getTerminalInlineAnchorOffset,
+  sanitizeTerminalTranscriptChunk,
+  type TerminalTimelineAnchor,
+} from "../terminal-timeline";
+import MessageBlock from "./message-block";
+import { AnsiText } from "./tool-renderers/ansi-text";
 
 function generateClientId(): string {
   if (
@@ -41,6 +50,30 @@ function generateClientId(): string {
 interface TerminalViewProps {
   terminalId: string;
   resolvedTheme: ResolvedTheme;
+  boundSessionId?: string | null;
+  embeddedMessages?: Array<{
+    messageKey: string;
+    message: ConversationMessage;
+    isActionable: boolean;
+    stepStates?: Record<string, AiTerminalStepState | undefined>;
+  }>;
+  embeddedMessagesLoading?: boolean;
+  chatBusy?: boolean;
+  onChatInSession?: () => void;
+  onOpenSession?: (sessionId: string) => void;
+  onFilePathLinkClick?: (href: string) => boolean;
+  onApproveAiTerminalStep?: (input: {
+    sessionId: string;
+    terminalId: string;
+    messageKey: string;
+    step: AiTerminalStepDirective;
+  }) => void;
+  onRejectAiTerminalStep?: (input: {
+    sessionId: string;
+    terminalId: string;
+    messageKey: string;
+    step: AiTerminalStepDirective;
+  }) => void;
 }
 
 function getTerminalTheme(resolvedTheme: ResolvedTheme): {
@@ -63,8 +96,35 @@ function getTerminalTheme(resolvedTheme: ResolvedTheme): {
   };
 }
 
+function TerminalTranscriptOutput(props: { text: string }) {
+  const sanitizedText = sanitizeTerminalTranscriptChunk(props.text);
+  if (!sanitizedText.trim()) {
+    return null;
+  }
+
+  return (
+    <div className="shrink-0 rounded-xl border border-zinc-800/80 bg-black/35 px-3 py-2 shadow-[0_0_0_1px_rgba(24,24,27,0.35)]">
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-zinc-100">
+        <AnsiText text={sanitizedText} />
+      </pre>
+    </div>
+  );
+}
+
 const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
-  const { terminalId, resolvedTheme } = props;
+  const {
+    terminalId,
+    resolvedTheme,
+    boundSessionId = null,
+    embeddedMessages = [],
+    embeddedMessagesLoading = false,
+    chatBusy = false,
+    onChatInSession,
+    onOpenSession,
+    onFilePathLinkClick,
+    onApproveAiTerminalStep,
+    onRejectAiTerminalStep,
+  } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -82,11 +142,21 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   );
   const readOnlyWarningVisibleRef = useRef(false);
   const readOnlyWarningShownAtRef = useRef(0);
+  const timelineViewportRef = useRef<HTMLDivElement | null>(null);
+  const terminalOutputRef = useRef("");
+  const anchorOrderRef = useRef(0);
+  const renderedLiveOutputRef = useRef("");
+  const renderedContextKeyRef = useRef("");
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [writeOwnerId, setWriteOwnerId] = useState<string | null>(null);
   const [showReadOnlyWarning, setShowReadOnlyWarning] = useState(false);
+  const [terminalOutput, setTerminalOutput] = useState("");
+  const [timelineResetVersion, setTimelineResetVersion] = useState(0);
+  const [timelineAnchors, setTimelineAnchors] = useState<
+    Record<string, TerminalTimelineAnchor | undefined>
+  >({});
   const terminalTheme = useMemo(
     () => getTerminalTheme(resolvedTheme),
     [resolvedTheme],
@@ -109,6 +179,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [writeOwnerId]);
 
   useEffect(() => {
+    terminalOutputRef.current = terminalOutput;
+  }, [terminalOutput]);
+
+  useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) {
       return;
@@ -122,17 +196,47 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     }
   }, [isReadOnly, dismissReadOnlyWarning]);
 
-  const applyFullSnapshot = useCallback(
-    (snapshot: TerminalSnapshotResponse) => {
-      const terminal = terminalRef.current;
-      if (!terminal) {
-        return;
+  useEffect(() => {
+    const visibleMessageKeys = new Set(
+      embeddedMessages.map((item) => item.messageKey),
+    );
+
+    setTimelineAnchors((current) => {
+      let changed = false;
+      const next: Record<string, TerminalTimelineAnchor | undefined> = {};
+
+      for (const [messageKey, anchor] of Object.entries(current)) {
+        if (visibleMessageKeys.has(messageKey)) {
+          next[messageKey] = anchor;
+        } else {
+          changed = true;
+        }
       }
 
-      terminal.reset();
-      if (snapshot.output.length > 0) {
-        terminal.write(snapshot.output);
+      for (const item of embeddedMessages) {
+        if (next[item.messageKey]) {
+          continue;
+        }
+        next[item.messageKey] = {
+          offset: getTerminalInlineAnchorOffset(terminalOutputRef.current),
+          order: anchorOrderRef.current,
+        };
+        anchorOrderRef.current += 1;
+        changed = true;
       }
+
+      return changed ? next : current;
+    });
+  }, [embeddedMessages, timelineResetVersion]);
+
+  const applyFullSnapshot = useCallback(
+    (snapshot: TerminalSnapshotResponse) => {
+      anchorOrderRef.current = 0;
+      renderedLiveOutputRef.current = "";
+      renderedContextKeyRef.current = "";
+      setTimelineAnchors({});
+      setTerminalOutput(snapshot.output);
+      setTimelineResetVersion((current) => current + 1);
       setRunning(snapshot.running);
       seqRef.current = snapshot.seq;
       writeOwnerIdRef.current = snapshot.writeOwnerId;
@@ -265,22 +369,19 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         return;
       }
 
-      const terminal = terminalRef.current;
-      if (!terminal) {
-        return;
-      }
-
       if (event.type === "output") {
         if (typeof event.chunk === "string" && event.chunk.length > 0) {
-          terminal.write(event.chunk);
+          setTerminalOutput((current) => `${current}${event.chunk ?? ""}`);
         }
       } else if (event.type === "state") {
         setRunning(event.running === true);
       } else if (event.type === "reset") {
-        terminal.reset();
-        if (typeof event.output === "string" && event.output.length > 0) {
-          terminal.write(event.output);
-        }
+        anchorOrderRef.current = 0;
+        renderedLiveOutputRef.current = "";
+        renderedContextKeyRef.current = "";
+        setTimelineAnchors({});
+        setTerminalOutput(typeof event.output === "string" ? event.output : "");
+        setTimelineResetVersion((current) => current + 1);
         setRunning(event.running === true);
       } else if (event.type === "ownership") {
         writeOwnerIdRef.current = event.writeOwnerId ?? null;
@@ -433,6 +534,13 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      terminalOutputRef.current = "";
+      renderedLiveOutputRef.current = "";
+      renderedContextKeyRef.current = "";
+      anchorOrderRef.current = 0;
+      setTerminalOutput("");
+      setTimelineAnchors({});
+      setTimelineResetVersion(0);
       setConnected(false);
       setRunning(false);
       setError(null);
@@ -449,6 +557,76 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     sendResize,
     terminalId,
     terminalTheme,
+  ]);
+
+  const embeddedMessagesByKey = useMemo(
+    () =>
+      new Map(embeddedMessages.map((item) => [item.messageKey, item] as const)),
+    [embeddedMessages],
+  );
+  const terminalTimeline = useMemo(
+    () =>
+      buildTerminalTimeline({
+        output: terminalOutput,
+        messageKeys: embeddedMessages.map((item) => item.messageKey),
+        anchors: timelineAnchors,
+      }),
+    [embeddedMessages, terminalOutput, timelineAnchors],
+  );
+  const hasEmbeddedTimelineEntries = terminalTimeline.entries.length > 0;
+  const liveTerminalContextKey = useMemo(
+    () =>
+      [
+        timelineResetVersion,
+        ...embeddedMessages.map((item) => {
+          const anchor = timelineAnchors[item.messageKey];
+          return `${item.messageKey}:${anchor?.offset ?? -1}:${anchor?.order ?? -1}`;
+        }),
+      ].join("|"),
+    [embeddedMessages, timelineAnchors, timelineResetVersion],
+  );
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+
+    const nextOutput = terminalTimeline.liveOutput;
+    if (
+      renderedContextKeyRef.current !== liveTerminalContextKey ||
+      !nextOutput.startsWith(renderedLiveOutputRef.current)
+    ) {
+      terminal.reset();
+      if (nextOutput.length > 0) {
+        terminal.write(nextOutput);
+      }
+      renderedLiveOutputRef.current = nextOutput;
+      renderedContextKeyRef.current = liveTerminalContextKey;
+      return;
+    }
+
+    if (nextOutput.length > renderedLiveOutputRef.current.length) {
+      terminal.write(nextOutput.slice(renderedLiveOutputRef.current.length));
+    }
+    renderedLiveOutputRef.current = nextOutput;
+    renderedContextKeyRef.current = liveTerminalContextKey;
+  }, [liveTerminalContextKey, terminalTimeline.liveOutput]);
+
+  useEffect(() => {
+    if (!hasEmbeddedTimelineEntries) {
+      return;
+    }
+    const viewport = timelineViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [
+    hasEmbeddedTimelineEntries,
+    terminalOutput,
+    terminalTimeline.entries.length,
+    terminalTimeline.liveOutput,
   ]);
 
   const statusText = useMemo(() => {
@@ -535,12 +713,109 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
             {error}
           </span>
         )}
+        {!error ? <div className="ml-auto" /> : null}
+        <button
+          type="button"
+          onClick={onChatInSession}
+          disabled={!onChatInSession || chatBusy}
+          className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-600/70 bg-cyan-600/20 px-2.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-600/30 disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          <MessageSquarePlus className="h-3.5 w-3.5" />
+          Chat in session
+        </button>
+        {boundSessionId && onOpenSession ? (
+          <button
+            type="button"
+            onClick={() => onOpenSession(boundSessionId)}
+            className="inline-flex h-7 items-center gap-1.5 rounded border border-zinc-700 bg-zinc-900/60 px-2.5 text-[11px] text-zinc-200 transition-colors hover:bg-zinc-800/70"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            Open session
+          </button>
+        ) : null}
       </div>
-      <div className="flex-1 overflow-hidden relative">
-        <div ref={containerRef} className="h-full w-full px-2 py-1" />
+      <div className="flex-1 min-h-0 relative overflow-hidden">
+        <div ref={timelineViewportRef} className="h-full overflow-y-auto">
+          <div
+            className={`flex min-h-full flex-col ${
+              hasEmbeddedTimelineEntries
+                ? "gap-3 px-2 py-1"
+                : "px-2 py-1"
+            }`}
+          >
+            {hasEmbeddedTimelineEntries ? (
+              <div className="flex items-center gap-2 px-1 pt-1 text-[11px] text-zinc-500">
+                <Bot className="h-3.5 w-3.5 shrink-0 text-cyan-300/80" />
+                <span className="truncate">
+                  {boundSessionId
+                    ? `Terminal chat cards inline from session ${boundSessionId}`
+                    : "Terminal chat cards inline"}
+                </span>
+              </div>
+            ) : null}
+            {embeddedMessagesLoading && !hasEmbeddedTimelineEntries ? (
+              <div className="shrink-0 px-1 text-[11px] text-zinc-500">
+                Loading bound session replies...
+              </div>
+            ) : null}
+            {terminalTimeline.entries.map((entry) => {
+              if (entry.type === "output") {
+                return (
+                  <TerminalTranscriptOutput key={entry.key} text={entry.text} />
+                );
+              }
+
+              const item = embeddedMessagesByKey.get(entry.messageKey);
+              if (!item) {
+                return null;
+              }
+
+              return (
+                <div
+                  key={entry.key}
+                  className="shrink-0 rounded-xl border border-zinc-800/80 bg-zinc-900/55 p-2"
+                >
+                  <MessageBlock
+                    message={item.message}
+                    aiTerminalContext={
+                      boundSessionId
+                        ? {
+                            sessionId: boundSessionId,
+                            terminalId,
+                            messageKey: item.messageKey,
+                            isActionable: item.isActionable,
+                            stepStates: item.stepStates,
+                            onApproveStep: onApproveAiTerminalStep,
+                            onRejectStep: onRejectAiTerminalStep,
+                          }
+                        : undefined
+                    }
+                    onFilePathLinkClick={onFilePathLinkClick}
+                  />
+                </div>
+              );
+            })}
+            <div
+              className={
+                hasEmbeddedTimelineEntries
+                  ? "shrink-0 overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950 shadow-[0_0_0_1px_rgba(24,24,27,0.4)]"
+                  : "min-h-full flex-1 overflow-hidden"
+              }
+            >
+              <div
+                ref={containerRef}
+                className={
+                  hasEmbeddedTimelineEntries
+                    ? "h-[16rem] w-full px-2 py-1"
+                    : "h-full w-full"
+                }
+              />
+            </div>
+          </div>
+        </div>
         {showReadOnlyWarning && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-            <div className="bg-zinc-800/90 border border-zinc-600/50 rounded-lg px-5 py-3 text-sm text-zinc-200 shadow-lg">
+          <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+            <div className="rounded-lg border border-zinc-600/50 bg-zinc-800/90 px-5 py-3 text-sm text-zinc-200 shadow-lg">
               Read-only mode — press{" "}
               <strong className="text-amber-300">Take Over</strong> to type
             </div>

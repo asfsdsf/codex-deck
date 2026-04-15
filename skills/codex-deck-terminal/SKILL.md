@@ -1,71 +1,112 @@
 ---
 name: codex-deck-terminal
-description: Plan shell commands from natural language using a strict machine-readable XML-like contract, one non-interactive command per step, explicit user approval or refusal, failure recovery, and requirement_finished completion signaling. Use when the user wants AI-terminal behavior, stepwise shell planning, or command proposals that another process or UI will parse and execute.
+description: Plan approval-first terminal workflows for codex-deck using markdown plus machine-readable HTML-like tags. Use when a controller or UI should parse shell-step proposals, show executable cards, react to approval or rejection, and continue from structured execution summaries.
 ---
 
-# Plan Shell Workflows For Approval-First Execution
+# Plan Shell Workflows For Controller-Reactive Execution
 
-Use this skill when the goal is to propose shell commands, not to run them immediately.
+Use this skill when the goal is to propose shell steps for a terminal controller, not to run them directly.
 
 ## Core behavior
 
-- Propose exactly one shell command per reply.
-- Keep every proposed command non-interactive.
-- Wait for explicit user approval before any command is executed by the caller.
-- If the caller or user rejects a command, propose an alternative next command instead of insisting on the same one.
-- If the caller reports an execution failure, explain the likely cause briefly and propose one recovery command.
-- When the task is complete, emit `<requirement_finished>...</requirement_finished>` and no `<command>` tag.
+- Write normal markdown plus exactly one actionable terminal tag block in each reply when the controller should react.
+- A reply may contain multiple commands only as ordered steps inside one `<ai-terminal-plan>`.
+- Each `<ai-terminal-step>` must contain exactly one non-interactive shell command.
+- Wait for explicit user approval before any command is executed by the controller.
+- If the user or controller rejects a step, revise the plan instead of insisting on the same command.
+- If the controller reports a step failure, briefly explain the likely cause and return a revised next plan.
+- When the task is complete, emit `<requirement_finished>...</requirement_finished>` and no plan block.
 
 ## Environment grounding
 
-- Use the current machine environment, not a hardcoded OS assumption.
-- If the caller already supplied the current system release, architecture, shell, and cwd, trust that context.
-- If that context is missing and you have local tool access, inspect the machine before proposing commands.
-- Prefer concrete release strings such as `macOS 15.4.1` or `Ubuntu 24.04.2 LTS` over generic labels like `Linux`.
+- Use the current machine environment supplied by the controller. Do not assume Ubuntu 22.04 or any fixed OS.
+- Trust the controller-provided terminal id, cwd, shell, OS release, architecture, and platform.
+- Prefer concrete release strings such as `macOS 15.4.1` or `Ubuntu 24.04.2 LTS`.
+- Default to the controller-provided cwd when the user did not specify another working directory.
 
-## Response contract
+## Output contract
 
-Respond with XML-like tags only.
+The controller parses exactly one of these top-level blocks from each reply:
 
-Required tags for command proposals:
-
-```xml
-<state>await_approval|need_input|step_ready|step_failed|finished</state>
-<command><![CDATA[exactly one shell command]]></command>
-<explanation>Brief explanation of key flags or terms.</explanation>
-<cwd>execution directory</cwd>
-<shell>shell name</shell>
-<risk>low|medium|high</risk>
-<step_id>stable short id</step_id>
-<step_goal>short goal</step_goal>
-<next_action>approve|edit|reject|provide_input</next_action>
-```
-
-Optional tags:
+### Action plan
 
 ```xml
-<failure_reason>permission|missing_dependency|invalid_path|runtime_error|timeout|unknown</failure_reason>
-<troubleshooting>Brief cause and suggested fix.</troubleshooting>
-<needs_input>Question for the user when information is missing.</needs_input>
-<context_note>Short note summarizing relevant prior progress.</context_note>
+<ai-terminal-plan>
+  <context_note>optional shared note</context_note>
+  <ai-terminal-step>
+    <step_id>stable short id</step_id>
+    <step_goal>short goal</step_goal>
+    <command><![CDATA[exactly one shell command]]></command>
+    <cwd>execution directory</cwd>
+    <shell>shell name</shell>
+    <risk>low|medium|high</risk>
+    <next_action>approve|reject|provide_input</next_action>
+    <explanation>brief explanation of key flags or terms</explanation>
+    <context_note>optional step note</context_note>
+  </ai-terminal-step>
+</ai-terminal-plan>
 ```
 
-Completion tag:
+Rules:
+
+- Keep `<ai-terminal-step>` blocks in execution order.
+- Use short stable `step_id` values because the controller reports execution feedback by `step_id`.
+- Use `provide_input` only when the user must answer before a safe command can be proposed.
+
+### Need input
+
+```xml
+<ai-terminal-need-input>
+  <question>short question for the user</question>
+  <context_note>optional note</context_note>
+</ai-terminal-need-input>
+```
+
+### Completion
 
 ```xml
 <requirement_finished>Further suggestions or precautions.</requirement_finished>
 ```
 
+## Controller feedback you will receive
+
+The controller may send structured follow-up blocks in user messages.
+
+### Step execution result
+
+```xml
+<ai-terminal-execution>
+  <step_id>step id</step_id>
+  <status>success|failed|timed_out</status>
+  <exit_code>numeric exit code if known</exit_code>
+  <cwd_after>cwd after running the step</cwd_after>
+  <output_summary><![CDATA[concise output summary]]></output_summary>
+  <error_summary><![CDATA[concise error summary]]></error_summary>
+  <output_reference>optional controller-specific output reference</output_reference>
+</ai-terminal-execution>
+```
+
+### Step rejection
+
+```xml
+<ai-terminal-feedback>
+  <step_id>step id</step_id>
+  <decision>rejected</decision>
+  <reason>optional rejection reason</reason>
+</ai-terminal-feedback>
+```
+
+Use these feedback blocks to revise the next plan, continue from success, or recover from failure.
+
 ## Output discipline
 
-- Do not emit prose outside the XML-like tags.
-- Do not emit multiple `<command>` tags.
-- Do not emit `<command>` when `state` is `need_input` or `finished`.
-- Default `cwd` to the caller-provided current directory when the user did not specify one.
-- Keep explanations short because other processes may parse this output.
+- Do not emit more than one top-level actionable block in a single reply.
+- Do not emit raw XML-only responses without markdown context unless brevity makes that best.
+- Keep markdown concise because the controller may embed the tagged content as UI cards.
+- Do not put multiple shell commands into one `<command>`.
 
 ## Long-output rule
 
-- Do not rely on long raw command output being fed back into context.
-- When the caller provides summarized output plus an output reference, reason from the summary first.
-- Use concise execution summaries to choose the next step.
+- Do not rely on full raw terminal output being fed back into context.
+- Reason primarily from the provided summaries.
+- If an `output_reference` is present, treat it as metadata only; do not assume the raw output text is available.

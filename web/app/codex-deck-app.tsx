@@ -64,10 +64,8 @@ import SessionView, {
   type SessionSearchStatus,
   type SessionViewHandle,
 } from "../components/session-view";
-import MessageBlock from "../components/message-block";
 import LatestSessionMessageBox from "../components/latest-session-message-box";
 import TerminalView from "../components/terminal-view";
-import AiTerminalPanel from "../components/ai-terminal-panel";
 import WorkflowView from "../components/workflow-view";
 import DiffPane, { type RightPaneMode } from "../components/diff-pane";
 import ProjectSelector from "../components/project-selector";
@@ -191,6 +189,7 @@ import {
   type RemoteServerTrustPins,
   updateRemoteAdminSetupToken,
   getConversation,
+  getSystemContext,
   getCodexConfigDefaults,
   getSessionFileContent,
   getWorkflowProjectFileContent,
@@ -216,6 +215,18 @@ import {
   getCodexThreadSummaries,
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
 } from "../api";
+import {
+  buildAiTerminalEnvironment,
+  buildAiTerminalExecutionFeedback,
+  buildAiTerminalRejectionFeedback,
+  extractConversationMessageText,
+  getAiTerminalMessageKey,
+  parseAiTerminalExecutionResult,
+  parseAiTerminalMessage,
+  shouldAttachAiTerminalOutputReference,
+  type AiTerminalStepDirective,
+  type AiTerminalStepState,
+} from "../ai-terminal";
 import {
   getCollaborationModeRequestValue,
   getEffectiveModelId,
@@ -731,16 +742,42 @@ function buildTerminalChatBootstrapMessage(input: {
   terminalId: string;
   cwd: string;
   shell: string;
+  osName: string;
+  osRelease: string;
+  architecture: string;
+  platform: string;
   initialUserMessage: string;
   imageCount: number;
 }): string {
-  const baseMessage = `(Use skill codex-deck-terminal) This chat is bound to terminal ${input.terminalId}. Terminal cwd is ${input.cwd}. Terminal shell is ${input.shell}. Propose one non-interactive shell command per step, ask for approval before execution, and use <requirement_finished>...</requirement_finished> when complete.`;
+  const baseMessage = `(Use skill codex-deck-terminal) This chat is bound to terminal ${input.terminalId}. The controller will parse markdown replies that contain one terminal tag block such as <ai-terminal-plan>, <ai-terminal-need-input>, or <requirement_finished>. Inside <ai-terminal-plan>, you may emit multiple ordered <ai-terminal-step> blocks, but each step must contain exactly one non-interactive shell command. Wait for explicit approval before execution.`;
   const normalizedUserMessage = input.initialUserMessage.trim();
   if (!normalizedUserMessage && input.imageCount === 0) {
-    return baseMessage;
+    return [
+      baseMessage,
+      "<ai-terminal-controller-context>",
+      `<terminal_id>${input.terminalId}</terminal_id>`,
+      `<cwd>${input.cwd}</cwd>`,
+      `<shell>${input.shell}</shell>`,
+      `<os_name>${input.osName}</os_name>`,
+      `<os_release>${input.osRelease}</os_release>`,
+      `<architecture>${input.architecture}</architecture>`,
+      `<platform>${input.platform}</platform>`,
+      "</ai-terminal-controller-context>",
+    ].join("\n\n");
   }
 
-  const parts = [baseMessage];
+  const parts = [
+    baseMessage,
+    "<ai-terminal-controller-context>",
+    `<terminal_id>${input.terminalId}</terminal_id>`,
+    `<cwd>${input.cwd}</cwd>`,
+    `<shell>${input.shell}</shell>`,
+    `<os_name>${input.osName}</os_name>`,
+    `<os_release>${input.osRelease}</os_release>`,
+    `<architecture>${input.architecture}</architecture>`,
+    `<platform>${input.platform}</platform>`,
+    "</ai-terminal-controller-context>",
+  ];
   parts.push(
     "Treat the next section as the user's first request for this terminal chat session.",
   );
@@ -3485,18 +3522,30 @@ export default function CodexDeckApp() {
     workflowLatestSessionPreviewLoading,
     setWorkflowLatestSessionPreviewLoading,
   ] = useState(false);
-  const [terminalLatestSessionPreview, setTerminalLatestSessionPreview] =
-    useState<{
-      sessionId: string | null;
-      message: ConversationMessage | null;
-    }>({
-      sessionId: null,
-      message: null,
-    });
+  const [terminalEmbeddedMessages, setTerminalEmbeddedMessages] = useState<{
+    sessionId: string | null;
+    messages: Array<{
+      messageKey: string;
+      message: ConversationMessage;
+    }>;
+  }>({
+    sessionId: null,
+    messages: [],
+  });
   const [
-    terminalLatestSessionPreviewLoading,
-    setTerminalLatestSessionPreviewLoading,
+    terminalEmbeddedMessagesLoading,
+    setTerminalEmbeddedMessagesLoading,
   ] = useState(false);
+  const [aiTerminalStepStatesBySession, setAiTerminalStepStatesBySession] =
+    useState<
+      Record<
+        string,
+        Record<string, Record<string, AiTerminalStepState | undefined>>
+      >
+    >({});
+  const [aiTerminalLockedMessageKeyBySession] = useState<
+    Record<string, string | null>
+  >({});
   const [centerView, setCenterView] = useState<CenterViewMode>("session");
   const [loading, setLoading] = useState(true);
   const [loadingTerminals, setLoadingTerminals] = useState(true);
@@ -3613,6 +3662,9 @@ export default function CodexDeckApp() {
   >({});
   const [fixingDangling, setFixingDangling] = useState(false);
   const [showFixDanglingConfirm, setShowFixDanglingConfirm] = useState(false);
+  const [fixDanglingTargetSessionId, setFixDanglingTargetSessionId] = useState<
+    string | null
+  >(null);
   const [waitSilenceStartedAt, setWaitSilenceStartedAt] = useState<
     number | null
   >(null);
@@ -4682,6 +4734,9 @@ export default function CodexDeckApp() {
       sessionsWithThreadNames.find((s) => s.id === selectedSession) || null
     );
   }, [sessionsWithThreadNames, selectedSession]);
+  const selectedSessionTerminalRole = selectedSession
+    ? (sessionTerminalRolesById[selectedSession] ?? null)
+    : null;
 
   const deleteSessionTargetData = useMemo(() => {
     if (!deleteSessionTargetId) {
@@ -4783,6 +4838,25 @@ export default function CodexDeckApp() {
       title: `Open workflow ${selectedSessionWorkflowMatch.workflow.title}`,
     };
   }, [selectedSessionWorkflowMatch]);
+  const selectedSessionTerminalShortcut = useMemo(() => {
+    const terminalId = selectedSessionTerminalRole?.terminalId?.trim() ?? "";
+    if (!terminalId) {
+      return null;
+    }
+
+    const terminal =
+      terminals.find(
+        (candidate) =>
+          candidate.id === terminalId || candidate.terminalId === terminalId,
+      ) ?? null;
+
+    return {
+      label: "Terminal",
+      title: terminal?.display
+        ? `Open terminal ${terminal.display}`
+        : `Open terminal ${terminalId}`,
+    };
+  }, [selectedSessionTerminalRole, terminals]);
 
   const workflowRightPaneProjectPath =
     workflowDetail?.summary.projectRoot ??
@@ -4800,6 +4874,40 @@ export default function CodexDeckApp() {
     null;
   const terminalComposerSessionId =
     selectedTerminalData?.boundSessionId?.trim() || null;
+  const latestTerminalPlanMessageKey = useMemo(() => {
+    for (
+      let index = terminalEmbeddedMessages.messages.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const item = terminalEmbeddedMessages.messages[index];
+      const parsed = parseAiTerminalMessage(
+        extractConversationMessageText(item.message),
+      );
+      if (parsed?.directive.kind === "plan") {
+        return item.messageKey;
+      }
+    }
+    return null;
+  }, [terminalEmbeddedMessages]);
+  const terminalEmbeddedMessageCards = useMemo(() => {
+    const sessionId = terminalComposerSessionId ?? "";
+    const lockedMessageKey = aiTerminalLockedMessageKeyBySession[sessionId] ?? null;
+    const sessionStates = aiTerminalStepStatesBySession[sessionId] ?? {};
+    return terminalEmbeddedMessages.messages.map((item) => ({
+      ...item,
+      isActionable:
+        item.messageKey === latestTerminalPlanMessageKey &&
+        lockedMessageKey !== item.messageKey,
+      stepStates: sessionStates[item.messageKey],
+    }));
+  }, [
+    aiTerminalLockedMessageKeyBySession,
+    aiTerminalStepStatesBySession,
+    latestTerminalPlanMessageKey,
+    terminalComposerSessionId,
+    terminalEmbeddedMessages,
+  ]);
   const activeComposerSessionId =
     centerView === "workflow"
       ? workflowComposerSessionId
@@ -6627,6 +6735,23 @@ export default function CodexDeckApp() {
     [isMobilePhone, selectedTerminalId, terminals],
   );
 
+  const handleOpenTerminalForSession = useCallback(() => {
+    const terminalId = selectedSessionTerminalRole?.terminalId?.trim() ?? "";
+    if (!terminalId) {
+      return;
+    }
+
+    const terminal =
+      terminals.find(
+        (candidate) =>
+          candidate.id === terminalId || candidate.terminalId === terminalId,
+      ) ?? null;
+    if (terminal?.project) {
+      setSelectedTerminalProject(terminal.project);
+    }
+    handleSelectTerminal(terminalId);
+  }, [handleSelectTerminal, selectedSessionTerminalRole, terminals]);
+
   const handleSelectLeftPaneItem = useCallback(
     (id: string) => {
       if (centerView === "terminal") {
@@ -7793,6 +7918,27 @@ export default function CodexDeckApp() {
     [promptForTerminalSkillInstall],
   );
 
+  const setAiTerminalStepState = useCallback(
+    (
+      sessionId: string,
+      messageKey: string,
+      stepId: string,
+      state: AiTerminalStepState,
+    ) => {
+      setAiTerminalStepStatesBySession((current) => ({
+        ...current,
+        [sessionId]: {
+          ...(current[sessionId] ?? {}),
+          [messageKey]: {
+            ...((current[sessionId] ?? {})[messageKey] ?? {}),
+            [stepId]: state,
+          },
+        },
+      }));
+    },
+    [],
+  );
+
   const initializeWorkflowChatSession = useCallback(
     async (options?: {
       openInSessionView?: boolean;
@@ -7968,6 +8114,12 @@ export default function CodexDeckApp() {
 
       setTerminalBindingBusy(true);
       try {
+        const system = await getSystemContext();
+        const environment = buildAiTerminalEnvironment({
+          system,
+          cwd: projectRoot,
+          shell,
+        });
         const created = await createCodexThread({
           cwd: projectRoot,
           ...(selectedModelId ? { model: selectedModelId } : {}),
@@ -7985,8 +8137,12 @@ export default function CodexDeckApp() {
 
         const bootstrapMessage = buildTerminalChatBootstrapMessage({
           terminalId,
-          cwd: projectRoot,
-          shell,
+          cwd: environment.cwd,
+          shell: environment.shell,
+          osName: environment.osName,
+          osRelease: environment.osRelease,
+          architecture: environment.architecture,
+          platform: environment.platform,
           initialUserMessage: normalizedUserFirstMessage,
           imageCount: normalizedImages.length,
         });
@@ -9237,6 +9393,8 @@ export default function CodexDeckApp() {
   const isGeneratingForTerminalComposer =
     !!terminalComposerSessionId &&
     pendingTurn?.sessionId === terminalComposerSessionId;
+  const isGeneratingForActiveWaitSession =
+    !!activeWaitSessionId && pendingTurn?.sessionId === activeWaitSessionId;
   const isTerminalComposerLocked = sendingMessage || terminalBindingBusy;
 
   const handleWorkflowComposerSendMessage = useCallback(
@@ -9331,21 +9489,144 @@ export default function CodexDeckApp() {
     await stopConversationForSession(terminalComposerSessionId);
   }, [stopConversationForSession, terminalComposerSessionId]);
 
+  const handleApproveAiTerminalStep = useCallback(
+    async (input: {
+      sessionId: string;
+      terminalId: string;
+      messageKey: string;
+      step: AiTerminalStepDirective;
+    }) => {
+      setAiTerminalStepState(
+        input.sessionId,
+        input.messageKey,
+        input.step.stepId,
+        "running",
+      );
+      setInteractionError(null);
+
+      try {
+        const runResult = await runInTerminalRequest(
+          input.step.command,
+          {
+            terminalId: input.terminalId,
+          },
+        );
+        const parsedResult = parseAiTerminalExecutionResult({
+          stepId: input.step.stepId,
+          rawOutput: runResult.rawOutput,
+          timedOut: runResult.timedOut,
+          fallbackCwd:
+            input.step.cwd?.trim() ||
+            selectedTerminalData?.cwd?.trim() ||
+            selectedSessionData?.project ||
+            ".",
+        });
+        const stepFailed =
+          parsedResult.timedOut ||
+          (parsedResult.exitCode !== null && parsedResult.exitCode !== 0);
+        setAiTerminalStepState(
+          input.sessionId,
+          input.messageKey,
+          input.step.stepId,
+          stepFailed ? "failed" : "completed",
+        );
+
+        const outputReference = shouldAttachAiTerminalOutputReference(
+          parsedResult.rawOutput,
+        )
+          ? `terminal:${runResult.terminalId}:seq:${runResult.startSeq}-${runResult.endSeq}`
+          : null;
+        await sendMessageText(
+          {
+            text: buildAiTerminalExecutionFeedback({
+              result: parsedResult,
+              outputReference,
+            }),
+            images: [],
+          },
+          {
+            sessionIdOverride: input.sessionId,
+            cwdOverride: parsedResult.cwdAfter,
+          },
+        );
+      } catch (error) {
+        setAiTerminalStepState(
+          input.sessionId,
+          input.messageKey,
+          input.step.stepId,
+          "failed",
+        );
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [
+      selectedTerminalData?.cwd,
+      selectedSessionData?.project,
+      sendMessageText,
+      setAiTerminalStepState,
+    ],
+  );
+
+  const handleRejectAiTerminalStep = useCallback(
+    async (input: {
+      sessionId: string;
+      terminalId: string;
+      messageKey: string;
+      step: AiTerminalStepDirective;
+    }) => {
+      setAiTerminalStepState(
+        input.sessionId,
+        input.messageKey,
+        input.step.stepId,
+        "rejected",
+      );
+      setInteractionError(null);
+
+      const sent = await sendMessageText(
+        {
+          text: buildAiTerminalRejectionFeedback({
+            stepId: input.step.stepId,
+            reason: "User rejected this step in the terminal UI.",
+          }),
+          images: [],
+        },
+        {
+          sessionIdOverride: input.sessionId,
+          cwdOverride:
+            input.step.cwd?.trim() || selectedSessionData?.project || null,
+        },
+      );
+      if (!sent) {
+        setInteractionError(
+          "Failed to send the terminal step rejection back to the session.",
+        );
+      }
+    },
+    [
+      selectedSessionData?.project,
+      sendMessageText,
+      setAiTerminalStepState,
+    ],
+  );
+
   useEffect(() => {
-    if (!selectedSession || !isGeneratingForSelectedSession) {
+    if (!activeWaitSessionId || !isGeneratingForActiveWaitSession) {
       setWaitSilenceStartedAt(null);
       setShowFixDangling(false);
       setShowFixDanglingConfirm(false);
+      setFixDanglingTargetSessionId(null);
       setFixingDangling(false);
       return;
     }
 
     setWaitSilenceStartedAt(Date.now());
     setShowFixDangling(false);
-  }, [selectedSession, isGeneratingForSelectedSession]);
+  }, [activeWaitSessionId, isGeneratingForActiveWaitSession]);
 
   useEffect(() => {
-    if (!isGeneratingForSelectedSession || waitSilenceStartedAt === null) {
+    if (!isGeneratingForActiveWaitSession || waitSilenceStartedAt === null) {
       return;
     }
 
@@ -9362,7 +9643,7 @@ export default function CodexDeckApp() {
     return () => {
       clearTimeout(timeout);
     };
-  }, [isGeneratingForSelectedSession, waitSilenceStartedAt]);
+  }, [isGeneratingForActiveWaitSession, waitSilenceStartedAt]);
 
   const handleConversationActivity = useCallback(
     (
@@ -9416,8 +9697,8 @@ export default function CodexDeckApp() {
 
       // Reset wait silence timer on visible message activity
       if (
-        selectedSession === sessionId &&
-        isGeneratingForSelectedSession &&
+        activeWaitSessionId === sessionId &&
+        pendingTurnRef.current?.sessionId === sessionId &&
         details?.hasVisibleMessageIncrease
       ) {
         setWaitSilenceStartedAt(Date.now());
@@ -9426,8 +9707,6 @@ export default function CodexDeckApp() {
     },
     [
       activeWaitSessionId,
-      selectedSession,
-      isGeneratingForSelectedSession,
       scheduleSettledWaitStateSync,
     ],
   );
@@ -9511,27 +9790,27 @@ export default function CodexDeckApp() {
   useEffect(() => {
     const normalizedSessionId = terminalComposerSessionId?.trim() ?? "";
     if (centerView !== "terminal" || !normalizedSessionId) {
-      setTerminalLatestSessionPreview({
+      setTerminalEmbeddedMessages({
         sessionId: null,
-        message: null,
+        messages: [],
       });
-      setTerminalLatestSessionPreviewLoading(false);
+      setTerminalEmbeddedMessagesLoading(false);
       return;
     }
 
     if (!isPageVisible) {
-      setTerminalLatestSessionPreviewLoading(false);
+      setTerminalEmbeddedMessagesLoading(false);
       return;
     }
 
     let mergedMessages: ConversationMessage[] = [];
-    setTerminalLatestSessionPreviewLoading(true);
-    setTerminalLatestSessionPreview((current) =>
+    setTerminalEmbeddedMessagesLoading(true);
+    setTerminalEmbeddedMessages((current) =>
       current.sessionId === normalizedSessionId
         ? current
         : {
             sessionId: normalizedSessionId,
-            message: null,
+            messages: [],
           },
     );
 
@@ -9550,11 +9829,27 @@ export default function CodexDeckApp() {
             newMessages,
             batch?.insertion ?? "append",
           );
-          setTerminalLatestSessionPreview({
+          setTerminalEmbeddedMessages({
             sessionId: normalizedSessionId,
-            message: getLatestWorkflowCreatePreviewMessage(mergedMessages),
+            messages: mergedMessages
+              .filter((message) => {
+                if (message.type !== "assistant") {
+                  return false;
+                }
+                return (
+                  parseAiTerminalMessage(
+                    extractConversationMessageText(message),
+                  ) !== null
+                );
+              })
+              .map((message, index) => ({
+                messageKey:
+                  getAiTerminalMessageKey(message) ??
+                  `terminal-ai:${normalizedSessionId}:${index}`,
+                message,
+              })),
           });
-          setTerminalLatestSessionPreviewLoading(false);
+          setTerminalEmbeddedMessagesLoading(false);
           handleConversationActivity(normalizedSessionId, {
             ...getConversationActivityDetails(
               newMessages,
@@ -9566,10 +9861,10 @@ export default function CodexDeckApp() {
           });
         },
         onHeartbeat: () => {
-          setTerminalLatestSessionPreviewLoading(false);
+          setTerminalEmbeddedMessagesLoading(false);
         },
         onError: () => {
-          setTerminalLatestSessionPreviewLoading(false);
+          setTerminalEmbeddedMessagesLoading(false);
         },
       },
       {
@@ -9578,8 +9873,11 @@ export default function CodexDeckApp() {
     );
   }, [
     centerView,
+    extractConversationMessageText,
     handleConversationActivity,
+    getAiTerminalMessageKey,
     isPageVisible,
+    parseAiTerminalMessage,
     syncSessionWaitState,
     terminalComposerSessionId,
   ]);
@@ -9662,12 +9960,13 @@ export default function CodexDeckApp() {
   );
 
   const handleFixDangling = useCallback(() => {
-    if (!selectedSession || fixingDangling) {
+    if (!activeWaitSessionId || fixingDangling) {
       return;
     }
 
+    setFixDanglingTargetSessionId(activeWaitSessionId);
     setShowFixDanglingConfirm(true);
-  }, [selectedSession, fixingDangling]);
+  }, [activeWaitSessionId, fixingDangling]);
 
   const handleRequestDeleteSession = useCallback((sessionId: string) => {
     setDeleteSessionTargetId(sessionId);
@@ -9820,29 +10119,31 @@ export default function CodexDeckApp() {
   // Fix dangling: triggered ONLY by the user clicking the "Fix dangling"
   // confirmation button. Must never be called automatically.
   const handleConfirmFixDangling = useCallback(async () => {
-    if (!selectedSession || fixingDangling) {
+    if (!fixDanglingTargetSessionId || fixingDangling) {
       return;
     }
+    const targetSessionId = fixDanglingTargetSessionId;
 
     setShowFixDanglingConfirm(false);
     setFixingDangling(true);
     setInteractionError(null);
     try {
-      await fixDanglingSession(selectedSession);
+      await fixDanglingSession(targetSessionId);
       setWaitSilenceStartedAt(Date.now());
       setShowFixDangling(false);
       setPendingTurn((current) =>
-        current?.sessionId === selectedSession ? null : current,
+        current?.sessionId === targetSessionId ? null : current,
       );
-      waitSuppressSessionsRef.current.delete(selectedSession);
+      waitSuppressSessionsRef.current.delete(targetSessionId);
     } catch (error) {
       setInteractionError(
         error instanceof Error ? error.message : String(error),
       );
     } finally {
       setFixingDangling(false);
+      setFixDanglingTargetSessionId(null);
     }
-  }, [selectedSession, fixingDangling]);
+  }, [fixDanglingTargetSessionId, fixingDangling]);
 
   const newSessionPlaceholder =
     (centerView === "terminal" ? terminalCwdForCreate : sessionCwdForCreate) ||
@@ -11292,7 +11593,7 @@ export default function CodexDeckApp() {
           </div>
         )}
 
-        {showFixDanglingConfirm && selectedSession && (
+        {showFixDanglingConfirm && fixDanglingTargetSessionId && (
           <div className="fixed right-4 bottom-4 z-50 w-[min(30rem,calc(100vw-2rem))] rounded-xl border border-amber-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur">
             <div className="px-4 py-3">
               <div className="text-sm font-semibold text-amber-200">
@@ -11311,6 +11612,7 @@ export default function CodexDeckApp() {
                   type="button"
                   onClick={() => {
                     setShowFixDanglingConfirm(false);
+                    setFixDanglingTargetSessionId(null);
                   }}
                   disabled={fixingDangling}
                   className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
@@ -11986,41 +12288,55 @@ export default function CodexDeckApp() {
             </div>
           ) : centerView === "terminal" ? (
             <div className="h-full min-h-0 flex flex-col">
-              <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+              <div className="relative flex min-h-0 flex-1 flex-col">
                 {selectedTerminalId ? (
-                  <>
-                    <div className="min-h-0 flex-1">
-                      <TerminalView
-                        terminalId={selectedTerminalId}
-                        resolvedTheme={resolvedTheme}
-                      />
-                    </div>
-                    {selectedTerminalData ? (
-                      <AiTerminalPanel
-                        terminal={selectedTerminalData}
-                        boundSessionId={terminalComposerSessionId}
-                        latestSessionMessage={
-                          terminalLatestSessionPreview.sessionId ===
-                          terminalComposerSessionId
-                            ? terminalLatestSessionPreview.message
-                            : null
-                        }
-                        latestSessionMessageLoading={
-                          terminalLatestSessionPreviewLoading
-                        }
-                        chatBusy={terminalBindingBusy}
-                        resolvedTheme={resolvedTheme}
-                        onChatInSession={() => {
-                          void handleChatInTerminalSession();
-                        }}
-                        onOpenSession={handleSelectSession}
-                        onFilePathLinkClick={handleFilePathLinkClick}
-                      />
-                    ) : null}
-                  </>
+                  <div className="min-h-0 flex-1">
+                    <TerminalView
+                      terminalId={selectedTerminalId}
+                      resolvedTheme={resolvedTheme}
+                      boundSessionId={terminalComposerSessionId}
+                      embeddedMessages={
+                        terminalEmbeddedMessages.sessionId ===
+                        terminalComposerSessionId
+                          ? terminalEmbeddedMessageCards
+                          : []
+                      }
+                      embeddedMessagesLoading={terminalEmbeddedMessagesLoading}
+                      chatBusy={terminalBindingBusy}
+                      onChatInSession={() => {
+                        void handleChatInTerminalSession();
+                      }}
+                      onOpenSession={handleSelectSession}
+                      onFilePathLinkClick={handleFilePathLinkClick}
+                      onApproveAiTerminalStep={handleApproveAiTerminalStep}
+                      onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                    />
+                  </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-zinc-500">
                     No active terminal selected.
+                  </div>
+                )}
+                {isGeneratingForTerminalComposer && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
+                    <div className="inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg">
+                      <span className="thinking-dot" />
+                      <span className="thinking-label">Chating...</span>
+                    </div>
+                    {showFixDangling && (
+                      <div className="pointer-events-auto flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleFixDangling();
+                          }}
+                          disabled={fixingDangling}
+                          className="rounded border border-amber-600/50 bg-amber-700/12 px-2.5 py-1 text-[11px] text-amber-200 shadow-lg transition-colors hover:bg-amber-700/24 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {fixingDangling ? "Fixing..." : "Fix dangling"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -12075,6 +12391,15 @@ export default function CodexDeckApp() {
                         }
                       : null
                   }
+                  terminalShortcut={
+                    selectedSessionTerminalShortcut
+                      ? {
+                          label: selectedSessionTerminalShortcut.label,
+                          title: selectedSessionTerminalShortcut.title,
+                          onClick: handleOpenTerminalForSession,
+                        }
+                      : null
+                  }
                   latestButtonBottomOffsetPx={
                     isGeneratingForSelectedSession && showFixDangling
                       ? 56
@@ -12086,6 +12411,22 @@ export default function CodexDeckApp() {
                   onConversationActivity={handleConversationActivity}
                   onConversationSearchStatusChange={setConversationSearchStatus}
                   onStreamConnect={handleStreamConnect}
+                  aiTerminalTerminalId={
+                    selectedSessionTerminalRole?.terminalId ?? null
+                  }
+                  aiTerminalLockedMessageKey={
+                    selectedSession
+                      ? (aiTerminalLockedMessageKeyBySession[selectedSession] ??
+                        null)
+                      : null
+                  }
+                  aiTerminalStepStatesByMessageKey={
+                    selectedSession
+                      ? (aiTerminalStepStatesBySession[selectedSession] ?? {})
+                      : {}
+                  }
+                  onApproveAiTerminalStep={handleApproveAiTerminalStep}
+                  onRejectAiTerminalStep={handleRejectAiTerminalStep}
                 />
                 {isGeneratingForSelectedSession && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">

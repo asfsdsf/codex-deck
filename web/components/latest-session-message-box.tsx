@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import type { ConversationMessage } from "@codex-deck/api";
 import MessageBlock from "./message-block";
 
@@ -6,6 +7,7 @@ interface LatestSessionMessageBoxProps {
   sessionId?: string | null;
   emptyText: string;
   onFilePathLinkClick?: (href: string) => boolean;
+  aiTerminalContext?: ComponentProps<typeof MessageBlock>["aiTerminalContext"];
   containerClassName?: string;
   viewportClassName?: string;
 }
@@ -36,6 +38,7 @@ export default function LatestSessionMessageBox(
         {props.message ? (
           <MessageBlock
             message={props.message}
+            aiTerminalContext={props.aiTerminalContext}
             onFilePathLinkClick={props.onFilePathLinkClick}
           />
         ) : (

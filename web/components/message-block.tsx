@@ -32,6 +32,13 @@ import { shouldDefaultExpandToolUse } from "../message-block-utils";
 import { getTokenLimitNoticeRepeatCount } from "../token-limit-notices";
 import { formatDurationFromTimestamps, sanitizeText } from "../utils";
 import { getPathTail } from "../path-utils";
+import {
+  parseAiTerminalMessage,
+  type AiTerminalDirective,
+  type AiTerminalPlanDirective,
+  type AiTerminalStepDirective,
+  type AiTerminalStepState,
+} from "../ai-terminal";
 import { getFencedCodeBlock, MarkdownRenderer } from "./markdown-renderer";
 import { PatchTextRenderer, getPatchFileTypes } from "./patch-text-renderer";
 import {
@@ -88,6 +95,25 @@ interface MessageBlockProps {
     request: CodexApprovalRequest,
     response: CodexApprovalResponsePayload,
   ) => void;
+  aiTerminalContext?: {
+    sessionId: string;
+    terminalId: string;
+    messageKey: string;
+    isActionable: boolean;
+    stepStates?: Record<string, AiTerminalStepState | undefined>;
+    onApproveStep?: (input: {
+      sessionId: string;
+      terminalId: string;
+      messageKey: string;
+      step: AiTerminalStepDirective;
+    }) => void;
+    onRejectStep?: (input: {
+      sessionId: string;
+      terminalId: string;
+      messageKey: string;
+      step: AiTerminalStepDirective;
+    }) => void;
+  };
   resolvedUserInputAnswersByItemId?: Map<
     string,
     Record<
@@ -427,6 +453,304 @@ function ProposedPlanRenderer(props: {
   );
 }
 
+function getAiTerminalStepStateLabel(
+  state: AiTerminalStepState | undefined,
+  isActionable: boolean,
+): string | null {
+  if (state === "running") {
+    return "Running";
+  }
+  if (state === "completed") {
+    return "Completed";
+  }
+  if (state === "failed") {
+    return "Failed";
+  }
+  if (state === "rejected") {
+    return "Rejected";
+  }
+  if (isActionable) {
+    return "Pending";
+  }
+  return null;
+}
+
+function getAiTerminalStepStateClasses(
+  state: AiTerminalStepState | undefined,
+  isActionable: boolean,
+): string {
+  if (state === "running") {
+    return "border-cyan-400/35 bg-cyan-500/15 text-cyan-100";
+  }
+  if (state === "completed") {
+    return "border-emerald-400/35 bg-emerald-500/15 text-emerald-100";
+  }
+  if (state === "failed") {
+    return "border-rose-400/35 bg-rose-500/15 text-rose-100";
+  }
+  if (state === "rejected") {
+    return "border-zinc-400/35 bg-zinc-500/15 text-zinc-100";
+  }
+  if (isActionable) {
+    return "border-amber-400/35 bg-amber-500/15 text-amber-100";
+  }
+  return "border-zinc-600/35 bg-zinc-800/55 text-zinc-300";
+}
+
+function AiTerminalPlanRenderer(props: {
+  plan: AiTerminalPlanDirective;
+  trailingMarkdown: string;
+  leadingMarkdown: string;
+  aiTerminalContext?: MessageBlockProps["aiTerminalContext"];
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  const { plan, trailingMarkdown, leadingMarkdown, aiTerminalContext } = props;
+
+  return (
+    <div className="my-1 space-y-3">
+      {leadingMarkdown ? (
+        <MarkdownRenderer
+          content={leadingMarkdown}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
+      <div className="rounded-xl border border-cyan-400/35 bg-zinc-950/70 p-3 shadow-[0_0_0_1px_rgba(8,145,178,0.08)]">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/90">
+            AI Terminal Plan
+          </div>
+          <div className="text-[10px] text-zinc-500">
+            {plan.steps.length} step{plan.steps.length === 1 ? "" : "s"}
+          </div>
+        </div>
+        {plan.contextNote ? (
+          <div className="mt-2 text-xs leading-relaxed text-zinc-300">
+            <MarkdownRenderer
+              content={plan.contextNote}
+              onFilePathLinkClick={props.onFilePathLinkClick}
+            />
+          </div>
+        ) : null}
+        <div className="mt-3 space-y-3">
+          {plan.steps.map((step, index) => {
+            const state = aiTerminalContext?.stepStates?.[step.stepId];
+            const stateLabel = getAiTerminalStepStateLabel(
+              state,
+              aiTerminalContext?.isActionable === true,
+            );
+            const canApprove =
+              aiTerminalContext?.isActionable === true &&
+              step.nextAction !== "provide_input" &&
+              state !== "running" &&
+              state !== "completed";
+            const canReject =
+              aiTerminalContext?.isActionable === true &&
+              state !== "running" &&
+              state !== "completed" &&
+              state !== "rejected";
+
+            return (
+              <div
+                key={step.stepId}
+                className="rounded-xl border border-zinc-800/80 bg-zinc-900/80 p-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-zinc-700 bg-zinc-950 px-1.5 text-[10px] font-medium text-zinc-200">
+                    {index + 1}
+                  </div>
+                  <div className="text-sm font-medium text-zinc-100">
+                    {step.stepGoal ?? `Step ${index + 1}`}
+                  </div>
+                  <div className="inline-flex items-center rounded-full border border-zinc-700/70 bg-zinc-950/80 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400">
+                    Risk {step.risk}
+                  </div>
+                  {stateLabel ? (
+                    <div
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${getAiTerminalStepStateClasses(
+                        state,
+                        aiTerminalContext?.isActionable === true,
+                      )}`}
+                    >
+                      {stateLabel}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-2 rounded-lg border border-zinc-800 bg-black/30 p-3">
+                  <div className="command-syntax command-syntax-block whitespace-pre-wrap break-all text-sm text-zinc-100">
+                    {step.command}
+                  </div>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+                  {step.cwd ? (
+                    <span className="rounded border border-zinc-800 bg-zinc-950/70 px-2 py-1 font-mono">
+                      {step.cwd}
+                    </span>
+                  ) : null}
+                  {step.shell ? (
+                    <span className="rounded border border-zinc-800 bg-zinc-950/70 px-2 py-1 font-mono">
+                      {step.shell}
+                    </span>
+                  ) : null}
+                  <CopyButton
+                    text={step.command}
+                    title="Copy command"
+                    className="rounded border border-zinc-700/70 bg-zinc-900/70 hover:bg-zinc-800/70"
+                  />
+                </div>
+
+                {step.explanation ? (
+                  <div className="mt-2 text-xs leading-relaxed text-zinc-300">
+                    <MarkdownRenderer
+                      content={step.explanation}
+                      onFilePathLinkClick={props.onFilePathLinkClick}
+                    />
+                  </div>
+                ) : null}
+
+                {step.contextNote ? (
+                  <div className="mt-2 text-xs leading-relaxed text-zinc-400">
+                    <MarkdownRenderer
+                      content={step.contextNote}
+                      onFilePathLinkClick={props.onFilePathLinkClick}
+                    />
+                  </div>
+                ) : null}
+
+                {step.nextAction === "provide_input" ? (
+                  <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
+                    This step needs more user input. Reply in the chat composer to continue.
+                  </div>
+                ) : null}
+
+                {(canApprove || canReject) && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {canApprove ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          aiTerminalContext?.onApproveStep?.({
+                            sessionId: aiTerminalContext.sessionId,
+                            terminalId: aiTerminalContext.terminalId,
+                            messageKey: aiTerminalContext.messageKey,
+                            step,
+                          })
+                        }
+                        className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-500/25"
+                      >
+                        {state === "running" ? "Running..." : "Approve and run"}
+                      </button>
+                    ) : null}
+                    {canReject ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          aiTerminalContext?.onRejectStep?.({
+                            sessionId: aiTerminalContext.sessionId,
+                            terminalId: aiTerminalContext.terminalId,
+                            messageKey: aiTerminalContext.messageKey,
+                            step,
+                          })
+                        }
+                        className="rounded-lg border border-zinc-500/35 bg-zinc-500/10 px-3 py-1.5 text-[11px] text-zinc-100 transition-colors hover:bg-zinc-500/20"
+                      >
+                        Reject
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {trailingMarkdown ? (
+        <MarkdownRenderer
+          content={trailingMarkdown}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function AiTerminalDirectiveRenderer(props: {
+  directive: AiTerminalDirective;
+  leadingMarkdown: string;
+  trailingMarkdown: string;
+  aiTerminalContext?: MessageBlockProps["aiTerminalContext"];
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  if (props.directive.kind === "plan") {
+    return (
+      <AiTerminalPlanRenderer
+        plan={props.directive}
+        leadingMarkdown={props.leadingMarkdown}
+        trailingMarkdown={props.trailingMarkdown}
+        aiTerminalContext={props.aiTerminalContext}
+        onFilePathLinkClick={props.onFilePathLinkClick}
+      />
+    );
+  }
+
+  if (props.directive.kind === "need_input") {
+    return (
+      <div className="my-1 space-y-3">
+        {props.leadingMarkdown ? (
+          <MarkdownRenderer
+            content={props.leadingMarkdown}
+            onFilePathLinkClick={props.onFilePathLinkClick}
+          />
+        ) : null}
+        <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100/90">
+            AI Terminal Needs Input
+          </div>
+          <div className="mt-2 text-sm text-zinc-100">{props.directive.question}</div>
+          {props.directive.contextNote ? (
+            <div className="mt-2 text-xs text-zinc-300">
+              <MarkdownRenderer
+                content={props.directive.contextNote}
+                onFilePathLinkClick={props.onFilePathLinkClick}
+              />
+            </div>
+          ) : null}
+        </div>
+        {props.trailingMarkdown ? (
+          <MarkdownRenderer
+            content={props.trailingMarkdown}
+            onFilePathLinkClick={props.onFilePathLinkClick}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-1 space-y-3">
+      {props.leadingMarkdown ? (
+        <MarkdownRenderer
+          content={props.leadingMarkdown}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
+      <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-3">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100/90">
+          AI Terminal Complete
+        </div>
+        <div className="mt-2 text-sm text-zinc-100">{props.directive.message}</div>
+      </div>
+      {props.trailingMarkdown ? (
+        <MarkdownRenderer
+          content={props.trailingMarkdown}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const {
     message,
@@ -438,6 +762,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     fallbackToolInputMap,
     fallbackToolTimestampMap,
     onPlanAction,
+    aiTerminalContext,
     onFilePathLinkClick,
     pendingUserInputRequests = [],
     pendingApprovalRequests = [],
@@ -668,6 +993,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
             fallbackToolInputMap={fallbackToolInputMap}
             fallbackToolTimestampMap={fallbackToolTimestampMap}
             onPlanAction={planActionHandler}
+            aiTerminalContext={aiTerminalContext}
             pendingUserInputRequestByItemId={pendingUserInputRequestByItemId}
             pendingApprovalRequestByItemId={pendingApprovalRequestByItemId}
             selectedUserInputAnswers={selectedUserInputAnswers}
@@ -800,6 +1126,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                   fallbackToolInputMap={fallbackToolInputMap}
                   fallbackToolTimestampMap={fallbackToolTimestampMap}
                   onPlanAction={planActionHandler}
+                  aiTerminalContext={aiTerminalContext}
                   pendingUserInputRequestByItemId={
                     pendingUserInputRequestByItemId
                   }
@@ -975,6 +1302,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                     fallbackToolInputMap={fallbackToolInputMap}
                     fallbackToolTimestampMap={fallbackToolTimestampMap}
                     onPlanAction={planActionHandler}
+                    aiTerminalContext={aiTerminalContext}
                     pendingUserInputRequestByItemId={
                       pendingUserInputRequestByItemId
                     }
@@ -1019,6 +1347,18 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
             {typeof content === "string" ? (
               (() => {
                 const sanitized = sanitizeText(content);
+                const aiTerminalMessage = parseAiTerminalMessage(sanitized);
+                if (aiTerminalMessage) {
+                  return (
+                    <AiTerminalDirectiveRenderer
+                      directive={aiTerminalMessage.directive}
+                      leadingMarkdown={aiTerminalMessage.leadingMarkdown}
+                      trailingMarkdown={aiTerminalMessage.trailingMarkdown}
+                      aiTerminalContext={aiTerminalContext}
+                      onFilePathLinkClick={onFilePathLinkClick}
+                    />
+                  );
+                }
                 const proposedPlan = parseProposedPlanBlock(sanitized);
                 if (proposedPlan) {
                   return (
@@ -1054,6 +1394,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                     fallbackToolInputMap={fallbackToolInputMap}
                     fallbackToolTimestampMap={fallbackToolTimestampMap}
                     onPlanAction={planActionHandler}
+                    aiTerminalContext={aiTerminalContext}
                     onFilePathLinkClick={onFilePathLinkClick}
                     pendingUserInputRequestByItemId={
                       pendingUserInputRequestByItemId
@@ -1110,6 +1451,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 fallbackToolInputMap={fallbackToolInputMap}
                 fallbackToolTimestampMap={fallbackToolTimestampMap}
                 onPlanAction={planActionHandler}
+                aiTerminalContext={aiTerminalContext}
                 onFilePathLinkClick={onFilePathLinkClick}
                 pendingUserInputRequestByItemId={
                   pendingUserInputRequestByItemId
@@ -1145,6 +1487,7 @@ interface ContentBlockRendererProps {
   fallbackToolInputMap?: Map<string, Record<string, unknown>>;
   fallbackToolTimestampMap?: Map<string, string>;
   onPlanAction?: (action: "implement" | "stay") => void;
+  aiTerminalContext?: MessageBlockProps["aiTerminalContext"];
   onFilePathLinkClick?: (href: string) => boolean;
   pendingUserInputRequestByItemId?: Map<string, CodexUserInputRequest>;
   pendingApprovalRequestByItemId?: Map<string, CodexApprovalRequest>;
@@ -2260,6 +2603,7 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     fallbackToolInputMap,
     fallbackToolTimestampMap,
     onPlanAction,
+    aiTerminalContext,
     onFilePathLinkClick,
     pendingUserInputRequestByItemId,
     pendingApprovalRequestByItemId,
@@ -2301,6 +2645,18 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     const sanitized = sanitizeText(block.text);
     if (!sanitized) {
       return null;
+    }
+    const aiTerminalMessage = parseAiTerminalMessage(sanitized);
+    if (aiTerminalMessage) {
+      return wrapSearchableBlock(
+        <AiTerminalDirectiveRenderer
+          directive={aiTerminalMessage.directive}
+          leadingMarkdown={aiTerminalMessage.leadingMarkdown}
+          trailingMarkdown={aiTerminalMessage.trailingMarkdown}
+          aiTerminalContext={aiTerminalContext}
+          onFilePathLinkClick={onFilePathLinkClick}
+        />,
+      );
     }
     const proposedPlan = parseProposedPlanBlock(sanitized);
     if (proposedPlan) {
