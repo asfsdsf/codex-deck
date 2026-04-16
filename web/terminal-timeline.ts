@@ -90,13 +90,53 @@ const TRANSIENT_PROMPT_ARTIFACT_LINE_PATTERN = /^[%=><]$/;
 const TRANSIENT_PROMPT_SUFFIX_ARTIFACT_LINE_PATTERN = /[#$%>»]\s*[%=><]\s*$/;
 
 function applyBackspaceCorrections(value: string): string {
-  let next = value;
-  let previous: string | null = null;
-  while (next !== previous) {
-    previous = next;
-    next = next.replace(/[^\n]\u0008/g, "");
+  const lines = [""];
+  let lineIndex = 0;
+  let column = 0;
+
+  const ensureLine = () => {
+    if (!lines[lineIndex]) {
+      lines[lineIndex] = "";
+    }
+  };
+
+  for (const char of value) {
+    if (char === "\n") {
+      lineIndex += 1;
+      column = 0;
+      ensureLine();
+      continue;
+    }
+
+    if (char === "\r") {
+      column = 0;
+      continue;
+    }
+
+    if (char === "\u0008") {
+      if (column > 0) {
+        const current = lines[lineIndex] ?? "";
+        const removeAt = column - 1;
+        lines[lineIndex] =
+          `${current.slice(0, removeAt)}${current.slice(column)}`;
+        column -= 1;
+      }
+      continue;
+    }
+
+    const current = lines[lineIndex] ?? "";
+    if (column >= current.length) {
+      const padding =
+        column > current.length ? " ".repeat(column - current.length) : "";
+      lines[lineIndex] = `${current}${padding}${char}`;
+    } else {
+      lines[lineIndex] =
+        `${current.slice(0, column)}${char}${current.slice(column + 1)}`;
+    }
+    column += 1;
   }
-  return next.replace(/\u0008/g, "");
+
+  return lines.join("\n");
 }
 
 export function sanitizeTerminalTranscriptChunk(text: string): string {
@@ -105,11 +145,12 @@ export function sanitizeTerminalTranscriptChunk(text: string): string {
   }
 
   const sanitized = applyBackspaceCorrections(
-    text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
+    text
+      .replace(/\r\n/g, "\n")
+      .replace(ANSI_OSC_SEQUENCE_PATTERN, "")
+      .replace(ANSI_CSI_SEQUENCE_PATTERN, "")
+      .replace(ANSI_SINGLE_CHAR_SEQUENCE_PATTERN, ""),
   )
-    .replace(ANSI_OSC_SEQUENCE_PATTERN, "")
-    .replace(ANSI_CSI_SEQUENCE_PATTERN, "")
-    .replace(ANSI_SINGLE_CHAR_SEQUENCE_PATTERN, "")
     .replace(CONTROL_CHAR_PATTERN, "")
     .replace(AI_TERMINAL_HELPER_ASSIGNMENT_PATTERN, "")
     .replace(AI_TERMINAL_RESULT_LINE_PATTERN, "")

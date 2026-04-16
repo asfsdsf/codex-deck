@@ -197,3 +197,21 @@ test("sanitizeTerminalTranscriptChunk drops prompt lines with transient suffix a
   assert.match(sanitized, /printf 'FIRST_ONLY\\n'/);
   assert.match(sanitized, /FIRST_ONLY/);
 });
+
+test("sanitizeTerminalTranscriptChunk applies carriage-return overwrite semantics", () => {
+  const sanitized = sanitizeTerminalTranscriptChunk(
+    [
+      '(base) Project/codex-deck » old broken line\r(base) Project/codex-deck » find . -type f -exec stat -f "%z %N" {} + | sort -n | head -n 10',
+      "0 ./node_modules/example.js",
+    ].join("\n"),
+  );
+
+  assert.equal(sanitized.includes("old broken line"), false);
+  assert.equal(
+    sanitized.includes(
+      '(base) Project/codex-deck » find . -type f -exec stat -f "%z %N" {} + | sort -n | head -n 10',
+    ),
+    true,
+  );
+  assert.match(sanitized, /0 \.\/node_modules\/example\.js/);
+});

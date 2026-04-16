@@ -32,6 +32,7 @@ import {
   sanitizeTerminalTranscriptChunk,
   type TerminalTimelineAnchor,
 } from "../terminal-timeline";
+import { fitTerminalViewport } from "../terminal-render";
 import MessageBlock from "./message-block";
 import { AnsiText } from "./tool-renderers/ansi-text";
 
@@ -146,6 +147,37 @@ function shouldFreezeTerminalTranscript(text: string): boolean {
       normalized.startsWith("(") ||
       normalized.startsWith("["))
   );
+}
+
+function getRenderedTerminalTranscriptSnapshot(
+  terminal: Terminal | null,
+): string | null {
+  if (!terminal) {
+    return null;
+  }
+
+  const activeBuffer = terminal.buffer.active;
+  const lines: string[] = [];
+
+  for (let index = 0; index < activeBuffer.length; index += 1) {
+    const line = activeBuffer.getLine(index);
+    if (!line) {
+      continue;
+    }
+    const lineText = line.translateToString(true);
+    const isWrapped = (line as { isWrapped?: boolean }).isWrapped === true;
+    if (isWrapped && lines.length > 0) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]}${lineText}`;
+    } else {
+      lines.push(lineText);
+    }
+  }
+
+  while (lines.length > 0 && (lines[lines.length - 1] ?? "").trim() === "") {
+    lines.pop();
+  }
+
+  return lines.join("\n");
 }
 
 function isTerminalCompletionMessage(message: ConversationMessage): boolean {
@@ -412,9 +444,15 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
           anchors: timelineAnchors,
           messageKey: firstMissingItem.messageKey,
         });
-        const frozenSnapshot = currentTerminalOutput.slice(
-          transcriptStartOffset,
+        const renderedSnapshot = getRenderedTerminalTranscriptSnapshot(
+          terminalRef.current,
         );
+        const snapshotSource =
+          renderedSnapshot && renderedSnapshot.trim().length > 0
+            ? renderedSnapshot
+            : currentTerminalOutput.slice(transcriptStartOffset);
+        const frozenSnapshot =
+          sanitizeTerminalTranscriptChunk(snapshotSource).trimEnd();
         if (shouldFreezeTerminalTranscript(frozenSnapshot)) {
           next[firstMissingItem.messageKey] = frozenSnapshot;
           changed = true;
@@ -564,6 +602,22 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     }
   }, []);
 
+  const fitTerminal = useCallback(() => {
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    const container = containerRef.current;
+    if (!terminal || !fitAddon || !container) {
+      return { didFit: false, sizeChanged: false };
+    }
+
+    return fitTerminalViewport({
+      container,
+      fitAddon,
+      terminal,
+      replayOutput: renderedLiveOutputRef.current,
+    });
+  }, []);
+
   const applyStreamEvent = useCallback(
     (event: {
       seq: number;
@@ -644,10 +698,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       applyFullSnapshot(snapshot);
       connectStream(snapshot.seq);
 
-      const fitAddon = fitAddonRef.current;
-      if (fitAddon) {
-        fitAddon.fit();
-      }
+      fitTerminal();
 
       if (snapshot.writeOwnerId === null) {
         const claim = await claimTerminalWrite(terminalId, clientIdRef.current);
@@ -671,7 +722,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       );
       setConnected(false);
     }
-  }, [applyFullSnapshot, connectStream, sendResize, terminalId]);
+  }, [applyFullSnapshot, connectStream, fitTerminal, sendResize, terminalId]);
 
   useEffect(() => {
     isDisposedRef.current = false;
@@ -698,8 +749,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
     if (container && typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => {
-        fitAddon.fit();
-        void sendResize();
+        const fitResult = fitTerminal();
+        if (fitResult.didFit) {
+          void sendResize();
+        }
       });
       observer.observe(container);
       resizeObserverRef.current = observer;
@@ -714,15 +767,17 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       }
 
       terminal.open(container);
-      fitAddon.fit();
+      fitTerminal();
 
       // Schedule retry fits for cases where the first measurement isn't stable.
       for (const delay of [100, 500]) {
         retryTimers.push(
           setTimeout(() => {
             if (!isDisposedRef.current) {
-              fitAddon.fit();
-              void sendResize();
+              const fitResult = fitTerminal();
+              if (fitResult.didFit) {
+                void sendResize();
+              }
             }
           }, delay),
         );
@@ -764,6 +819,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [
     bootstrap,
     closeStream,
+    fitTerminal,
     queueInput,
     sendResize,
     terminalId,
@@ -882,7 +938,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         const claim = await claimTerminalWrite(terminalId, clientIdRef.current);
         writeOwnerIdRef.current = claim.writeOwnerId;
         setWriteOwnerId(claim.writeOwnerId);
-        fitAddonRef.current?.fit();
+        fitTerminal();
         await sendResize();
       } catch (claimError) {
         setError(
@@ -890,7 +946,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         );
       }
     })();
-  }, [sendResize, terminalId]);
+  }, [fitTerminal, sendResize, terminalId]);
 
   return (
     <div className="h-full flex flex-col bg-zinc-950">

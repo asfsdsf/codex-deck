@@ -3,6 +3,7 @@ import test from "node:test";
 import type { SystemContextResponse } from "@codex-deck/api";
 import {
   AI_TERMINAL_DEVELOPER_INSTRUCTIONS,
+  buildApprovedAiTerminalInput,
   buildAiTerminalEnvironment,
   buildAiTerminalExecutionFeedback,
   buildAiTerminalExecutionWrapper,
@@ -146,6 +147,15 @@ test("buildAiTerminalExecutionWrapper appends controller marker and optional cwd
   assert.match(wrapped, /pwd/);
   assert.match(wrapped, /__CODEX_DECK_AI_RESULT__/);
   assert.match(wrapped, /step-7/);
+});
+
+test("buildApprovedAiTerminalInput sends only the approved command", () => {
+  const input = buildApprovedAiTerminalInput({
+    command: "git status",
+  });
+
+  assert.equal(input, "git status\n");
+  assert.doesNotMatch(input, /^cd\s+/m);
 });
 
 test("parseAiTerminalExecutionResult extracts exit code and cwd", () => {

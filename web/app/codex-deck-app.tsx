@@ -212,7 +212,9 @@ import {
   setSessionSkillEnabled,
   setWorkflowProjectSkillEnabled,
   cleanSessionBackgroundTerminalRuns,
-  executeTerminalCommand as executeTerminalCommandRequest,
+  claimTerminalWrite as claimTerminalWriteRequest,
+  releaseTerminalWrite as releaseTerminalWriteRequest,
+  sendTerminalInput as sendTerminalInputRequest,
   runInTerminal as runInTerminalRequest,
   type RunInTerminalOptions,
   type RunInTerminalResult,
@@ -224,6 +226,7 @@ import {
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
 } from "../api";
 import {
+  buildApprovedAiTerminalInput,
   buildAiTerminalEnvironment,
   buildAiTerminalExecutionFeedback,
   buildAiTerminalRejectionFeedback,
@@ -231,9 +234,7 @@ import {
   extractConversationMessageText,
   getAiTerminalMessageKey,
   mergeAiTerminalStepStates,
-  parseAiTerminalExecutionResult,
   parseAiTerminalMessage,
-  shouldAttachAiTerminalOutputReference,
   type AiTerminalStepDirective,
   type AiTerminalStepState,
 } from "../ai-terminal";
@@ -9540,41 +9541,55 @@ export default function CodexDeckApp() {
       setInteractionError(null);
 
       try {
-        const runResult = await executeTerminalCommandRequest(
-          input.terminalId,
-          {
-            command: input.step.command,
-            cwd: input.step.cwd?.trim() || null,
-            displayCommand: input.step.command,
-          },
-          undefined,
-        );
+        const normalizedInput = buildApprovedAiTerminalInput(input.step);
+        const clientId =
+          typeof crypto !== "undefined" &&
+          typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `terminal-approve-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        let claimedWrite = false;
+        try {
+          await sendTerminalInputRequest(
+            input.terminalId,
+            { input: normalizedInput },
+            clientId,
+          );
+        } catch (sendError) {
+          const message =
+            sendError instanceof Error ? sendError.message : String(sendError);
+          if (!message.toLowerCase().includes("owns terminal write")) {
+            throw sendError;
+          }
+          await claimTerminalWriteRequest(input.terminalId, clientId);
+          claimedWrite = true;
+          await sendTerminalInputRequest(
+            input.terminalId,
+            { input: normalizedInput },
+            clientId,
+          );
+        } finally {
+          if (claimedWrite) {
+            void releaseTerminalWriteRequest(input.terminalId, clientId).catch(
+              () => {},
+            );
+          }
+        }
+
         const parsedResult = {
           stepId: input.step.stepId,
-          exitCode: runResult.exitCode,
-          timedOut: runResult.timedOut,
+          exitCode: null,
+          timedOut: false,
           cwdAfter:
-            runResult.cwdAfter.trim() ||
-            input.step.cwd?.trim() ||
             selectedTerminalData?.cwd?.trim() ||
             selectedSessionData?.project ||
             ".",
-          outputSummary: "",
+          outputSummary:
+            "Command was sent to the shared interactive terminal. Watch live output in the terminal pane and interact there (including Ctrl+C or manual input) if needed.",
           errorSummary: null as string | null,
-          rawOutput: runResult.rawOutput,
-          markerFound: true,
+          rawOutput: "",
+          markerFound: false,
         };
-        const summarizedResult = parseAiTerminalExecutionResult({
-          stepId: input.step.stepId,
-          rawOutput: runResult.rawOutput,
-          timedOut: runResult.timedOut,
-          fallbackCwd: parsedResult.cwdAfter,
-        });
-        parsedResult.outputSummary = summarizedResult.outputSummary;
-        parsedResult.errorSummary = summarizedResult.errorSummary;
-        const stepFailed =
-          parsedResult.timedOut ||
-          (parsedResult.exitCode !== null && parsedResult.exitCode !== 0);
+        const stepFailed = false;
         setAiTerminalStepState(
           input.sessionId,
           input.messageKey,
@@ -9582,16 +9597,10 @@ export default function CodexDeckApp() {
           stepFailed ? "failed" : "completed",
         );
 
-        const outputReference = shouldAttachAiTerminalOutputReference(
-          parsedResult.rawOutput,
-        )
-          ? `terminal:${runResult.terminalId}:seq:${runResult.startSeq}-${runResult.endSeq}`
-          : null;
         await sendMessageText(
           {
             text: buildAiTerminalExecutionFeedback({
               result: parsedResult,
-              outputReference,
             }),
             images: [],
           },
@@ -9613,7 +9622,9 @@ export default function CodexDeckApp() {
       }
     },
     [
-      executeTerminalCommandRequest,
+      claimTerminalWriteRequest,
+      releaseTerminalWriteRequest,
+      sendTerminalInputRequest,
       selectedTerminalData?.cwd,
       selectedSessionData?.project,
       sendMessageText,

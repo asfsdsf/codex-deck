@@ -143,6 +143,12 @@ function normalizeText(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+export function buildApprovedAiTerminalInput(
+  step: Pick<AiTerminalStepDirective, "command">,
+): string {
+  return step.command.endsWith("\n") ? step.command : `${step.command}\n`;
+}
+
 function decodeXmlText(value: string): string {
   return value
     .replace(/&lt;/g, "<")
