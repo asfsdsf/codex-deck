@@ -49,7 +49,10 @@ import type {
   TerminalExecuteCommandRequest,
   TerminalExecuteCommandResponse,
   TerminalInputRequest,
+  TerminalPersistFrozenBlockRequest,
+  TerminalPersistFrozenBlockResponse,
   TerminalResizeRequest,
+  TerminalSessionArtifactsResponse,
   TerminalSnapshotResponse,
   SessionDiffMode,
   SessionDiffResponse,
@@ -150,11 +153,153 @@ export async function getSystemContext(): Promise<SystemContextResponse> {
 
 const DEFAULT_RUN_IN_TERMINAL_TIMEOUT_MS = 15_000;
 const DEFAULT_RUN_IN_TERMINAL_WAIT_MS = 1_000;
+const READONLY_CLI_CACHE_TTL_MS = 30_000;
+const THREAD_STATE_CACHE_TTL_MS = 250;
+const SESSION_ROLE_CACHE_TTL_MS = 250;
+const WORKFLOW_SESSION_LOOKUP_CACHE_TTL_MS = 250;
 const ANSI_CSI_SEQUENCE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_OSC_SEQUENCE_PATTERN = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
 const ANSI_SINGLE_CHAR_SEQUENCE_PATTERN = /\u001B[@-Z\\-_]/g;
 
 let runInTerminalClientId: string | null = null;
+
+interface TimedCacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+function createTimedLoader<T>(ttlMs: number, load: () => Promise<T>) {
+  let cache: TimedCacheEntry<T> | null = null;
+  let inFlight: Promise<T> | null = null;
+
+  return {
+    async load(): Promise<T> {
+      if (cache && cache.expiresAt > Date.now()) {
+        return cache.value;
+      }
+
+      if (inFlight) {
+        return inFlight;
+      }
+
+      inFlight = load()
+        .then((value) => {
+          cache = {
+            value,
+            expiresAt: Date.now() + ttlMs,
+          };
+          return value;
+        })
+        .finally(() => {
+          inFlight = null;
+        });
+
+      return inFlight;
+    },
+
+    clear(): void {
+      cache = null;
+      inFlight = null;
+    },
+  };
+}
+
+function createKeyedTimedLoader<T>(ttlMs: number) {
+  const cache = new Map<string, TimedCacheEntry<T>>();
+  const inFlight = new Map<string, Promise<T>>();
+
+  return {
+    async getOrLoad(key: string, load: () => Promise<T>): Promise<T> {
+      const cached = cache.get(key);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
+      }
+
+      const existing = inFlight.get(key);
+      if (existing) {
+        return existing;
+      }
+
+      const promise = load()
+        .then((value) => {
+          cache.set(key, {
+            value,
+            expiresAt: Date.now() + ttlMs,
+          });
+          return value;
+        })
+        .finally(() => {
+          inFlight.delete(key);
+        });
+
+      inFlight.set(key, promise);
+      return promise;
+    },
+
+    clearKey(key: string): void {
+      cache.delete(key);
+      inFlight.delete(key);
+    },
+
+    clearMatching(matcher: (key: string) => boolean): void {
+      for (const key of cache.keys()) {
+        if (matcher(key)) {
+          cache.delete(key);
+        }
+      }
+      for (const key of inFlight.keys()) {
+        if (matcher(key)) {
+          inFlight.delete(key);
+        }
+      }
+    },
+  };
+}
+
+const loadCodexModels = createTimedLoader(READONLY_CLI_CACHE_TTL_MS, async () => {
+  const payload = await requestJson<CodexModelsResponse>("/api/codex/models");
+  return Array.isArray(payload.models) ? payload.models : [];
+});
+
+const loadCodexCollaborationModes = createTimedLoader(
+  READONLY_CLI_CACHE_TTL_MS,
+  async () => {
+    const payload = await requestJson<CodexCollaborationModesResponse>(
+      "/api/codex/collaboration-modes",
+    );
+    return Array.isArray(payload.modes) ? payload.modes : [];
+  },
+);
+
+const loadCodexConfigDefaults = createTimedLoader(
+  READONLY_CLI_CACHE_TTL_MS,
+  () => requestJson<CodexConfigDefaultsResponse>("/api/codex/defaults"),
+);
+
+const codexThreadStateLoader =
+  createKeyedTimedLoader<CodexThreadStateResponse>(THREAD_STATE_CACHE_TTL_MS);
+const workflowBySessionLoader =
+  createKeyedTimedLoader<WorkflowSessionLookupResponse | null>(
+    WORKFLOW_SESSION_LOOKUP_CACHE_TTL_MS,
+  );
+const workflowSessionRolesLoader =
+  createKeyedTimedLoader<WorkflowSessionRoleSummary[]>(SESSION_ROLE_CACHE_TTL_MS);
+const terminalSessionRolesLoader =
+  createKeyedTimedLoader<TerminalSessionRoleSummary[]>(SESSION_ROLE_CACHE_TTL_MS);
+
+function resetApiRequestCaches(): void {
+  loadCodexModels.clear();
+  loadCodexCollaborationModes.clear();
+  loadCodexConfigDefaults.clear();
+  codexThreadStateLoader.clearMatching(() => true);
+  workflowBySessionLoader.clearMatching(() => true);
+  workflowSessionRolesLoader.clearMatching(() => true);
+  terminalSessionRolesLoader.clearMatching(() => true);
+}
+
+export const __TEST_ONLY__ = {
+  resetApiRequestCaches,
+};
 
 function getRunInTerminalClientId(): string {
   if (runInTerminalClientId) {
@@ -545,26 +690,36 @@ export async function getWorkflowDetail(
 export async function getWorkflowBySession(
   sessionId: string,
 ): Promise<WorkflowSessionLookupResponse | null> {
-  const response = await requestJson<WorkflowSessionLookupResult>(
-    `/api/workflows/by-session/${encodeURIComponent(sessionId)}`,
-  );
-  return response.match ?? null;
+  const normalizedSessionId = sessionId.trim();
+  return workflowBySessionLoader.getOrLoad(normalizedSessionId, async () => {
+    const response = await requestJson<WorkflowSessionLookupResult>(
+      `/api/workflows/by-session/${encodeURIComponent(normalizedSessionId)}`,
+    );
+    return response.match ?? null;
+  });
 }
 
 export async function getWorkflowSessionRoles(
   sessionIds: string[],
 ): Promise<WorkflowSessionRoleSummary[]> {
-  const response = await requestJson<WorkflowSessionRolesResponse>(
-    "/api/workflows/session-roles",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+  const normalizedSessionIds = [...sessionIds]
+    .map((sessionId) => sessionId.trim())
+    .filter((sessionId) => sessionId.length > 0)
+    .sort();
+  const cacheKey = normalizedSessionIds.join("|");
+  return workflowSessionRolesLoader.getOrLoad(cacheKey, async () => {
+    const response = await requestJson<WorkflowSessionRolesResponse>(
+      "/api/workflows/session-roles",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionIds: normalizedSessionIds }),
       },
-      body: JSON.stringify({ sessionIds }),
-    },
-  );
-  return Array.isArray(response.sessions) ? response.sessions : [];
+    );
+    return Array.isArray(response.sessions) ? response.sessions : [];
+  });
 }
 
 export async function getWorkflowLog(
@@ -788,21 +943,17 @@ export function notifyWorkflowMutation(workflowKey?: string | null): void {
 }
 
 export async function listCodexModels(): Promise<CodexModelOption[]> {
-  const payload = await requestJson<CodexModelsResponse>("/api/codex/models");
-  return Array.isArray(payload.models) ? payload.models : [];
+  return loadCodexModels.load();
 }
 
 export async function listCodexCollaborationModes(): Promise<
   CodexCollaborationModeOption[]
 > {
-  const payload = await requestJson<CodexCollaborationModesResponse>(
-    "/api/codex/collaboration-modes",
-  );
-  return Array.isArray(payload.modes) ? payload.modes : [];
+  return loadCodexCollaborationModes.load();
 }
 
 export async function getCodexConfigDefaults(): Promise<CodexConfigDefaultsResponse> {
-  return requestJson<CodexConfigDefaultsResponse>("/api/codex/defaults");
+  return loadCodexConfigDefaults.load();
 }
 
 export async function createCodexThread(
@@ -821,9 +972,13 @@ export async function sendCodexMessage(
   threadId: string,
   input: SendCodexMessageRequest,
 ): Promise<SendCodexMessageResponse> {
+  const normalizedThreadId = threadId.trim();
+  codexThreadStateLoader.clearMatching((key) =>
+    key.startsWith(`${normalizedThreadId}:`),
+  );
   return requestJsonAndNotifyConversation<SendCodexMessageResponse>(
-    threadId,
-    `/api/codex/threads/${encodeURIComponent(threadId)}/messages`,
+    normalizedThreadId,
+    `/api/codex/threads/${encodeURIComponent(normalizedThreadId)}/messages`,
     {
       method: "POST",
       headers: {
@@ -838,22 +993,30 @@ export async function getCodexThreadState(
   threadId: string,
   turnId?: string | null,
 ): Promise<CodexThreadStateResponse> {
+  const normalizedThreadId = threadId.trim();
   const params = new URLSearchParams();
   if (typeof turnId === "string" && turnId.trim()) {
     params.set("turnId", turnId.trim());
   }
   const query = params.toString();
-  return requestJson<CodexThreadStateResponse>(
-    `/api/codex/threads/${encodeURIComponent(threadId)}/state${query ? `?${query}` : ""}`,
+  const cacheKey = `${normalizedThreadId}:${params.get("turnId") ?? ""}`;
+  return codexThreadStateLoader.getOrLoad(cacheKey, () =>
+    requestJson<CodexThreadStateResponse>(
+      `/api/codex/threads/${encodeURIComponent(normalizedThreadId)}/state${query ? `?${query}` : ""}`,
+    ),
   );
 }
 
 export async function interruptCodexThread(
   threadId: string,
 ): Promise<InterruptCodexThreadResponse> {
+  const normalizedThreadId = threadId.trim();
+  codexThreadStateLoader.clearMatching((key) =>
+    key.startsWith(`${normalizedThreadId}:`),
+  );
   return requestJsonAndNotifyConversation<InterruptCodexThreadResponse>(
-    threadId,
-    `/api/codex/threads/${encodeURIComponent(threadId)}/interrupt`,
+    normalizedThreadId,
+    `/api/codex/threads/${encodeURIComponent(normalizedThreadId)}/interrupt`,
     {
       method: "POST",
     },
@@ -1137,17 +1300,24 @@ export async function bindTerminalSession(
 export async function getTerminalSessionRoles(
   sessionIds: string[],
 ): Promise<TerminalSessionRoleSummary[]> {
-  const response = await requestJson<TerminalSessionRolesResponse>(
-    "/api/terminals/session-roles",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+  const normalizedSessionIds = [...sessionIds]
+    .map((sessionId) => sessionId.trim())
+    .filter((sessionId) => sessionId.length > 0)
+    .sort();
+  const cacheKey = normalizedSessionIds.join("|");
+  return terminalSessionRolesLoader.getOrLoad(cacheKey, async () => {
+    const response = await requestJson<TerminalSessionRolesResponse>(
+      "/api/terminals/session-roles",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionIds: normalizedSessionIds }),
       },
-      body: JSON.stringify({ sessionIds }),
-    },
-  );
-  return Array.isArray(response.sessions) ? response.sessions : [];
+    );
+    return Array.isArray(response.sessions) ? response.sessions : [];
+  });
 }
 
 export async function createTerminal(
@@ -1167,6 +1337,32 @@ export async function getTerminalSnapshot(
 ): Promise<TerminalSnapshotResponse> {
   return requestJson<TerminalSnapshotResponse>(
     `/api/terminals/${encodeURIComponent(terminalId)}`,
+  );
+}
+
+export async function getTerminalFrozenBlocks(
+  terminalId: string,
+  sessionId: string,
+): Promise<TerminalSessionArtifactsResponse> {
+  const params = new URLSearchParams({ sessionId });
+  return requestJson<TerminalSessionArtifactsResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/frozen-blocks?${params.toString()}`,
+  );
+}
+
+export async function persistTerminalFrozenBlock(
+  terminalId: string,
+  input: TerminalPersistFrozenBlockRequest,
+): Promise<TerminalPersistFrozenBlockResponse> {
+  return requestJson<TerminalPersistFrozenBlockResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/frozen-blocks`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
   );
 }
 

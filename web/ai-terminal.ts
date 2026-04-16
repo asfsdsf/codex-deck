@@ -130,6 +130,46 @@ export interface AiTerminalExecutionResult {
   markerFound: boolean;
 }
 
+export type AiTerminalExecutionStatus =
+  | "success"
+  | "failed"
+  | "timed_out"
+  | "completed_unknown";
+
+export interface AiTerminalExecutionFeedback {
+  kind: "execution";
+  stepId: string;
+  status: AiTerminalExecutionStatus;
+  exitCode: number | null;
+  cwdAfter: string | null;
+  outputSummary: string | null;
+  errorSummary: string | null;
+  outputReference: string | null;
+}
+
+export interface AiTerminalRejectionFeedback {
+  kind: "rejection";
+  stepId: string;
+  decision: "rejected";
+  reason: string | null;
+}
+
+export type AiTerminalUserFeedback =
+  | AiTerminalExecutionFeedback
+  | AiTerminalRejectionFeedback;
+
+export interface AiTerminalBootstrapMessage {
+  kind: "bootstrap";
+  terminalId: string;
+  cwd: string | null;
+  shell: string | null;
+  osName: string | null;
+  osRelease: string | null;
+  architecture: string | null;
+  platform: string | null;
+  userRequest: string | null;
+}
+
 interface AiTerminalPersistedStepState {
   stepId: string;
   state: AiTerminalStepState;
@@ -193,6 +233,28 @@ function pickNextAction(value: string | null): AiTerminalNextAction | null {
     return value;
   }
   return null;
+}
+
+function pickExecutionStatus(
+  value: string | null,
+): AiTerminalExecutionStatus | null {
+  if (
+    value === "success" ||
+    value === "failed" ||
+    value === "timed_out" ||
+    value === "completed_unknown"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function parseOptionalInteger(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function parseAiTerminalStep(text: string): AiTerminalStepDirective | null {
@@ -360,6 +422,93 @@ export function parseAiTerminalPersistedStepState(
   return {
     stepId,
     state: "rejected",
+  };
+}
+
+export function parseAiTerminalUserFeedback(
+  text: string,
+): AiTerminalUserFeedback | null {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const executionBlock = normalized.match(
+    /^<ai-terminal-execution>\s*([\s\S]*?)\s*<\/ai-terminal-execution>$/i,
+  );
+  if (executionBlock) {
+    const block = executionBlock[1] ?? "";
+    const stepId = extractTagValue(block, "step_id");
+    const status = pickExecutionStatus(extractTagValue(block, "status"));
+    if (!stepId || !status) {
+      return null;
+    }
+
+    return {
+      kind: "execution",
+      stepId,
+      status,
+      exitCode: parseOptionalInteger(extractTagValue(block, "exit_code")),
+      cwdAfter: extractTagValue(block, "cwd_after"),
+      outputSummary: extractTagValue(block, "output_summary"),
+      errorSummary: extractTagValue(block, "error_summary"),
+      outputReference: extractTagValue(block, "output_reference"),
+    };
+  }
+
+  const feedbackBlock = normalized.match(
+    /^<ai-terminal-feedback>\s*([\s\S]*?)\s*<\/ai-terminal-feedback>$/i,
+  );
+  if (!feedbackBlock) {
+    return null;
+  }
+
+  const block = feedbackBlock[1] ?? "";
+  const stepId = extractTagValue(block, "step_id");
+  const decision = extractTagValue(block, "decision");
+  if (!stepId || decision !== "rejected") {
+    return null;
+  }
+
+  return {
+    kind: "rejection",
+    stepId,
+    decision: "rejected",
+    reason: extractTagValue(block, "reason"),
+  };
+}
+
+export function parseAiTerminalBootstrapMessage(
+  text: string,
+): AiTerminalBootstrapMessage | null {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized || !normalized.includes("<ai-terminal-controller-context>")) {
+    return null;
+  }
+
+  const contextMatch = normalized.match(
+    /<ai-terminal-controller-context>\s*([\s\S]*?)\s*<\/ai-terminal-controller-context>/i,
+  );
+  if (!contextMatch) {
+    return null;
+  }
+
+  const contextBlock = contextMatch[1] ?? "";
+  const terminalId = extractTagValue(contextBlock, "terminal_id");
+  if (!terminalId) {
+    return null;
+  }
+
+  return {
+    kind: "bootstrap",
+    terminalId,
+    cwd: extractTagValue(contextBlock, "cwd"),
+    shell: extractTagValue(contextBlock, "shell"),
+    osName: extractTagValue(contextBlock, "os_name"),
+    osRelease: extractTagValue(contextBlock, "os_release"),
+    architecture: extractTagValue(contextBlock, "architecture"),
+    platform: extractTagValue(contextBlock, "platform"),
+    userRequest: extractTagValue(normalized, "user-request"),
   };
 }
 

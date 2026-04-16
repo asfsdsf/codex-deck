@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { WorkflowDetailResponse, WorkflowSummary } from "@codex-deck/api";
+import type {
+  ConversationMessage,
+  Session,
+  TerminalSummary,
+  WorkflowDetailResponse,
+  WorkflowSummary,
+} from "@codex-deck/api";
 import { createLocalTransport } from "../../web/transport/local";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
@@ -245,7 +251,7 @@ test("local workflow summary updates wake selected workflow detail immediately",
 
     const eventSource = MockEventSource.instances[0];
     assert.ok(eventSource);
-    assert.equal(eventSource.url, "/api/workflows/stream");
+    assert.equal(eventSource.url, "/api/sessions/stream");
     eventSource.emit("workflowsUpdate", [updatedSummary]);
 
     await flushAsyncWork();
@@ -257,5 +263,153 @@ test("local workflow summary updates wake selected workflow detail immediately",
     globalThis.fetch = originalFetch;
     restoreEventSource();
     restoreTimers();
+  }
+});
+
+test("local transport shares one global EventSource for sessions, terminals, and workflows", async () => {
+  const restoreEventSource = installMockEventSource();
+  const transport = createLocalTransport();
+  const seenSessions: Session[][] = [];
+  const seenTerminals: TerminalSummary[][] = [];
+  const seenWorkflows: WorkflowSummary[][] = [];
+  const sessionsPayload = [
+    {
+      id: "session-1",
+      timestamp: 1,
+      title: "Session 1",
+      project: "/repo",
+      preview: "preview",
+      hasUnread: false,
+      dirty: false,
+      archived: false,
+    },
+  ] as unknown as Session[];
+  const terminalsPayload = [
+    {
+      id: "terminal-1",
+      terminalId: "terminal-1",
+      display: "repo",
+      firstCommand: null,
+      timestamp: 1,
+      project: "/repo",
+      projectName: "repo",
+      cwd: "/repo",
+      shell: "zsh",
+      running: true,
+      boundSessionId: null,
+    },
+  ] satisfies TerminalSummary[];
+  const workflowsPayload = [createWorkflowSummary()];
+
+  try {
+    const unsubscribeSessions = transport.subscribeSessionsStream({
+      onSessions: (sessions) => {
+        seenSessions.push(sessions);
+      },
+      onSessionsUpdate: () => {},
+      onSessionsRemoved: () => {},
+    });
+    const unsubscribeTerminals = transport.subscribeTerminalsStream({
+      onTerminals: (terminals) => {
+        seenTerminals.push(terminals);
+      },
+    });
+    const unsubscribeWorkflows = transport.subscribeWorkflowsStream({
+      onWorkflows: (workflows) => {
+        seenWorkflows.push(workflows);
+      },
+    });
+
+    assert.equal(MockEventSource.instances.length, 1);
+    const eventSource = MockEventSource.instances[0];
+    assert.ok(eventSource);
+    assert.equal(eventSource.url, "/api/sessions/stream");
+
+    eventSource.emit("sessions", sessionsPayload);
+    eventSource.emit("terminals", terminalsPayload);
+    eventSource.emit("workflows", workflowsPayload);
+
+    await flushAsyncWork();
+
+    assert.deepEqual(seenSessions, [sessionsPayload]);
+    assert.deepEqual(seenTerminals, [terminalsPayload]);
+    assert.deepEqual(seenWorkflows, [workflowsPayload]);
+
+    unsubscribeWorkflows();
+    unsubscribeTerminals();
+    unsubscribeSessions();
+  } finally {
+    restoreEventSource();
+  }
+});
+
+test("local terminal stream forwards bound session conversation batches over the same EventSource", async () => {
+  const restoreEventSource = installMockEventSource();
+  const transport = createLocalTransport();
+  const conversationPayload = {
+    messages: [
+      {
+        type: "assistant",
+        timestamp: "2026-03-16T00:00:00.000Z",
+        uuid: "assistant-1",
+        message: {
+          role: "assistant",
+          content: [{ type: "output_text", text: "inline terminal reply" }],
+        },
+      },
+    ] satisfies ConversationMessage[],
+    nextOffset: 42,
+    done: true,
+  };
+  const seenBatches: Array<{
+    messages: ConversationMessage[];
+    nextOffset?: number;
+    phase?: string;
+    done?: boolean;
+  }> = [];
+
+  try {
+    const unsubscribe = transport.subscribeTerminalStream(
+      {
+        onEvent: () => {},
+        onConversationMessages: (messages, batch) => {
+          seenBatches.push({
+            messages,
+            nextOffset: batch?.nextOffset,
+            phase: batch?.phase,
+            done: batch?.done,
+          });
+        },
+      },
+      {
+        terminalId: "terminal-1",
+        fromSeq: 0,
+        conversationSessionId: "session-1",
+        conversationInitialOffset: 0,
+      },
+    );
+
+    const eventSource = MockEventSource.instances[0];
+    assert.ok(eventSource);
+    assert.equal(
+      eventSource.url,
+      "/api/terminals/terminal-1/stream?fromSeq=0&conversationSessionId=session-1&conversationOffset=0",
+    );
+
+    eventSource.emit("conversationMessages", conversationPayload);
+    await flushAsyncWork();
+
+    assert.deepEqual(seenBatches, [
+      {
+        messages: conversationPayload.messages,
+        nextOffset: 42,
+        phase: "bootstrap",
+        done: true,
+      },
+    ]);
+
+    unsubscribe();
+  } finally {
+    restoreEventSource();
   }
 });

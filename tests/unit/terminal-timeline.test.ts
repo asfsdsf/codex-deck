@@ -5,6 +5,7 @@ import {
   getTerminalInlineAnchorOffset,
   getTerminalTranscriptStartOffset,
   normalizeFrozenTerminalOutputsInOrder,
+  restoreTerminalTimelineRenderState,
   sanitizeTerminalTranscriptChunk,
 } from "../../web/terminal-timeline";
 
@@ -46,7 +47,7 @@ test("buildTerminalTimeline interleaves output slices and cards", () => {
       messageKey: "m2",
     },
   ]);
-  assert.equal(timeline.liveOutput, "prompt> ");
+  assert.equal(timeline.liveOutput, "alpha\nbeta\nprompt> ");
 });
 
 test("buildTerminalTimeline orders cards with the same anchor by insertion order", () => {
@@ -65,7 +66,7 @@ test("buildTerminalTimeline orders cards with the same anchor by insertion order
     ),
     ["alpha\n", "earlier", "later"],
   );
-  assert.equal(timeline.liveOutput, "prompt> ");
+  assert.equal(timeline.liveOutput, "alpha\nprompt> ");
 });
 
 test("buildTerminalTimeline can insert frozen transcript output before a later card", () => {
@@ -87,7 +88,7 @@ test("buildTerminalTimeline can insert frozen transcript output before a later c
     ),
     ["plan", "prompt> find .\n0 ./a\n0 ./b\nprompt> ", "complete"],
   );
-  assert.equal(timeline.liveOutput, "prompt> ");
+  assert.equal(timeline.liveOutput, "prompt> find .\n0 ./a\n0 ./b\nprompt> ");
 });
 
 test("buildTerminalTimeline keeps multiple restored frozen transcript blocks separate", () => {
@@ -123,6 +124,65 @@ test("buildTerminalTimeline keeps multiple restored frozen transcript blocks sep
     new Set(timeline.entries.map((entry) => entry.key)).size,
     timeline.entries.length,
   );
+});
+
+test("restoreTerminalTimelineRenderState preserves a live block anchor across terminal switches", () => {
+  const restored = restoreTerminalTimelineRenderState({
+    cachedState: {
+      output: "prompt> ",
+      anchors: {
+        "plan-1": { offset: 0, order: 0 },
+      },
+      anchorOrder: 1,
+    },
+    output: "prompt> pnpm test\nrunning tests...\n",
+  });
+
+  assert.deepEqual(restored, {
+    output: "prompt> pnpm test\nrunning tests...\n",
+    anchors: {
+      "plan-1": { offset: 0, order: 0 },
+    },
+    anchorOrder: 1,
+  });
+
+  const timeline = buildTerminalTimeline({
+    output: restored?.output ?? "",
+    messageKeys: ["plan-1"],
+    anchors: restored?.anchors ?? {},
+  });
+
+  assert.deepEqual(
+    timeline.entries.map((entry) =>
+      entry.type === "card" ? entry.messageKey : entry.text,
+    ),
+    ["plan-1"],
+  );
+  assert.equal(timeline.liveOutput, "prompt> pnpm test\nrunning tests...\n");
+});
+
+test("buildTerminalTimeline keeps full live history after freezing command output", () => {
+  const output = "prompt> pnpm test\nok\nprompt> ";
+  const promptOffset = output.lastIndexOf("prompt> ");
+  const timeline = buildTerminalTimeline({
+    output,
+    messageKeys: ["plan-1", "complete-1"],
+    anchors: {
+      "plan-1": { offset: 0, order: 0 },
+      "complete-1": { offset: promptOffset, order: 1 },
+    },
+    frozenOutputByMessageKey: {
+      "complete-1": "prompt> pnpm test\nok",
+    },
+  });
+
+  assert.deepEqual(
+    timeline.entries.map((entry) =>
+      entry.type === "card" ? entry.messageKey : entry.text,
+    ),
+    ["plan-1", "prompt> pnpm test\nok", "complete-1"],
+  );
+  assert.equal(timeline.liveOutput, output);
 });
 
 test("getTerminalTranscriptStartOffset uses the nearest preceding anchored card", () => {

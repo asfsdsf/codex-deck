@@ -33,11 +33,18 @@ import { getTokenLimitNoticeRepeatCount } from "../token-limit-notices";
 import { formatDurationFromTimestamps, sanitizeText } from "../utils";
 import { getPathTail } from "../path-utils";
 import {
+  parseAiTerminalBootstrapMessage,
   parseAiTerminalMessage,
+  parseAiTerminalUserFeedback,
+  type AiTerminalBootstrapMessage,
   type AiTerminalDirective,
+  type AiTerminalExecutionFeedback,
+  type AiTerminalExecutionStatus,
   type AiTerminalPlanDirective,
+  type AiTerminalRejectionFeedback,
   type AiTerminalStepDirective,
   type AiTerminalStepState,
+  type AiTerminalUserFeedback,
 } from "../ai-terminal";
 import { getFencedCodeBlock, MarkdownRenderer } from "./markdown-renderer";
 import { PatchTextRenderer, getPatchFileTypes } from "./patch-text-renderer";
@@ -793,6 +800,362 @@ function AiTerminalDirectiveRenderer(props: {
   );
 }
 
+function getAiTerminalExecutionStatusLabel(
+  status: AiTerminalExecutionStatus,
+): string {
+  if (status === "success") {
+    return "Success";
+  }
+  if (status === "failed") {
+    return "Failed";
+  }
+  if (status === "timed_out") {
+    return "Timed out";
+  }
+  return "Completed";
+}
+
+function getAiTerminalFeedbackStatusClasses(
+  feedback: AiTerminalUserFeedback,
+): string {
+  if (feedback.kind === "rejection") {
+    return "border-zinc-500/40 bg-zinc-500/15 text-zinc-100";
+  }
+  if (
+    feedback.status === "success" ||
+    feedback.status === "completed_unknown"
+  ) {
+    return "border-emerald-400/40 bg-emerald-500/15 text-emerald-100";
+  }
+  if (feedback.status === "timed_out") {
+    return "border-amber-400/40 bg-amber-500/15 text-amber-100";
+  }
+  return "border-rose-400/40 bg-rose-500/15 text-rose-100";
+}
+
+function AiTerminalFeedbackTextSection(props: {
+  label: string;
+  content: string;
+  tone?: "default" | "error";
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  return (
+    <div
+      className={`border-t pt-2 ${
+        props.tone === "error"
+          ? "border-rose-400/20 text-rose-50/95"
+          : "border-zinc-700/55 text-zinc-100"
+      }`}
+    >
+      <div
+        className={`mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+          props.tone === "error" ? "text-rose-200/90" : "text-zinc-400"
+        }`}
+      >
+        {props.label}
+      </div>
+      <div className="text-xs leading-relaxed">
+        <MarkdownRenderer
+          content={props.content}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AiTerminalExecutionFeedbackBody(props: {
+  feedback: AiTerminalExecutionFeedback;
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  const { feedback } = props;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-300">
+        {feedback.exitCode !== null ? (
+          <span className="rounded border border-zinc-700/70 bg-zinc-950/60 px-2 py-1 font-mono">
+            Exit {feedback.exitCode}
+          </span>
+        ) : null}
+        {feedback.cwdAfter ? (
+          <span
+            className="max-w-full truncate rounded border border-zinc-700/70 bg-zinc-950/60 px-2 py-1 font-mono"
+            title={feedback.cwdAfter}
+          >
+            {feedback.cwdAfter}
+          </span>
+        ) : null}
+      </div>
+      {feedback.outputSummary ? (
+        <AiTerminalFeedbackTextSection
+          label="Output"
+          content={feedback.outputSummary}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
+      {feedback.errorSummary ? (
+        <AiTerminalFeedbackTextSection
+          label="Error"
+          content={feedback.errorSummary}
+          tone="error"
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
+      {feedback.outputReference ? (
+        <div className="border-t border-zinc-700/55 pt-2 text-[11px] text-zinc-400">
+          <span className="mr-1.5 uppercase tracking-[0.14em] text-zinc-500">
+            Reference
+          </span>
+          <span className="font-mono text-zinc-300">
+            {feedback.outputReference}
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function AiTerminalRejectionFeedbackBody(props: {
+  feedback: AiTerminalRejectionFeedback;
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  if (!props.feedback.reason) {
+    return (
+      <div className="border-t border-zinc-700/55 pt-2 text-xs text-zinc-400">
+        No rejection reason was provided.
+      </div>
+    );
+  }
+
+  return (
+    <AiTerminalFeedbackTextSection
+      label="Reason"
+      content={props.feedback.reason}
+      onFilePathLinkClick={props.onFilePathLinkClick}
+    />
+  );
+}
+
+function AiTerminalBootstrapDetail(props: {
+  label: string;
+  value: string | null;
+}) {
+  if (!props.value) {
+    return null;
+  }
+
+  return (
+    <div className="flex min-w-0 items-start gap-2 text-xs">
+      <span className="w-20 shrink-0 text-zinc-500">{props.label}</span>
+      <span className="min-w-0 break-words font-mono text-zinc-200">
+        {props.value}
+      </span>
+    </div>
+  );
+}
+
+function AiTerminalBootstrapRenderer(props: {
+  bootstrap: AiTerminalBootstrapMessage;
+  copyText: string;
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  const [viewMode, setViewMode] = useState<JsonViewMode>("formatted");
+  const { bootstrap } = props;
+
+  return (
+    <div className="flex justify-end min-w-0">
+      <div className="max-w-[92%] min-w-0">
+        <div className="overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-900/90 text-zinc-100 shadow-[0_0_0_1px_rgba(99,102,241,0.08)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-700/55 px-3 py-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-200">
+                <Terminal size={13} className="shrink-0 opacity-75" />
+                <span>Terminal Chat</span>
+              </div>
+              <span className="inline-flex items-center rounded border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cyan-100">
+                Bound
+              </span>
+              <span
+                className="min-w-0 truncate rounded border border-zinc-700/70 bg-zinc-950/60 px-2 py-0.5 font-mono text-[10px] text-zinc-300"
+                title={bootstrap.terminalId}
+              >
+                {bootstrap.terminalId}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <CopyButton
+                text={props.copyText}
+                title="Copy message"
+                className="rounded-lg border border-zinc-600/55 bg-zinc-950/70 hover:bg-zinc-900/80"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setViewMode((current) =>
+                    current === "formatted" ? "raw" : "formatted",
+                  )
+                }
+                className={`rounded-lg border px-2 py-1 text-[11px] font-mono transition-colors ${
+                  viewMode === "raw"
+                    ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-200"
+                    : "border-zinc-600/55 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-900/80"
+                }`}
+                title={
+                  viewMode === "raw" ? "Show formatted view" : "Show raw text"
+                }
+              >
+                {"</>"}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2 px-3.5 py-2.5">
+            {viewMode === "raw" ? (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-300">
+                {props.copyText}
+              </pre>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <AiTerminalBootstrapDetail
+                    label="CWD"
+                    value={bootstrap.cwd}
+                  />
+                  <AiTerminalBootstrapDetail
+                    label="Shell"
+                    value={bootstrap.shell}
+                  />
+                  <AiTerminalBootstrapDetail
+                    label="OS"
+                    value={
+                      [bootstrap.osName, bootstrap.osRelease]
+                        .filter(Boolean)
+                        .join(" ") || null
+                    }
+                  />
+                  <AiTerminalBootstrapDetail
+                    label="Platform"
+                    value={
+                      [bootstrap.architecture, bootstrap.platform]
+                        .filter(Boolean)
+                        .join(" / ") || null
+                    }
+                  />
+                </div>
+                {bootstrap.userRequest ? (
+                  <AiTerminalFeedbackTextSection
+                    label="First request"
+                    content={bootstrap.userRequest}
+                    onFilePathLinkClick={props.onFilePathLinkClick}
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AiTerminalUserFeedbackRenderer(props: {
+  feedback: AiTerminalUserFeedback;
+  copyText: string;
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  const { feedback } = props;
+  const [viewMode, setViewMode] = useState<JsonViewMode>("formatted");
+  const statusLabel =
+    feedback.kind === "rejection"
+      ? "Rejected"
+      : getAiTerminalExecutionStatusLabel(feedback.status);
+  const StatusIcon =
+    feedback.kind === "rejection"
+      ? X
+      : feedback.status === "success" || feedback.status === "completed_unknown"
+        ? Check
+        : feedback.status === "timed_out"
+          ? Clock3
+          : AlertTriangle;
+
+  return (
+    <div className="flex justify-end min-w-0">
+      <div className="max-w-[92%] min-w-0">
+        <div className="overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-900/90 text-zinc-100 shadow-[0_0_0_1px_rgba(99,102,241,0.08)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-700/55 px-3 py-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-200">
+                <Terminal size={13} className="shrink-0 opacity-75" />
+                <span>Terminal Step</span>
+              </div>
+              <span
+                className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${getAiTerminalFeedbackStatusClasses(
+                  feedback,
+                )}`}
+              >
+                <StatusIcon size={11} className="opacity-80" />
+                {statusLabel}
+              </span>
+              <span
+                className="min-w-0 truncate rounded border border-zinc-700/70 bg-zinc-950/60 px-2 py-0.5 font-mono text-[10px] text-zinc-300"
+                title={feedback.stepId}
+              >
+                {feedback.stepId}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <CopyButton
+                text={props.copyText}
+                title="Copy message"
+                className="rounded-lg border border-zinc-600/55 bg-zinc-950/70 hover:bg-zinc-900/80"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setViewMode((current) =>
+                    current === "formatted" ? "raw" : "formatted",
+                  )
+                }
+                className={`rounded-lg border px-2 py-1 text-[11px] font-mono transition-colors ${
+                  viewMode === "raw"
+                    ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-200"
+                    : "border-zinc-600/55 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-900/80"
+                }`}
+                title={
+                  viewMode === "raw" ? "Show formatted view" : "Show raw text"
+                }
+              >
+                {"</>"}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2 px-3.5 py-2.5">
+            {viewMode === "raw" ? (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-300">
+                {props.copyText}
+              </pre>
+            ) : (
+              <>
+                {feedback.kind === "execution" ? (
+                  <AiTerminalExecutionFeedbackBody
+                    feedback={feedback}
+                    onFilePathLinkClick={props.onFilePathLinkClick}
+                  />
+                ) : (
+                  <AiTerminalRejectionFeedbackBody
+                    feedback={feedback}
+                    onFilePathLinkClick={props.onFilePathLinkClick}
+                  />
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const {
     message,
@@ -988,6 +1351,12 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const messageCopyText = getMessageCopyText(content);
   const showMessageCopyButton =
     (isUser || message.type === "assistant") && !!messageCopyText;
+  const terminalUserFeedback = isUser
+    ? parseAiTerminalUserFeedback(messageCopyText ?? "")
+    : null;
+  const terminalBootstrap = isUser
+    ? parseAiTerminalBootstrapMessage(messageCopyText ?? "")
+    : null;
 
   const toolMap = Array.isArray(content)
     ? buildToolMap(content)
@@ -1190,6 +1559,106 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
             </div>
           )}
         </div>
+      </div>
+    );
+  }
+
+  if (isUser && terminalUserFeedback && messageCopyText) {
+    return (
+      <div className="min-w-0">
+        <AiTerminalUserFeedbackRenderer
+          feedback={terminalUserFeedback}
+          copyText={messageCopyText}
+          onFilePathLinkClick={onFilePathLinkClick}
+        />
+
+        {hasAuxiliary && (
+          <div className="flex flex-col gap-1 mt-1.5">
+            {auxiliaryBlocks.map((block, index) => (
+              <ContentBlockRenderer
+                key={index}
+                block={block}
+                blockIndex={
+                  Array.isArray(content) ? content.indexOf(block) : null
+                }
+                forceExpanded={shouldForceExpandBlock(block)}
+                toolMap={toolMap}
+                toolInputMap={toolInputMap}
+                toolTimestampMap={toolTimestampMap}
+                fallbackToolMap={fallbackToolMap}
+                fallbackToolInputMap={fallbackToolInputMap}
+                fallbackToolTimestampMap={fallbackToolTimestampMap}
+                onPlanAction={planActionHandler}
+                aiTerminalContext={aiTerminalContext}
+                onFilePathLinkClick={onFilePathLinkClick}
+                pendingUserInputRequestByItemId={
+                  pendingUserInputRequestByItemId
+                }
+                pendingApprovalRequestByItemId={pendingApprovalRequestByItemId}
+                selectedUserInputAnswers={selectedUserInputAnswers}
+                resolvedUserInputAnswersByItemId={
+                  resolvedUserInputAnswersByItemId
+                }
+                submittingUserInputRequestIds={submittingRequestIdSet}
+                submittingApprovalRequestIds={submittingApprovalRequestIdSet}
+                onSelectUserInputOption={onSelectUserInputOption}
+                onChangeUserInputOtherText={onChangeUserInputOtherText}
+                onSubmitUserInputAnswers={onSubmitUserInputAnswers}
+                onRespondApprovalRequest={onRespondApprovalRequest}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (isUser && terminalBootstrap && messageCopyText) {
+    return (
+      <div className="min-w-0">
+        <AiTerminalBootstrapRenderer
+          bootstrap={terminalBootstrap}
+          copyText={messageCopyText}
+          onFilePathLinkClick={onFilePathLinkClick}
+        />
+
+        {hasAuxiliary && (
+          <div className="flex flex-col gap-1 mt-1.5">
+            {auxiliaryBlocks.map((block, index) => (
+              <ContentBlockRenderer
+                key={index}
+                block={block}
+                blockIndex={
+                  Array.isArray(content) ? content.indexOf(block) : null
+                }
+                forceExpanded={shouldForceExpandBlock(block)}
+                toolMap={toolMap}
+                toolInputMap={toolInputMap}
+                toolTimestampMap={toolTimestampMap}
+                fallbackToolMap={fallbackToolMap}
+                fallbackToolInputMap={fallbackToolInputMap}
+                fallbackToolTimestampMap={fallbackToolTimestampMap}
+                onPlanAction={planActionHandler}
+                aiTerminalContext={aiTerminalContext}
+                onFilePathLinkClick={onFilePathLinkClick}
+                pendingUserInputRequestByItemId={
+                  pendingUserInputRequestByItemId
+                }
+                pendingApprovalRequestByItemId={pendingApprovalRequestByItemId}
+                selectedUserInputAnswers={selectedUserInputAnswers}
+                resolvedUserInputAnswersByItemId={
+                  resolvedUserInputAnswersByItemId
+                }
+                submittingUserInputRequestIds={submittingRequestIdSet}
+                submittingApprovalRequestIds={submittingApprovalRequestIdSet}
+                onSelectUserInputOption={onSelectUserInputOption}
+                onChangeUserInputOtherText={onChangeUserInputOtherText}
+                onSubmitUserInputAnswers={onSubmitUserInputAnswers}
+                onRespondApprovalRequest={onRespondApprovalRequest}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }

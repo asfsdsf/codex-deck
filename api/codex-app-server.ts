@@ -14,6 +14,9 @@ import { StringDecoder } from "node:string_decoder";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MODEL_LIMIT = 200;
+const MODELS_CACHE_TTL_MS = 30_000;
+const COLLABORATION_MODES_CACHE_TTL_MS = 30_000;
+const THREAD_STATE_CACHE_TTL_MS = 250;
 
 export type CodexReasoningEffort =
   | "none"
@@ -323,6 +326,11 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+interface ReadCacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
 function sanitizeAppServerJsonText(text: string): string {
   let result = "";
   let inString = false;
@@ -521,10 +529,77 @@ class AppServerStdoutMessageParser {
 export const __TEST_ONLY__ = {
   AppServerStdoutMessageParser,
   createCodexAppServerSpawnSpec,
+  createReadCoalescer,
   pickPreferredWindowsCommandPath,
   resolveWindowsCommandPath,
   sanitizeAppServerJsonText,
 };
+
+function createReadCoalescer() {
+  const cache = new Map<string, ReadCacheEntry<unknown>>();
+  const inFlight = new Map<string, Promise<unknown>>();
+
+  return {
+    async getOrLoad<T>(
+      key: string,
+      ttlMs: number,
+      loader: () => Promise<T>,
+    ): Promise<T> {
+      if (ttlMs > 0) {
+        const cached = cache.get(key);
+        if (cached && cached.expiresAt > Date.now()) {
+          return cached.value as T;
+        }
+        if (cached) {
+          cache.delete(key);
+        }
+      }
+
+      const existing = inFlight.get(key);
+      if (existing) {
+        return existing as Promise<T>;
+      }
+
+      const promise = (async () => {
+        try {
+          const value = await loader();
+          if (ttlMs > 0) {
+            cache.set(key, {
+              value,
+              expiresAt: Date.now() + ttlMs,
+            });
+          }
+          return value;
+        } finally {
+          if (inFlight.get(key) === promise) {
+            inFlight.delete(key);
+          }
+        }
+      })();
+
+      inFlight.set(key, promise);
+      return promise;
+    },
+
+    clearKey(key: string): void {
+      cache.delete(key);
+      inFlight.delete(key);
+    },
+
+    clearMatching(matcher: (key: string) => boolean): void {
+      for (const key of cache.keys()) {
+        if (matcher(key)) {
+          cache.delete(key);
+        }
+      }
+      for (const key of inFlight.keys()) {
+        if (matcher(key)) {
+          inFlight.delete(key);
+        }
+      }
+    },
+  };
+}
 
 interface SpawnSpec {
   command: string;
@@ -568,6 +643,7 @@ class CodexAppServerClient {
     string,
     Map<string, string>
   >();
+  private readonly readCoalescer = createReadCoalescer();
 
   public constructor(options: CodexAppServerClientOptions = {}) {
     this.executablePath =
@@ -582,100 +658,112 @@ class CodexAppServerClient {
   public async listModels(
     limit = DEFAULT_MODEL_LIMIT,
   ): Promise<CodexModelOption[]> {
-    const result = await this.request("model/list", { limit });
-    if (!result || typeof result !== "object") {
-      throw new CodexAppServerTransportError(
-        "Invalid model/list response from codex app-server",
-      );
-    }
+    return this.readCoalescer.getOrLoad(
+      `models:${limit}`,
+      MODELS_CACHE_TTL_MS,
+      async () => {
+        const result = await this.request("model/list", { limit });
+        if (!result || typeof result !== "object") {
+          throw new CodexAppServerTransportError(
+            "Invalid model/list response from codex app-server",
+          );
+        }
 
-    const data = (result as { data?: unknown }).data;
-    if (!Array.isArray(data)) {
-      throw new CodexAppServerTransportError(
-        "Missing model data in codex app-server response",
-      );
-    }
+        const data = (result as { data?: unknown }).data;
+        if (!Array.isArray(data)) {
+          throw new CodexAppServerTransportError(
+            "Missing model data in codex app-server response",
+          );
+        }
 
-    const models: CodexModelOption[] = [];
+        const models: CodexModelOption[] = [];
 
-    for (const entry of data) {
-      if (!entry || typeof entry !== "object") {
-        continue;
-      }
+        for (const entry of data) {
+          if (!entry || typeof entry !== "object") {
+            continue;
+          }
 
-      const record = entry as Record<string, unknown>;
-      const fallbackModelName = asString(record.model)?.trim();
-      const id = asString(record.id)?.trim() || fallbackModelName;
-      if (!id) {
-        continue;
-      }
+          const record = entry as Record<string, unknown>;
+          const fallbackModelName = asString(record.model)?.trim();
+          const id = asString(record.id)?.trim() || fallbackModelName;
+          if (!id) {
+            continue;
+          }
 
-      const supported = collectSupportedReasoningEfforts(
-        record.supportedReasoningEfforts,
-      );
+          const supported = collectSupportedReasoningEfforts(
+            record.supportedReasoningEfforts,
+          );
 
-      models.push({
-        id,
-        displayName: asString(record.displayName)?.trim() || id,
-        description: asString(record.description)?.trim() || "",
-        isDefault: record.isDefault === true,
-        hidden: record.hidden === true,
-        defaultReasoningEffort: toReasoningEffort(
-          record.defaultReasoningEffort,
-        ),
-        supportedReasoningEfforts: supported,
-      });
-    }
+          models.push({
+            id,
+            displayName: asString(record.displayName)?.trim() || id,
+            description: asString(record.description)?.trim() || "",
+            isDefault: record.isDefault === true,
+            hidden: record.hidden === true,
+            defaultReasoningEffort: toReasoningEffort(
+              record.defaultReasoningEffort,
+            ),
+            supportedReasoningEfforts: supported,
+          });
+        }
 
-    return models;
+        return models;
+      },
+    );
   }
 
   public async listCollaborationModes(): Promise<
     CodexCollaborationModeOption[]
   > {
-    const result = await this.request("collaborationMode/list", {});
-    if (!result || typeof result !== "object") {
-      throw new CodexAppServerTransportError(
-        "Invalid collaborationMode/list response from codex app-server",
-      );
-    }
+    return this.readCoalescer.getOrLoad(
+      "collaboration-modes",
+      COLLABORATION_MODES_CACHE_TTL_MS,
+      async () => {
+        const result = await this.request("collaborationMode/list", {});
+        if (!result || typeof result !== "object") {
+          throw new CodexAppServerTransportError(
+            "Invalid collaborationMode/list response from codex app-server",
+          );
+        }
 
-    const data = (result as { data?: unknown }).data;
-    if (!Array.isArray(data)) {
-      throw new CodexAppServerTransportError(
-        "Missing collaboration mode data in codex app-server response",
-      );
-    }
+        const data = (result as { data?: unknown }).data;
+        if (!Array.isArray(data)) {
+          throw new CodexAppServerTransportError(
+            "Missing collaboration mode data in codex app-server response",
+          );
+        }
 
-    const modes: CodexCollaborationModeOption[] = [];
+        const modes: CodexCollaborationModeOption[] = [];
 
-    for (const entry of data) {
-      if (!entry || typeof entry !== "object") {
-        continue;
-      }
+        for (const entry of data) {
+          if (!entry || typeof entry !== "object") {
+            continue;
+          }
 
-      const record = entry as Record<string, unknown>;
-      const mode = asString(record.mode)?.trim();
-      if (!mode) {
-        continue;
-      }
+          const record = entry as Record<string, unknown>;
+          const mode = asString(record.mode)?.trim();
+          if (!mode) {
+            continue;
+          }
 
-      const reasoningEffort = toReasoningEffort(
-        record.reasoning_effort ?? record.reasoningEffort,
-      );
+          const reasoningEffort = toReasoningEffort(
+            record.reasoning_effort ?? record.reasoningEffort,
+          );
 
-      modes.push({
-        mode,
-        name: asString(record.name)?.trim() || mode,
-        model: asNullableString(record.model),
-        ...(reasoningEffort ? { reasoningEffort } : {}),
-        developerInstructions: asNullableString(
-          record.developer_instructions ?? record.developerInstructions,
-        ),
-      });
-    }
+          modes.push({
+            mode,
+            name: asString(record.name)?.trim() || mode,
+            model: asNullableString(record.model),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+            developerInstructions: asNullableString(
+              record.developer_instructions ?? record.developerInstructions,
+            ),
+          });
+        }
 
-    return modes;
+        return modes;
+      },
+    );
   }
 
   public async listSkills(
@@ -1104,6 +1192,7 @@ class CodexAppServerClient {
     }
 
     try {
+      this.clearThreadStateCache(threadId);
       const result = await this.request("turn/start", params);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
@@ -1114,6 +1203,7 @@ class CodexAppServerClient {
       }
 
       await this.resumeThread(threadId);
+      this.clearThreadStateCache(threadId);
       const result = await this.request("turn/start", params);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
@@ -1127,6 +1217,7 @@ class CodexAppServerClient {
       throw new Error("threadId is required");
     }
 
+    this.clearThreadStateCache(normalizedThreadId);
     const threadState = await this.getThreadState(normalizedThreadId);
     const activeTurnId = threadState.activeTurnId;
     if (!activeTurnId) {
@@ -1138,12 +1229,14 @@ class CodexAppServerClient {
         threadId: normalizedThreadId,
         turnId: activeTurnId,
       });
+      this.clearThreadStateCache(normalizedThreadId);
     } catch (error) {
       if (!shouldRetryAfterResume(error)) {
         throw error;
       }
 
       await this.resumeThread(normalizedThreadId);
+      this.clearThreadStateCache(normalizedThreadId);
       const refreshedThreadState =
         await this.getThreadState(normalizedThreadId);
       if (!refreshedThreadState.activeTurnId) {
@@ -1154,6 +1247,7 @@ class CodexAppServerClient {
         threadId: normalizedThreadId,
         turnId: refreshedThreadState.activeTurnId,
       });
+      this.clearThreadStateCache(normalizedThreadId);
     }
   }
 
@@ -1193,43 +1287,50 @@ class CodexAppServerClient {
         ? requestedTurnId.trim()
         : null;
 
-    const result = await this.readThreadWithTurns(normalizedThreadId);
+    return this.readCoalescer.getOrLoad(
+      this.getThreadStateCacheKey(normalizedThreadId, normalizedRequestedTurnId),
+      THREAD_STATE_CACHE_TTL_MS,
+      async () => {
+        const result = await this.readThreadWithTurns(normalizedThreadId);
 
-    const turns = extractTurnsFromThreadReadResult(result);
-    let activeTurnId: string | null = null;
-    let requestedTurnStatus: CodexTurnStatus | null = null;
+        const turns = extractTurnsFromThreadReadResult(result);
+        let activeTurnId: string | null = null;
+        let requestedTurnStatus: CodexTurnStatus | null = null;
 
-    for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const turn = turns[index];
-      if (!turn || typeof turn !== "object") {
-        continue;
-      }
+        for (let index = turns.length - 1; index >= 0; index -= 1) {
+          const turn = turns[index];
+          if (!turn || typeof turn !== "object") {
+            continue;
+          }
 
-      const turnId = asString(turn.id)?.trim() ?? "";
-      const turnStatus = toTurnStatus(turn.status);
+          const turnId = asString(turn.id)?.trim() ?? "";
+          const turnStatus = toTurnStatus(turn.status);
 
-      if (
-        normalizedRequestedTurnId &&
-        turnId === normalizedRequestedTurnId &&
-        turnStatus
-      ) {
-        requestedTurnStatus = turnStatus;
-      }
+          if (
+            normalizedRequestedTurnId &&
+            turnId === normalizedRequestedTurnId &&
+            turnStatus
+          ) {
+            requestedTurnStatus = turnStatus;
+          }
 
-      if (!activeTurnId && turnStatus === "inProgress" && turnId) {
-        activeTurnId = turnId;
-      }
-    }
+          if (!activeTurnId && turnStatus === "inProgress" && turnId) {
+            activeTurnId = turnId;
+          }
+        }
 
-    const threadRuntimeStatus = extractThreadStatusFromReadResult(result);
+        const threadRuntimeStatus = extractThreadStatusFromReadResult(result);
 
-    return {
-      threadId: normalizedThreadId,
-      activeTurnId,
-      isGenerating: activeTurnId !== null || threadRuntimeStatus === "active",
-      requestedTurnId: normalizedRequestedTurnId,
-      requestedTurnStatus,
-    };
+        return {
+          threadId: normalizedThreadId,
+          activeTurnId,
+          isGenerating:
+            activeTurnId !== null || threadRuntimeStatus === "active",
+          requestedTurnId: normalizedRequestedTurnId,
+          requestedTurnStatus,
+        };
+      },
+    );
   }
 
   public async getLastTurnDiff(threadId: string): Promise<CodexLastTurnDiff> {
@@ -1445,10 +1546,30 @@ class CodexAppServerClient {
   }
 
   private async resumeThread(threadId: string): Promise<void> {
+    this.clearThreadStateCache(threadId);
     await this.request("thread/resume", {
       threadId,
       persistExtendedHistory: true,
     });
+    this.clearThreadStateCache(threadId);
+  }
+
+  private getThreadStateCacheKey(
+    threadId: string,
+    requestedTurnId: string | null,
+  ): string {
+    return `thread-state:${threadId}:${requestedTurnId ?? ""}`;
+  }
+
+  private clearThreadStateCache(threadId: string): void {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      return;
+    }
+
+    this.readCoalescer.clearMatching((key) =>
+      key.startsWith(`thread-state:${normalizedThreadId}:`),
+    );
   }
 
   private async readThread(

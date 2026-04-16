@@ -185,3 +185,50 @@ test("Windows spawn spec uses the shell for .cmd wrappers only", () => {
     args: ["app-server"],
   });
 });
+
+test("read coalescer reuses one in-flight load and short-lived cached value", async () => {
+  const coalescer = __TEST_ONLY__.createReadCoalescer();
+  let callCount = 0;
+
+  const [first, second] = await Promise.all([
+    coalescer.getOrLoad("models:200", 1_000, async () => {
+      callCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { value: callCount };
+    }),
+    coalescer.getOrLoad("models:200", 1_000, async () => {
+      callCount += 1;
+      return { value: callCount };
+    }),
+  ]);
+
+  assert.deepEqual(first, { value: 1 });
+  assert.deepEqual(second, { value: 1 });
+  assert.equal(callCount, 1);
+
+  const cached = await coalescer.getOrLoad("models:200", 1_000, async () => {
+    callCount += 1;
+    return { value: callCount };
+  });
+
+  assert.deepEqual(cached, { value: 1 });
+  assert.equal(callCount, 1);
+});
+
+test("read coalescer can clear matching cached keys", async () => {
+  const coalescer = __TEST_ONLY__.createReadCoalescer();
+  let callCount = 0;
+
+  const load = async () => {
+    callCount += 1;
+    return callCount;
+  };
+
+  assert.equal(await coalescer.getOrLoad("thread-state:a:", 1_000, load), 1);
+  assert.equal(await coalescer.getOrLoad("thread-state:a:", 1_000, load), 1);
+
+  coalescer.clearMatching((key) => key.startsWith("thread-state:a:"));
+
+  assert.equal(await coalescer.getOrLoad("thread-state:a:", 1_000, load), 2);
+  assert.equal(callCount, 2);
+});

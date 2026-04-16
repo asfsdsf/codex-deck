@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { getLocalTerminalManager } from "../local-terminal";
+import { offSessionChange, onSessionChange } from "../watcher";
 import {
   clearTerminalBinding,
   getTerminalBinding,
@@ -10,12 +11,19 @@ import {
   setTerminalBinding,
   TerminalBindingConflictError,
 } from "../terminal-bindings";
+import {
+  getPersistedTerminalSessionArtifacts,
+  persistTerminalSessionFrozenBlock,
+  removeTerminalSessionArtifacts,
+} from "../terminal-session-store";
 import type {
   CreateTerminalRequest,
   TerminalBindSessionRequest,
   TerminalBindingResponse,
   TerminalClaimWriteRequest,
   TerminalCommandResponse,
+  TerminalPersistFrozenBlockRequest,
+  TerminalPersistFrozenBlockResponse,
   TerminalExecuteCommandRequest,
   TerminalExecuteCommandResponse,
   TerminalEventsResponse,
@@ -25,10 +33,12 @@ import type {
   TerminalResizeRequest,
   TerminalSessionRolesRequest,
   TerminalSessionRolesResponse,
+  TerminalSessionArtifactsResponse,
   TerminalSnapshotResponse,
   TerminalStreamEvent,
   TerminalSummary,
 } from "../storage";
+import { getConversationStream } from "../storage";
 import {
   MAX_LONG_POLL_WAIT_MS,
   parseNonNegativeInteger,
@@ -180,6 +190,91 @@ export function registerTerminalRoutes(app: Hono): void {
     }
   });
 
+  app.get("/api/terminals/:terminalId/frozen-blocks", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId")?.trim();
+      if (!terminalId) {
+        return c.json({ error: "terminal id is required" }, 400);
+      }
+
+      const manager = getLocalTerminalManager();
+      if (!manager.getSnapshot(terminalId)) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+
+      const sessionId = c.req.query("sessionId")?.trim();
+      if (!sessionId) {
+        return c.json({ error: "sessionId is required" }, 400);
+      }
+
+      return c.json(
+        (await getPersistedTerminalSessionArtifacts(terminalId, {
+          sessionId,
+        })) satisfies TerminalSessionArtifactsResponse,
+      );
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/terminals/:terminalId/frozen-blocks", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId")?.trim();
+      if (!terminalId) {
+        return c.json({ error: "terminal id is required" }, 400);
+      }
+
+      const manager = getLocalTerminalManager();
+      if (!manager.getSnapshot(terminalId)) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+
+      const body = (await c.req
+        .json()
+        .catch(() => ({}))) as Partial<TerminalPersistFrozenBlockRequest>;
+      const sessionId = body.sessionId?.trim();
+      const messageKey = body.messageKey?.trim();
+      const transcript = body.transcript;
+      const stepId =
+        body.stepId === undefined || body.stepId === null
+          ? null
+          : typeof body.stepId === "string"
+            ? body.stepId
+            : undefined;
+
+      if (!sessionId) {
+        return c.json({ error: "sessionId is required" }, 400);
+      }
+      if (!messageKey) {
+        return c.json({ error: "messageKey is required" }, 400);
+      }
+      if (typeof transcript !== "string" || transcript.trim().length === 0) {
+        return c.json({ error: "transcript must be a non-empty string" }, 400);
+      }
+      if (stepId === undefined) {
+        return c.json({ error: "stepId must be a string or null" }, 400);
+      }
+
+      return c.json(
+        (await persistTerminalSessionFrozenBlock({
+          terminalId,
+          sessionId,
+          messageKey,
+          transcript,
+          stepId,
+        })) satisfies TerminalPersistFrozenBlockResponse,
+      );
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
   app.post("/api/terminals/:terminalId/binding", async (c) => {
     try {
       const terminalId = c.req.param("terminalId")?.trim();
@@ -258,6 +353,7 @@ export function registerTerminalRoutes(app: Hono): void {
         return c.json({ error: "terminal not found" }, 404);
       }
       await clearTerminalBinding(terminalId);
+      await removeTerminalSessionArtifacts(terminalId);
       return c.json({ ok: true });
     } catch (error) {
       return c.json(
@@ -630,6 +726,25 @@ export function registerTerminalRoutes(app: Hono): void {
     if (fromSeqRaw !== undefined && fromSeq === null) {
       return c.json({ error: "fromSeq must be a non-negative integer" }, 400);
     }
+    const conversationSessionIdRaw = c.req.query("conversationSessionId");
+    const conversationSessionId =
+      typeof conversationSessionIdRaw === "string" &&
+      conversationSessionIdRaw.trim()
+        ? conversationSessionIdRaw.trim()
+        : null;
+    const conversationOffsetRaw = c.req.query("conversationOffset");
+    const conversationOffset = conversationOffsetRaw
+      ? parseNonNegativeInteger(conversationOffsetRaw)
+      : 0;
+    if (
+      conversationOffsetRaw !== undefined &&
+      conversationOffset === null
+    ) {
+      return c.json(
+        { error: "conversationOffset must be a non-negative integer" },
+        400,
+      );
+    }
 
     const streamClientId = c.req.query("clientId") ?? null;
 
@@ -640,12 +755,16 @@ export function registerTerminalRoutes(app: Hono): void {
       }
       let isConnected = true;
       let unsubscribe: (() => void) | null = null;
+      let conversationStreamOffset = conversationOffset ?? 0;
 
       const cleanup = () => {
         isConnected = false;
         if (unsubscribe) {
           unsubscribe();
           unsubscribe = null;
+        }
+        if (conversationSessionId) {
+          offSessionChange(handleConversationChange);
         }
         if (streamClientId) {
           manager.releaseWrite(terminalId, streamClientId);
@@ -661,6 +780,65 @@ export function registerTerminalRoutes(app: Hono): void {
             event: "terminal",
             data: JSON.stringify(event),
           });
+        } catch {
+          cleanup();
+        }
+      };
+
+      const writeConversationBatches = async (
+        emitWhenEmpty: boolean,
+      ): Promise<void> => {
+        if (!conversationSessionId) {
+          return;
+        }
+
+        let firstBatch = true;
+        while (isConnected) {
+          const previousOffset = conversationStreamOffset;
+          const {
+            messages,
+            nextOffset,
+            done,
+          } = await getConversationStream(
+            conversationSessionId,
+            conversationStreamOffset,
+          );
+          conversationStreamOffset = nextOffset;
+
+          if (
+            (emitWhenEmpty && firstBatch) ||
+            messages.length > 0 ||
+            nextOffset > previousOffset
+          ) {
+            await stream.writeSSE({
+              event: "conversationMessages",
+              data: JSON.stringify({
+                messages,
+                nextOffset,
+                done,
+              }),
+            });
+          }
+
+          if (done || nextOffset <= previousOffset) {
+            break;
+          }
+
+          firstBatch = false;
+        }
+      };
+
+      const handleConversationChange = async (changedSessionId: string) => {
+        if (
+          !conversationSessionId ||
+          changedSessionId !== conversationSessionId ||
+          !isConnected
+        ) {
+          return;
+        }
+
+        try {
+          await writeConversationBatches(false);
         } catch {
           cleanup();
         }
@@ -702,6 +880,10 @@ export function registerTerminalRoutes(app: Hono): void {
       unsubscribe = manager.subscribeTerminal(terminalId, (event) => {
         void writeTerminalEvent(event);
       });
+      if (conversationSessionId) {
+        onSessionChange(handleConversationChange);
+        await writeConversationBatches(true);
+      }
 
       c.req.raw.signal.addEventListener("abort", cleanup);
 
@@ -711,6 +893,12 @@ export function registerTerminalRoutes(app: Hono): void {
             event: "heartbeat",
             data: JSON.stringify({ timestamp: Date.now() }),
           });
+          if (conversationSessionId) {
+            await stream.writeSSE({
+              event: "conversationHeartbeat",
+              data: JSON.stringify({ timestamp: Date.now() }),
+            });
+          }
           await stream.sleep(30000);
         }
       } catch {

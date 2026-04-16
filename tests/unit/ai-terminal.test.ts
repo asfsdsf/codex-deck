@@ -10,9 +10,11 @@ import {
   buildAiTerminalRejectionFeedback,
   buildAiTerminalTurnPrompt,
   deriveAiTerminalStepStatesByMessageKey,
+  parseAiTerminalBootstrapMessage,
   parseAiTerminalExecutionResult,
   parseAiTerminalMessage,
   parseAiTerminalPersistedStepState,
+  parseAiTerminalUserFeedback,
   shouldAttachAiTerminalOutputReference,
   summarizeAiTerminalOutput,
 } from "../../web/ai-terminal";
@@ -262,6 +264,106 @@ test("parseAiTerminalPersistedStepState normalizes execution and rejection feedb
     stepId: "check-mem",
     state: "failed",
   });
+});
+
+test("parseAiTerminalUserFeedback parses execution summaries with cdata", () => {
+  const parsed = parseAiTerminalUserFeedback(`
+<ai-terminal-execution>
+  <step_id>check-mem</step_id>
+  <status>failed</status>
+  <exit_code>2</exit_code>
+  <cwd_after>/repo</cwd_after>
+  <output_summary><![CDATA[stdout <ok> & done]]></output_summary>
+  <error_summary><![CDATA[permission denied]]></error_summary>
+  <output_reference>terminal:t1:seq:10-20</output_reference>
+</ai-terminal-execution>
+  `);
+
+  assert.deepEqual(parsed, {
+    kind: "execution",
+    stepId: "check-mem",
+    status: "failed",
+    exitCode: 2,
+    cwdAfter: "/repo",
+    outputSummary: "stdout <ok> & done",
+    errorSummary: "permission denied",
+    outputReference: "terminal:t1:seq:10-20",
+  });
+});
+
+test("parseAiTerminalUserFeedback parses rejection reasons and rejects incomplete blocks", () => {
+  assert.deepEqual(
+    parseAiTerminalUserFeedback(`
+<ai-terminal-feedback>
+  <step_id>check-mem</step_id>
+  <decision>rejected</decision>
+  <reason><![CDATA[Use pnpm test instead.]]></reason>
+</ai-terminal-feedback>
+    `),
+    {
+      kind: "rejection",
+      stepId: "check-mem",
+      decision: "rejected",
+      reason: "Use pnpm test instead.",
+    },
+  );
+
+  assert.equal(
+    parseAiTerminalUserFeedback(`
+<ai-terminal-execution>
+  <status>success</status>
+</ai-terminal-execution>
+    `),
+    null,
+  );
+  assert.equal(parseAiTerminalUserFeedback("plain message"), null);
+});
+
+test("parseAiTerminalBootstrapMessage parses controller context and first request", () => {
+  const parsed = parseAiTerminalBootstrapMessage(`
+(Use skill codex-deck-terminal) This chat is bound to terminal terminal-1. The controller will parse markdown replies.
+
+<ai-terminal-controller-context>
+<terminal_id>terminal-1</terminal_id>
+<cwd>/repo</cwd>
+<shell>/bin/zsh</shell>
+<os_name>macOS</os_name>
+<os_release>macOS 26.4.1</os_release>
+<architecture>arm64</architecture>
+<platform>darwin</platform>
+</ai-terminal-controller-context>
+
+Treat the next section as the user's first request for this terminal chat session.
+
+User first request:
+<user-request>
+Show largest 10 files
+</user-request>
+  `);
+
+  assert.deepEqual(parsed, {
+    kind: "bootstrap",
+    terminalId: "terminal-1",
+    cwd: "/repo",
+    shell: "/bin/zsh",
+    osName: "macOS",
+    osRelease: "macOS 26.4.1",
+    architecture: "arm64",
+    platform: "darwin",
+    userRequest: "Show largest 10 files",
+  });
+});
+
+test("parseAiTerminalBootstrapMessage rejects unrelated or incomplete messages", () => {
+  assert.equal(parseAiTerminalBootstrapMessage("plain message"), null);
+  assert.equal(
+    parseAiTerminalBootstrapMessage(`
+<ai-terminal-controller-context>
+<cwd>/repo</cwd>
+</ai-terminal-controller-context>
+    `),
+    null,
+  );
 });
 
 test("buildAiTerminalExecutionFeedback marks unknown exit code as completed_unknown", () => {

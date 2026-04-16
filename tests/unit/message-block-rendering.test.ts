@@ -253,3 +253,135 @@ test("MessageBlock hides ai terminal action buttons after a terminal step is dec
   assert.doesNotMatch(html, /Reject/);
   assert.match(html, /Failed/);
 });
+
+test("MessageBlock renders terminal execution user feedback and hides raw tags", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: `<ai-terminal-execution>
+  <step_id>check-mem</step_id>
+  <status>success</status>
+  <exit_code>0</exit_code>
+  <cwd_after>/repo</cwd_after>
+  <output_summary><![CDATA[Mem: ok]]></output_summary>
+  <output_reference>terminal:t1:seq:10-20</output_reference>
+</ai-terminal-execution>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Terminal Step/);
+  assert.match(html, /Success/);
+  assert.match(html, /check-mem/);
+  assert.match(html, /Exit 0/);
+  assert.match(html, /\/repo/);
+  assert.match(html, /Mem: ok/);
+  assert.match(html, /terminal:t1:seq:10-20/);
+  assert.match(html, /title="Show raw text"/);
+  assert.match(html, /&lt;\/&gt;/);
+  assert.doesNotMatch(html, /&lt;ai-terminal-execution&gt;/);
+});
+
+test("MessageBlock renders terminal failed execution error summary", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: `<ai-terminal-execution>
+  <step_id>run-tests</step_id>
+  <status>timed_out</status>
+  <exit_code></exit_code>
+  <cwd_after>/repo</cwd_after>
+  <output_summary><![CDATA[Tests started.]]></output_summary>
+  <error_summary><![CDATA[Command timed out.]]></error_summary>
+</ai-terminal-execution>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Timed out/);
+  assert.match(html, /Tests started\./);
+  assert.match(html, /Command timed out\./);
+  assert.doesNotMatch(html, /&lt;error_summary&gt;/);
+});
+
+test("MessageBlock renders terminal rejection user feedback and hides raw tags", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: `<ai-terminal-feedback>
+  <step_id>check-mem</step_id>
+  <decision>rejected</decision>
+  <reason><![CDATA[Use pnpm test instead.]]></reason>
+</ai-terminal-feedback>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Terminal Step/);
+  assert.match(html, /Rejected/);
+  assert.match(html, /check-mem/);
+  assert.match(html, /Use pnpm test instead\./);
+  assert.match(html, /title="Show raw text"/);
+  assert.doesNotMatch(html, /&lt;ai-terminal-feedback&gt;/);
+});
+
+test("MessageBlock renders terminal bootstrap user messages and hides raw tags", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: `(Use skill codex-deck-terminal) This chat is bound to terminal terminal-ufyscs8a5kdz. The controller will parse markdown replies that contain one terminal tag block such as <ai-terminal-plan>, <ai-terminal-need-input>, or <requirement_finished>.
+
+<ai-terminal-controller-context>
+<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<cwd>/Users/zky/Programming/Web/Project/codex-deck</cwd>
+<shell>/bin/zsh</shell>
+<os_name>macOS</os_name>
+<os_release>macOS 26.4.1</os_release>
+<architecture>arm64</architecture>
+<platform>darwin</platform>
+</ai-terminal-controller-context>
+
+Treat the next section as the user's first request for this terminal chat session.
+
+User first request:
+<user-request>
+Show larget 10 fiels
+</user-request>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Terminal Chat/);
+  assert.match(html, /terminal-ufyscs8a5kdz/);
+  assert.match(html, /\/Users\/zky\/Programming\/Web\/Project\/codex-deck/);
+  assert.match(html, /\/bin\/zsh/);
+  assert.match(html, /macOS 26\.4\.1/);
+  assert.match(html, /arm64/);
+  assert.match(html, /darwin/);
+  assert.match(html, /Show larget 10 fiels/);
+  assert.match(html, /title="Show raw text"/);
+  assert.doesNotMatch(html, /&lt;ai-terminal-controller-context&gt;/);
+  assert.doesNotMatch(html, /&lt;user-request&gt;/);
+});
+
+test("MessageBlock keeps normal user markdown rendering for unrelated messages", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: "Please run **tests** next.",
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Please run/);
+  assert.match(
+    html,
+    /<strong class="font-semibold text-zinc-50">tests<\/strong>/,
+  );
+  assert.doesNotMatch(html, /Terminal Step/);
+});

@@ -107,6 +107,80 @@ async function requestJson(
   };
 }
 
+interface SseEventRecord {
+  event: string;
+  data: string;
+}
+
+async function readSseEvents(
+  response: Response,
+  expectedEvents: string[],
+  timeoutMs: number = 200,
+): Promise<SseEventRecord[]> {
+  const reader = response.body?.getReader();
+  assert.ok(reader, "expected response body reader");
+  const decoder = new TextDecoder();
+  const events: SseEventRecord[] = [];
+  const expectedSet = new Set(expectedEvents);
+  const seenExpected = new Set<string>();
+  let buffer = "";
+
+  const parseBuffer = () => {
+    let separatorIndex = buffer.indexOf("\n\n");
+    while (separatorIndex >= 0) {
+      const rawEvent = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      const lines = rawEvent.split("\n");
+      let eventName = "message";
+      const dataLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice("event:".length).trim();
+          continue;
+        }
+        if (line.startsWith("data:")) {
+          dataLines.push(line.slice("data:".length).trimStart());
+        }
+      }
+      if (dataLines.length > 0) {
+        events.push({
+          event: eventName,
+          data: dataLines.join("\n"),
+        });
+        if (expectedSet.has(eventName)) {
+          seenExpected.add(eventName);
+        }
+      }
+      separatorIndex = buffer.indexOf("\n\n");
+    }
+  };
+
+  try {
+    while (seenExpected.size < expectedSet.size) {
+      const nextChunk = (await Promise.race([
+        reader.read(),
+        new Promise<{ timedOut: true }>((resolve) => {
+          setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+        }),
+      ])) as ReadableStreamReadResult<Uint8Array> | { timedOut: true };
+
+      if ("timedOut" in nextChunk) {
+        break;
+      }
+      if (nextChunk.done) {
+        break;
+      }
+
+      buffer += decoder.decode(nextChunk.value, { stream: true });
+      parseBuffer();
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+
+  return events;
+}
+
 test("server routes return sessions/projects/conversation/context and fix dangling", async () => {
   const { rootDir, sessionsDir, cleanup } =
     await createTempCodexDir("server-core");
@@ -270,6 +344,165 @@ test("conversation chunk route returns bounded chunks with offsets", async () =>
       true,
     );
   } finally {
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("sessions stream carries sessions, terminals, and workflows snapshots", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("server-global-stream");
+  const server = createServer({ port: 13018, codexDir: rootDir, open: false });
+  const terminalId = "terminal-global-1";
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [
+      {
+        id: terminalId,
+        terminalId,
+        display: "repo",
+        firstCommand: null,
+        timestamp: 1,
+        project: "/repo/app",
+        projectName: "app",
+        cwd: "/repo/app",
+        shell: "zsh",
+        running: true,
+      },
+    ],
+    createTerminal: () => {
+      throw new Error("not implemented");
+    },
+    closeTerminal: async () => false,
+    getSnapshot: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    restart: () => null,
+    subscribeTerminal: () => () => {},
+    subscribeTerminals: () => () => {},
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+      responseItemMessageLine("user", "global stream"),
+    ]);
+
+    await loadStorage();
+
+    const response = await server.app.request("/api/sessions/stream");
+    assert.equal(response.status, 200);
+
+    const events = await readSseEvents(response, [
+      "sessions",
+      "terminals",
+      "workflows",
+    ]);
+    const eventMap = new Map(events.map((event) => [event.event, event.data]));
+
+    assert.ok(eventMap.has("sessions"));
+    assert.ok(eventMap.has("terminals"));
+    assert.ok(eventMap.has("workflows"));
+
+    const sessions = JSON.parse(eventMap.get("sessions") ?? "[]") as Array<{
+      id: string;
+    }>;
+    const terminals = JSON.parse(eventMap.get("terminals") ?? "[]") as Array<{
+      terminalId: string;
+    }>;
+    const workflows = JSON.parse(eventMap.get("workflows") ?? "[]") as unknown[];
+
+    assert.equal(
+      sessions.some((session) => session.id === SESSION_ID),
+      true,
+    );
+    assert.equal(
+      terminals.some((terminal) => terminal.terminalId === terminalId),
+      true,
+    );
+    assert.deepEqual(workflows, []);
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal stream can include bound session conversation batches", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("server-terminal-bound-session-stream");
+  const server = createServer({ port: 13019, codexDir: rootDir, open: false });
+  const terminalId = "terminal-bound-1";
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => {
+      throw new Error("not implemented");
+    },
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 7,
+            writeOwnerId: null,
+          }
+        : null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    restart: () => null,
+    subscribeTerminal: () => () => {},
+    subscribeTerminals: () => () => {},
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+      responseItemMessageLine("assistant", "terminal-bound reply"),
+    ]);
+
+    await loadStorage();
+
+    const response = await server.app.request(
+      `/api/terminals/${terminalId}/stream?fromSeq=0&conversationSessionId=${SESSION_ID}&conversationOffset=0`,
+    );
+    assert.equal(response.status, 200);
+
+    const events = await readSseEvents(response, ["conversationMessages"]);
+    const conversationEvent = events.find(
+      (event) => event.event === "conversationMessages",
+    );
+    assert.ok(conversationEvent);
+
+    const payload = JSON.parse(conversationEvent.data) as {
+      messages?: Array<{ type?: string }>;
+      nextOffset?: number;
+      done?: boolean;
+    };
+    assert.equal(Array.isArray(payload.messages), true);
+    assert.equal(
+      payload.messages?.some((message) => message.type === "assistant"),
+      true,
+    );
+    assert.equal(typeof payload.nextOffset, "number");
+    assert.equal(payload.done, true);
+  } finally {
+    setLocalTerminalManagerForTests(null);
     server.stop();
     await cleanup();
   }
@@ -2950,6 +3183,115 @@ test("terminal binding routes persist bindings and expose terminal session roles
       "utf-8",
     );
     assert.match(storedBindingText, /terminal-session-1/);
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal frozen block routes persist artifacts under codex home and delete them with the terminal", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-frozen-blocks",
+  );
+  const server = createServer({ port: 13017, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-frozen-1";
+  let terminalExists = true;
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: true,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "",
+      seq: 1,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async (requestedTerminalId: string) => {
+      if (requestedTerminalId !== terminalId || !terminalExists) {
+        return false;
+      }
+      terminalExists = false;
+      return true;
+    },
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId && terminalExists
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    await loadStorage();
+
+    const persisted = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/frozen-blocks`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          messageKey: "message-1",
+          transcript: "pwd\n/repo/app\n",
+        }),
+      },
+    );
+    assert.equal(persisted.status, 200);
+
+    const manifestPath = join(
+      rootDir,
+      "codex-deck",
+      "terminal",
+      "sessions",
+      terminalId,
+      "session.json",
+    );
+    assert.equal(existsSync(manifestPath), true);
+
+    const restored = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/frozen-blocks?sessionId=session-1`,
+    );
+    assert.equal(restored.status, 200);
+    assert.deepEqual(
+      (restored.body as { frozenOutputByMessageKey?: Record<string, string> })
+        .frozenOutputByMessageKey,
+      {
+        "message-1": "pwd\n/repo/app\n",
+      },
+    );
+
+    const deleted = await requestJson(server, `/api/terminals/${terminalId}`, {
+      method: "DELETE",
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal(existsSync(manifestPath), false);
   } finally {
     setLocalTerminalManagerForTests(null);
     server.stop();

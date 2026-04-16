@@ -121,6 +121,113 @@ export function createLocalTransport(): WebTransport {
   const workflowWakeListeners = new Set<() => void>();
   const workflowDaemonStatusWakeListeners = new Set<() => void>();
   const workflowDetailWakeListeners = new Map<string, Set<() => void>>();
+  const sessionsStreamSubscribers = new Set<SessionsStreamHandlers>();
+  const terminalsStreamSubscribers = new Set<TerminalsStreamHandlers>();
+  const workflowsStreamSubscribers = new Set<{
+    onWorkflows: (workflows: WorkflowSummary[]) => void;
+    onWorkflowsUpdate: (workflows: WorkflowSummary[]) => void;
+    onWorkflowsRemoved: (workflowKeys: string[]) => void;
+    onError?: () => void;
+  }>();
+  let unsubscribeSharedRealtimeStream: (() => void) | null = null;
+
+  const stopSharedRealtimeStreamIfIdle = () => {
+    if (
+      !unsubscribeSharedRealtimeStream ||
+      sessionsStreamSubscribers.size > 0 ||
+      terminalsStreamSubscribers.size > 0 ||
+      workflowsStreamSubscribers.size > 0
+    ) {
+      return;
+    }
+
+    unsubscribeSharedRealtimeStream();
+    unsubscribeSharedRealtimeStream = null;
+  };
+
+  const ensureSharedRealtimeStream = () => {
+    if (unsubscribeSharedRealtimeStream) {
+      return;
+    }
+
+    // Keep a single local EventSource for global realtime state so two visible
+    // pages do not exhaust the browser's per-origin connection budget.
+    unsubscribeSharedRealtimeStream = createReconnectingEventSource({
+      createUrl: () => "/api/sessions/stream",
+      configure: (eventSource) => {
+        eventSource.addEventListener("sessions", (event) => {
+          const sessions = JSON.parse(event.data);
+          for (const subscriber of sessionsStreamSubscribers) {
+            subscriber.onSessions(sessions);
+          }
+        });
+        eventSource.addEventListener("sessionsUpdate", (event) => {
+          const sessions = JSON.parse(event.data);
+          for (const subscriber of sessionsStreamSubscribers) {
+            subscriber.onSessionsUpdate(sessions);
+          }
+        });
+        eventSource.addEventListener("sessionsRemoved", (event) => {
+          const payload = JSON.parse(event.data) as { sessionIds?: string[] };
+          const sessionIds = Array.isArray(payload.sessionIds)
+            ? payload.sessionIds
+            : [];
+          for (const subscriber of sessionsStreamSubscribers) {
+            subscriber.onSessionsRemoved(sessionIds);
+          }
+        });
+        eventSource.addEventListener("skillsChanged", (event) => {
+          const payload = JSON.parse(event.data) as { sessionId?: unknown };
+          if (typeof payload.sessionId !== "string") {
+            return;
+          }
+          for (const subscriber of sessionsStreamSubscribers) {
+            subscriber.onSkillsChanged?.({ sessionId: payload.sessionId });
+          }
+        });
+        eventSource.addEventListener("terminals", (event) => {
+          const terminals = JSON.parse(event.data) as TerminalSummary[];
+          for (const subscriber of terminalsStreamSubscribers) {
+            subscriber.onTerminals(terminals);
+          }
+        });
+        eventSource.addEventListener("workflows", (event) => {
+          const workflows = JSON.parse(event.data) as WorkflowSummary[];
+          for (const subscriber of workflowsStreamSubscribers) {
+            subscriber.onWorkflows(workflows);
+          }
+        });
+        eventSource.addEventListener("workflowsUpdate", (event) => {
+          const workflows = JSON.parse(event.data) as WorkflowSummary[];
+          for (const subscriber of workflowsStreamSubscribers) {
+            subscriber.onWorkflowsUpdate(workflows);
+          }
+        });
+        eventSource.addEventListener("workflowsRemoved", (event) => {
+          const payload = JSON.parse(event.data) as {
+            workflowKeys?: string[];
+          };
+          const workflowKeys = Array.isArray(payload.workflowKeys)
+            ? payload.workflowKeys
+            : [];
+          for (const subscriber of workflowsStreamSubscribers) {
+            subscriber.onWorkflowsRemoved(workflowKeys);
+          }
+        });
+      },
+      onDisconnect: () => {
+        for (const subscriber of sessionsStreamSubscribers) {
+          subscriber.onError?.();
+        }
+        for (const subscriber of terminalsStreamSubscribers) {
+          subscriber.onError?.();
+        }
+        for (const subscriber of workflowsStreamSubscribers) {
+          subscriber.onError?.();
+        }
+      },
+    });
+  };
 
   return {
     requestJson: requestLocalJson,
@@ -146,42 +253,23 @@ export function createLocalTransport(): WebTransport {
     },
 
     subscribeSessionsStream(handlers: SessionsStreamHandlers): () => void {
-      return createReconnectingEventSource({
-        createUrl: () => "/api/sessions/stream",
-        configure: (eventSource) => {
-          eventSource.addEventListener("sessions", (event) => {
-            handlers.onSessions(JSON.parse(event.data));
-          });
-          eventSource.addEventListener("sessionsUpdate", (event) => {
-            handlers.onSessionsUpdate(JSON.parse(event.data));
-          });
-          eventSource.addEventListener("sessionsRemoved", (event) => {
-            const payload = JSON.parse(event.data) as { sessionIds?: string[] };
-            handlers.onSessionsRemoved(
-              Array.isArray(payload.sessionIds) ? payload.sessionIds : [],
-            );
-          });
-          eventSource.addEventListener("skillsChanged", (event) => {
-            const payload = JSON.parse(event.data) as { sessionId?: unknown };
-            if (typeof payload.sessionId === "string") {
-              handlers.onSkillsChanged?.({ sessionId: payload.sessionId });
-            }
-          });
-        },
-        onDisconnect: handlers.onError,
-      });
+      sessionsStreamSubscribers.add(handlers);
+      ensureSharedRealtimeStream();
+
+      return () => {
+        sessionsStreamSubscribers.delete(handlers);
+        stopSharedRealtimeStreamIfIdle();
+      };
     },
 
     subscribeTerminalsStream(handlers: TerminalsStreamHandlers): () => void {
-      return createReconnectingEventSource({
-        createUrl: () => "/api/terminals/stream",
-        configure: (eventSource) => {
-          eventSource.addEventListener("terminals", (event) => {
-            handlers.onTerminals(JSON.parse(event.data) as TerminalSummary[]);
-          });
-        },
-        onDisconnect: handlers.onError,
-      });
+      terminalsStreamSubscribers.add(handlers);
+      ensureSharedRealtimeStream();
+
+      return () => {
+        terminalsStreamSubscribers.delete(handlers);
+        stopSharedRealtimeStreamIfIdle();
+      };
     },
 
     subscribeWorkflowsStream(handlers: WorkflowsStreamHandlers): () => void {
@@ -251,31 +339,19 @@ export function createLocalTransport(): WebTransport {
       const unregisterWake = registerWakeListener(workflowWakeListeners, () => {
         void refreshWorkflows();
       });
-
-      const unsubscribe = createReconnectingEventSource({
-        createUrl: () => "/api/workflows/stream",
-        configure: (eventSource) => {
-          eventSource.addEventListener("workflows", (event) => {
-            publishWorkflows(JSON.parse(event.data) as WorkflowSummary[]);
-          });
-          eventSource.addEventListener("workflowsUpdate", (event) => {
-            applyWorkflowUpdates(JSON.parse(event.data) as WorkflowSummary[]);
-          });
-          eventSource.addEventListener("workflowsRemoved", (event) => {
-            const payload = JSON.parse(event.data) as {
-              workflowKeys?: string[];
-            };
-            applyWorkflowRemovals(
-              Array.isArray(payload.workflowKeys) ? payload.workflowKeys : [],
-            );
-          });
-        },
-        onDisconnect: handlers.onError,
-      });
+      const workflowSubscriber = {
+        onWorkflows: publishWorkflows,
+        onWorkflowsUpdate: applyWorkflowUpdates,
+        onWorkflowsRemoved: applyWorkflowRemovals,
+        onError: handlers.onError,
+      };
+      workflowsStreamSubscribers.add(workflowSubscriber);
+      ensureSharedRealtimeStream();
 
       return () => {
         unregisterWake();
-        unsubscribe();
+        workflowsStreamSubscribers.delete(workflowSubscriber);
+        stopSharedRealtimeStreamIfIdle();
       };
     },
 
@@ -411,10 +487,30 @@ export function createLocalTransport(): WebTransport {
         options.fromSeq >= 0
           ? Math.floor(options.fromSeq)
           : 0;
+      const conversationSessionId =
+        options.conversationSessionId?.trim() || null;
+      let conversationOffset =
+        typeof options.conversationInitialOffset === "number" &&
+        Number.isFinite(options.conversationInitialOffset) &&
+        options.conversationInitialOffset > 0
+          ? Math.floor(options.conversationInitialOffset)
+          : 0;
+      let conversationBootstrapComplete = conversationOffset > 0;
 
       return createReconnectingEventSource({
-        createUrl: () =>
-          `/api/terminals/${encodeURIComponent(options.terminalId)}/stream?fromSeq=${fromSeq}`,
+        createUrl: () => {
+          const params = new URLSearchParams({
+            fromSeq: String(fromSeq),
+          });
+          if (options.clientId?.trim()) {
+            params.set("clientId", options.clientId.trim());
+          }
+          if (conversationSessionId) {
+            params.set("conversationSessionId", conversationSessionId);
+            params.set("conversationOffset", String(conversationOffset));
+          }
+          return `/api/terminals/${encodeURIComponent(options.terminalId)}/stream?${params.toString()}`;
+        },
         configure: (eventSource) => {
           eventSource.addEventListener("terminal", (message) => {
             const event = parseTerminalEvent(message.data);
@@ -423,6 +519,49 @@ export function createLocalTransport(): WebTransport {
             }
             fromSeq = event.seq;
             handlers.onEvent(event);
+          });
+          eventSource.addEventListener("conversationMessages", (event) => {
+            const payload = JSON.parse(event.data) as
+              | ConversationStreamPayload
+              | unknown[];
+            const messages = (
+              Array.isArray(payload)
+                ? payload
+                : Array.isArray(payload.messages)
+                  ? payload.messages
+                  : []
+            ) as ConversationMessage[];
+            if (
+              !Array.isArray(payload) &&
+              Number.isFinite(payload.nextOffset) &&
+              typeof payload.nextOffset === "number"
+            ) {
+              conversationOffset = Math.max(
+                conversationOffset,
+                Math.floor(payload.nextOffset),
+              );
+            }
+
+            const done =
+              Array.isArray(payload) || typeof payload.done !== "boolean"
+                ? true
+                : payload.done;
+            const phase = conversationBootstrapComplete
+              ? "incremental"
+              : "bootstrap";
+            if (done) {
+              conversationBootstrapComplete = true;
+            }
+            handlers.onConversationMessages?.(messages, {
+              messages,
+              phase,
+              nextOffset: conversationOffset,
+              done,
+              insertion: "append",
+            });
+          });
+          eventSource.addEventListener("conversationHeartbeat", () => {
+            handlers.onConversationHeartbeat?.();
           });
         },
         onDisconnect: handlers.onError,

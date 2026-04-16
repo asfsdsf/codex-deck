@@ -3541,6 +3541,7 @@ export default function CodexDeckApp() {
   });
   const [terminalEmbeddedMessagesLoading, setTerminalEmbeddedMessagesLoading] =
     useState(false);
+  const terminalEmbeddedRawMessagesRef = useRef<ConversationMessage[]>([]);
   const [aiTerminalStepStatesBySession, setAiTerminalStepStatesBySession] =
     useState<
       Record<
@@ -5912,33 +5913,37 @@ export default function CodexDeckApp() {
     }
 
     let cancelled = false;
-
-    getSessionContext(activeComposerSessionId)
-      .then((context) => {
-        if (cancelled) {
-          return;
-        }
-        setContextLeftPercent(context.contextLeftPercent);
-        setContextUsedTokens(context.usedTokens);
-        setContextModelWindow(context.modelContextWindow);
-        setStatusTokenUsage(context.tokenUsage);
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
-        setContextLeftPercent(null);
-        setContextUsedTokens(null);
-        setContextModelWindow(null);
-        setStatusTokenUsage(null);
-      });
+    const delayMs = centerView === "terminal" ? 400 : 0;
+    const timer = setTimeout(() => {
+      void getSessionContext(activeComposerSessionId)
+        .then((context) => {
+          if (cancelled) {
+            return;
+          }
+          setContextLeftPercent(context.contextLeftPercent);
+          setContextUsedTokens(context.usedTokens);
+          setContextModelWindow(context.modelContextWindow);
+          setStatusTokenUsage(context.tokenUsage);
+        })
+        .catch(() => {
+          if (cancelled) {
+            return;
+          }
+          setContextLeftPercent(null);
+          setContextUsedTokens(null);
+          setContextModelWindow(null);
+          setStatusTokenUsage(null);
+        });
+    }, delayMs);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [
     activeComposerSessionData?.timestamp,
     activeComposerSessionId,
+    centerView,
     contextRefreshVersion,
   ]);
 
@@ -6046,7 +6051,7 @@ export default function CodexDeckApp() {
 
       if (includesSelectedSession) {
         setContextRefreshVersion((value) => value + 1);
-        if (isPageVisible && selectedSession) {
+        if (centerView === "session" && isPageVisible && selectedSession) {
           const requestedTurnId =
             pendingTurnRef.current?.sessionId === selectedSession
               ? pendingTurnRef.current.turnId
@@ -6055,7 +6060,7 @@ export default function CodexDeckApp() {
         }
       }
     },
-    [selectedSession, isPageVisible, syncSessionWaitState],
+    [centerView, selectedSession, isPageVisible, syncSessionWaitState],
   );
 
   const handleSessionsRemoved = useCallback(
@@ -6156,7 +6161,6 @@ export default function CodexDeckApp() {
     });
   }, [
     apiReady,
-    remoteConnected,
     isPageVisible,
     handleSessionsFull,
     handleSessionsRemoved,
@@ -7484,7 +7488,7 @@ export default function CodexDeckApp() {
       return;
     }
 
-    if (!apiReady || !isPageVisible) {
+    if (!apiReady || !isPageVisible || centerView !== "session") {
       return;
     }
 
@@ -7509,6 +7513,7 @@ export default function CodexDeckApp() {
     };
   }, [
     apiReady,
+    centerView,
     isPageVisible,
     selectedSession,
     workflowSessionRolesRefreshKey,
@@ -9395,7 +9400,7 @@ export default function CodexDeckApp() {
   }, [selectedSession, stopConversationForSession]);
 
   useEffect(() => {
-    if (!selectedSession || !isPageVisible) {
+    if (!selectedSession || !isPageVisible || centerView !== "session") {
       return;
     }
 
@@ -9405,7 +9410,7 @@ export default function CodexDeckApp() {
         : null;
 
     void syncSessionWaitState(selectedSession, requestedTurnId);
-  }, [selectedSession, isPageVisible, syncSessionWaitState]);
+  }, [centerView, selectedSession, isPageVisible, syncSessionWaitState]);
 
   const isGeneratingForSelectedSession =
     !!selectedSession && pendingTurn?.sessionId === selectedSession;
@@ -9768,6 +9773,70 @@ export default function CodexDeckApp() {
     [activeWaitSessionId, scheduleSettledWaitStateSync],
   );
 
+  const handleTerminalEmbeddedMessagesBatch = useCallback(
+    (
+      sessionId: string,
+      newMessages: ConversationMessage[],
+      batch?: ConversationStreamBatch,
+    ) => {
+      terminalEmbeddedRawMessagesRef.current = mergeDisplayConversationMessages(
+        terminalEmbeddedRawMessagesRef.current,
+        newMessages,
+        batch?.insertion ?? "append",
+      );
+      const mergedMessages = terminalEmbeddedRawMessagesRef.current;
+      const persistedStepStatesByMessageKey =
+        deriveAiTerminalStepStatesByMessageKey(mergedMessages, {
+          getMessage: (message) => message,
+          getMessageKey: (message, _messageIndex, planIndex) =>
+            getAiTerminalMessageKey(message) ??
+            `terminal-ai:${sessionId}:${planIndex}`,
+        });
+      setTerminalEmbeddedMessages({
+        sessionId,
+        messages: mergedMessages
+          .filter((message) => {
+            if (message.type !== "assistant") {
+              return false;
+            }
+            return (
+              parseAiTerminalMessage(
+                extractConversationMessageText(message),
+              ) !== null
+            );
+          })
+          .map((message, index) => ({
+            messageKey:
+              getAiTerminalMessageKey(message) ??
+              `terminal-ai:${sessionId}:${index}`,
+            message,
+          })),
+        persistedStepStatesByMessageKey,
+      });
+      setTerminalEmbeddedMessagesLoading(false);
+      handleConversationActivity(sessionId, {
+        ...getConversationActivityDetails(
+          newMessages,
+          batch?.phase ?? "incremental",
+          batch?.insertion ?? "append",
+        ),
+        phase: batch?.phase ?? "incremental",
+        done: batch?.done ?? true,
+      });
+    },
+    [
+      deriveAiTerminalStepStatesByMessageKey,
+      extractConversationMessageText,
+      getAiTerminalMessageKey,
+      handleConversationActivity,
+      parseAiTerminalMessage,
+    ],
+  );
+
+  const handleTerminalEmbeddedMessagesHeartbeat = useCallback(() => {
+    setTerminalEmbeddedMessagesLoading(false);
+  }, []);
+
   useEffect(() => {
     const normalizedSessionId = workflowComposerSessionId?.trim() ?? "";
     if (centerView !== "workflow" || !normalizedSessionId) {
@@ -9847,6 +9916,7 @@ export default function CodexDeckApp() {
   useEffect(() => {
     const normalizedSessionId = terminalComposerSessionId?.trim() ?? "";
     if (centerView !== "terminal" || !normalizedSessionId) {
+      terminalEmbeddedRawMessagesRef.current = [];
       setTerminalEmbeddedMessages({
         sessionId: null,
         messages: [],
@@ -9861,7 +9931,7 @@ export default function CodexDeckApp() {
       return;
     }
 
-    let mergedMessages: ConversationMessage[] = [];
+    terminalEmbeddedRawMessagesRef.current = [];
     setTerminalEmbeddedMessagesLoading(true);
     setTerminalEmbeddedMessages((current) =>
       current.sessionId === normalizedSessionId
@@ -9877,74 +9947,44 @@ export default function CodexDeckApp() {
       pendingTurnRef.current?.sessionId === normalizedSessionId
         ? pendingTurnRef.current.turnId
         : null;
-    void syncSessionWaitState(normalizedSessionId, requestedTurnId);
+    const timer = setTimeout(() => {
+      void syncSessionWaitState(normalizedSessionId, requestedTurnId);
+    }, 400);
 
-    return subscribeConversationStream(
+    if (!remoteConnected) {
+      return () => {
+        clearTimeout(timer);
+      };
+    }
+
+    const unsubscribe = subscribeConversationStream(
       normalizedSessionId,
       {
         onMessages: (newMessages, batch) => {
-          mergedMessages = mergeDisplayConversationMessages(
-            mergedMessages,
+          handleTerminalEmbeddedMessagesBatch(
+            normalizedSessionId,
             newMessages,
-            batch?.insertion ?? "append",
+            batch,
           );
-          const persistedStepStatesByMessageKey =
-            deriveAiTerminalStepStatesByMessageKey(mergedMessages, {
-              getMessage: (message) => message,
-              getMessageKey: (message, _messageIndex, planIndex) =>
-                getAiTerminalMessageKey(message) ??
-                `terminal-ai:${normalizedSessionId}:${planIndex}`,
-            });
-          setTerminalEmbeddedMessages({
-            sessionId: normalizedSessionId,
-            messages: mergedMessages
-              .filter((message) => {
-                if (message.type !== "assistant") {
-                  return false;
-                }
-                return (
-                  parseAiTerminalMessage(
-                    extractConversationMessageText(message),
-                  ) !== null
-                );
-              })
-              .map((message, index) => ({
-                messageKey:
-                  getAiTerminalMessageKey(message) ??
-                  `terminal-ai:${normalizedSessionId}:${index}`,
-                message,
-              })),
-            persistedStepStatesByMessageKey,
-          });
-          setTerminalEmbeddedMessagesLoading(false);
-          handleConversationActivity(normalizedSessionId, {
-            ...getConversationActivityDetails(
-              newMessages,
-              batch?.phase ?? "incremental",
-              batch?.insertion ?? "append",
-            ),
-            phase: batch?.phase ?? "incremental",
-            done: batch?.done ?? true,
-          });
         },
-        onHeartbeat: () => {
-          setTerminalEmbeddedMessagesLoading(false);
-        },
-        onError: () => {
-          setTerminalEmbeddedMessagesLoading(false);
-        },
+        onHeartbeat: handleTerminalEmbeddedMessagesHeartbeat,
+        onError: handleTerminalEmbeddedMessagesHeartbeat,
       },
       {
         initialOffset: 0,
       },
     );
+
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
   }, [
     centerView,
-    extractConversationMessageText,
-    handleConversationActivity,
-    getAiTerminalMessageKey,
+    handleTerminalEmbeddedMessagesBatch,
+    handleTerminalEmbeddedMessagesHeartbeat,
     isPageVisible,
-    parseAiTerminalMessage,
+    remoteConnected,
     syncSessionWaitState,
     terminalComposerSessionId,
   ]);
@@ -12377,6 +12417,12 @@ export default function CodexDeckApp() {
                       onFilePathLinkClick={handleFilePathLinkClick}
                       onApproveAiTerminalStep={handleApproveAiTerminalStep}
                       onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                      onEmbeddedConversationMessages={
+                        handleTerminalEmbeddedMessagesBatch
+                      }
+                      onEmbeddedConversationHeartbeat={
+                        handleTerminalEmbeddedMessagesHeartbeat
+                      }
                     />
                   </div>
                 ) : (

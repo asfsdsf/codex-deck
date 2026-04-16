@@ -483,6 +483,56 @@ export interface TerminalEventsResponse {
   snapshot: TerminalSnapshotResponse | null;
 }
 
+export interface TerminalSessionArtifactReference {
+  kind: "codex-session-message";
+  sessionId: string;
+  messageKey: string;
+}
+
+export interface TerminalSessionArtifactEntry {
+  entryId: string;
+  terminalId: string;
+  type: "frozen-block";
+  createdAt: string;
+  updatedAt: string;
+  stepId: string | null;
+  transcriptPath: string;
+  transcriptLength: number;
+  reference: TerminalSessionArtifactReference;
+}
+
+export interface TerminalSessionArtifactEntryWithTranscript
+  extends TerminalSessionArtifactEntry {
+  transcript: string;
+}
+
+export interface TerminalSessionArtifactsManifest {
+  terminalId: string;
+  createdAt: string;
+  updatedAt: string;
+  entries: TerminalSessionArtifactEntry[];
+}
+
+export interface TerminalPersistFrozenBlockRequest {
+  sessionId: string;
+  messageKey: string;
+  transcript: string;
+  stepId?: string | null;
+}
+
+export interface TerminalPersistFrozenBlockResponse {
+  entry: TerminalSessionArtifactEntry;
+}
+
+export interface TerminalSessionArtifactsResponse {
+  terminalId: string;
+  sessionId: string | null;
+  manifest: TerminalSessionArtifactsManifest;
+  entries: TerminalSessionArtifactEntryWithTranscript[];
+  frozenOutputByMessageKey: Record<string, string>;
+  frozenOutputsInOrder: string[];
+}
+
 export interface SessionFileTreeResponse {
   sessionId: string;
   projectPath: string | null;

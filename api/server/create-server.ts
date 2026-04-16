@@ -114,7 +114,10 @@ import {
   type CodexLiveTerminalRun,
   type CodexReasoningEffort,
 } from "../codex-app-server";
-import { closeLocalTerminalManager } from "../local-terminal";
+import {
+  closeLocalTerminalManager,
+  getLocalTerminalManager,
+} from "../local-terminal";
 import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../remote/internal-proxy";
 import { RemoteServerClient } from "../remote/remote-server-client";
 import { registerTerminalRoutes } from "./terminal-routes";
@@ -126,7 +129,11 @@ import {
   toErrorMessage,
 } from "./utils";
 import { registerWorkflowRoutes } from "./workflow-routes";
-import { getWorkflowSummaryByKey } from "../workflows";
+import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
+import {
+  getTerminalBindingsByTerminalIds,
+  onTerminalBindingChange,
+} from "../terminal-bindings";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -196,6 +203,22 @@ function parseOptionalString(value: unknown): string | null | undefined {
   }
   const normalized = value.trim();
   return normalized ? normalized : null;
+}
+
+async function withTerminalBindings(
+  terminals: TerminalSummary[],
+): Promise<TerminalSummary[]> {
+  if (terminals.length === 0) {
+    return [];
+  }
+
+  const bindings = await getTerminalBindingsByTerminalIds(
+    terminals.map((terminal) => terminal.terminalId),
+  );
+  return terminals.map((terminal) => ({
+    ...terminal,
+    boundSessionId: bindings[terminal.terminalId] ?? null,
+  }));
 }
 
 function normalizeCwdPath(value: string): string {
@@ -2060,13 +2083,63 @@ export function createServer(options: ServerOptions) {
     return streamSSE(c, async (stream) => {
       let isConnected = true;
       const knownSessions = new Map<string, number>();
+      const terminalManager = getLocalTerminalManager();
+      let previousTerminalsPayload = "";
+      let previousWorkflowsPayload = "";
+      let unsubscribeTerminals: (() => void) | null = null;
+      let unsubscribeTerminalBindings: (() => void) | null = null;
 
       const cleanup = () => {
         isConnected = false;
         offHistoryChange(handleSessionsChange);
         offSessionChange(handleSessionsChange);
+        offWorkflowChange(handleWorkflowsChange);
         sessionsRemovedListeners.delete(handleSessionsRemoved);
         skillsChangedListeners.delete(handleSkillsChanged);
+        if (unsubscribeTerminals) {
+          unsubscribeTerminals();
+          unsubscribeTerminals = null;
+        }
+        if (unsubscribeTerminalBindings) {
+          unsubscribeTerminalBindings();
+          unsubscribeTerminalBindings = null;
+        }
+      };
+
+      const writeTerminals = async () => {
+        if (!isConnected) {
+          return;
+        }
+
+        const terminals = await withTerminalBindings(
+          terminalManager.listTerminals(),
+        );
+        const payload = JSON.stringify(terminals);
+        if (payload === previousTerminalsPayload) {
+          return;
+        }
+        previousTerminalsPayload = payload;
+        await stream.writeSSE({
+          event: "terminals",
+          data: payload,
+        });
+      };
+
+      const writeWorkflows = async () => {
+        if (!isConnected) {
+          return;
+        }
+
+        const workflows = await listWorkflows();
+        const payload = JSON.stringify(workflows);
+        if (payload === previousWorkflowsPayload) {
+          return;
+        }
+        previousWorkflowsPayload = payload;
+        await stream.writeSSE({
+          event: "workflows",
+          data: payload,
+        });
       };
 
       const handleSessionsChange = async (
@@ -2113,6 +2186,30 @@ export function createServer(options: ServerOptions) {
         }
       };
 
+      const handleTerminalsChange = async () => {
+        if (!isConnected) {
+          return;
+        }
+
+        try {
+          await writeTerminals();
+        } catch {
+          cleanup();
+        }
+      };
+
+      const handleWorkflowsChange = async () => {
+        if (!isConnected) {
+          return;
+        }
+
+        try {
+          await writeWorkflows();
+        } catch {
+          cleanup();
+        }
+      };
+
       const handleSessionsRemoved = async (event: SessionsRemovedEvent) => {
         if (!isConnected) {
           return;
@@ -2149,8 +2246,15 @@ export function createServer(options: ServerOptions) {
 
       onHistoryChange(handleSessionsChange);
       onSessionChange(handleSessionsChange);
+      onWorkflowChange(handleWorkflowsChange);
       sessionsRemovedListeners.add(handleSessionsRemoved);
       skillsChangedListeners.add(handleSkillsChanged);
+      unsubscribeTerminals = terminalManager.subscribeTerminals(() => {
+        void handleTerminalsChange();
+      });
+      unsubscribeTerminalBindings = onTerminalBindingChange(() => {
+        void handleTerminalsChange();
+      });
       c.req.raw.signal.addEventListener("abort", cleanup);
 
       try {
@@ -2163,6 +2267,8 @@ export function createServer(options: ServerOptions) {
           event: "sessions",
           data: JSON.stringify(sessions),
         });
+        await writeTerminals();
+        await writeWorkflows();
 
         while (isConnected) {
           await stream.writeSSE({

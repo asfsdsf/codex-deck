@@ -9,7 +9,9 @@ import type {
 } from "@codex-deck/api";
 import {
   claimTerminalWrite,
+  getTerminalFrozenBlocks,
   getTerminalSnapshot,
+  persistTerminalFrozenBlock,
   releaseTerminalWrite,
   restartTerminal,
   resizeTerminal,
@@ -29,10 +31,13 @@ import {
   getTerminalInlineAnchorOffset,
   getTerminalTranscriptStartOffset,
   normalizeFrozenTerminalOutputsInOrder,
+  restoreTerminalTimelineRenderState,
   sanitizeTerminalTranscriptChunk,
   type TerminalTimelineAnchor,
+  type TerminalTimelineRenderState,
 } from "../terminal-timeline";
 import { fitTerminalViewport } from "../terminal-render";
+import { shouldAutoClaimWriteAfterRestart } from "../terminal-write-ownership";
 import MessageBlock from "./message-block";
 import { AnsiText } from "./tool-renderers/ansi-text";
 
@@ -56,6 +61,41 @@ function generateClientId(): string {
     "",
   );
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+const TERMINAL_TIMELINE_STATE_CACHE_LIMIT = 50;
+const terminalTimelineStateCache = new Map<
+  string,
+  TerminalTimelineRenderState
+>();
+
+function getTerminalTimelineStateCacheKey(
+  terminalId: string,
+  boundSessionId: string | null | undefined,
+): string {
+  return `${terminalId}\u0000${boundSessionId?.trim() ?? ""}`;
+}
+
+function rememberTerminalTimelineState(
+  key: string,
+  state: TerminalTimelineRenderState,
+): void {
+  terminalTimelineStateCache.delete(key);
+  terminalTimelineStateCache.set(key, {
+    output: state.output,
+    anchors: { ...state.anchors },
+    anchorOrder: state.anchorOrder,
+  });
+
+  while (
+    terminalTimelineStateCache.size > TERMINAL_TIMELINE_STATE_CACHE_LIMIT
+  ) {
+    const oldestKey = terminalTimelineStateCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    terminalTimelineStateCache.delete(oldestKey);
+  }
 }
 
 interface TerminalViewProps {
@@ -86,6 +126,18 @@ interface TerminalViewProps {
     step: AiTerminalStepDirective;
     reason: string;
   }) => void;
+  onEmbeddedConversationMessages?: (
+    sessionId: string,
+    messages: ConversationMessage[],
+    batch?: {
+      messages: ConversationMessage[];
+      phase: "bootstrap" | "incremental";
+      nextOffset: number;
+      done: boolean;
+      insertion?: "append" | "prepend";
+    },
+  ) => void;
+  onEmbeddedConversationHeartbeat?: () => void;
 }
 
 function getTerminalTheme(resolvedTheme: ResolvedTheme): {
@@ -200,6 +252,8 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     onFilePathLinkClick,
     onApproveAiTerminalStep,
     onRejectAiTerminalStep,
+    onEmbeddedConversationMessages,
+    onEmbeddedConversationHeartbeat,
   } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -213,6 +267,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const hasStartedRef = useRef(false);
   const clientIdRef = useRef(generateClientId());
   const writeOwnerIdRef = useRef<string | null>(null);
+  const restartInFlightRef = useRef(false);
   const readOnlyWarningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -220,10 +275,15 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const readOnlyWarningShownAtRef = useRef(0);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const terminalOutputRef = useRef("");
+  const timelineAnchorsRef = useRef<
+    Record<string, TerminalTimelineAnchor | undefined>
+  >({});
   const anchorOrderRef = useRef(0);
   const renderedLiveOutputRef = useRef("");
   const renderedContextKeyRef = useRef("");
   const restoredFrozenOutputsInOrderRef = useRef<string[]>([]);
+  const persistedFrozenMessageKeysRef = useRef(new Set<string>());
+  const persistingFrozenMessageKeysRef = useRef(new Set<string>());
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -237,19 +297,15 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const [frozenOutputByMessageKey, setFrozenOutputByMessageKey] = useState<
     Record<string, string | undefined>
   >({});
-  const [timelinePersistenceLoadedKey, setTimelinePersistenceLoadedKey] =
-    useState<string | null>(null);
+  const [frozenOutputsLoaded, setFrozenOutputsLoaded] = useState(false);
   const terminalTheme = useMemo(
     () => getTerminalTheme(resolvedTheme),
     [resolvedTheme],
   );
-  const timelinePersistenceKey = useMemo(() => {
-    const normalizedSessionId = boundSessionId?.trim();
-    if (!normalizedSessionId) {
-      return null;
-    }
-    return `codex-deck:terminal-timeline:${terminalId}:${normalizedSessionId}`;
-  }, [boundSessionId, terminalId]);
+  const timelineStateCacheKey = useMemo(
+    () => getTerminalTimelineStateCacheKey(terminalId, boundSessionId),
+    [boundSessionId, terminalId],
+  );
 
   const isReadOnly =
     writeOwnerId !== null && writeOwnerId !== clientIdRef.current;
@@ -272,6 +328,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [terminalOutput]);
 
   useEffect(() => {
+    timelineAnchorsRef.current = timelineAnchors;
+  }, [timelineAnchors]);
+
+  useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) {
       return;
@@ -286,83 +346,66 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [isReadOnly, dismissReadOnlyWarning]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (!timelinePersistenceKey) {
+    const normalizedSessionId = boundSessionId?.trim() ?? "";
+    if (!normalizedSessionId) {
       restoredFrozenOutputsInOrderRef.current = [];
+      persistedFrozenMessageKeysRef.current = new Set();
+      persistingFrozenMessageKeysRef.current = new Set();
       setFrozenOutputByMessageKey({});
-      setTimelinePersistenceLoadedKey(null);
+      setFrozenOutputsLoaded(true);
       return;
     }
 
-    try {
-      const stored = window.localStorage.getItem(timelinePersistenceKey);
-      if (!stored) {
-        restoredFrozenOutputsInOrderRef.current = [];
-        setFrozenOutputByMessageKey({});
-        setTimelinePersistenceLoadedKey(timelinePersistenceKey);
-        return;
-      }
-      const parsed = JSON.parse(stored) as {
-        frozenOutputByMessageKey?: Record<string, string | undefined>;
-        frozenOutputsInOrder?: string[];
-      };
-      const restoredOutputsInOrder = Array.isArray(parsed.frozenOutputsInOrder)
-        ? parsed.frozenOutputsInOrder
-        : Object.values(parsed.frozenOutputByMessageKey ?? {});
-      restoredFrozenOutputsInOrderRef.current =
-        normalizeFrozenTerminalOutputsInOrder(
-          restoredOutputsInOrder.filter(
-            (value): value is string => typeof value === "string" && !!value,
-          ),
-        );
-      setFrozenOutputByMessageKey(parsed.frozenOutputByMessageKey ?? {});
-      setTimelinePersistenceLoadedKey(timelinePersistenceKey);
-    } catch {
+    let cancelled = false;
+    restoredFrozenOutputsInOrderRef.current = [];
+    persistedFrozenMessageKeysRef.current = new Set();
+    persistingFrozenMessageKeysRef.current = new Set();
+    setFrozenOutputsLoaded(false);
+    const timer = setTimeout(() => {
+      void getTerminalFrozenBlocks(terminalId, normalizedSessionId)
+        .then((response) => {
+          if (cancelled) {
+            return;
+          }
+          restoredFrozenOutputsInOrderRef.current =
+            normalizeFrozenTerminalOutputsInOrder(
+              response.frozenOutputsInOrder,
+            );
+          persistedFrozenMessageKeysRef.current = new Set(
+            Object.keys(response.frozenOutputByMessageKey),
+          );
+          setFrozenOutputByMessageKey(response.frozenOutputByMessageKey);
+        })
+        .catch(() => {
+          if (cancelled) {
+            return;
+          }
+          restoredFrozenOutputsInOrderRef.current = [];
+          persistedFrozenMessageKeysRef.current = new Set();
+          setFrozenOutputByMessageKey({});
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setFrozenOutputsLoaded(true);
+          }
+        });
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
       restoredFrozenOutputsInOrderRef.current = [];
-      setFrozenOutputByMessageKey({});
-      setTimelinePersistenceLoadedKey(timelinePersistenceKey);
-    }
-  }, [timelinePersistenceKey]);
+    };
+  }, [boundSessionId, terminalId]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !timelinePersistenceKey) {
+    if (!frozenOutputsLoaded) {
       return;
     }
-    if (timelinePersistenceLoadedKey !== timelinePersistenceKey) {
+    if (embeddedMessagesLoading && embeddedMessages.length === 0) {
       return;
     }
 
-    try {
-      const hasFrozenOutput = Object.values(frozenOutputByMessageKey).some(
-        (value) => typeof value === "string" && value.length > 0,
-      );
-      if (!hasFrozenOutput && embeddedMessages.length === 0) {
-        return;
-      }
-
-      const frozenOutputsInOrder = embeddedMessages
-        .filter((item) => isTerminalCompletionMessage(item.message))
-        .map((item) => frozenOutputByMessageKey[item.messageKey])
-        .filter(
-          (value): value is string => typeof value === "string" && !!value,
-        );
-      window.localStorage.setItem(
-        timelinePersistenceKey,
-        JSON.stringify({ frozenOutputByMessageKey, frozenOutputsInOrder }),
-      );
-    } catch {
-      // Ignore persistence failures.
-    }
-  }, [
-    embeddedMessages,
-    frozenOutputByMessageKey,
-    timelinePersistenceKey,
-    timelinePersistenceLoadedKey,
-  ]);
-
-  useEffect(() => {
     const messageKeys = embeddedMessages.map((item) => item.messageKey);
     const visibleMessageKeys = new Set(messageKeys);
     const currentTerminalOutput = terminalOutputRef.current;
@@ -391,7 +434,9 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         changed = true;
       }
 
-      return changed ? next : current;
+      const resolved = changed ? next : current;
+      timelineAnchorsRef.current = resolved;
+      return resolved;
     });
 
     setFrozenOutputByMessageKey((current) => {
@@ -476,14 +521,74 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
       return changed ? next : current;
     });
-  }, [embeddedMessages, timelineAnchors, timelineResetVersion]);
+  }, [
+    embeddedMessages,
+    embeddedMessagesLoading,
+    frozenOutputsLoaded,
+    timelineAnchors,
+    timelineResetVersion,
+  ]);
+
+  useEffect(() => {
+    const normalizedSessionId = boundSessionId?.trim() ?? "";
+    if (!frozenOutputsLoaded || !normalizedSessionId) {
+      return;
+    }
+
+    const completionItems = embeddedMessages.filter((item) =>
+      isTerminalCompletionMessage(item.message),
+    );
+    for (const item of completionItems) {
+      const transcript = frozenOutputByMessageKey[item.messageKey];
+      if (!transcript) {
+        continue;
+      }
+      if (persistedFrozenMessageKeysRef.current.has(item.messageKey)) {
+        continue;
+      }
+      if (persistingFrozenMessageKeysRef.current.has(item.messageKey)) {
+        continue;
+      }
+
+      persistingFrozenMessageKeysRef.current.add(item.messageKey);
+      void persistTerminalFrozenBlock(terminalId, {
+        sessionId: normalizedSessionId,
+        messageKey: item.messageKey,
+        transcript,
+      })
+        .then(() => {
+          persistedFrozenMessageKeysRef.current.add(item.messageKey);
+        })
+        .catch(() => {
+          persistingFrozenMessageKeysRef.current.delete(item.messageKey);
+        })
+        .finally(() => {
+          persistingFrozenMessageKeysRef.current.delete(item.messageKey);
+        });
+    }
+  }, [
+    boundSessionId,
+    embeddedMessages,
+    frozenOutputByMessageKey,
+    frozenOutputsLoaded,
+    terminalId,
+  ]);
 
   const applyFullSnapshot = useCallback(
     (snapshot: TerminalSnapshotResponse) => {
-      anchorOrderRef.current = 0;
+      const restoredTimelineState = restoreTerminalTimelineRenderState({
+        cachedState: terminalTimelineStateCache.get(timelineStateCacheKey),
+        output: snapshot.output,
+      });
+      const nextAnchors = restoredTimelineState?.anchors ?? {};
+      const nextAnchorOrder = restoredTimelineState?.anchorOrder ?? 0;
+
+      anchorOrderRef.current = nextAnchorOrder;
+      timelineAnchorsRef.current = nextAnchors;
+      terminalOutputRef.current = snapshot.output;
       renderedLiveOutputRef.current = "";
       renderedContextKeyRef.current = "";
-      setTimelineAnchors({});
+      setTimelineAnchors(nextAnchors);
       setTerminalOutput(snapshot.output);
       setTimelineResetVersion((current) => current + 1);
       setRunning(snapshot.running);
@@ -491,11 +596,15 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       writeOwnerIdRef.current = snapshot.writeOwnerId;
       setWriteOwnerId(snapshot.writeOwnerId);
     },
-    [],
+    [timelineStateCacheKey],
   );
 
   const sendResize = useCallback(async () => {
     if (!hasStartedRef.current) {
+      return;
+    }
+
+    if (restartInFlightRef.current) {
       return;
     }
 
@@ -636,16 +745,23 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
       if (event.type === "output") {
         if (typeof event.chunk === "string" && event.chunk.length > 0) {
-          setTerminalOutput((current) => `${current}${event.chunk ?? ""}`);
+          setTerminalOutput((current) => {
+            const next = `${current}${event.chunk ?? ""}`;
+            terminalOutputRef.current = next;
+            return next;
+          });
         }
       } else if (event.type === "state") {
         setRunning(event.running === true);
       } else if (event.type === "reset") {
         anchorOrderRef.current = 0;
+        timelineAnchorsRef.current = {};
+        terminalOutputRef.current =
+          typeof event.output === "string" ? event.output : "";
         renderedLiveOutputRef.current = "";
         renderedContextKeyRef.current = "";
         setTimelineAnchors({});
-        setTerminalOutput(typeof event.output === "string" ? event.output : "");
+        setTerminalOutput(terminalOutputRef.current);
         setTimelineResetVersion((current) => current + 1);
         setRunning(event.running === true);
       } else if (event.type === "ownership") {
@@ -670,19 +786,37 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
           onEvent: (event) => {
             applyStreamEvent(event);
           },
+          onConversationMessages: (messages, batch) => {
+            if (!boundSessionId) {
+              return;
+            }
+            onEmbeddedConversationMessages?.(boundSessionId, messages, batch);
+          },
+          onConversationHeartbeat: () => {
+            onEmbeddedConversationHeartbeat?.();
+          },
           onError: () => {
             setConnected(false);
           },
         },
         {
           fromSeq,
-          clientId: clientIdRef.current,
           terminalId,
+          clientId: clientIdRef.current,
+          conversationSessionId: boundSessionId,
+          conversationInitialOffset: 0,
         },
       );
       setConnected(true);
     },
-    [applyStreamEvent, closeStream, terminalId],
+    [
+      applyStreamEvent,
+      boundSessionId,
+      closeStream,
+      onEmbeddedConversationHeartbeat,
+      onEmbeddedConversationMessages,
+      terminalId,
+    ],
   );
 
   const bootstrap = useCallback(async () => {
@@ -788,6 +922,11 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
     const capturedClientId = clientIdRef.current;
     return () => {
+      rememberTerminalTimelineState(timelineStateCacheKey, {
+        output: terminalOutputRef.current,
+        anchors: timelineAnchorsRef.current,
+        anchorOrder: anchorOrderRef.current,
+      });
       isDisposedRef.current = true;
       cancelAnimationFrame(rafId);
       for (const timer of retryTimers) {
@@ -803,6 +942,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       terminalOutputRef.current = "";
       renderedLiveOutputRef.current = "";
       renderedContextKeyRef.current = "";
+      timelineAnchorsRef.current = {};
       anchorOrderRef.current = 0;
       setTerminalOutput("");
       setTimelineAnchors({});
@@ -824,6 +964,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     sendResize,
     terminalId,
     terminalTheme,
+    timelineStateCacheKey,
   ]);
 
   const embeddedMessagesByKey = useMemo(
@@ -914,6 +1055,13 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
   const handleRestart = useCallback(() => {
     void (async () => {
+      const previousWriteOwnerId = writeOwnerIdRef.current;
+      const shouldClaimWrite = shouldAutoClaimWriteAfterRestart(
+        previousWriteOwnerId,
+        clientIdRef.current,
+      );
+
+      restartInFlightRef.current = true;
       try {
         const snapshot = await restartTerminal(terminalId, clientIdRef.current);
         if (isDisposedRef.current) {
@@ -921,6 +1069,26 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         }
 
         applyFullSnapshot(snapshot);
+        let nextWriteOwnerId = snapshot.writeOwnerId;
+
+        if (shouldClaimWrite && nextWriteOwnerId === null) {
+          const claim = await claimTerminalWrite(
+            terminalId,
+            clientIdRef.current,
+          );
+          if (isDisposedRef.current) {
+            return;
+          }
+          nextWriteOwnerId = claim.writeOwnerId;
+          writeOwnerIdRef.current = claim.writeOwnerId;
+          setWriteOwnerId(claim.writeOwnerId);
+        }
+
+        restartInFlightRef.current = false;
+        fitTerminal();
+        if (nextWriteOwnerId === clientIdRef.current) {
+          await sendResize();
+        }
         onTerminalRestarted?.();
       } catch (reconnectError) {
         setError(
@@ -928,9 +1096,17 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
             ? reconnectError.message
             : String(reconnectError),
         );
+      } finally {
+        restartInFlightRef.current = false;
       }
     })();
-  }, [applyFullSnapshot, onTerminalRestarted, terminalId]);
+  }, [
+    applyFullSnapshot,
+    fitTerminal,
+    onTerminalRestarted,
+    sendResize,
+    terminalId,
+  ]);
 
   const handleTakeOver = useCallback(() => {
     void (async () => {

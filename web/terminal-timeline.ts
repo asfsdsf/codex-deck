@@ -3,6 +3,12 @@ export interface TerminalTimelineAnchor {
   order: number;
 }
 
+export interface TerminalTimelineRenderState {
+  output: string;
+  anchors: Record<string, TerminalTimelineAnchor | undefined>;
+  anchorOrder: number;
+}
+
 export type TerminalTimelineEntry =
   | {
       type: "output";
@@ -76,6 +82,52 @@ export function normalizeFrozenTerminalOutputsInOrder(
   }
 
   return normalized;
+}
+
+function cloneTimelineAnchors(
+  anchors: Record<string, TerminalTimelineAnchor | undefined>,
+  outputLength: number,
+): Record<string, TerminalTimelineAnchor | undefined> {
+  const cloned: Record<string, TerminalTimelineAnchor | undefined> = {};
+
+  for (const [messageKey, anchor] of Object.entries(anchors)) {
+    if (!anchor) {
+      continue;
+    }
+    cloned[messageKey] = {
+      offset: Math.max(0, Math.min(outputLength, anchor.offset)),
+      order: anchor.order,
+    };
+  }
+
+  return cloned;
+}
+
+export function restoreTerminalTimelineRenderState(input: {
+  cachedState: TerminalTimelineRenderState | null | undefined;
+  output: string;
+}): TerminalTimelineRenderState | null {
+  const cachedState = input.cachedState;
+  if (!cachedState || !input.output.startsWith(cachedState.output)) {
+    return null;
+  }
+
+  const anchors = cloneTimelineAnchors(
+    cachedState.anchors,
+    input.output.length,
+  );
+  const nextAnchorOrder = Math.max(
+    cachedState.anchorOrder,
+    ...Object.values(anchors).map((anchor) =>
+      anchor ? anchor.order + 1 : cachedState.anchorOrder,
+    ),
+  );
+
+  return {
+    output: input.output,
+    anchors,
+    anchorOrder: nextAnchorOrder,
+  };
 }
 
 const ANSI_OSC_SEQUENCE_PATTERN =
@@ -237,6 +289,6 @@ export function buildTerminalTimeline(input: {
 
   return {
     entries,
-    liveOutput: input.output.slice(cursor),
+    liveOutput: input.output,
   };
 }

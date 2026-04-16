@@ -110,3 +110,17 @@ Use these feedback blocks to revise the next plan, continue from success, or rec
 - Do not rely on full raw terminal output being fed back into context.
 - Reason primarily from the provided summaries.
 - If an `output_reference` is present, treat it as metadata only; do not assume the raw output text is available.
+
+## Local inspection scripts
+
+Use the scripts in `scripts/` when a human or debugging workflow needs to inspect stored terminal artifacts directly. These scripts are read-only.
+
+- `python3 scripts/terminal_session_summary.py <terminal-id> [--codex-home <path>]`
+  - Prints the full JSON content of `<codex-home>/codex-deck/terminal/sessions/<terminal-id>/session.json`.
+  - Enriches each `terminal-frozen-output` block with `contentPreview`, the first 1000 characters from the file named by its `path`.
+  - Enriches each `codex-session-message` block with `contentPreview`, the first 1000 characters of the referenced Codex session message.
+- `python3 scripts/terminal_session_blocks.py <terminal-id> <block> [<block> ...] [--codex-home <path>] [--line-range <start>:<end>]`
+  - Prints content for one or more blocks in a terminal session.
+  - A block selector can be a `blockId` or a 1-based block index from the manifest.
+  - Add a per-block one-based inclusive line range with `@`, for example `block-mabc123@20:80`, `block-mabc123@20:`, or `3@1:40`.
+  - `--line-range` applies to selectors that do not include their own `@` range.

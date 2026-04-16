@@ -1,4 +1,5 @@
 # Dependencies
+.codex/
 playwright-report/
 test-results/
 *.pyc

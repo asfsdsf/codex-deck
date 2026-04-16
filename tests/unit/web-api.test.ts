@@ -9,6 +9,7 @@ import type {
 } from "@codex-deck/api";
 import { encodeBase64 } from "@zuoyehaoduoa/wire";
 import {
+  __TEST_ONLY__ as WEB_API_TEST_ONLY,
   applyWorkflowMerge,
   bindWorkflowSession,
   bindTerminalSession,
@@ -40,6 +41,7 @@ import {
   getSessionTerminalRunOutput,
   getSessionTerminalRuns,
   getTerminalBinding,
+  getTerminalFrozenBlocks,
   getTerminalSessionRoles,
   getSessionSkills,
   getTerminalSnapshot,
@@ -64,6 +66,7 @@ import {
   reconcileWorkflow,
   restartTerminal,
   resizeTerminal,
+  persistTerminalFrozenBlock,
   respondCodexApprovalRequest,
   respondCodexUserInputRequest,
   runInTerminal,
@@ -86,6 +89,10 @@ import {
 } from "../../web/api";
 import { RemoteClient } from "../../web/remote-client";
 import { responseItemMessageLine } from "./test-utils";
+
+test.afterEach(() => {
+  WEB_API_TEST_ONLY.resetApiRequestCaches();
+});
 
 function jsonResponse(body: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -769,6 +776,37 @@ test("codex config endpoints return normalized payloads", async () => {
     reasoningEffort: "xhigh",
     planModeReasoningEffort: "high",
   });
+  assert.deepEqual(calls, [
+    "/api/codex/models",
+    "/api/codex/collaboration-modes",
+    "/api/codex/defaults",
+  ]);
+});
+
+test("codex config endpoints reuse cached responses within a page", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    if (String(input).includes("/models")) {
+      return jsonResponse({ models: [{ id: "gpt-5.4" }] });
+    }
+    if (String(input).includes("/collaboration-modes")) {
+      return jsonResponse({ modes: [{ mode: "default", name: "Default" }] });
+    }
+    return jsonResponse({
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      planModeReasoningEffort: "medium",
+    });
+  };
+
+  await listCodexModels();
+  await listCodexModels();
+  await listCodexCollaborationModes();
+  await listCodexCollaborationModes();
+  await getCodexConfigDefaults();
+  await getCodexConfigDefaults();
+
   assert.deepEqual(calls, [
     "/api/codex/models",
     "/api/codex/collaboration-modes",
@@ -1884,7 +1922,7 @@ test("subscribeWorkflowsStream maps local SSE workflow updates and removals", as
 
     const eventSource = MockEventSource.instances[0];
     assert.ok(eventSource);
-    assert.equal(eventSource.url, "/api/workflows/stream");
+    assert.equal(eventSource.url, "/api/sessions/stream");
 
     eventSource.emit("workflows", [workflowB]);
     eventSource.emit("workflowsUpdate", [workflowA]);
@@ -1916,7 +1954,9 @@ test("subscribeWorkflowsStream ignores duplicate local SSE payloads", async () =
       },
     });
 
-    const eventSource = MockEventSource.instances[0];
+    const eventSource = MockEventSource.instances.find(
+      (instance) => instance.url === "/api/sessions/stream",
+    );
     assert.ok(eventSource);
 
     eventSource.emit("workflows", [workflow]);
@@ -1990,7 +2030,9 @@ test("local workflow list updates wake the selected workflow detail subscription
     assert.deepEqual(sessionIds, ["session-1"]);
     assert.equal(timerController.minPendingDelay(), 3000);
 
-    const eventSource = MockEventSource.instances[0];
+    const eventSource = MockEventSource.instances.find(
+      (instance) => instance.url === "/api/sessions/stream",
+    );
     assert.ok(eventSource);
     eventSource.emit("workflowsUpdate", [updatedSummary]);
 
@@ -3028,6 +3070,76 @@ test("terminal helper routes request expected endpoints", async () => {
   ]);
 });
 
+test("terminal frozen block helper routes request expected endpoints", async () => {
+  const terminalId = "terminal-1";
+  const sessionId = "session-1";
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(`${String(input)}:${init?.method ?? "GET"}`);
+
+    if (
+      String(input) ===
+        `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}` &&
+      init?.method !== "POST"
+    ) {
+      return jsonResponse({
+        terminalId,
+        sessionId,
+        manifest: {
+          terminalId,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          entries: [],
+        },
+        frozenOutputByMessageKey: {
+          "message-1": "pwd\n/repo\n",
+        },
+        frozenOutputsInOrder: ["pwd\n/repo\n"],
+        entries: [],
+      });
+    }
+
+    if (String(input) === `/api/terminals/${terminalId}/frozen-blocks`) {
+      return jsonResponse({
+        entry: {
+          entryId: "entry-1",
+          terminalId,
+          type: "frozen-block",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          stepId: null,
+          transcriptPath: "blocks/entry-1.txt",
+          transcriptLength: 10,
+          reference: {
+            kind: "codex-session-message",
+            sessionId,
+            messageKey: "message-1",
+          },
+        },
+      });
+    }
+
+    return jsonResponse({ error: "unexpected route" }, 404);
+  };
+
+  const restored = await getTerminalFrozenBlocks(terminalId, sessionId);
+  const persisted = await persistTerminalFrozenBlock(terminalId, {
+    sessionId,
+    messageKey: "message-1",
+    transcript: "pwd\n/repo\n",
+  });
+
+  assert.deepEqual(restored.frozenOutputByMessageKey, {
+    "message-1": "pwd\n/repo\n",
+  });
+  assert.deepEqual(restored.frozenOutputsInOrder, ["pwd\n/repo\n"]);
+  assert.equal(persisted.entry.entryId, "entry-1");
+  assert.deepEqual(calls, [
+    `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}:GET`,
+    `/api/terminals/${terminalId}/frozen-blocks:POST`,
+  ]);
+});
+
 test("getSystemContext requests expected endpoint", async () => {
   const calls: string[] = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3495,6 +3607,30 @@ test("getCodexThreadState omits turnId query when turnId is blank", async () => 
 
   await getCodexThreadState("thread#1", "   ");
   assert.equal(capturedUrl, "/api/codex/threads/thread%231/state");
+});
+
+test("getCodexThreadState coalesces duplicate in-flight requests", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    await flushAsyncWork();
+    return jsonResponse({
+      threadId: "thread-1",
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    });
+  };
+
+  const [first, second] = await Promise.all([
+    getCodexThreadState("thread-1"),
+    getCodexThreadState("thread-1"),
+  ]);
+
+  assert.equal(first.threadId, "thread-1");
+  assert.equal(second.threadId, "thread-1");
+  assert.deepEqual(calls, ["/api/codex/threads/thread-1/state"]);
 });
 
 test("listCodexUserInputRequests normalizes invalid payload to empty array", async () => {
