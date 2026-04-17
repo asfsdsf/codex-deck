@@ -213,6 +213,7 @@ import {
   setWorkflowProjectSkillEnabled,
   cleanSessionBackgroundTerminalRuns,
   claimTerminalWrite as claimTerminalWriteRequest,
+  persistTerminalMessageAction as persistTerminalMessageActionRequest,
   releaseTerminalWrite as releaseTerminalWriteRequest,
   sendTerminalInput as sendTerminalInputRequest,
   runInTerminal as runInTerminalRequest,
@@ -9580,6 +9581,22 @@ export default function CodexDeckApp() {
           }
         }
 
+        let actionPersistError: string | null = null;
+        try {
+          await persistTerminalMessageActionRequest(input.terminalId, {
+            sessionId: input.sessionId,
+            messageKey: input.messageKey,
+            stepId: input.step.stepId,
+            decision: "approved",
+            reason: null,
+          });
+        } catch (persistError) {
+          actionPersistError =
+            persistError instanceof Error
+              ? persistError.message
+              : String(persistError);
+        }
+
         const parsedResult = {
           stepId: input.step.stepId,
           exitCode: null,
@@ -9614,6 +9631,11 @@ export default function CodexDeckApp() {
             cwdOverride: parsedResult.cwdAfter,
           },
         );
+        if (actionPersistError) {
+          setInteractionError(
+            `Command was approved, but the approval was not saved: ${actionPersistError}`,
+          );
+        }
       } catch (error) {
         setAiTerminalStepState(
           input.sessionId,
@@ -9628,6 +9650,7 @@ export default function CodexDeckApp() {
     },
     [
       claimTerminalWriteRequest,
+      persistTerminalMessageActionRequest,
       releaseTerminalWriteRequest,
       sendTerminalInputRequest,
       selectedTerminalData?.cwd,
@@ -9653,6 +9676,22 @@ export default function CodexDeckApp() {
       );
       setInteractionError(null);
 
+      let actionPersistError: string | null = null;
+      try {
+        await persistTerminalMessageActionRequest(input.terminalId, {
+          sessionId: input.sessionId,
+          messageKey: input.messageKey,
+          stepId: input.step.stepId,
+          decision: "rejected",
+          reason: input.reason,
+        });
+      } catch (persistError) {
+        actionPersistError =
+          persistError instanceof Error
+            ? persistError.message
+            : String(persistError);
+      }
+
       const sent = await sendMessageText(
         {
           text: buildAiTerminalRejectionFeedback({
@@ -9671,9 +9710,18 @@ export default function CodexDeckApp() {
         setInteractionError(
           "Failed to send the terminal step rejection back to the session.",
         );
+      } else if (actionPersistError) {
+        setInteractionError(
+          `Step was rejected, but the rejection was not saved: ${actionPersistError}`,
+        );
       }
     },
-    [selectedSessionData?.project, sendMessageText, setAiTerminalStepState],
+    [
+      persistTerminalMessageActionRequest,
+      selectedSessionData?.project,
+      sendMessageText,
+      setAiTerminalStepState,
+    ],
   );
 
   useEffect(() => {

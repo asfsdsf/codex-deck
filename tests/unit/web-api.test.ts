@@ -67,6 +67,7 @@ import {
   restartTerminal,
   resizeTerminal,
   persistTerminalFrozenBlock,
+  persistTerminalMessageAction,
   respondCodexApprovalRequest,
   respondCodexUserInputRequest,
   runInTerminal,
@@ -3094,6 +3095,9 @@ test("terminal frozen block helper routes request expected endpoints", async () 
         frozenOutputByMessageKey: {
           "message-1": "pwd\n/repo\n",
         },
+        frozenOutputByBeforeMessageKey: {
+          "message-2": "prompt> pwd\n/repo\nprompt>\n",
+        },
         frozenOutputsInOrder: ["pwd\n/repo\n"],
         entries: [],
       });
@@ -3119,24 +3123,55 @@ test("terminal frozen block helper routes request expected endpoints", async () 
       });
     }
 
+    if (String(input) === `/api/terminals/${terminalId}/message-action`) {
+      return jsonResponse({
+        terminalId,
+        sessionId,
+        messageKey: "message-1",
+        action: {
+          kind: "ai-terminal-step-actions",
+          steps: [
+            {
+              stepId: "step-1",
+              decision: "rejected",
+              reason: "Use a safer command.",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+    }
+
     return jsonResponse({ error: "unexpected route" }, 404);
   };
 
   const restored = await getTerminalFrozenBlocks(terminalId, sessionId);
   const persisted = await persistTerminalFrozenBlock(terminalId, {
     sessionId,
+    beforeMessageKey: "message-2",
+    transcript: "prompt> pwd\n/repo\nprompt>\n",
+  });
+  const actionPersisted = await persistTerminalMessageAction(terminalId, {
+    sessionId,
     messageKey: "message-1",
-    transcript: "pwd\n/repo\n",
+    stepId: "step-1",
+    decision: "rejected",
+    reason: "Use a safer command.",
   });
 
   assert.deepEqual(restored.frozenOutputByMessageKey, {
     "message-1": "pwd\n/repo\n",
   });
+  assert.deepEqual(restored.frozenOutputByBeforeMessageKey, {
+    "message-2": "prompt> pwd\n/repo\nprompt>\n",
+  });
   assert.deepEqual(restored.frozenOutputsInOrder, ["pwd\n/repo\n"]);
   assert.equal(persisted.entry.entryId, "entry-1");
+  assert.equal(actionPersisted.action.steps[0]?.decision, "rejected");
   assert.deepEqual(calls, [
     `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}:GET`,
     `/api/terminals/${terminalId}/frozen-blocks:POST`,
+    `/api/terminals/${terminalId}/message-action:POST`,
   ]);
 });
 

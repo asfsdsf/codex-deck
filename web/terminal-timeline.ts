@@ -222,11 +222,24 @@ export function sanitizeTerminalTranscriptChunk(text: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
+export function getFrozenTerminalTranscript(input: {
+  output: string;
+  messageKeys: string[];
+  anchors: Record<string, TerminalTimelineAnchor | undefined>;
+  messageKey: string;
+}): string {
+  const transcriptStartOffset = getTerminalTranscriptStartOffset(input);
+  return sanitizeTerminalTranscriptChunk(
+    input.output.slice(transcriptStartOffset),
+  ).trimEnd();
+}
+
 export function buildTerminalTimeline(input: {
   output: string;
   messageKeys: string[];
   anchors: Record<string, TerminalTimelineAnchor | undefined>;
   frozenOutputByMessageKey?: Record<string, string | undefined>;
+  frozenOutputByBeforeMessageKey?: Record<string, string | undefined>;
 }): {
   entries: TerminalTimelineEntry[];
   liveOutput: string;
@@ -258,7 +271,11 @@ export function buildTerminalTimeline(input: {
   let cursor = 0;
   const offsetsWithFrozenOutput = new Set(
     anchoredCards
-      .filter((card) => input.frozenOutputByMessageKey?.[card.messageKey])
+      .filter(
+        (card) =>
+          input.frozenOutputByMessageKey?.[card.messageKey] ||
+          input.frozenOutputByBeforeMessageKey?.[card.messageKey],
+      )
       .map((card) => card.offset),
   );
 
@@ -266,7 +283,9 @@ export function buildTerminalTimeline(input: {
     const rawSlice =
       card.offset > cursor ? input.output.slice(cursor, card.offset) : "";
     const frozenText =
-      input.frozenOutputByMessageKey?.[card.messageKey] ?? undefined;
+      input.frozenOutputByMessageKey?.[card.messageKey] ??
+      input.frozenOutputByBeforeMessageKey?.[card.messageKey] ??
+      undefined;
     const outputText =
       frozenText ?? (offsetsWithFrozenOutput.has(card.offset) ? "" : rawSlice);
 

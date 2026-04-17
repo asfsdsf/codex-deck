@@ -483,10 +483,30 @@ export interface TerminalEventsResponse {
   snapshot: TerminalSnapshotResponse | null;
 }
 
-export interface TerminalSessionArtifactReference {
-  kind: "codex-session-message";
-  sessionId: string;
-  messageKey: string;
+export type TerminalSessionArtifactReference =
+  | {
+      kind: "codex-session-message";
+      sessionId: string;
+      messageKey: string;
+    }
+  | {
+      kind: "terminal-inline-output";
+      sessionId: string;
+      beforeMessageKey: string;
+    };
+
+export type TerminalSessionMessageActionDecision = "approved" | "rejected";
+
+export interface TerminalSessionMessageActionStep {
+  stepId: string;
+  decision: TerminalSessionMessageActionDecision;
+  reason: string | null;
+  updatedAt: string;
+}
+
+export interface TerminalSessionMessageAction {
+  kind: "ai-terminal-step-actions";
+  steps: TerminalSessionMessageActionStep[];
 }
 
 export interface TerminalSessionArtifactEntry {
@@ -515,7 +535,8 @@ export interface TerminalSessionArtifactsManifest {
 
 export interface TerminalPersistFrozenBlockRequest {
   sessionId: string;
-  messageKey: string;
+  messageKey?: string | null;
+  beforeMessageKey?: string | null;
   transcript: string;
   stepId?: string | null;
 }
@@ -524,12 +545,28 @@ export interface TerminalPersistFrozenBlockResponse {
   entry: TerminalSessionArtifactEntry;
 }
 
+export interface TerminalPersistMessageActionRequest {
+  sessionId: string;
+  messageKey: string;
+  stepId: string;
+  decision: TerminalSessionMessageActionDecision;
+  reason?: string | null;
+}
+
+export interface TerminalPersistMessageActionResponse {
+  terminalId: string;
+  sessionId: string;
+  messageKey: string;
+  action: TerminalSessionMessageAction;
+}
+
 export interface TerminalSessionArtifactsResponse {
   terminalId: string;
   sessionId: string | null;
   manifest: TerminalSessionArtifactsManifest;
   entries: TerminalSessionArtifactEntryWithTranscript[];
   frozenOutputByMessageKey: Record<string, string>;
+  frozenOutputByBeforeMessageKey: Record<string, string>;
   frozenOutputsInOrder: string[];
 }
 

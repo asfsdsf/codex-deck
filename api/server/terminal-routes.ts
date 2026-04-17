@@ -14,6 +14,7 @@ import {
 import {
   getPersistedTerminalSessionArtifacts,
   persistTerminalSessionFrozenBlock,
+  persistTerminalSessionMessageAction,
   removeTerminalSessionArtifacts,
 } from "../terminal-session-store";
 import type {
@@ -30,6 +31,8 @@ import type {
   TerminalInputRequest,
   TerminalListResponse,
   TerminalReleaseWriteRequest,
+  TerminalPersistMessageActionRequest,
+  TerminalPersistMessageActionResponse,
   TerminalResizeRequest,
   TerminalSessionRolesRequest,
   TerminalSessionRolesResponse,
@@ -236,7 +239,18 @@ export function registerTerminalRoutes(app: Hono): void {
         .json()
         .catch(() => ({}))) as Partial<TerminalPersistFrozenBlockRequest>;
       const sessionId = body.sessionId?.trim();
-      const messageKey = body.messageKey?.trim();
+      const messageKey =
+        body.messageKey === undefined || body.messageKey === null
+          ? null
+          : typeof body.messageKey === "string"
+            ? body.messageKey.trim()
+            : undefined;
+      const beforeMessageKey =
+        body.beforeMessageKey === undefined || body.beforeMessageKey === null
+          ? null
+          : typeof body.beforeMessageKey === "string"
+            ? body.beforeMessageKey.trim()
+            : undefined;
       const transcript = body.transcript;
       const stepId =
         body.stepId === undefined || body.stepId === null
@@ -248,8 +262,23 @@ export function registerTerminalRoutes(app: Hono): void {
       if (!sessionId) {
         return c.json({ error: "sessionId is required" }, 400);
       }
-      if (!messageKey) {
-        return c.json({ error: "messageKey is required" }, 400);
+      if (messageKey === undefined || beforeMessageKey === undefined) {
+        return c.json(
+          { error: "messageKey and beforeMessageKey must be strings or null" },
+          400,
+        );
+      }
+      if (!messageKey && !beforeMessageKey) {
+        return c.json(
+          { error: "messageKey or beforeMessageKey is required" },
+          400,
+        );
+      }
+      if (messageKey && beforeMessageKey) {
+        return c.json(
+          { error: "messageKey and beforeMessageKey cannot both be set" },
+          400,
+        );
       }
       if (typeof transcript !== "string" || transcript.trim().length === 0) {
         return c.json({ error: "transcript must be a non-empty string" }, 400);
@@ -262,10 +291,70 @@ export function registerTerminalRoutes(app: Hono): void {
         (await persistTerminalSessionFrozenBlock({
           terminalId,
           sessionId,
-          messageKey,
+          ...(messageKey ? { messageKey } : { beforeMessageKey }),
           transcript,
           stepId,
         })) satisfies TerminalPersistFrozenBlockResponse,
+      );
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/terminals/:terminalId/message-action", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId")?.trim();
+      if (!terminalId) {
+        return c.json({ error: "terminal id is required" }, 400);
+      }
+
+      const manager = getLocalTerminalManager();
+      if (!manager.getSnapshot(terminalId)) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+
+      const body = (await c.req
+        .json()
+        .catch(() => ({}))) as Partial<TerminalPersistMessageActionRequest>;
+      const sessionId = body.sessionId?.trim();
+      const messageKey = body.messageKey?.trim();
+      const stepId = body.stepId?.trim();
+      const decision = body.decision;
+      const reason =
+        body.reason === undefined || body.reason === null
+          ? null
+          : typeof body.reason === "string"
+            ? body.reason
+            : undefined;
+
+      if (!sessionId) {
+        return c.json({ error: "sessionId is required" }, 400);
+      }
+      if (!messageKey) {
+        return c.json({ error: "messageKey is required" }, 400);
+      }
+      if (!stepId) {
+        return c.json({ error: "stepId is required" }, 400);
+      }
+      if (decision !== "approved" && decision !== "rejected") {
+        return c.json({ error: "decision must be approved or rejected" }, 400);
+      }
+      if (reason === undefined) {
+        return c.json({ error: "reason must be a string or null" }, 400);
+      }
+
+      return c.json(
+        (await persistTerminalSessionMessageAction({
+          terminalId,
+          sessionId,
+          messageKey,
+          stepId,
+          decision,
+          reason,
+        })) satisfies TerminalPersistMessageActionResponse,
       );
     } catch (error) {
       return c.json(

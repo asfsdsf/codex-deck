@@ -51,6 +51,8 @@ import type {
   TerminalInputRequest,
   TerminalPersistFrozenBlockRequest,
   TerminalPersistFrozenBlockResponse,
+  TerminalPersistMessageActionRequest,
+  TerminalPersistMessageActionResponse,
   TerminalResizeRequest,
   TerminalSessionArtifactsResponse,
   TerminalSnapshotResponse,
@@ -1356,6 +1358,22 @@ export async function persistTerminalFrozenBlock(
 ): Promise<TerminalPersistFrozenBlockResponse> {
   return requestJson<TerminalPersistFrozenBlockResponse>(
     `/api/terminals/${encodeURIComponent(terminalId)}/frozen-blocks`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function persistTerminalMessageAction(
+  terminalId: string,
+  input: TerminalPersistMessageActionRequest,
+): Promise<TerminalPersistMessageActionResponse> {
+  return requestJson<TerminalPersistMessageActionResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/message-action`,
     {
       method: "POST",
       headers: {

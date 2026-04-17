@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildTerminalTimeline,
+  getFrozenTerminalTranscript,
   getTerminalInlineAnchorOffset,
   getTerminalTranscriptStartOffset,
   normalizeFrozenTerminalOutputsInOrder,
@@ -89,6 +90,26 @@ test("buildTerminalTimeline can insert frozen transcript output before a later c
     ["plan", "prompt> find .\n0 ./a\n0 ./b\nprompt> ", "complete"],
   );
   assert.equal(timeline.liveOutput, "prompt> find .\n0 ./a\n0 ./b\nprompt> ");
+});
+
+test("buildTerminalTimeline can restore a manual frozen transcript before a card", () => {
+  const timeline = buildTerminalTimeline({
+    output: "prompt> manual\nsaved\nprompt> ",
+    messageKeys: ["plan"],
+    anchors: {
+      plan: { offset: 30, order: 0 },
+    },
+    frozenOutputByBeforeMessageKey: {
+      plan: "prompt> manual\nsaved\nprompt>",
+    },
+  });
+
+  assert.deepEqual(
+    timeline.entries.map((entry) =>
+      entry.type === "card" ? entry.messageKey : entry.text,
+    ),
+    ["prompt> manual\nsaved\nprompt>", "plan"],
+  );
 });
 
 test("buildTerminalTimeline keeps multiple restored frozen transcript blocks separate", () => {
@@ -197,6 +218,25 @@ test("getTerminalTranscriptStartOffset uses the nearest preceding anchored card"
       messageKey: "complete-2",
     }),
     20,
+  );
+});
+
+test("getFrozenTerminalTranscript keeps only the current step output", () => {
+  const output = "prompt> one\n1\nprompt> two\n2\nprompt> ";
+  const secondStepOffset = output.indexOf("prompt> two");
+
+  assert.equal(
+    getFrozenTerminalTranscript({
+      output,
+      messageKeys: ["plan-1", "complete-1", "plan-2", "complete-2"],
+      anchors: {
+        "plan-1": { offset: 0, order: 0 },
+        "complete-1": { offset: secondStepOffset, order: 1 },
+        "plan-2": { offset: secondStepOffset, order: 2 },
+      },
+      messageKey: "complete-2",
+    }),
+    "prompt> two\n2\nprompt>",
   );
 });
 

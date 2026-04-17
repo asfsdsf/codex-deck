@@ -28,8 +28,8 @@ import {
 } from "../ai-terminal";
 import {
   buildTerminalTimeline,
+  getFrozenTerminalTranscript,
   getTerminalInlineAnchorOffset,
-  getTerminalTranscriptStartOffset,
   normalizeFrozenTerminalOutputsInOrder,
   restoreTerminalTimelineRenderState,
   sanitizeTerminalTranscriptChunk,
@@ -201,37 +201,6 @@ function shouldFreezeTerminalTranscript(text: string): boolean {
   );
 }
 
-function getRenderedTerminalTranscriptSnapshot(
-  terminal: Terminal | null,
-): string | null {
-  if (!terminal) {
-    return null;
-  }
-
-  const activeBuffer = terminal.buffer.active;
-  const lines: string[] = [];
-
-  for (let index = 0; index < activeBuffer.length; index += 1) {
-    const line = activeBuffer.getLine(index);
-    if (!line) {
-      continue;
-    }
-    const lineText = line.translateToString(true);
-    const isWrapped = (line as { isWrapped?: boolean }).isWrapped === true;
-    if (isWrapped && lines.length > 0) {
-      lines[lines.length - 1] = `${lines[lines.length - 1]}${lineText}`;
-    } else {
-      lines.push(lineText);
-    }
-  }
-
-  while (lines.length > 0 && (lines[lines.length - 1] ?? "").trim() === "") {
-    lines.pop();
-  }
-
-  return lines.join("\n");
-}
-
 function isTerminalCompletionMessage(message: ConversationMessage): boolean {
   const parsed = parseAiTerminalMessage(
     extractConversationMessageText(message),
@@ -284,6 +253,12 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const restoredFrozenOutputsInOrderRef = useRef<string[]>([]);
   const persistedFrozenMessageKeysRef = useRef(new Set<string>());
   const persistingFrozenMessageKeysRef = useRef(new Set<string>());
+  const persistedFrozenBeforeMessageKeysRef = useRef(new Set<string>());
+  const persistingFrozenBeforeMessageKeysRef = useRef(new Set<string>());
+  const persistedFrozenOutputByMessageKeyRef = useRef(new Map<string, string>());
+  const persistedFrozenOutputByBeforeMessageKeyRef = useRef(
+    new Map<string, string>(),
+  );
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -297,6 +272,8 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const [frozenOutputByMessageKey, setFrozenOutputByMessageKey] = useState<
     Record<string, string | undefined>
   >({});
+  const [frozenOutputByBeforeMessageKey, setFrozenOutputByBeforeMessageKey] =
+    useState<Record<string, string | undefined>>({});
   const [frozenOutputsLoaded, setFrozenOutputsLoaded] = useState(false);
   const terminalTheme = useMemo(
     () => getTerminalTheme(resolvedTheme),
@@ -351,7 +328,12 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       restoredFrozenOutputsInOrderRef.current = [];
       persistedFrozenMessageKeysRef.current = new Set();
       persistingFrozenMessageKeysRef.current = new Set();
+      persistedFrozenBeforeMessageKeysRef.current = new Set();
+      persistingFrozenBeforeMessageKeysRef.current = new Set();
+      persistedFrozenOutputByMessageKeyRef.current = new Map();
+      persistedFrozenOutputByBeforeMessageKeyRef.current = new Map();
       setFrozenOutputByMessageKey({});
+      setFrozenOutputByBeforeMessageKey({});
       setFrozenOutputsLoaded(true);
       return;
     }
@@ -360,6 +342,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     restoredFrozenOutputsInOrderRef.current = [];
     persistedFrozenMessageKeysRef.current = new Set();
     persistingFrozenMessageKeysRef.current = new Set();
+    persistedFrozenBeforeMessageKeysRef.current = new Set();
+    persistingFrozenBeforeMessageKeysRef.current = new Set();
+    persistedFrozenOutputByMessageKeyRef.current = new Map();
+    persistedFrozenOutputByBeforeMessageKeyRef.current = new Map();
     setFrozenOutputsLoaded(false);
     const timer = setTimeout(() => {
       void getTerminalFrozenBlocks(terminalId, normalizedSessionId)
@@ -374,7 +360,19 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
           persistedFrozenMessageKeysRef.current = new Set(
             Object.keys(response.frozenOutputByMessageKey),
           );
+          persistedFrozenBeforeMessageKeysRef.current = new Set(
+            Object.keys(response.frozenOutputByBeforeMessageKey),
+          );
+          persistedFrozenOutputByMessageKeyRef.current = new Map(
+            Object.entries(response.frozenOutputByMessageKey),
+          );
+          persistedFrozenOutputByBeforeMessageKeyRef.current = new Map(
+            Object.entries(response.frozenOutputByBeforeMessageKey),
+          );
           setFrozenOutputByMessageKey(response.frozenOutputByMessageKey);
+          setFrozenOutputByBeforeMessageKey(
+            response.frozenOutputByBeforeMessageKey,
+          );
         })
         .catch(() => {
           if (cancelled) {
@@ -382,7 +380,11 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
           }
           restoredFrozenOutputsInOrderRef.current = [];
           persistedFrozenMessageKeysRef.current = new Set();
+          persistedFrozenBeforeMessageKeysRef.current = new Set();
+          persistedFrozenOutputByMessageKeyRef.current = new Map();
+          persistedFrozenOutputByBeforeMessageKeyRef.current = new Map();
           setFrozenOutputByMessageKey({});
+          setFrozenOutputByBeforeMessageKey({});
         })
         .finally(() => {
           if (!cancelled) {
@@ -484,20 +486,12 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
           isTerminalCompletionMessage(item.message),
       );
       if (firstMissingItem && !next[firstMissingItem.messageKey]) {
-        const transcriptStartOffset = getTerminalTranscriptStartOffset({
+        const frozenSnapshot = getFrozenTerminalTranscript({
+          output: currentTerminalOutput,
           messageKeys,
           anchors: timelineAnchors,
           messageKey: firstMissingItem.messageKey,
         });
-        const renderedSnapshot = getRenderedTerminalTranscriptSnapshot(
-          terminalRef.current,
-        );
-        const snapshotSource =
-          renderedSnapshot && renderedSnapshot.trim().length > 0
-            ? renderedSnapshot
-            : currentTerminalOutput.slice(transcriptStartOffset);
-        const frozenSnapshot =
-          sanitizeTerminalTranscriptChunk(snapshotSource).trimEnd();
         if (shouldFreezeTerminalTranscript(frozenSnapshot)) {
           next[firstMissingItem.messageKey] = frozenSnapshot;
           changed = true;
@@ -521,9 +515,51 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
       return changed ? next : current;
     });
+
+    setFrozenOutputByBeforeMessageKey((current) => {
+      let changed = false;
+      const next: Record<string, string | undefined> = {};
+
+      for (const [messageKey, output] of Object.entries(current)) {
+        if (visibleMessageKeys.has(messageKey) && output) {
+          next[messageKey] = output;
+        } else {
+          changed = true;
+        }
+      }
+
+      for (const item of embeddedMessages) {
+        if (next[item.messageKey]) {
+          continue;
+        }
+        if (isTerminalCompletionMessage(item.message)) {
+          continue;
+        }
+        if (frozenOutputByMessageKey[item.messageKey]) {
+          continue;
+        }
+        if (!timelineAnchors[item.messageKey]) {
+          continue;
+        }
+
+        const frozenSnapshot = getFrozenTerminalTranscript({
+          output: currentTerminalOutput,
+          messageKeys,
+          anchors: timelineAnchors,
+          messageKey: item.messageKey,
+        });
+        if (shouldFreezeTerminalTranscript(frozenSnapshot)) {
+          next[item.messageKey] = frozenSnapshot;
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
   }, [
     embeddedMessages,
     embeddedMessagesLoading,
+    frozenOutputByMessageKey,
     frozenOutputsLoaded,
     timelineAnchors,
     timelineResetVersion,
@@ -544,6 +580,16 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         continue;
       }
       if (persistedFrozenMessageKeysRef.current.has(item.messageKey)) {
+        const persistedTranscript =
+          persistedFrozenOutputByMessageKeyRef.current.get(item.messageKey);
+        if (persistedTranscript === transcript) {
+          continue;
+        }
+      }
+      if (
+        persistedFrozenOutputByMessageKeyRef.current.get(item.messageKey) ===
+        transcript
+      ) {
         continue;
       }
       if (persistingFrozenMessageKeysRef.current.has(item.messageKey)) {
@@ -558,6 +604,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       })
         .then(() => {
           persistedFrozenMessageKeysRef.current.add(item.messageKey);
+          persistedFrozenOutputByMessageKeyRef.current.set(
+            item.messageKey,
+            transcript,
+          );
         })
         .catch(() => {
           persistingFrozenMessageKeysRef.current.delete(item.messageKey);
@@ -570,6 +620,64 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     boundSessionId,
     embeddedMessages,
     frozenOutputByMessageKey,
+    frozenOutputsLoaded,
+    terminalId,
+  ]);
+
+  useEffect(() => {
+    const normalizedSessionId = boundSessionId?.trim() ?? "";
+    if (!frozenOutputsLoaded || !normalizedSessionId) {
+      return;
+    }
+
+    for (const item of embeddedMessages) {
+      const transcript = frozenOutputByBeforeMessageKey[item.messageKey];
+      if (!transcript) {
+        continue;
+      }
+      if (persistedFrozenBeforeMessageKeysRef.current.has(item.messageKey)) {
+        const persistedTranscript =
+          persistedFrozenOutputByBeforeMessageKeyRef.current.get(
+            item.messageKey,
+          );
+        if (persistedTranscript === transcript) {
+          continue;
+        }
+      }
+      if (
+        persistedFrozenOutputByBeforeMessageKeyRef.current.get(item.messageKey) ===
+        transcript
+      ) {
+        continue;
+      }
+      if (persistingFrozenBeforeMessageKeysRef.current.has(item.messageKey)) {
+        continue;
+      }
+
+      persistingFrozenBeforeMessageKeysRef.current.add(item.messageKey);
+      void persistTerminalFrozenBlock(terminalId, {
+        sessionId: normalizedSessionId,
+        beforeMessageKey: item.messageKey,
+        transcript,
+      })
+        .then(() => {
+          persistedFrozenBeforeMessageKeysRef.current.add(item.messageKey);
+          persistedFrozenOutputByBeforeMessageKeyRef.current.set(
+            item.messageKey,
+            transcript,
+          );
+        })
+        .catch(() => {
+          persistingFrozenBeforeMessageKeysRef.current.delete(item.messageKey);
+        })
+        .finally(() => {
+          persistingFrozenBeforeMessageKeysRef.current.delete(item.messageKey);
+        });
+    }
+  }, [
+    boundSessionId,
+    embeddedMessages,
+    frozenOutputByBeforeMessageKey,
     frozenOutputsLoaded,
     terminalId,
   ]);
@@ -979,9 +1087,11 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         messageKeys: embeddedMessages.map((item) => item.messageKey),
         anchors: timelineAnchors,
         frozenOutputByMessageKey,
+        frozenOutputByBeforeMessageKey,
       }),
     [
       embeddedMessages,
+      frozenOutputByBeforeMessageKey,
       frozenOutputByMessageKey,
       terminalOutput,
       timelineAnchors,

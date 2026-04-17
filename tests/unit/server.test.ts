@@ -12,7 +12,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
@@ -3264,6 +3264,21 @@ test("terminal frozen block routes persist artifacts under codex home and delete
     );
     assert.equal(persisted.status, 200);
 
+    const manualPersisted = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/frozen-blocks`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          beforeMessageKey: "message-2",
+          transcript: "prompt> pwd\n/repo/app\nprompt>\n",
+        }),
+      },
+    );
+    assert.equal(manualPersisted.status, 200);
+
     const manifestPath = join(
       rootDir,
       "codex-deck",
@@ -3273,6 +3288,45 @@ test("terminal frozen block routes persist artifacts under codex home and delete
       "session.json",
     );
     assert.equal(existsSync(manifestPath), true);
+
+    const actionPersisted = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/message-action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          messageKey: "message-1",
+          stepId: "check-status",
+          decision: "rejected",
+          reason: "Use a read-only command.",
+        }),
+      },
+    );
+    assert.equal(actionPersisted.status, 200);
+    const actionManifest = JSON.parse(
+      readFileSync(manifestPath, "utf-8"),
+    ) as {
+      blocks: Array<{
+        type?: string;
+        action?: {
+          steps?: Array<{
+            stepId?: string;
+            decision?: string;
+            reason?: string | null;
+            updatedAt?: string;
+          }>;
+        } | null;
+      }>;
+    };
+    assert.equal(actionManifest.blocks[0]?.type, "codex-session-message");
+    assert.deepEqual(actionManifest.blocks[0]?.action?.steps?.[0], {
+      stepId: "check-status",
+      decision: "rejected",
+      reason: "Use a read-only command.",
+      updatedAt: actionManifest.blocks[0]?.action?.steps?.[0]?.updatedAt,
+    });
 
     const restored = await requestJson(
       server,
@@ -3284,6 +3338,16 @@ test("terminal frozen block routes persist artifacts under codex home and delete
         .frozenOutputByMessageKey,
       {
         "message-1": "pwd\n/repo/app\n",
+      },
+    );
+    assert.deepEqual(
+      (
+        restored.body as {
+          frozenOutputByBeforeMessageKey?: Record<string, string>;
+        }
+      ).frozenOutputByBeforeMessageKey,
+      {
+        "message-2": "prompt> pwd\n/repo/app\nprompt>\n",
       },
     );
 
