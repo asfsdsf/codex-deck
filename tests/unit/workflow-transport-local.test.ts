@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
-  ConversationMessage,
   Session,
   TerminalSummary,
   WorkflowDetailResponse,
@@ -343,49 +342,18 @@ test("local transport shares one global EventSource for sessions, terminals, and
   }
 });
 
-test("local terminal stream forwards bound session conversation batches over the same EventSource", async () => {
+test("local terminal stream opens a terminal-only EventSource", async () => {
   const restoreEventSource = installMockEventSource();
   const transport = createLocalTransport();
-  const conversationPayload = {
-    messages: [
-      {
-        type: "assistant",
-        timestamp: "2026-03-16T00:00:00.000Z",
-        uuid: "assistant-1",
-        message: {
-          role: "assistant",
-          content: [{ type: "output_text", text: "inline terminal reply" }],
-        },
-      },
-    ] satisfies ConversationMessage[],
-    nextOffset: 42,
-    done: true,
-  };
-  const seenBatches: Array<{
-    messages: ConversationMessage[];
-    nextOffset?: number;
-    phase?: string;
-    done?: boolean;
-  }> = [];
 
   try {
     const unsubscribe = transport.subscribeTerminalStream(
       {
         onEvent: () => {},
-        onConversationMessages: (messages, batch) => {
-          seenBatches.push({
-            messages,
-            nextOffset: batch?.nextOffset,
-            phase: batch?.phase,
-            done: batch?.done,
-          });
-        },
       },
       {
         terminalId: "terminal-1",
         fromSeq: 0,
-        conversationSessionId: "session-1",
-        conversationInitialOffset: 0,
       },
     );
 
@@ -393,20 +361,8 @@ test("local terminal stream forwards bound session conversation batches over the
     assert.ok(eventSource);
     assert.equal(
       eventSource.url,
-      "/api/terminals/terminal-1/stream?fromSeq=0&conversationSessionId=session-1&conversationOffset=0",
+      "/api/terminals/terminal-1/stream?fromSeq=0",
     );
-
-    eventSource.emit("conversationMessages", conversationPayload);
-    await flushAsyncWork();
-
-    assert.deepEqual(seenBatches, [
-      {
-        messages: conversationPayload.messages,
-        nextOffset: 42,
-        phase: "bootstrap",
-        done: true,
-      },
-    ]);
 
     unsubscribe();
   } finally {

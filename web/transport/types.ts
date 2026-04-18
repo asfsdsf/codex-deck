@@ -1,5 +1,4 @@
 import type {
-  ConversationMessage,
   Session,
   TerminalSummary,
   TerminalStreamEvent,
@@ -41,11 +40,6 @@ export interface ConversationStreamSubscriptionOptions {
 
 export interface TerminalStreamHandlers {
   onEvent: (event: TerminalStreamEvent) => void;
-  onConversationMessages?: (
-    messages: ConversationMessage[],
-    batch?: ConversationStreamBatch,
-  ) => void;
-  onConversationHeartbeat?: () => void;
   onError?: () => void;
 }
 
@@ -73,8 +67,6 @@ export interface TerminalStreamSubscriptionOptions {
   fromSeq?: number;
   clientId?: string;
   terminalId: string;
-  conversationSessionId?: string | null;
-  conversationInitialOffset?: number;
 }
 
 export interface WebTransport {

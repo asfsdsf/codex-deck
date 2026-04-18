@@ -127,6 +127,7 @@ import {
   parseNonNegativeInteger,
   responseStatusForError,
   toErrorMessage,
+  waitForAbortableTimeout,
 } from "./utils";
 import { registerWorkflowRoutes } from "./workflow-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
@@ -2082,6 +2083,7 @@ export function createServer(options: ServerOptions) {
   app.get("/api/sessions/stream", async (c) => {
     return streamSSE(c, async (stream) => {
       let isConnected = true;
+      const disconnectController = new AbortController();
       const knownSessions = new Map<string, number>();
       const terminalManager = getLocalTerminalManager();
       let previousTerminalsPayload = "";
@@ -2090,7 +2092,11 @@ export function createServer(options: ServerOptions) {
       let unsubscribeTerminalBindings: (() => void) | null = null;
 
       const cleanup = () => {
+        if (!isConnected) {
+          return;
+        }
         isConnected = false;
+        disconnectController.abort();
         offHistoryChange(handleSessionsChange);
         offSessionChange(handleSessionsChange);
         offWorkflowChange(handleWorkflowsChange);
@@ -2255,7 +2261,8 @@ export function createServer(options: ServerOptions) {
       unsubscribeTerminalBindings = onTerminalBindingChange(() => {
         void handleTerminalsChange();
       });
-      c.req.raw.signal.addEventListener("abort", cleanup);
+      stream.onAbort(cleanup);
+      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
 
       try {
         const sessions = await getSessions();
@@ -2275,7 +2282,7 @@ export function createServer(options: ServerOptions) {
             event: "heartbeat",
             data: JSON.stringify({ timestamp: Date.now() }),
           });
-          await stream.sleep(30000);
+          await waitForAbortableTimeout(30000, disconnectController.signal);
         }
       } catch {
         // Connection closed
@@ -3429,6 +3436,7 @@ export function createServer(options: ServerOptions) {
 
     return streamSSE(c, async (stream) => {
       let isConnected = true;
+      const disconnectController = new AbortController();
 
       const writeConversationBatches = async (
         emitWhenEmpty: boolean,
@@ -3468,7 +3476,11 @@ export function createServer(options: ServerOptions) {
       };
 
       const cleanup = () => {
+        if (!isConnected) {
+          return;
+        }
         isConnected = false;
+        disconnectController.abort();
         offSessionChange(handleSessionChange);
       };
 
@@ -3485,7 +3497,8 @@ export function createServer(options: ServerOptions) {
       };
 
       onSessionChange(handleSessionChange);
-      c.req.raw.signal.addEventListener("abort", cleanup);
+      stream.onAbort(cleanup);
+      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
 
       try {
         await writeConversationBatches(true);
@@ -3495,7 +3508,7 @@ export function createServer(options: ServerOptions) {
             event: "heartbeat",
             data: JSON.stringify({ timestamp: Date.now() }),
           });
-          await stream.sleep(30000);
+          await waitForAbortableTimeout(30000, disconnectController.signal);
         }
       } catch {
         // Connection closed

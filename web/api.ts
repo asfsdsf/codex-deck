@@ -49,6 +49,7 @@ import type {
   TerminalExecuteCommandRequest,
   TerminalExecuteCommandResponse,
   TerminalInputRequest,
+  TerminalInputResponse,
   TerminalPersistFrozenBlockRequest,
   TerminalPersistFrozenBlockResponse,
   TerminalPersistMessageActionRequest,
@@ -338,6 +339,7 @@ export interface RunInTerminalOptions {
   timeoutMs?: number;
   appendNewline?: boolean;
   untilPattern?: string;
+  onStarted?: (input: { startSeq: number; startOffset: number }) => void;
 }
 
 export interface RunInTerminalResult {
@@ -347,6 +349,7 @@ export interface RunInTerminalResult {
   output: string;
   rawOutput: string;
   startSeq: number;
+  startOffset: number;
   endSeq: number;
   timedOut: boolean;
 }
@@ -1345,8 +1348,16 @@ export async function getTerminalSnapshot(
 export async function getTerminalFrozenBlocks(
   terminalId: string,
   sessionId: string,
+  viewport?: {
+    cols: number;
+    rows: number;
+  } | null,
 ): Promise<TerminalSessionArtifactsResponse> {
   const params = new URLSearchParams({ sessionId });
+  if (viewport && viewport.cols >= 2 && viewport.rows >= 2) {
+    params.set("cols", String(viewport.cols));
+    params.set("rows", String(viewport.rows));
+  }
   return requestJson<TerminalSessionArtifactsResponse>(
     `/api/terminals/${encodeURIComponent(terminalId)}/frozen-blocks?${params.toString()}`,
   );
@@ -1399,9 +1410,9 @@ export async function sendTerminalInput(
   terminalId: string,
   input: TerminalInputRequest,
   clientId?: string,
-): Promise<TerminalCommandResponse> {
+): Promise<TerminalInputResponse> {
   const params = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
-  return requestJson<TerminalCommandResponse>(
+  return requestJson<TerminalInputResponse>(
     `/api/terminals/${encodeURIComponent(terminalId)}/input${params}`,
     {
       method: "POST",
@@ -1560,17 +1571,12 @@ export async function runInTerminal(
       ? command
       : `${command}\n`;
 
-  const initialSnapshot = await getTerminalSnapshot(terminalId);
-  const initialSeq = initialSnapshot.seq;
-  const initialOutput = initialSnapshot.output;
-
-  const sendInput = async () => {
-    await sendTerminalInput(terminalId, { input }, clientId);
-  };
+  const sendInput = () => sendTerminalInput(terminalId, { input }, clientId);
 
   let claimedWrite = false;
+  let startResponse: TerminalInputResponse;
   try {
-    await sendInput();
+    startResponse = await sendInput();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes("owns terminal write")) {
@@ -1578,11 +1584,16 @@ export async function runInTerminal(
     }
     await claimTerminalWrite(terminalId, clientId);
     claimedWrite = true;
-    await sendInput();
+    startResponse = await sendInput();
   }
 
+  options.onStarted?.({
+    startSeq: startResponse.startSeq,
+    startOffset: startResponse.startOffset,
+  });
+
   const deadline = Date.now() + timeoutMs;
-  let fromSeq = initialSeq;
+  let fromSeq = startResponse.startSeq;
   let output = "";
   let sawEvent = false;
   let timedOut = false;
@@ -1605,9 +1616,7 @@ export async function runInTerminal(
       if (batch.requiresReset && batch.snapshot) {
         const resetOutput = batch.snapshot.output;
         if (typeof resetOutput === "string") {
-          output = resetOutput.startsWith(initialOutput)
-            ? resetOutput.slice(initialOutput.length)
-            : resetOutput;
+          output = resetOutput.slice(startResponse.startOffset);
           matchedUntilPattern =
             untilPattern !== null && output.includes(untilPattern);
         }
@@ -1633,9 +1642,7 @@ export async function runInTerminal(
           terminalStopped = true;
         }
         if (event.type === "reset" && typeof event.output === "string") {
-          output = event.output.startsWith(initialOutput)
-            ? event.output.slice(initialOutput.length)
-            : event.output;
+          output = event.output.slice(startResponse.startOffset);
           terminalStopped = event.running === false;
           matchedUntilPattern =
             untilPattern !== null && output.includes(untilPattern);
@@ -1674,7 +1681,8 @@ export async function runInTerminal(
     command,
     output,
     rawOutput: stripTerminalAnsiCodes(output),
-    startSeq: initialSeq,
+    startSeq: startResponse.startSeq,
+    startOffset: startResponse.startOffset,
     endSeq: fromSeq,
     timedOut,
   };

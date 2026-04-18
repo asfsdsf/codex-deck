@@ -4,7 +4,7 @@ import {
   type RunInTerminalResult,
 } from "./api";
 import {
-  AI_TERMINAL_RESULT_MARKER_OSC_PREFIX,
+  buildAiTerminalExecutionMarkerPrefix,
   buildAiTerminalExecutionWrapper,
   parseAiTerminalExecutionResult,
   summarizeAiTerminalOutput,
@@ -139,6 +139,114 @@ export function cleanAiTerminalExecutionOutput(
     .trimEnd();
 }
 
+function stripPromptPrefixForLiveOutput(line: string): string {
+  return line
+    .replace(/^.*?\bcursh>\s*=?\s*/iu, "")
+    .replace(/^(?:\([^)]*\)\s*)?[^\r\n]{0,80}?\s[»>$#%]\s*=?\s*/u, "")
+    .replace(/^=\s*/u, "")
+    .trim();
+}
+
+export function cleanLiveAiTerminalExecutionOutput(
+  execution: Pick<AiTerminalStepExecution, "command" | "cwd" | "stepId">,
+  rawOutput: string,
+): string {
+  const sanitized = sanitizeTerminalTranscriptChunk(rawOutput);
+  const expectedLines = [
+    execution.command,
+    ...buildAiTerminalExecutionWrapper({
+      command: execution.command,
+      cwd: execution.cwd,
+      stepId: execution.stepId,
+    }).split("\n"),
+  ]
+    .map((line) => stripPromptPrefixForLiveOutput(line).replace(/\s+/gu, ""))
+    .filter(
+      (line, index, lines) => line.length > 0 && lines.indexOf(line) === index,
+    );
+  const lines = sanitized.split("\n");
+  const keptLines: string[] = [];
+  let sawMeaningfulOutput = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (sawMeaningfulOutput && keptLines[keptLines.length - 1] !== "") {
+        keptLines.push("");
+      }
+      continue;
+    }
+
+    const strippedLine = stripPromptPrefixForLiveOutput(line);
+    const compactLine = strippedLine.replace(/\s+/gu, "");
+    const relaxedCompactLine = compactLine.replace(/^[&X>=-]+/u, "");
+    const looksLikePromptLine =
+      /\s[»>$#%]\s*$/u.test(trimmed) || /\bcursh>\s*$/iu.test(trimmed);
+    const looksLikeMarkerNoise =
+      strippedLine.includes("__CODEX_DECK_AI_STEP_ID=") ||
+      strippedLine.includes("__CODE") ||
+      /^[=&X>%]+$/u.test(strippedLine);
+    const looksLikeShellNoisePrefix = /^[&X>=-]/u.test(strippedLine);
+    const looksLikeShellSyntaxFragment =
+      /['"$;&=]/u.test(strippedLine) ||
+      strippedLine.includes("&&") ||
+      /^(?:cd|printf|read|find|xargs|sort|head|awk)\b/u.test(strippedLine);
+    const matchesExpectedLine = (value: string) =>
+      value.length > 0 &&
+      expectedLines.some(
+        (expectedLine) =>
+          expectedLine === value ||
+          expectedLine.startsWith(value) ||
+          value.startsWith(expectedLine),
+      );
+    const matchesExpectedLinePrefix = (value: string) =>
+      value.length > 0 &&
+      expectedLines.some(
+        (expectedLine) =>
+          expectedLine === value || expectedLine.startsWith(value),
+      );
+    const looksLikeCommandEcho =
+      compactLine.length > 0 &&
+      matchesExpectedLine(compactLine) &&
+      looksLikeShellSyntaxFragment;
+    const looksLikeBrokenCommandEcho =
+      !sawMeaningfulOutput &&
+      relaxedCompactLine.length > 0 &&
+      matchesExpectedLine(relaxedCompactLine) &&
+      (looksLikeShellSyntaxFragment || looksLikeShellNoisePrefix);
+    const looksLikeEarlyCommandFragment =
+      !sawMeaningfulOutput &&
+      compactLine.length > 0 &&
+      matchesExpectedLinePrefix(relaxedCompactLine || compactLine);
+    const looksLikePreOutputShellEditingNoise =
+      !sawMeaningfulOutput &&
+      strippedLine.length <= 240 &&
+      (looksLikeShellSyntaxFragment ||
+        looksLikeShellNoisePrefix ||
+        strippedLine.includes("$user_value") ||
+        strippedLine.endsWith(">"));
+
+    if (
+      looksLikePromptLine ||
+      looksLikeMarkerNoise ||
+      looksLikeCommandEcho ||
+      looksLikeBrokenCommandEcho ||
+      looksLikeEarlyCommandFragment ||
+      looksLikePreOutputShellEditingNoise
+    ) {
+      continue;
+    }
+
+    sawMeaningfulOutput = true;
+    keptLines.push(trimmed);
+  }
+
+  return keptLines
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
 function getFallbackCwd(
   step: AiTerminalStepDirective,
   snapshotCwd: string,
@@ -169,30 +277,33 @@ export async function runApprovedAiTerminalStep(
   const snapshot = await resolvedDeps.getTerminalSnapshot(input.terminalId);
   const startedAt = resolvedDeps.now();
   const fallbackCwd = getFallbackCwd(input.step, snapshot.cwd);
-  const pendingExecution: AiTerminalStepExecution = {
-    terminalId: input.terminalId,
-    stepId: input.step.stepId,
-    command: input.step.command,
-    cwd: fallbackCwd,
-    status: "running",
-    startSeq: snapshot.seq,
-    startOffset: snapshot.output.length,
-    startedAt,
-    completedAt: null,
-    frozenOutput: null,
-  };
-
-  input.onStart?.(pendingExecution);
+  let startedExecution: AiTerminalStepExecution | null = null;
 
   const runResult = await resolvedDeps.runInTerminal(
     buildAiTerminalExecutionWrapper({
       command: input.step.command,
       cwd: input.step.cwd?.trim() || null,
+      stepId: input.step.stepId,
     }),
     {
       terminalId: input.terminalId,
       timeoutMs: APPROVED_AI_TERMINAL_TIMEOUT_MS,
-      untilPattern: AI_TERMINAL_RESULT_MARKER_OSC_PREFIX,
+      untilPattern: buildAiTerminalExecutionMarkerPrefix(input.step.stepId),
+      onStarted: ({ startSeq, startOffset }) => {
+        startedExecution = {
+          terminalId: input.terminalId,
+          stepId: input.step.stepId,
+          command: input.step.command,
+          cwd: fallbackCwd,
+          status: "running",
+          startSeq,
+          startOffset,
+          startedAt,
+          completedAt: null,
+          frozenOutput: null,
+        };
+        input.onStart?.(startedExecution);
+      },
     },
   );
 
@@ -215,7 +326,18 @@ export async function runApprovedAiTerminalStep(
   };
   const completedAt = resolvedDeps.now();
   const execution: AiTerminalStepExecution = {
-    ...pendingExecution,
+    ...(startedExecution ?? {
+      terminalId: input.terminalId,
+      stepId: input.step.stepId,
+      command: input.step.command,
+      cwd: fallbackCwd,
+      status: "running" as const,
+      startSeq: runResult.startSeq,
+      startOffset: runResult.startOffset,
+      startedAt,
+      completedAt: null,
+      frozenOutput: null,
+    }),
     cwd: result.cwdAfter,
     status: getExecutionStatus(result),
     completedAt,

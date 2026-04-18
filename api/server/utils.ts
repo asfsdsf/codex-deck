@@ -5,6 +5,36 @@ import {
 
 export const MAX_LONG_POLL_WAIT_MS = 25_000;
 
+export async function waitForAbortableTimeout(
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal?.removeEventListener("abort", handleAbort);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      resolve();
+    };
+    const handleAbort = () => {
+      finish();
+    };
+    const timeout = setTimeout(finish, ms);
+    timeout.unref?.();
+    signal?.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
 export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

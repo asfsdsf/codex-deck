@@ -9,43 +9,19 @@ import {
   type KeyboardEvent,
 } from "react";
 import { CheckCircle2, LoaderCircle, TerminalSquare } from "lucide-react";
-import {
-  claimTerminalWrite,
-  getTerminalSnapshot,
-  releaseTerminalWrite,
-  sendTerminalInput,
-  subscribeTerminalStream,
-} from "../api";
-import { buildAiTerminalExecutionWrapper } from "../ai-terminal";
+import { claimTerminalWrite, releaseTerminalWrite } from "../api";
 import {
   cleanAiTerminalExecutionOutput,
+  cleanLiveAiTerminalExecutionOutput,
   type AiTerminalStepExecution,
 } from "../ai-terminal-runtime";
 import { TERMINAL_FONT_FAMILY } from "../terminal-font";
-import { sanitizeTerminalTranscriptChunk } from "../terminal-timeline";
+import {
+  connectTerminalSession,
+  createBufferedTerminalInputController,
+  createTerminalClientId,
+} from "../terminal-session-client";
 import { AnsiText } from "./tool-renderers/ansi-text";
-
-function generateClientId(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    try {
-      return crypto.randomUUID();
-    } catch {
-      // Not available in insecure contexts.
-    }
-  }
-
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 interface AiTerminalExecutionBlockProps {
   execution: AiTerminalStepExecution;
@@ -88,94 +64,6 @@ function StaticExecutionOutput(props: {
   );
 }
 
-function stripPromptPrefixForLiveOutput(line: string): string {
-  return line
-    .replace(/^.*?\bcursh>\s*=?\s*/iu, "")
-    .replace(/^(?:\([^)]*\)\s*)?[^\r\n]{0,80}?\s[»>$#%]\s*=?\s*/u, "")
-    .replace(/^=\s*/u, "")
-    .trim();
-}
-
-function cleanLiveExecutionOutput(execution: AiTerminalStepExecution, rawOutput: string): string {
-  const sanitized = sanitizeTerminalTranscriptChunk(rawOutput);
-  const expectedCommands = [
-    execution.command,
-    buildAiTerminalExecutionWrapper({
-      command: execution.command,
-      cwd: execution.cwd,
-    }),
-  ]
-    .map((command) => command.replace(/\s+/gu, ""))
-    .filter((command, index, commands) => command && commands.indexOf(command) === index);
-  const lines = sanitized.split("\n");
-  const keptLines: string[] = [];
-  let sawMeaningfulOutput = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      if (sawMeaningfulOutput && keptLines[keptLines.length - 1] !== "") {
-        keptLines.push("");
-      }
-      continue;
-    }
-
-    const strippedLine = stripPromptPrefixForLiveOutput(line);
-    const compactLine = strippedLine.replace(/\s+/gu, "");
-    const relaxedCompactLine = compactLine.replace(/^[&X>=-]+/u, "");
-    const looksLikePromptLine =
-      /\s[»>$#%]\s*$/u.test(trimmed) || /\bcursh>\s*$/iu.test(trimmed);
-    const looksLikeMarkerNoise =
-      strippedLine.includes("__CODEX_DECK_AI_STEP_ID=") ||
-      strippedLine.includes("__CODE") ||
-      /^[=&X>%]+$/u.test(strippedLine);
-    const looksLikeShellNoisePrefix = /^[&X>=-]/u.test(strippedLine);
-    const looksLikeShellSyntaxFragment =
-      /['"$;&=]/u.test(strippedLine) ||
-      strippedLine.includes("&&") ||
-      /^(?:cd|printf|read|find|xargs|sort|head|awk)\b/u.test(strippedLine);
-    const matchesExpectedFragment = (value: string) =>
-      value.length > 0 &&
-      expectedCommands.some((expectedCommand) => expectedCommand.includes(value));
-    const looksLikeCommandEcho =
-      compactLine.length > 0 &&
-      matchesExpectedFragment(compactLine) &&
-      looksLikeShellSyntaxFragment;
-    const looksLikeBrokenCommandEcho =
-      !sawMeaningfulOutput &&
-      relaxedCompactLine.length > 0 &&
-      matchesExpectedFragment(relaxedCompactLine) &&
-      (looksLikeShellSyntaxFragment || looksLikeShellNoisePrefix);
-    const looksLikeEarlyCommandFragment =
-      !sawMeaningfulOutput &&
-      compactLine.length > 0 &&
-      matchesExpectedFragment(relaxedCompactLine || compactLine);
-    const looksLikePreOutputShellEditingNoise =
-      !sawMeaningfulOutput &&
-      strippedLine.length <= 240 &&
-      (looksLikeShellSyntaxFragment ||
-        looksLikeShellNoisePrefix ||
-        strippedLine.includes("$user_value") ||
-        strippedLine.endsWith(">"));
-
-    if (
-      looksLikePromptLine ||
-      looksLikeMarkerNoise ||
-      looksLikeCommandEcho ||
-      looksLikeBrokenCommandEcho ||
-      looksLikeEarlyCommandFragment ||
-      looksLikePreOutputShellEditingNoise
-    ) {
-      continue;
-    }
-
-    sawMeaningfulOutput = true;
-    keptLines.push(trimmed);
-  }
-
-  return keptLines.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
-}
-
 export function AiTerminalExecutionBlock(
   props: AiTerminalExecutionBlockProps,
 ): JSX.Element {
@@ -187,10 +75,8 @@ export function AiTerminalExecutionBlock(
   const rawOutputRef = useRef("");
   const seqRef = useRef(0);
   const writeOwnerIdRef = useRef<string | null>(null);
-  const inputBufferRef = useRef("");
-  const inputFlushPromiseRef = useRef<Promise<void> | null>(null);
   const isDisposedRef = useRef(false);
-  const clientIdRef = useRef(generateClientId());
+  const clientIdRef = useRef(createTerminalClientId());
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [writeOwnerId, setWriteOwnerId] = useState<string | null>(null);
@@ -220,64 +106,26 @@ export function AiTerminalExecutionBlock(
   const updateDisplayOutput = useCallback(
     (nextRawOutput: string) => {
       rawOutputRef.current = nextRawOutput;
-      setDisplayOutput(cleanLiveExecutionOutput(execution, nextRawOutput));
+      setDisplayOutput(
+        cleanLiveAiTerminalExecutionOutput(execution, nextRawOutput),
+      );
     },
     [execution],
   );
 
-  const flushInputBuffer = useCallback(async () => {
-    if (inputFlushPromiseRef.current) {
-      return inputFlushPromiseRef.current;
-    }
-
-    inputFlushPromiseRef.current = (async () => {
-      while (inputBufferRef.current.length > 0 && !isDisposedRef.current) {
-        if (writeOwnerIdRef.current !== clientIdRef.current) {
-          if (writeOwnerIdRef.current === null) {
-            await claimWrite();
-          } else {
-            break;
-          }
-        }
-
-        const chunk = inputBufferRef.current;
-        inputBufferRef.current = "";
-        try {
-          await sendTerminalInput(
-            execution.terminalId,
-            { input: chunk },
-            clientIdRef.current,
-          );
-        } catch (sendError) {
-          setError(
-            sendError instanceof Error ? sendError.message : String(sendError),
-          );
-          inputBufferRef.current = `${chunk}${inputBufferRef.current}`;
-          break;
-        }
-      }
-    })().finally(() => {
-      inputFlushPromiseRef.current = null;
-    });
-
-    return inputFlushPromiseRef.current;
-  }, [claimWrite, execution.terminalId]);
-
-  const queueInput = useCallback(
-    (chunk: string) => {
-      if (!chunk || isDisposedRef.current) {
-      return;
-    }
-    if (
-      writeOwnerIdRef.current !== null &&
-      writeOwnerIdRef.current !== clientIdRef.current
-      ) {
-        return;
-      }
-      inputBufferRef.current += chunk;
-      void flushInputBuffer();
-    },
-    [flushInputBuffer],
+  const terminalInputController = useMemo(
+    () =>
+      createBufferedTerminalInputController({
+        terminalId: execution.terminalId,
+        clientId: clientIdRef.current,
+        isDisposed: () => isDisposedRef.current,
+        getWriteOwnerId: () => writeOwnerIdRef.current,
+        setError: (message) => {
+          setError(message);
+        },
+        claimWriteIfUnowned: claimWrite,
+      }),
+    [claimWrite, execution.terminalId],
   );
 
   useEffect(() => {
@@ -292,66 +140,42 @@ export function AiTerminalExecutionBlock(
     isDisposedRef.current = false;
 
     const bootstrap = async () => {
-      try {
-        const snapshot = await getTerminalSnapshot(execution.terminalId);
-        if (isDisposedRef.current) {
-          return;
-        }
+      streamCleanupRef.current = await connectTerminalSession({
+        terminalId: execution.terminalId,
+        clientId: clientIdRef.current,
+        isDisposed: () => isDisposedRef.current,
+        onSnapshot: (snapshot) => {
+          seqRef.current = snapshot.seq;
+          writeOwnerIdRef.current = snapshot.writeOwnerId;
+          setWriteOwnerId(snapshot.writeOwnerId);
+          updateDisplayOutput(snapshot.output.slice(execution.startOffset));
+        },
+        onEvent: (event) => {
+          if (event.seq <= seqRef.current) {
+            return;
+          }
+          seqRef.current = event.seq;
 
-        seqRef.current = snapshot.seq;
-        writeOwnerIdRef.current = snapshot.writeOwnerId;
-        setWriteOwnerId(snapshot.writeOwnerId);
-        const initialOutput = snapshot.output.slice(execution.startOffset);
-        updateDisplayOutput(initialOutput);
+          if (event.type === "output") {
+            updateDisplayOutput(rawOutputRef.current + (event.chunk ?? ""));
+            return;
+          }
 
-        streamCleanupRef.current = subscribeTerminalStream(
-          {
-            onEvent: (event) => {
-              if (event.seq <= seqRef.current) {
-                return;
-              }
-              seqRef.current = event.seq;
-              setConnected(true);
-              setError(null);
+          if (event.type === "reset") {
+            updateDisplayOutput(event.output.slice(execution.startOffset));
+            return;
+          }
 
-              if (event.type === "output") {
-                updateDisplayOutput(rawOutputRef.current + event.chunk);
-                return;
-              }
-
-              if (event.type === "reset") {
-                const resetOutput = event.output.slice(execution.startOffset);
-                updateDisplayOutput(resetOutput);
-                return;
-              }
-
-              if (event.type === "ownership") {
-                writeOwnerIdRef.current = event.writeOwnerId ?? null;
-                setWriteOwnerId(event.writeOwnerId ?? null);
-              }
-            },
-            onError: () => {
-              setConnected(false);
-            },
-          },
-          {
-            terminalId: execution.terminalId,
-            fromSeq: snapshot.seq,
-            clientId: clientIdRef.current,
-          },
-        );
-        setConnected(true);
-      } catch (bootstrapError) {
-        if (isDisposedRef.current) {
-          return;
-        }
-        setConnected(false);
-        setError(
-          bootstrapError instanceof Error
-            ? bootstrapError.message
-            : String(bootstrapError),
-        );
-      }
+          if (event.type === "ownership") {
+            writeOwnerIdRef.current = event.writeOwnerId ?? null;
+            setWriteOwnerId(event.writeOwnerId ?? null);
+          }
+        },
+        onConnectedChange: setConnected,
+        onError: (message) => {
+          setError(message);
+        },
+      });
     };
 
     void bootstrap();
@@ -362,6 +186,7 @@ export function AiTerminalExecutionBlock(
       streamCleanupRef.current = null;
       rawOutputRef.current = "";
       seqRef.current = 0;
+      terminalInputController.reset();
       setConnected(false);
       setWriteOwnerId(null);
       setDisplayOutput("");
@@ -371,7 +196,13 @@ export function AiTerminalExecutionBlock(
         clientIdRef.current,
       ).catch(() => {});
     };
-  }, [execution.startOffset, execution.terminalId, isRunning, updateDisplayOutput]);
+  }, [
+    execution.startOffset,
+    execution.terminalId,
+    isRunning,
+    terminalInputController,
+    updateDisplayOutput,
+  ]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -400,7 +231,7 @@ export function AiTerminalExecutionBlock(
 
       const queueKey = (value: string) => {
         event.preventDefault();
-        queueInput(value);
+        terminalInputController.queueInput(value);
       };
 
       if (event.ctrlKey && !event.altKey) {
@@ -451,7 +282,7 @@ export function AiTerminalExecutionBlock(
         queueKey(event.key);
       }
     },
-    [queueInput],
+    [terminalInputController],
   );
 
   const handlePaste = useCallback(
@@ -461,9 +292,9 @@ export function AiTerminalExecutionBlock(
         return;
       }
       event.preventDefault();
-      queueInput(text);
+      terminalInputController.queueInput(text);
     },
-    [queueInput],
+    [terminalInputController],
   );
 
   if (!isRunning) {
@@ -503,7 +334,8 @@ export function AiTerminalExecutionBlock(
         {!error ? (
           <span className="ml-auto inline-flex items-center gap-1 text-zinc-500">
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-            Click to focus. Typing, paste, arrows, and Ctrl+C are forwarded to the shared terminal.
+            Click to focus. Typing, paste, arrows, and Ctrl+C are forwarded to
+            the shared terminal.
           </span>
         ) : null}
       </div>

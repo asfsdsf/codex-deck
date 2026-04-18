@@ -2,251 +2,84 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildTerminalTimeline,
-  getFrozenTerminalTranscript,
-  getTerminalInlineAnchorOffset,
-  getTerminalTranscriptStartOffset,
-  normalizeFrozenTerminalOutputsInOrder,
-  restoreTerminalTimelineRenderState,
   sanitizeTerminalTranscriptChunk,
 } from "../../web/terminal-timeline";
 
-test("getTerminalInlineAnchorOffset keeps the active line below new cards", () => {
-  assert.equal(getTerminalInlineAnchorOffset("line 1\nprompt> "), 7);
-  assert.equal(getTerminalInlineAnchorOffset("prompt> "), 0);
-  assert.equal(getTerminalInlineAnchorOffset("a\rprompt> "), 2);
-});
-
-test("buildTerminalTimeline interleaves output slices and cards", () => {
+test("buildTerminalTimeline renders ordered blocks before their cards", () => {
   const timeline = buildTerminalTimeline({
-    output: "alpha\nbeta\nprompt> ",
-    messageKeys: ["m1", "m2"],
-    anchors: {
-      m1: { offset: 6, order: 0 },
-      m2: { offset: 11, order: 1 },
-    },
-  });
-
-  assert.deepEqual(timeline.entries, [
-    {
-      type: "output",
-      key: "output:0:6",
-      text: "alpha\n",
-    },
-    {
-      type: "card",
-      key: "card:m1",
-      messageKey: "m1",
-    },
-    {
-      type: "output",
-      key: "output:6:11",
-      text: "beta\n",
-    },
-    {
-      type: "card",
-      key: "card:m2",
-      messageKey: "m2",
-    },
-  ]);
-  assert.equal(timeline.liveOutput, "alpha\nbeta\nprompt> ");
-});
-
-test("buildTerminalTimeline orders cards with the same anchor by insertion order", () => {
-  const timeline = buildTerminalTimeline({
-    output: "alpha\nprompt> ",
-    messageKeys: ["later", "earlier"],
-    anchors: {
-      later: { offset: 6, order: 1 },
-      earlier: { offset: 6, order: 0 },
-    },
-  });
-
-  assert.deepEqual(
-    timeline.entries.map((entry) =>
-      entry.type === "card" ? entry.messageKey : entry.text,
-    ),
-    ["alpha\n", "earlier", "later"],
-  );
-  assert.equal(timeline.liveOutput, "alpha\nprompt> ");
-});
-
-test("buildTerminalTimeline can insert frozen transcript output before a later card", () => {
-  const timeline = buildTerminalTimeline({
-    output: "prompt> find .\n0 ./a\n0 ./b\nprompt> ",
+    output: "prompt> ",
     messageKeys: ["plan", "complete"],
-    anchors: {
-      plan: { offset: 27, order: 0 },
-      complete: { offset: 27, order: 1 },
-    },
-    frozenOutputByMessageKey: {
-      complete: "prompt> find .\n0 ./a\n0 ./b\nprompt> ",
-    },
-  });
-
-  assert.deepEqual(
-    timeline.entries.map((entry) =>
-      entry.type === "card" ? entry.messageKey : entry.text,
-    ),
-    ["plan", "prompt> find .\n0 ./a\n0 ./b\nprompt> ", "complete"],
-  );
-  assert.equal(timeline.liveOutput, "prompt> find .\n0 ./a\n0 ./b\nprompt> ");
-});
-
-test("buildTerminalTimeline can restore a manual frozen transcript before a card", () => {
-  const timeline = buildTerminalTimeline({
-    output: "prompt> manual\nsaved\nprompt> ",
-    messageKeys: ["plan"],
-    anchors: {
-      plan: { offset: 30, order: 0 },
-    },
-    frozenOutputByBeforeMessageKey: {
-      plan: "prompt> manual\nsaved\nprompt>",
-    },
-  });
-
-  assert.deepEqual(
-    timeline.entries.map((entry) =>
-      entry.type === "card" ? entry.messageKey : entry.text,
-    ),
-    ["prompt> manual\nsaved\nprompt>", "plan"],
-  );
-});
-
-test("buildTerminalTimeline keeps multiple restored frozen transcript blocks separate", () => {
-  const timeline = buildTerminalTimeline({
-    output: "prompt> one\n1\nprompt> two\n2\nprompt> ",
-    messageKeys: ["plan-1", "complete-1", "plan-2", "complete-2"],
-    anchors: {
-      "plan-1": { offset: 31, order: 0 },
-      "complete-1": { offset: 31, order: 1 },
-      "plan-2": { offset: 31, order: 2 },
-      "complete-2": { offset: 31, order: 3 },
-    },
-    frozenOutputByMessageKey: {
-      "complete-1": "prompt> one\n1\nprompt> ",
-      "complete-2": "prompt> two\n2\nprompt> ",
-    },
-  });
-
-  assert.deepEqual(
-    timeline.entries.map((entry) =>
-      entry.type === "card" ? entry.messageKey : entry.text,
-    ),
-    [
-      "plan-1",
-      "prompt> one\n1\nprompt> ",
-      "complete-1",
-      "plan-2",
-      "prompt> two\n2\nprompt> ",
-      "complete-2",
+    blocks: [
+      {
+        blockId: "block-2",
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        kind: "execution",
+        sequence: 2,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        messageKey: "complete",
+        stepId: null,
+        transcriptPath: "blocks/block-2.txt",
+        transcriptLength: 12,
+        action: null,
+        transcript: "final-output",
+      },
+      {
+        blockId: "block-1",
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        kind: "manual",
+        sequence: 1,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+        messageKey: "plan",
+        stepId: null,
+        transcriptPath: "blocks/block-1.txt",
+        transcriptLength: 11,
+        action: null,
+        transcript: "plan-output",
+      },
     ],
-  );
-  assert.equal(
-    new Set(timeline.entries.map((entry) => entry.key)).size,
-    timeline.entries.length,
-  );
-});
-
-test("restoreTerminalTimelineRenderState preserves a live block anchor across terminal switches", () => {
-  const restored = restoreTerminalTimelineRenderState({
-    cachedState: {
-      output: "prompt> ",
-      anchors: {
-        "plan-1": { offset: 0, order: 0 },
-      },
-      anchorOrder: 1,
-    },
-    output: "prompt> pnpm test\nrunning tests...\n",
-  });
-
-  assert.deepEqual(restored, {
-    output: "prompt> pnpm test\nrunning tests...\n",
-    anchors: {
-      "plan-1": { offset: 0, order: 0 },
-    },
-    anchorOrder: 1,
-  });
-
-  const timeline = buildTerminalTimeline({
-    output: restored?.output ?? "",
-    messageKeys: ["plan-1"],
-    anchors: restored?.anchors ?? {},
   });
 
   assert.deepEqual(
     timeline.entries.map((entry) =>
       entry.type === "card" ? entry.messageKey : entry.text,
     ),
-    ["plan-1"],
+    ["plan-output", "plan", "final-output", "complete"],
   );
-  assert.equal(timeline.liveOutput, "prompt> pnpm test\nrunning tests...\n");
+  assert.equal(timeline.liveOutput, "prompt> ");
 });
 
-test("buildTerminalTimeline keeps full live history after freezing command output", () => {
-  const output = "prompt> pnpm test\nok\nprompt> ";
-  const promptOffset = output.lastIndexOf("prompt> ");
+test("buildTerminalTimeline appends standalone manual blocks after message-bound cards", () => {
   const timeline = buildTerminalTimeline({
-    output,
-    messageKeys: ["plan-1", "complete-1"],
-    anchors: {
-      "plan-1": { offset: 0, order: 0 },
-      "complete-1": { offset: promptOffset, order: 1 },
-    },
-    frozenOutputByMessageKey: {
-      "complete-1": "prompt> pnpm test\nok",
-    },
+    output: "",
+    messageKeys: ["plan"],
+    blocks: [
+      {
+        blockId: "block-1",
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        kind: "manual",
+        sequence: 1,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+        messageKey: null,
+        stepId: null,
+        transcriptPath: "blocks/block-1.txt",
+        transcriptLength: 6,
+        action: null,
+        transcript: "saved!",
+      },
+    ],
   });
 
   assert.deepEqual(
     timeline.entries.map((entry) =>
       entry.type === "card" ? entry.messageKey : entry.text,
     ),
-    ["plan-1", "prompt> pnpm test\nok", "complete-1"],
-  );
-  assert.equal(timeline.liveOutput, output);
-});
-
-test("getTerminalTranscriptStartOffset uses the nearest preceding anchored card", () => {
-  assert.equal(
-    getTerminalTranscriptStartOffset({
-      messageKeys: ["plan-1", "complete-1", "plan-2", "complete-2"],
-      anchors: {
-        "plan-1": { offset: 0, order: 0 },
-        "complete-1": { offset: 20, order: 1 },
-        "plan-2": { offset: 20, order: 2 },
-      },
-      messageKey: "complete-2",
-    }),
-    20,
-  );
-});
-
-test("getFrozenTerminalTranscript keeps only the current step output", () => {
-  const output = "prompt> one\n1\nprompt> two\n2\nprompt> ";
-  const secondStepOffset = output.indexOf("prompt> two");
-
-  assert.equal(
-    getFrozenTerminalTranscript({
-      output,
-      messageKeys: ["plan-1", "complete-1", "plan-2", "complete-2"],
-      anchors: {
-        "plan-1": { offset: 0, order: 0 },
-        "complete-1": { offset: secondStepOffset, order: 1 },
-        "plan-2": { offset: secondStepOffset, order: 2 },
-      },
-      messageKey: "complete-2",
-    }),
-    "prompt> two\n2\nprompt>",
-  );
-});
-
-test("normalizeFrozenTerminalOutputsInOrder trims cumulative restored blocks", () => {
-  assert.deepEqual(
-    normalizeFrozenTerminalOutputsInOrder([
-      "prompt> one\n1\nprompt>\nprompt> two\n2\nprompt>",
-      "prompt> two\n2\nprompt>",
-    ]),
-    ["prompt> one\n1\nprompt>", "prompt> two\n2\nprompt>"],
+    ["plan", "saved!"],
   );
 });
 
@@ -279,39 +112,6 @@ test("sanitizeTerminalTranscriptChunk drops transient prompt artifact lines", ()
   const sanitized = sanitizeTerminalTranscriptChunk(raw);
 
   assert.equal(sanitized.includes("%"), false);
-  assert.match(sanitized, /\(base\) Project\/codex-deck »/);
-});
-
-test("sanitizeTerminalTranscriptChunk drops prompt lines with transient suffix artifacts", () => {
-  const sanitized = sanitizeTerminalTranscriptChunk(
-    [
-      "(base) Project/codex-deck » =",
-      "",
-      "(base) Project/codex-deck » printf 'FIRST_ONLY\\n'",
-      "FIRST_ONLY",
-    ].join("\n"),
-  );
-
-  assert.equal(sanitized.includes("» ="), false);
-  assert.equal(sanitized.startsWith("\n"), false);
-  assert.match(sanitized, /printf 'FIRST_ONLY\\n'/);
-  assert.match(sanitized, /FIRST_ONLY/);
-});
-
-test("sanitizeTerminalTranscriptChunk applies carriage-return overwrite semantics", () => {
-  const sanitized = sanitizeTerminalTranscriptChunk(
-    [
-      '(base) Project/codex-deck » old broken line\r(base) Project/codex-deck » find . -type f -exec stat -f "%z %N" {} + | sort -n | head -n 10',
-      "0 ./node_modules/example.js",
-    ].join("\n"),
-  );
-
-  assert.equal(sanitized.includes("old broken line"), false);
-  assert.equal(
-    sanitized.includes(
-      '(base) Project/codex-deck » find . -type f -exec stat -f "%z %N" {} + | sort -n | head -n 10',
-    ),
-    true,
-  );
-  assert.match(sanitized, /0 \.\/node_modules\/example\.js/);
+  assert.equal(sanitized.includes("\u001b"), false);
+  assert.equal(sanitized.trim(), "(base) Project/codex-deck »");
 });

@@ -1,13 +1,4 @@
-export interface TerminalTimelineAnchor {
-  offset: number;
-  order: number;
-}
-
-export interface TerminalTimelineRenderState {
-  output: string;
-  anchors: Record<string, TerminalTimelineAnchor | undefined>;
-  anchorOrder: number;
-}
+import type { TerminalSessionBlockRecordWithTranscript } from "../api/storage";
 
 export type TerminalTimelineEntry =
   | {
@@ -20,115 +11,6 @@ export type TerminalTimelineEntry =
       key: string;
       messageKey: string;
     };
-
-export function getTerminalInlineAnchorOffset(output: string): number {
-  const lastLineFeed = output.lastIndexOf("\n");
-  const lastCarriageReturn = output.lastIndexOf("\r");
-  const anchorIndex = Math.max(lastLineFeed, lastCarriageReturn);
-  return anchorIndex >= 0 ? anchorIndex + 1 : 0;
-}
-
-export function getTerminalTranscriptStartOffset(input: {
-  messageKeys: string[];
-  anchors: Record<string, TerminalTimelineAnchor | undefined>;
-  messageKey: string;
-}): number {
-  const targetIndex = input.messageKeys.indexOf(input.messageKey);
-  if (targetIndex <= 0) {
-    return 0;
-  }
-
-  for (let index = targetIndex - 1; index >= 0; index -= 1) {
-    const previousMessageKey = input.messageKeys[index];
-    const previousAnchor = input.anchors[previousMessageKey];
-    if (previousAnchor) {
-      return Math.max(0, previousAnchor.offset);
-    }
-  }
-
-  return 0;
-}
-
-export function normalizeFrozenTerminalOutputsInOrder(
-  outputs: string[],
-): string[] {
-  const normalized = [...outputs];
-
-  for (let index = 0; index < normalized.length; index += 1) {
-    const current = normalized[index];
-    if (!current) {
-      continue;
-    }
-
-    for (
-      let nextIndex = index + 1;
-      nextIndex < normalized.length;
-      nextIndex += 1
-    ) {
-      const next = normalized[nextIndex];
-      const nextNeedle = next?.trim();
-      if (!next || !nextNeedle) {
-        continue;
-      }
-
-      const exactIndex = current.indexOf(next);
-      const trimmedIndex =
-        exactIndex > 0 ? exactIndex : current.indexOf(nextNeedle);
-      if (trimmedIndex > 0) {
-        normalized[index] = current.slice(0, trimmedIndex).replace(/\s+$/u, "");
-        break;
-      }
-    }
-  }
-
-  return normalized;
-}
-
-function cloneTimelineAnchors(
-  anchors: Record<string, TerminalTimelineAnchor | undefined>,
-  outputLength: number,
-): Record<string, TerminalTimelineAnchor | undefined> {
-  const cloned: Record<string, TerminalTimelineAnchor | undefined> = {};
-
-  for (const [messageKey, anchor] of Object.entries(anchors)) {
-    if (!anchor) {
-      continue;
-    }
-    cloned[messageKey] = {
-      offset: Math.max(0, Math.min(outputLength, anchor.offset)),
-      order: anchor.order,
-    };
-  }
-
-  return cloned;
-}
-
-export function restoreTerminalTimelineRenderState(input: {
-  cachedState: TerminalTimelineRenderState | null | undefined;
-  output: string;
-}): TerminalTimelineRenderState | null {
-  const cachedState = input.cachedState;
-  if (!cachedState || !input.output.startsWith(cachedState.output)) {
-    return null;
-  }
-
-  const anchors = cloneTimelineAnchors(
-    cachedState.anchors,
-    input.output.length,
-  );
-  const nextAnchorOrder = Math.max(
-    cachedState.anchorOrder,
-    ...Object.values(anchors).map((anchor) =>
-      anchor ? anchor.order + 1 : cachedState.anchorOrder,
-    ),
-  );
-
-  return {
-    output: input.output,
-    anchors,
-    anchorOrder: nextAnchorOrder,
-  };
-}
 
 const ANSI_OSC_SEQUENCE_PATTERN =
   /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
@@ -222,88 +104,61 @@ export function sanitizeTerminalTranscriptChunk(text: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
-export function getFrozenTerminalTranscript(input: {
-  output: string;
-  messageKeys: string[];
-  anchors: Record<string, TerminalTimelineAnchor | undefined>;
-  messageKey: string;
-}): string {
-  const transcriptStartOffset = getTerminalTranscriptStartOffset(input);
-  return sanitizeTerminalTranscriptChunk(
-    input.output.slice(transcriptStartOffset),
-  ).trimEnd();
-}
-
 export function buildTerminalTimeline(input: {
-  output: string;
   messageKeys: string[];
-  anchors: Record<string, TerminalTimelineAnchor | undefined>;
-  frozenOutputByMessageKey?: Record<string, string | undefined>;
-  frozenOutputByBeforeMessageKey?: Record<string, string | undefined>;
+  blocks: TerminalSessionBlockRecordWithTranscript[];
+  output: string;
 }): {
   entries: TerminalTimelineEntry[];
   liveOutput: string;
 } {
-  const anchoredCards = input.messageKeys
-    .map((messageKey) => {
-      const anchor = input.anchors[messageKey];
-      if (!anchor) {
-        return null;
-      }
-      return {
-        messageKey,
-        offset: Math.max(0, Math.min(input.output.length, anchor.offset)),
-        order: anchor.order,
-      };
-    })
-    .filter(
-      (value): value is { messageKey: string; offset: number; order: number } =>
-        value !== null,
-    )
-    .sort((left, right) => {
-      if (left.offset !== right.offset) {
-        return left.offset - right.offset;
-      }
-      return left.order - right.order;
-    });
-
   const entries: TerminalTimelineEntry[] = [];
-  let cursor = 0;
-  const offsetsWithFrozenOutput = new Set(
-    anchoredCards
-      .filter(
-        (card) =>
-          input.frozenOutputByMessageKey?.[card.messageKey] ||
-          input.frozenOutputByBeforeMessageKey?.[card.messageKey],
-      )
-      .map((card) => card.offset),
-  );
+  const blocksByMessageKey = new Map<string, TerminalSessionBlockRecordWithTranscript[]>();
+  const standaloneBlocks: TerminalSessionBlockRecordWithTranscript[] = [];
 
-  for (const card of anchoredCards) {
-    const rawSlice =
-      card.offset > cursor ? input.output.slice(cursor, card.offset) : "";
-    const frozenText =
-      input.frozenOutputByMessageKey?.[card.messageKey] ??
-      input.frozenOutputByBeforeMessageKey?.[card.messageKey] ??
-      undefined;
-    const outputText =
-      frozenText ?? (offsetsWithFrozenOutput.has(card.offset) ? "" : rawSlice);
+  for (const block of [...input.blocks].sort((left, right) => {
+    if (left.sequence !== right.sequence) {
+      return left.sequence - right.sequence;
+    }
+    return left.blockId.localeCompare(right.blockId);
+  })) {
+    if (block.messageKey) {
+      const group = blocksByMessageKey.get(block.messageKey) ?? [];
+      group.push(block);
+      blocksByMessageKey.set(block.messageKey, group);
+    } else {
+      standaloneBlocks.push(block);
+    }
+  }
 
-    if (outputText.length > 0) {
+  for (const messageKey of input.messageKeys) {
+    const blocks = blocksByMessageKey.get(messageKey) ?? [];
+    for (const block of blocks) {
+      if (!block.transcript?.trim()) {
+        continue;
+      }
       entries.push({
         type: "output",
-        key: frozenText
-          ? `output:frozen:${card.messageKey}`
-          : `output:${cursor}:${card.offset}`,
-        text: outputText,
+        key: `block:${block.blockId}`,
+        text: block.transcript,
       });
     }
     entries.push({
       type: "card",
-      key: `card:${card.messageKey}`,
-      messageKey: card.messageKey,
+      key: `card:${messageKey}`,
+      messageKey,
     });
-    cursor = Math.max(cursor, card.offset);
+  }
+
+  for (const block of standaloneBlocks) {
+    if (!block.transcript?.trim()) {
+      continue;
+    }
+    entries.push({
+      type: "output",
+      key: `block:${block.blockId}`,
+      text: block.transcript,
+    });
   }
 
   return {

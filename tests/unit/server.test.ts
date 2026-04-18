@@ -433,8 +433,8 @@ test("sessions stream carries sessions, terminals, and workflows snapshots", asy
   }
 });
 
-test("terminal stream can include bound session conversation batches", async () => {
-  const { rootDir, sessionsDir, cleanup } =
+test("terminal stream accepts terminal-only subscriptions", async () => {
+  const { rootDir, cleanup } =
     await createTempCodexDir("server-terminal-bound-session-stream");
   const server = createServer({ port: 13019, codexDir: rootDir, open: false });
   const terminalId = "terminal-bound-1";
@@ -471,36 +471,16 @@ test("terminal stream can include bound session conversation batches", async () 
 
   try {
     setLocalTerminalManagerForTests(manager);
-    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
-      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
-      responseItemMessageLine("assistant", "terminal-bound reply"),
-    ]);
-
     await loadStorage();
 
-    const response = await server.app.request(
-      `/api/terminals/${terminalId}/stream?fromSeq=0&conversationSessionId=${SESSION_ID}&conversationOffset=0`,
-    );
+    const response = await server.app.request(`/api/terminals/${terminalId}/stream?fromSeq=0`);
     assert.equal(response.status, 200);
 
-    const events = await readSseEvents(response, ["conversationMessages"]);
-    const conversationEvent = events.find(
-      (event) => event.event === "conversationMessages",
-    );
-    assert.ok(conversationEvent);
-
-    const payload = JSON.parse(conversationEvent.data) as {
-      messages?: Array<{ type?: string }>;
-      nextOffset?: number;
-      done?: boolean;
-    };
-    assert.equal(Array.isArray(payload.messages), true);
+    const events = await readSseEvents(response, ["heartbeat"]);
     assert.equal(
-      payload.messages?.some((message) => message.type === "assistant"),
+      events.some((event) => event.event === "heartbeat"),
       true,
     );
-    assert.equal(typeof payload.nextOffset, "number");
-    assert.equal(payload.done, true);
   } finally {
     setLocalTerminalManagerForTests(null);
     server.stop();
@@ -2801,6 +2781,11 @@ test("terminal routes return snapshot, control responses, and stream events", as
     );
     assert.equal(inputResponse.status, 200);
     assert.equal(writeInputCalls, 1);
+    assert.equal((inputResponse.body as { startSeq?: number }).startSeq, 4);
+    assert.equal(
+      (inputResponse.body as { startOffset?: number }).startOffset,
+      "boot line\\n".length,
+    );
 
     const resizeInvalid = await requestJson(
       server,
@@ -3190,14 +3175,29 @@ test("terminal binding routes persist bindings and expose terminal session roles
   }
 });
 
-test("terminal frozen block routes persist artifacts under codex home and delete them with the terminal", async () => {
-  const { rootDir, cleanup } = await createTempCodexDir(
+test("terminal frozen block routes derive and persist artifacts under codex home and delete them with the terminal", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "server-terminal-frozen-blocks",
   );
   const server = createServer({ port: 13017, codexDir: rootDir, open: false });
 
   const terminalId = "terminal-frozen-1";
   let terminalExists = true;
+  let terminalOutput = "plan-output\n";
+
+  const planMessage = [
+    "<ai-terminal-plan>",
+    "<ai-terminal-step>",
+    "<step_id>check-status</step_id>",
+    "<command><![CDATA[pwd]]></command>",
+    "<cwd>/repo/app</cwd>",
+    "<shell>zsh</shell>",
+    "<risk>low</risk>",
+    "<next_action>approve</next_action>",
+    "</ai-terminal-step>",
+    "</ai-terminal-plan>",
+  ].join("\n");
+  const finishedMessage = "<requirement_finished>done</requirement_finished>";
 
   const manager: LocalTerminalManager = {
     listTerminals: () => [],
@@ -3207,7 +3207,7 @@ test("terminal frozen block routes persist artifacts under codex home and delete
       running: true,
       cwd: "/repo/app",
       shell: "zsh",
-      output: "",
+      output: terminalOutput,
       seq: 1,
       writeOwnerId: null,
     }),
@@ -3226,7 +3226,7 @@ test("terminal frozen block routes persist artifacts under codex home and delete
             running: true,
             cwd: "/repo/app",
             shell: "zsh",
-            output: "",
+            output: terminalOutput,
             seq: 1,
             writeOwnerId: null,
           }
@@ -3249,35 +3249,27 @@ test("terminal frozen block routes persist artifacts under codex home and delete
     setLocalTerminalManagerForTests(manager);
     await loadStorage();
 
-    const persisted = await requestJson(
-      server,
-      `/api/terminals/${terminalId}/frozen-blocks`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: "session-1",
-          messageKey: "message-1",
-          transcript: "pwd\n/repo/app\n",
-        }),
-      },
-    );
-    assert.equal(persisted.status, 200);
+    await writeSessionFile(sessionsDir, "session-1.jsonl", [
+      sessionMetaLine("session-1", "/repo/app", Date.now()),
+      responseItemMessageLine(
+        "assistant",
+        planMessage,
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ]);
 
-    const manualPersisted = await requestJson(
+    const initialRestored = await requestJson(
       server,
-      `/api/terminals/${terminalId}/frozen-blocks`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: "session-1",
-          beforeMessageKey: "message-2",
-          transcript: "prompt> pwd\n/repo/app\nprompt>\n",
-        }),
-      },
+      `/api/terminals/${terminalId}/frozen-blocks?sessionId=session-1`,
     );
-    assert.equal(manualPersisted.status, 200);
+    assert.equal(initialRestored.status, 200);
+    const initialBlocks =
+      (initialRestored.body as { blocks?: Array<{ messageKey?: string | null; transcript?: string | null; kind?: string }> }).blocks ?? [];
+    const planBlock =
+      initialBlocks.find((block) => block.kind === "manual") ?? null;
+    const planMessageKey = planBlock?.messageKey ?? null;
+    assert.ok(planMessageKey);
+    assert.equal(planBlock?.transcript, "plan-output");
 
     const manifestPath = join(
       rootDir,
@@ -3289,6 +3281,64 @@ test("terminal frozen block routes persist artifacts under codex home and delete
     );
     assert.equal(existsSync(manifestPath), true);
 
+    terminalOutput = "plan-output\nfinal-output\n";
+    await writeSessionFile(sessionsDir, "session-1.jsonl", [
+      sessionMetaLine("session-1", "/repo/app", Date.now()),
+      responseItemMessageLine(
+        "assistant",
+        planMessage,
+        "2026-01-01T00:00:00.000Z",
+      ),
+      responseItemMessageLine(
+        "assistant",
+        finishedMessage,
+        "2026-01-01T00:00:01.000Z",
+      ),
+    ]);
+
+    const restored = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/frozen-blocks?sessionId=session-1`,
+    );
+    assert.equal(restored.status, 200);
+    const restoredBlocks =
+      (restored.body as {
+        blocks?: Array<{
+          blockId?: string;
+          messageKey?: string | null;
+          transcript?: string | null;
+          kind?: string;
+          sequence?: number;
+        }>;
+      }).blocks ?? [];
+    const completionBlock =
+      restoredBlocks.find((block) => block.kind === "execution") ?? null;
+    const completionMessageKey = completionBlock?.messageKey ?? null;
+    assert.ok(completionMessageKey);
+    assert.equal(completionBlock?.transcript, "final-output");
+    assert.deepEqual(
+      restoredBlocks.map((block) => ({
+        kind: block.kind,
+        messageKey: block.messageKey,
+        transcript: block.transcript,
+        sequence: block.sequence,
+      })),
+      [
+        {
+          kind: "manual",
+          messageKey: planMessageKey,
+          transcript: "plan-output",
+          sequence: 1,
+        },
+        {
+          kind: "execution",
+          messageKey: completionMessageKey,
+          transcript: "final-output",
+          sequence: 2,
+        },
+      ],
+    );
+
     const actionPersisted = await requestJson(
       server,
       `/api/terminals/${terminalId}/message-action`,
@@ -3297,7 +3347,7 @@ test("terminal frozen block routes persist artifacts under codex home and delete
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId: "session-1",
-          messageKey: "message-1",
+          messageKey: completionMessageKey,
           stepId: "check-status",
           decision: "rejected",
           reason: "Use a read-only command.",
@@ -3309,7 +3359,8 @@ test("terminal frozen block routes persist artifacts under codex home and delete
       readFileSync(manifestPath, "utf-8"),
     ) as {
       blocks: Array<{
-        type?: string;
+        kind?: string;
+        messageKey?: string;
         action?: {
           steps?: Array<{
             stepId?: string;
@@ -3320,36 +3371,16 @@ test("terminal frozen block routes persist artifacts under codex home and delete
         } | null;
       }>;
     };
-    assert.equal(actionManifest.blocks[0]?.type, "codex-session-message");
-    assert.deepEqual(actionManifest.blocks[0]?.action?.steps?.[0], {
+    const actionBlock = actionManifest.blocks.find(
+      (block) => block.kind === "execution" && block.messageKey === completionMessageKey,
+    );
+    assert.equal(actionBlock?.kind, "execution");
+    assert.deepEqual(actionBlock?.action?.steps?.[0], {
       stepId: "check-status",
       decision: "rejected",
       reason: "Use a read-only command.",
-      updatedAt: actionManifest.blocks[0]?.action?.steps?.[0]?.updatedAt,
+      updatedAt: actionBlock?.action?.steps?.[0]?.updatedAt,
     });
-
-    const restored = await requestJson(
-      server,
-      `/api/terminals/${terminalId}/frozen-blocks?sessionId=session-1`,
-    );
-    assert.equal(restored.status, 200);
-    assert.deepEqual(
-      (restored.body as { frozenOutputByMessageKey?: Record<string, string> })
-        .frozenOutputByMessageKey,
-      {
-        "message-1": "pwd\n/repo/app\n",
-      },
-    );
-    assert.deepEqual(
-      (
-        restored.body as {
-          frozenOutputByBeforeMessageKey?: Record<string, string>;
-        }
-      ).frozenOutputByBeforeMessageKey,
-      {
-        "message-2": "prompt> pwd\n/repo/app\nprompt>\n",
-      },
-    );
 
     const deleted = await requestJson(server, `/api/terminals/${terminalId}`, {
       method: "DELETE",

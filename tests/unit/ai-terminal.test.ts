@@ -10,6 +10,7 @@ import {
   buildAiTerminalRejectionFeedback,
   buildAiTerminalTurnPrompt,
   deriveAiTerminalStepStatesByMessageKey,
+  getAiTerminalMessageKey,
   parseAiTerminalBootstrapMessage,
   parseAiTerminalExecutionResult,
   parseAiTerminalMessage,
@@ -158,6 +159,34 @@ test("buildApprovedAiTerminalInput sends only the approved command", () => {
 
   assert.equal(input, "git status\n");
   assert.doesNotMatch(input, /^cd\s+/m);
+});
+
+test("getAiTerminalMessageKey prefers stable timestamp identity over chunk-scoped message uuids", () => {
+  assert.equal(
+    getAiTerminalMessageKey({
+      type: "assistant",
+      uuid: "184237:message:0",
+      timestamp: "2026-04-17T14:42:43.911Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+      },
+    }),
+    "assistant::2026-04-17T14:42:43.911Z",
+  );
+
+  assert.equal(
+    getAiTerminalMessageKey({
+      type: "assistant",
+      uuid: "real-message-id",
+      timestamp: "2026-04-17T14:42:43.911Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+      },
+    }),
+    "real-message-id",
+  );
 });
 
 test("parseAiTerminalExecutionResult extracts exit code and cwd", () => {

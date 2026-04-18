@@ -9999,12 +9999,6 @@ export default function CodexDeckApp() {
       void syncSessionWaitState(normalizedSessionId, requestedTurnId);
     }, 400);
 
-    if (!remoteConnected) {
-      return () => {
-        clearTimeout(timer);
-      };
-    }
-
     const unsubscribe = subscribeConversationStream(
       normalizedSessionId,
       {
@@ -10032,7 +10026,6 @@ export default function CodexDeckApp() {
     handleTerminalEmbeddedMessagesBatch,
     handleTerminalEmbeddedMessagesHeartbeat,
     isPageVisible,
-    remoteConnected,
     syncSessionWaitState,
     terminalComposerSessionId,
   ]);
@@ -12458,21 +12451,15 @@ export default function CodexDeckApp() {
                       }
                       embeddedMessagesLoading={terminalEmbeddedMessagesLoading}
                       chatBusy={terminalBindingBusy}
-                      onChatInSession={() => {
-                        void handleChatInTerminalSession();
-                      }}
-                      onTerminalRestarted={handleTerminalRestarted}
-                      onFilePathLinkClick={handleFilePathLinkClick}
-                      onApproveAiTerminalStep={handleApproveAiTerminalStep}
-                      onRejectAiTerminalStep={handleRejectAiTerminalStep}
-                      onEmbeddedConversationMessages={
-                        handleTerminalEmbeddedMessagesBatch
-                      }
-                      onEmbeddedConversationHeartbeat={
-                        handleTerminalEmbeddedMessagesHeartbeat
-                      }
-                    />
-                  </div>
+                    onChatInSession={() => {
+                      void handleChatInTerminalSession();
+                    }}
+                    onTerminalRestarted={handleTerminalRestarted}
+                    onFilePathLinkClick={handleFilePathLinkClick}
+                    onApproveAiTerminalStep={handleApproveAiTerminalStep}
+                    onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                  />
+                </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-zinc-500">
                     No active terminal selected.

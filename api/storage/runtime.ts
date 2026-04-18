@@ -441,8 +441,14 @@ export interface TerminalCommandResponse {
   writeOwnerId: string | null;
 }
 
+export interface TerminalInputResponse extends TerminalCommandResponse {
+  startSeq: number;
+  startOffset: number;
+}
+
 export interface TerminalExecuteCommandResponse extends TerminalCommandResponse {
   startSeq: number;
+  startOffset: number;
   endSeq: number;
   exitCode: number | null;
   cwdAfter: string;
@@ -483,18 +489,6 @@ export interface TerminalEventsResponse {
   snapshot: TerminalSnapshotResponse | null;
 }
 
-export type TerminalSessionArtifactReference =
-  | {
-      kind: "codex-session-message";
-      sessionId: string;
-      messageKey: string;
-    }
-  | {
-      kind: "terminal-inline-output";
-      sessionId: string;
-      beforeMessageKey: string;
-    };
-
 export type TerminalSessionMessageActionDecision = "approved" | "rejected";
 
 export interface TerminalSessionMessageActionStep {
@@ -509,40 +503,46 @@ export interface TerminalSessionMessageAction {
   steps: TerminalSessionMessageActionStep[];
 }
 
-export interface TerminalSessionArtifactEntry {
-  entryId: string;
+export type TerminalSessionBlockKind = "execution" | "manual";
+
+export interface TerminalSessionBlockRecord {
+  blockId: string;
   terminalId: string;
-  type: "frozen-block";
+  sessionId: string;
+  kind: TerminalSessionBlockKind;
+  sequence: number;
   createdAt: string;
   updatedAt: string;
+  messageKey: string | null;
   stepId: string | null;
-  transcriptPath: string;
+  transcriptPath: string | null;
   transcriptLength: number;
-  reference: TerminalSessionArtifactReference;
+  action: TerminalSessionMessageAction | null;
 }
 
-export interface TerminalSessionArtifactEntryWithTranscript
-  extends TerminalSessionArtifactEntry {
-  transcript: string;
+export interface TerminalSessionBlockRecordWithTranscript
+  extends TerminalSessionBlockRecord {
+  transcript: string | null;
 }
 
 export interface TerminalSessionArtifactsManifest {
   terminalId: string;
   createdAt: string;
   updatedAt: string;
-  entries: TerminalSessionArtifactEntry[];
+  blocks: TerminalSessionBlockRecord[];
 }
 
 export interface TerminalPersistFrozenBlockRequest {
   sessionId: string;
+  kind?: TerminalSessionBlockKind | null;
   messageKey?: string | null;
-  beforeMessageKey?: string | null;
   transcript: string;
   stepId?: string | null;
+  sequence?: number | null;
 }
 
 export interface TerminalPersistFrozenBlockResponse {
-  entry: TerminalSessionArtifactEntry;
+  block: TerminalSessionBlockRecord;
 }
 
 export interface TerminalPersistMessageActionRequest {
@@ -564,10 +564,7 @@ export interface TerminalSessionArtifactsResponse {
   terminalId: string;
   sessionId: string | null;
   manifest: TerminalSessionArtifactsManifest;
-  entries: TerminalSessionArtifactEntryWithTranscript[];
-  frozenOutputByMessageKey: Record<string, string>;
-  frozenOutputByBeforeMessageKey: Record<string, string>;
-  frozenOutputsInOrder: string[];
+  blocks: TerminalSessionBlockRecordWithTranscript[];
 }
 
 export interface SessionFileTreeResponse {

@@ -774,11 +774,16 @@ export function getAiTerminalMessageKey(
     return null;
   }
   const uuid = normalizeText(message.uuid);
+  const turnId = normalizeText(message.turnId);
+  const timestamp = normalizeText(message.timestamp);
+  const syntheticChunkScopedUuid =
+    uuid !== null && /^\d+:message:\d+$/u.test(uuid);
+  if ((turnId || timestamp) && (syntheticChunkScopedUuid || !uuid)) {
+    return `${message.type}:${turnId ?? ""}:${timestamp ?? ""}`;
+  }
   if (uuid) {
     return uuid;
   }
-  const turnId = normalizeText(message.turnId);
-  const timestamp = normalizeText(message.timestamp);
   if (!turnId && !timestamp) {
     return null;
   }

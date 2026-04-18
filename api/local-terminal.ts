@@ -73,6 +73,7 @@ export interface LocalTerminalManager {
     },
   ) => Promise<{
     startSeq: number;
+    startOffset: number;
     endSeq: number;
     exitCode: number | null;
     cwdAfter: string;
@@ -104,6 +105,7 @@ interface TerminalInstanceOptions {
 
 interface TerminalCommandExecutionResult {
   startSeq: number;
+  startOffset: number;
   endSeq: number;
   exitCode: number | null;
   cwdAfter: string;
@@ -249,6 +251,7 @@ class TerminalInstance {
     );
     const promptTail = this.getPromptTail();
     const startSeq = this.seq;
+    const startOffset = this.output.length;
 
     if (!this.firstCommand && displayCommand) {
       this.firstCommand = displayCommand;
@@ -324,6 +327,7 @@ class TerminalInstance {
           }
           finish({
             startSeq,
+            startOffset,
             endSeq: this.seq,
             exitCode,
             cwdAfter: parsed.cwdAfter,

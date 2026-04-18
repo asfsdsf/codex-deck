@@ -2961,6 +2961,8 @@ test("terminal helper routes request expected endpoints", async () => {
         running: true,
         seq: 7,
         writeOwnerId: null,
+        startSeq: 6,
+        startOffset: 2,
       });
     }
 
@@ -3052,6 +3054,8 @@ test("terminal helper routes request expected endpoints", async () => {
   assert.equal(snapshot.running, true);
   assert.equal(snapshot.shell, "zsh");
   assert.equal(inputResult.seq, 7);
+  assert.equal(inputResult.startSeq, 6);
+  assert.equal(inputResult.startOffset, 2);
   assert.equal(resizeResult.seq, 8);
   assert.equal(interruptResult.seq, 9);
   assert.equal(restarted.seq, 10);
@@ -3074,13 +3078,14 @@ test("terminal helper routes request expected endpoints", async () => {
 test("terminal frozen block helper routes request expected endpoints", async () => {
   const terminalId = "terminal-1";
   const sessionId = "session-1";
+  const viewport = { cols: 120, rows: 40 };
   const calls: string[] = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${String(input)}:${init?.method ?? "GET"}`);
 
     if (
       String(input) ===
-        `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}` &&
+        `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}&cols=${viewport.cols}&rows=${viewport.rows}` &&
       init?.method !== "POST"
     ) {
       return jsonResponse({
@@ -3090,35 +3095,43 @@ test("terminal frozen block helper routes request expected endpoints", async () 
           terminalId,
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
-          entries: [],
+          blocks: [],
         },
-        frozenOutputByMessageKey: {
-          "message-1": "pwd\n/repo\n",
-        },
-        frozenOutputByBeforeMessageKey: {
-          "message-2": "prompt> pwd\n/repo\nprompt>\n",
-        },
-        frozenOutputsInOrder: ["pwd\n/repo\n"],
-        entries: [],
+        blocks: [
+          {
+            blockId: "block-1",
+            terminalId,
+            sessionId,
+            kind: "execution",
+            sequence: 1,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            messageKey: "message-1",
+            stepId: null,
+            transcriptPath: "blocks/block-1.txt",
+            transcriptLength: 10,
+            action: null,
+            transcript: "pwd\n/repo\n",
+          },
+        ],
       });
     }
 
     if (String(input) === `/api/terminals/${terminalId}/frozen-blocks`) {
       return jsonResponse({
-        entry: {
-          entryId: "entry-1",
+        block: {
+          blockId: "block-2",
           terminalId,
-          type: "frozen-block",
+          sessionId,
+          kind: "manual",
+          sequence: 2,
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
+          messageKey: "message-2",
           stepId: null,
-          transcriptPath: "blocks/entry-1.txt",
-          transcriptLength: 10,
-          reference: {
-            kind: "codex-session-message",
-            sessionId,
-            messageKey: "message-1",
-          },
+          transcriptPath: "blocks/block-2.txt",
+          transcriptLength: 25,
+          action: null,
         },
       });
     }
@@ -3145,11 +3158,13 @@ test("terminal frozen block helper routes request expected endpoints", async () 
     return jsonResponse({ error: "unexpected route" }, 404);
   };
 
-  const restored = await getTerminalFrozenBlocks(terminalId, sessionId);
+  const restored = await getTerminalFrozenBlocks(terminalId, sessionId, viewport);
   const persisted = await persistTerminalFrozenBlock(terminalId, {
     sessionId,
-    beforeMessageKey: "message-2",
+    kind: "manual",
+    messageKey: "message-2",
     transcript: "prompt> pwd\n/repo\nprompt>\n",
+    sequence: 2,
   });
   const actionPersisted = await persistTerminalMessageAction(terminalId, {
     sessionId,
@@ -3159,17 +3174,12 @@ test("terminal frozen block helper routes request expected endpoints", async () 
     reason: "Use a safer command.",
   });
 
-  assert.deepEqual(restored.frozenOutputByMessageKey, {
-    "message-1": "pwd\n/repo\n",
-  });
-  assert.deepEqual(restored.frozenOutputByBeforeMessageKey, {
-    "message-2": "prompt> pwd\n/repo\nprompt>\n",
-  });
-  assert.deepEqual(restored.frozenOutputsInOrder, ["pwd\n/repo\n"]);
-  assert.equal(persisted.entry.entryId, "entry-1");
+  assert.equal(restored.blocks[0]?.transcript, "pwd\n/repo\n");
+  assert.equal(restored.blocks[0]?.messageKey, "message-1");
+  assert.equal(persisted.block.blockId, "block-2");
   assert.equal(actionPersisted.action.steps[0]?.decision, "rejected");
   assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}:GET`,
+    `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}&cols=${viewport.cols}&rows=${viewport.rows}:GET`,
     `/api/terminals/${terminalId}/frozen-blocks:POST`,
     `/api/terminals/${terminalId}/message-action:POST`,
   ]);
@@ -3203,19 +3213,6 @@ test("runInTerminal sends command and returns incremental output", async () => {
     const path = String(input);
     calls.push(`${path}:${init?.method ?? "GET"}`);
 
-    if (path === `/api/terminals/${terminalId}`) {
-      return jsonResponse({
-        id: terminalId,
-        terminalId,
-        running: true,
-        cwd: "/repo",
-        shell: "zsh",
-        output: "$ ",
-        seq: 10,
-        writeOwnerId: null,
-      });
-    }
-
     if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
       return jsonResponse({
         ok: true,
@@ -3224,6 +3221,8 @@ test("runInTerminal sends command and returns incremental output", async () => {
         running: true,
         seq: 11,
         writeOwnerId: null,
+        startSeq: 10,
+        startOffset: 2,
       });
     }
 
@@ -3263,12 +3262,12 @@ test("runInTerminal sends command and returns incremental output", async () => {
   assert.equal(result.terminalId, terminalId);
   assert.equal(result.clientId, "client-a");
   assert.equal(result.startSeq, 10);
+  assert.equal(result.startOffset, 2);
   assert.equal(result.endSeq, 11);
   assert.equal(result.timedOut, false);
   assert.equal(result.output, "\u001b[32mpwd\u001b[0m\n/repo\n");
   assert.equal(result.rawOutput, "pwd\n/repo\n");
   assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}:GET`,
     `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
     `/api/terminals/${terminalId}/events?fromSeq=10&waitMs=2000:GET`,
     `/api/terminals/${terminalId}/events?fromSeq=11&waitMs=2000:GET`,
@@ -3282,19 +3281,6 @@ test("runInTerminal claims write when current owner blocks input", async () => {
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     calls.push(`${path}:${init?.method ?? "GET"}`);
-
-    if (path === `/api/terminals/${terminalId}`) {
-      return jsonResponse({
-        id: terminalId,
-        terminalId,
-        running: true,
-        cwd: "/repo",
-        shell: "zsh",
-        output: "$ ",
-        seq: 3,
-        writeOwnerId: "other-client",
-      });
-    }
 
     if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
       inputAttempts += 1;
@@ -3311,6 +3297,8 @@ test("runInTerminal claims write when current owner blocks input", async () => {
         running: true,
         seq: 4,
         writeOwnerId: "client-a",
+        startSeq: 3,
+        startOffset: 2,
       });
     }
 
@@ -3362,9 +3350,10 @@ test("runInTerminal claims write when current owner blocks input", async () => {
 
   assert.equal(result.output, "ok\n");
   assert.equal(result.rawOutput, "ok\n");
+  assert.equal(result.startSeq, 3);
+  assert.equal(result.startOffset, 2);
   assert.equal(inputAttempts, 2);
   assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}:GET`,
     `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
     `/api/terminals/${terminalId}/claim-write:POST`,
     `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
@@ -3399,6 +3388,7 @@ test("executeTerminalCommand claims write when current owner blocks execution", 
         seq: 9,
         writeOwnerId: "client-a",
         startSeq: 4,
+        startOffset: 2,
         endSeq: 9,
         exitCode: 0,
         cwdAfter: "/repo",
@@ -3446,6 +3436,7 @@ test("executeTerminalCommand claims write when current owner blocks execution", 
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.cwdAfter, "/repo");
+  assert.equal(result.startOffset, 2);
   assert.equal(result.rawOutput, "0 ./a\n0 ./b\n");
   assert.equal(result.timedOut, false);
   assert.deepEqual(calls, [
@@ -3464,19 +3455,6 @@ test("runInTerminal can wait for an explicit completion marker across quiet poll
     const path = String(input);
     calls.push(`${path}:${init?.method ?? "GET"}`);
 
-    if (path === `/api/terminals/${terminalId}`) {
-      return jsonResponse({
-        id: terminalId,
-        terminalId,
-        running: true,
-        cwd: "/repo",
-        shell: "zsh",
-        output: "$ ",
-        seq: 20,
-        writeOwnerId: "client-a",
-      });
-    }
-
     if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
       return jsonResponse({
         ok: true,
@@ -3485,6 +3463,8 @@ test("runInTerminal can wait for an explicit completion marker across quiet poll
         running: true,
         seq: 21,
         writeOwnerId: "client-a",
+        startSeq: 20,
+        startOffset: 2,
       });
     }
 
@@ -3539,13 +3519,13 @@ test("runInTerminal can wait for an explicit completion marker across quiet poll
   });
 
   assert.equal(result.endSeq, 22);
+  assert.equal(result.startOffset, 2);
   assert.equal(result.timedOut, false);
   assert.equal(
     result.rawOutput,
     "find . -type f\n__CODEX_DECK_AI_RESULT__ step=largest-files exit=0 cwd=/repo\n",
   );
   assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}:GET`,
     `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
     `/api/terminals/${terminalId}/events?fromSeq=20&waitMs=1000:GET`,
     `/api/terminals/${terminalId}/events?fromSeq=21&waitMs=1000:GET`,

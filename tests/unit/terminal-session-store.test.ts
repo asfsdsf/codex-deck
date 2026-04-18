@@ -12,7 +12,7 @@ import {
 } from "../../api/terminal-session-store";
 import { createTempCodexDir, waitFor } from "./test-utils";
 
-test("persistTerminalSessionFrozenBlock stores manifest and block files under codex home", async () => {
+test("persistTerminalSessionFrozenBlock stores canonical block manifest and transcript", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-persist",
   );
@@ -22,8 +22,10 @@ test("persistTerminalSessionFrozenBlock stores manifest and block files under co
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
+        kind: "execution",
         messageKey: "message-1",
         transcript: "pwd\n/repo/app\n",
+        sequence: 1,
       },
       rootDir,
     );
@@ -36,64 +38,33 @@ test("persistTerminalSessionFrozenBlock stores manifest and block files under co
       "terminal-1",
     );
     const manifestPath = join(sessionDir, "session.json");
-    const blockPath = join(sessionDir, persisted.entry.transcriptPath);
+    const blockPath = join(sessionDir, persisted.block.transcriptPath ?? "");
 
     await waitFor(() => existsSync(manifestPath) && existsSync(blockPath));
 
-    const manifestText = readFileSync(manifestPath, "utf-8");
-    const manifest = JSON.parse(manifestText) as {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
       terminalId: string;
       blocks: Array<Record<string, unknown>>;
     };
     assert.equal(manifest.terminalId, "terminal-1");
-    assert.equal(manifest.blocks.length, 2);
-    assert.deepEqual(
-      manifest.blocks.map((block) => block.type),
-      ["codex-session-message", "terminal-frozen-output"],
-    );
-    assert.deepEqual(manifest.blocks[0], {
-      blockId: `${persisted.entry.entryId}-message`,
-      type: "codex-session-message",
-      createdAt: persisted.entry.createdAt,
-      updatedAt: persisted.entry.updatedAt,
-      sessionId: "session-1",
-      messageKey: "message-1",
-      action: null,
-    });
-    assert.deepEqual(manifest.blocks[1], {
-      blockId: persisted.entry.entryId,
-      type: "terminal-frozen-output",
-      createdAt: persisted.entry.createdAt,
-      updatedAt: persisted.entry.updatedAt,
-      path: persisted.entry.transcriptPath,
-      transcriptLength: persisted.entry.transcriptLength,
-      stepId: null,
-      source: {
-        kind: "codex-session-message",
-        blockId: `${persisted.entry.entryId}-message`,
-      },
-    });
+    assert.equal(manifest.blocks.length, 1);
+    assert.equal(manifest.blocks[0]?.kind, "execution");
+    assert.equal(manifest.blocks[0]?.messageKey, "message-1");
+    assert.equal(manifest.blocks[0]?.sequence, 1);
 
     const restored = await getPersistedTerminalSessionArtifacts(
       "terminal-1",
-      {
-        sessionId: "session-1",
-      },
+      { sessionId: "session-1" },
       rootDir,
     );
-    assert.equal(restored.manifest.terminalId, "terminal-1");
-    assert.deepEqual(restored.frozenOutputByMessageKey, {
-      "message-1": "pwd\n/repo/app\n",
-    });
-    assert.deepEqual(restored.frozenOutputsInOrder, ["pwd\n/repo/app\n"]);
-    assert.equal(restored.entries.length, 1);
-    assert.equal(restored.entries[0]?.transcript, "pwd\n/repo/app\n");
+    assert.equal(restored.blocks.length, 1);
+    assert.equal(restored.blocks[0]?.transcript, "pwd\n/repo/app\n");
   } finally {
     await cleanup();
   }
 });
 
-test("persistTerminalSessionFrozenBlock updates an existing message entry instead of duplicating it", async () => {
+test("persistTerminalSessionFrozenBlock updates existing logical block instead of duplicating it", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-update",
   );
@@ -103,114 +74,73 @@ test("persistTerminalSessionFrozenBlock updates an existing message entry instea
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
+        kind: "execution",
         messageKey: "message-1",
         transcript: "first output\n",
+        sequence: 1,
       },
       rootDir,
     );
 
-    await persistTerminalSessionFrozenBlock(
+    const updated = await persistTerminalSessionFrozenBlock(
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
+        kind: "execution",
         messageKey: "message-1",
         transcript: "updated output\n",
+        sequence: 2,
       },
       rootDir,
     );
 
     const restored = await getPersistedTerminalSessionArtifacts(
       "terminal-1",
-      {
-        sessionId: "session-1",
-      },
+      { sessionId: "session-1" },
       rootDir,
     );
-    assert.equal(restored.entries.length, 1);
-    assert.deepEqual(restored.frozenOutputByMessageKey, {
-      "message-1": "updated output\n",
-    });
-
-    const manifestPath = join(
-      rootDir,
-      "codex-deck",
-      "terminal",
-      "sessions",
-      "terminal-1",
-      "session.json",
-    );
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
-      blocks: Array<Record<string, unknown>>;
-    };
-    assert.equal(manifest.blocks.length, 2);
+    assert.equal(restored.blocks.length, 1);
+    assert.equal(restored.blocks[0]?.transcript, "updated output\n");
+    assert.equal(restored.blocks[0]?.sequence, 2);
+    assert.equal(restored.blocks[0]?.blockId, updated.block.blockId);
   } finally {
     await cleanup();
   }
 });
 
-test("persistTerminalSessionFrozenBlock stores manual anchored output without a codex message source", async () => {
+test("persistTerminalSessionFrozenBlock stores manual blocks with explicit sequence", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-manual",
   );
 
   try {
-    const persisted = await persistTerminalSessionFrozenBlock(
+    await persistTerminalSessionFrozenBlock(
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        beforeMessageKey: "message-2",
+        kind: "manual",
+        messageKey: "message-2",
         transcript: "prompt> pwd\n/repo/app\nprompt>\n",
+        sequence: 3,
       },
       rootDir,
     );
-
-    const manifestPath = join(
-      rootDir,
-      "codex-deck",
-      "terminal",
-      "sessions",
-      "terminal-1",
-      "session.json",
-    );
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
-      blocks: Array<Record<string, unknown>>;
-    };
-
-    assert.equal(manifest.blocks.length, 1);
-    assert.deepEqual(manifest.blocks[0], {
-      blockId: persisted.entry.entryId,
-      type: "terminal-frozen-output",
-      createdAt: persisted.entry.createdAt,
-      updatedAt: persisted.entry.updatedAt,
-      path: persisted.entry.transcriptPath,
-      transcriptLength: persisted.entry.transcriptLength,
-      stepId: null,
-      source: {
-        kind: "terminal-inline-output",
-        sessionId: "session-1",
-        beforeMessageKey: "message-2",
-      },
-    });
 
     const restored = await getPersistedTerminalSessionArtifacts(
       "terminal-1",
-      {
-        sessionId: "session-1",
-      },
+      { sessionId: "session-1" },
       rootDir,
     );
-    assert.deepEqual(restored.frozenOutputByMessageKey, {});
-    assert.deepEqual(restored.frozenOutputByBeforeMessageKey, {
-      "message-2": "prompt> pwd\n/repo/app\nprompt>\n",
-    });
-    assert.deepEqual(restored.frozenOutputsInOrder, []);
-    assert.equal(restored.entries[0]?.reference.kind, "terminal-inline-output");
+    assert.equal(restored.blocks.length, 1);
+    assert.equal(restored.blocks[0]?.kind, "manual");
+    assert.equal(restored.blocks[0]?.messageKey, "message-2");
+    assert.equal(restored.blocks[0]?.sequence, 3);
   } finally {
     await cleanup();
   }
 });
 
-test("persistTerminalSessionMessageAction stores decisions inside the codex-session-message block", async () => {
+test("persistTerminalSessionMessageAction stores decisions on canonical execution block", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-action",
   );
@@ -239,20 +169,9 @@ test("persistTerminalSessionMessageAction stores decisions inside the codex-sess
       rootDir,
     );
 
-    const manifestPath = join(
-      rootDir,
-      "codex-deck",
-      "terminal",
-      "sessions",
-      "terminal-1",
-      "session.json",
-    );
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
-      blocks: Array<Record<string, unknown>>;
-    };
-
+    const manifest = readPersistedTerminalSessionManifestSync("terminal-1", rootDir);
     assert.equal(manifest.blocks.length, 1);
-    assert.equal(manifest.blocks[0]?.type, "codex-session-message");
+    assert.equal(manifest.blocks[0]?.kind, "execution");
     assert.deepEqual(manifest.blocks[0]?.action, {
       kind: "ai-terminal-step-actions",
       steps: [
@@ -266,11 +185,7 @@ test("persistTerminalSessionMessageAction stores decisions inside the codex-sess
           stepId: "run-tests",
           decision: "rejected",
           reason: "Use the targeted test first.",
-          updatedAt: (
-            manifest.blocks[0]?.action as {
-              steps: Array<{ updatedAt: string }>;
-            }
-          ).steps[1]?.updatedAt,
+          updatedAt: manifest.blocks[0]?.action?.steps[1]?.updatedAt,
         },
       ],
     });
@@ -279,92 +194,27 @@ test("persistTerminalSessionMessageAction stores decisions inside the codex-sess
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
+        kind: "execution",
         messageKey: "plan-message-1",
         transcript: "git status\nclean\n",
+        sequence: 1,
       },
       rootDir,
     );
 
-    const updatedManifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
-      blocks: Array<Record<string, unknown>>;
-    };
-    assert.equal(updatedManifest.blocks.length, 2);
-    assert.equal(updatedManifest.blocks[0]?.type, "codex-session-message");
-    assert.deepEqual(
-      updatedManifest.blocks[0]?.action,
-      manifest.blocks[0]?.action,
+    const updatedManifest = readPersistedTerminalSessionManifestSync(
+      "terminal-1",
+      rootDir,
     );
-    assert.equal(updatedManifest.blocks[1]?.type, "terminal-frozen-output");
+    assert.equal(updatedManifest.blocks.length, 1);
+    assert.equal(updatedManifest.blocks[0]?.transcriptPath, "blocks/" + updatedManifest.blocks[0]?.blockId + ".txt");
+    assert.equal(updatedManifest.blocks[0]?.action?.steps.length, 2);
   } finally {
     await cleanup();
   }
 });
 
-test("getPersistedTerminalSessionArtifacts restores legacy combined manifest blocks", async () => {
-  const { rootDir, cleanup } = await createTempCodexDir(
-    "terminal-session-store-legacy",
-  );
-
-  try {
-    const sessionDir = join(
-      rootDir,
-      "codex-deck",
-      "terminal",
-      "sessions",
-      "terminal-1",
-    );
-    const blocksDir = join(sessionDir, "blocks");
-    await mkdir(blocksDir, { recursive: true });
-    await writeFile(
-      join(sessionDir, "session.json"),
-      JSON.stringify(
-        {
-          terminalId: "terminal-1",
-          createdAt: "2026-04-16T09:42:18.187Z",
-          updatedAt: "2026-04-16T09:43:28.475Z",
-          blocks: [
-            {
-              blockId: "block-legacy-1",
-              type: "codex-session-block-reference",
-              createdAt: "2026-04-16T09:42:18.187Z",
-              updatedAt: "2026-04-16T09:43:28.475Z",
-              reference: {
-                kind: "codex-session-message",
-                sessionId: "session-1",
-                messageKey: "message-1",
-              },
-              frozenArtifact: {
-                kind: "terminal-frozen-output",
-                path: "blocks/block-legacy-1.txt",
-                transcriptLength: 14,
-                stepId: null,
-              },
-            },
-          ],
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    await writeFile(join(blocksDir, "block-legacy-1.txt"), "pwd\n/repo/app\n");
-
-    const restored = await getPersistedTerminalSessionArtifacts(
-      "terminal-1",
-      { sessionId: "session-1" },
-      rootDir,
-    );
-
-    assert.equal(restored.entries.length, 1);
-    assert.equal(restored.entries[0]?.entryId, "block-legacy-1");
-    assert.equal(restored.entries[0]?.reference.messageKey, "message-1");
-    assert.equal(restored.entries[0]?.transcript, "pwd\n/repo/app\n");
-  } finally {
-    await cleanup();
-  }
-});
-
-test("readPersistedTerminalSessionManifestSync restores legacy combined manifest blocks", async () => {
+test("readPersistedTerminalSessionManifestSync returns empty manifest for legacy shape", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-legacy-sync",
   );
@@ -377,37 +227,13 @@ test("readPersistedTerminalSessionManifestSync restores legacy combined manifest
       "sessions",
       "terminal-1",
     );
-    await mkdir(join(sessionDir, "blocks"), { recursive: true });
+    await mkdir(sessionDir, { recursive: true });
     await writeFile(
       join(sessionDir, "session.json"),
-      JSON.stringify(
-        {
-          terminalId: "terminal-1",
-          createdAt: "2026-04-16T09:42:18.187Z",
-          updatedAt: "2026-04-16T09:43:28.475Z",
-          blocks: [
-            {
-              blockId: "block-legacy-1",
-              type: "codex-session-block-reference",
-              createdAt: "2026-04-16T09:42:18.187Z",
-              updatedAt: "2026-04-16T09:43:28.475Z",
-              reference: {
-                kind: "codex-session-message",
-                sessionId: "session-1",
-                messageKey: "message-1",
-              },
-              frozenArtifact: {
-                kind: "terminal-frozen-output",
-                path: "blocks/block-legacy-1.txt",
-                transcriptLength: 14,
-                stepId: null,
-              },
-            },
-          ],
-        },
-        null,
-        2,
-      ),
+      JSON.stringify({
+        terminalId: "terminal-1",
+        entries: [{ entryId: "legacy-1" }],
+      }),
       "utf-8",
     );
 
@@ -415,15 +241,7 @@ test("readPersistedTerminalSessionManifestSync restores legacy combined manifest
       "terminal-1",
       rootDir,
     );
-
-    assert.equal(restored.terminalId, "terminal-1");
-    assert.equal(restored.entries.length, 1);
-    assert.equal(restored.entries[0]?.entryId, "block-legacy-1");
-    assert.deepEqual(restored.entries[0]?.reference, {
-      kind: "codex-session-message",
-      sessionId: "session-1",
-      messageKey: "message-1",
-    });
+    assert.equal(restored.blocks.length, 0);
   } finally {
     await cleanup();
   }
@@ -439,8 +257,10 @@ test("removeTerminalSessionArtifacts deletes the persisted terminal session dire
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
+        kind: "execution",
         messageKey: "message-1",
         transcript: "done\n",
+        sequence: 1,
       },
       rootDir,
     );

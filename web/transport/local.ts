@@ -1,5 +1,4 @@
 import type {
-  ConversationMessage,
   TerminalSummary,
   TerminalStreamEvent,
   WorkflowDaemonStatusResponse,
@@ -487,16 +486,6 @@ export function createLocalTransport(): WebTransport {
         options.fromSeq >= 0
           ? Math.floor(options.fromSeq)
           : 0;
-      const conversationSessionId =
-        options.conversationSessionId?.trim() || null;
-      let conversationOffset =
-        typeof options.conversationInitialOffset === "number" &&
-        Number.isFinite(options.conversationInitialOffset) &&
-        options.conversationInitialOffset > 0
-          ? Math.floor(options.conversationInitialOffset)
-          : 0;
-      let conversationBootstrapComplete = conversationOffset > 0;
-
       return createReconnectingEventSource({
         createUrl: () => {
           const params = new URLSearchParams({
@@ -504,10 +493,6 @@ export function createLocalTransport(): WebTransport {
           });
           if (options.clientId?.trim()) {
             params.set("clientId", options.clientId.trim());
-          }
-          if (conversationSessionId) {
-            params.set("conversationSessionId", conversationSessionId);
-            params.set("conversationOffset", String(conversationOffset));
           }
           return `/api/terminals/${encodeURIComponent(options.terminalId)}/stream?${params.toString()}`;
         },
@@ -519,49 +504,6 @@ export function createLocalTransport(): WebTransport {
             }
             fromSeq = event.seq;
             handlers.onEvent(event);
-          });
-          eventSource.addEventListener("conversationMessages", (event) => {
-            const payload = JSON.parse(event.data) as
-              | ConversationStreamPayload
-              | unknown[];
-            const messages = (
-              Array.isArray(payload)
-                ? payload
-                : Array.isArray(payload.messages)
-                  ? payload.messages
-                  : []
-            ) as ConversationMessage[];
-            if (
-              !Array.isArray(payload) &&
-              Number.isFinite(payload.nextOffset) &&
-              typeof payload.nextOffset === "number"
-            ) {
-              conversationOffset = Math.max(
-                conversationOffset,
-                Math.floor(payload.nextOffset),
-              );
-            }
-
-            const done =
-              Array.isArray(payload) || typeof payload.done !== "boolean"
-                ? true
-                : payload.done;
-            const phase = conversationBootstrapComplete
-              ? "incremental"
-              : "bootstrap";
-            if (done) {
-              conversationBootstrapComplete = true;
-            }
-            handlers.onConversationMessages?.(messages, {
-              messages,
-              phase,
-              nextOffset: conversationOffset,
-              done,
-              insertion: "append",
-            });
-          });
-          eventSource.addEventListener("conversationHeartbeat", () => {
-            handlers.onConversationHeartbeat?.();
           });
         },
         onDisconnect: handlers.onError,

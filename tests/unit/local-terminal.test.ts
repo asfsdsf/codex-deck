@@ -310,6 +310,7 @@ test("executeCommand streams visible output without leaking controller marker", 
     assert.equal(result.exitCode, 0);
     assert.equal(result.cwdAfter, "/repo/app");
     assert.equal(result.timedOut, false);
+    assert.equal(result.startOffset, "(base) Project/codex-deck » ".length);
     assert.equal(
       result.rawOutput,
       "0 ./node_modules/.pnpm/example-a\n0 ./node_modules/.pnpm/example-b",

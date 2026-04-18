@@ -40,7 +40,11 @@ import type {
   WorkflowControlMessageRequest,
   WorkflowBindSessionRequest,
 } from "../storage";
-import { responseStatusForError, toErrorMessage } from "./utils";
+import {
+  responseStatusForError,
+  toErrorMessage,
+  waitForAbortableTimeout,
+} from "./utils";
 
 interface WorkflowRouteDependencies {
   workflowRouteUnavailable: (headers: Headers) => boolean;
@@ -84,6 +88,7 @@ export function registerWorkflowRoutes(
 
     return streamSSE(c, async (stream) => {
       let isConnected = true;
+      const disconnectController = new AbortController();
       const knownWorkflows = new Map<string, string>();
       const workflowRegistryDir = join(
         getCodexDir(),
@@ -92,7 +97,11 @@ export function registerWorkflowRoutes(
       );
 
       const cleanup = () => {
+        if (!isConnected) {
+          return;
+        }
         isConnected = false;
+        disconnectController.abort();
         offWorkflowChange(handleWorkflowChange);
       };
 
@@ -133,7 +142,8 @@ export function registerWorkflowRoutes(
       };
 
       onWorkflowChange(handleWorkflowChange);
-      c.req.raw.signal.addEventListener("abort", cleanup);
+      stream.onAbort(cleanup);
+      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
 
       try {
         const workflows = await listWorkflows();
@@ -151,7 +161,7 @@ export function registerWorkflowRoutes(
             event: "heartbeat",
             data: JSON.stringify({ timestamp: Date.now() }),
           });
-          await stream.sleep(30000);
+          await waitForAbortableTimeout(30000, disconnectController.signal);
         }
       } catch {
         // Connection closed.
