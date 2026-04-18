@@ -612,12 +612,8 @@ export function createRemoteTransport(
       handlers: TerminalStreamHandlers,
       options: TerminalStreamSubscriptionOptions,
     ): () => void {
-      let fromSeq =
-        typeof options.fromSeq === "number" &&
-        Number.isFinite(options.fromSeq) &&
-        options.fromSeq >= 0
-          ? Math.floor(options.fromSeq)
-          : 0;
+      let fromSeq = 0;
+      let shouldBootstrap = options.bootstrap === true;
 
       return createPollingSubscription(async () => {
         try {
@@ -625,9 +621,24 @@ export function createRemoteTransport(
             fromSeq: String(fromSeq),
             waitMs: String(REMOTE_TERMINAL_EVENTS_WAIT_MS),
           });
+          if (shouldBootstrap) {
+            params.set("bootstrap", "1");
+          }
           const batch = await remoteClient.requestJson<TerminalEventsResponse>(
             `/api/terminals/${encodeURIComponent(options.terminalId)}/events?${params.toString()}`,
           );
+
+          if (shouldBootstrap && batch.bootstrap) {
+            handlers.onEvent({
+              terminalId: batch.bootstrap.snapshot.terminalId,
+              seq: batch.bootstrap.snapshot.seq,
+              type: "bootstrap",
+              snapshot: batch.bootstrap.snapshot,
+              artifacts: batch.bootstrap.artifacts,
+            });
+            fromSeq = Math.max(fromSeq, batch.bootstrap.snapshot.seq);
+            shouldBootstrap = false;
+          }
 
           if (batch.requiresReset && batch.snapshot) {
             handlers.onEvent({

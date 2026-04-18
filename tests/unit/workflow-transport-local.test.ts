@@ -3,6 +3,7 @@ import test from "node:test";
 import type {
   Session,
   TerminalSummary,
+  TerminalStreamEvent,
   WorkflowDetailResponse,
   WorkflowSummary,
 } from "@codex-deck/api";
@@ -353,7 +354,6 @@ test("local terminal stream opens a terminal-only EventSource", async () => {
       },
       {
         terminalId: "terminal-1",
-        fromSeq: 0,
       },
     );
 
@@ -362,6 +362,71 @@ test("local terminal stream opens a terminal-only EventSource", async () => {
     assert.equal(
       eventSource.url,
       "/api/terminals/terminal-1/stream?fromSeq=0",
+    );
+
+    unsubscribe();
+  } finally {
+    restoreEventSource();
+  }
+});
+
+test("local terminal stream keeps bootstrap events when seq matches fromSeq", async () => {
+  const restoreEventSource = installMockEventSource();
+  const transport = createLocalTransport();
+  const seenEvents: TerminalStreamEvent[] = [];
+
+  try {
+    const unsubscribe = transport.subscribeTerminalStream(
+      {
+        onEvent: (event) => {
+          seenEvents.push(event);
+        },
+      },
+      {
+        terminalId: "terminal-1",
+        bootstrap: true,
+      },
+    );
+
+    const eventSource = MockEventSource.instances[0];
+    assert.ok(eventSource);
+    eventSource.emit("terminal", {
+      terminalId: "terminal-1",
+      seq: 0,
+      type: "bootstrap",
+      snapshot: {
+        id: "terminal-1",
+        terminalId: "terminal-1",
+        running: false,
+        cwd: "/repo",
+        shell: "zsh",
+        output: "",
+        seq: 0,
+        writeOwnerId: null,
+      },
+      artifacts: null,
+    } satisfies TerminalStreamEvent);
+    eventSource.emit("terminal", {
+      terminalId: "terminal-1",
+      seq: 1,
+      type: "output",
+      chunk: "hello\n",
+    } satisfies TerminalStreamEvent);
+    eventSource.emit("terminal", {
+      terminalId: "terminal-1",
+      seq: 1,
+      type: "output",
+      chunk: "duplicate\n",
+    } satisfies TerminalStreamEvent);
+
+    await flushAsyncWork();
+
+    assert.deepEqual(
+      seenEvents.map((event) => ({ type: event.type, seq: event.seq })),
+      [
+        { type: "bootstrap", seq: 0 },
+        { type: "output", seq: 1 },
+      ],
     );
 
     unsubscribe();

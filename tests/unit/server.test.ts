@@ -2858,6 +2858,7 @@ test("terminal routes return snapshot, control responses, and stream events", as
       events: [{ terminalId, seq: 2, type: "output", chunk: "history\\n" }],
       requiresReset: false,
       snapshot: null,
+      bootstrap: null,
     });
 
     const resetBatch = await requestJson(
@@ -2878,6 +2879,7 @@ test("terminal routes return snapshot, control responses, and stream events", as
         seq,
         writeOwnerId,
       },
+      bootstrap: null,
     });
 
     const claimResponse = await requestJson(
@@ -3265,11 +3267,41 @@ test("terminal frozen block routes derive and persist artifacts under codex home
     assert.equal(initialRestored.status, 200);
     const initialBlocks =
       (initialRestored.body as { blocks?: Array<{ messageKey?: string | null; transcript?: string | null; kind?: string }> }).blocks ?? [];
+    const initialTimelineEntries =
+      (initialRestored.body as {
+        timelineEntries?: Array<
+          | { type?: "output"; text?: string }
+          | { type?: "card"; messageKey?: string }
+        >;
+      }).timelineEntries ?? [];
     const planBlock =
       initialBlocks.find((block) => block.kind === "manual") ?? null;
     const planMessageKey = planBlock?.messageKey ?? null;
     assert.ok(planMessageKey);
     assert.equal(planBlock?.transcript, "plan-output");
+    assert.deepEqual(
+      initialTimelineEntries.map((entry) =>
+        entry.type === "output"
+          ? {
+              type: entry.type,
+              text: entry.text,
+            }
+          : {
+              type: entry.type,
+              messageKey: entry.messageKey,
+            },
+      ),
+      [
+        {
+          type: "output",
+          text: "plan-output",
+        },
+        {
+          type: "card",
+          messageKey: planMessageKey,
+        },
+      ],
+    );
 
     const manifestPath = join(
       rootDir,
@@ -3311,6 +3343,13 @@ test("terminal frozen block routes derive and persist artifacts under codex home
           sequence?: number;
         }>;
       }).blocks ?? [];
+    const restoredTimelineEntries =
+      (restored.body as {
+        timelineEntries?: Array<
+          | { type?: "output"; text?: string }
+          | { type?: "card"; messageKey?: string }
+        >;
+      }).timelineEntries ?? [];
     const completionBlock =
       restoredBlocks.find((block) => block.kind === "execution") ?? null;
     const completionMessageKey = completionBlock?.messageKey ?? null;
@@ -3335,6 +3374,37 @@ test("terminal frozen block routes derive and persist artifacts under codex home
           messageKey: completionMessageKey,
           transcript: "final-output",
           sequence: 2,
+        },
+      ],
+    );
+    assert.deepEqual(
+      restoredTimelineEntries.map((entry) =>
+        entry.type === "output"
+          ? {
+              type: entry.type,
+              text: entry.text,
+            }
+          : {
+              type: entry.type,
+              messageKey: entry.messageKey,
+            },
+      ),
+      [
+        {
+          type: "output",
+          text: "plan-output",
+        },
+        {
+          type: "card",
+          messageKey: planMessageKey,
+        },
+        {
+          type: "output",
+          text: "final-output",
+        },
+        {
+          type: "card",
+          messageKey: completionMessageKey,
         },
       ],
     );

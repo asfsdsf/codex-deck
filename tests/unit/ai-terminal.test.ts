@@ -6,13 +6,11 @@ import {
   buildApprovedAiTerminalInput,
   buildAiTerminalEnvironment,
   buildAiTerminalExecutionFeedback,
-  buildAiTerminalExecutionWrapper,
   buildAiTerminalRejectionFeedback,
   buildAiTerminalTurnPrompt,
   deriveAiTerminalStepStatesByMessageKey,
   getAiTerminalMessageKey,
   parseAiTerminalBootstrapMessage,
-  parseAiTerminalExecutionResult,
   parseAiTerminalMessage,
   parseAiTerminalPersistedStepState,
   parseAiTerminalUserFeedback,
@@ -139,19 +137,6 @@ test("buildAiTerminalTurnPrompt includes live environment facts", () => {
   assert.match(prompt, /<ai-terminal-context>|<ai_terminal_context>/);
 });
 
-test("buildAiTerminalExecutionWrapper appends controller marker and optional cwd change", () => {
-  const wrapped = buildAiTerminalExecutionWrapper({
-    command: "pwd",
-    stepId: "step-7",
-    cwd: "/repo",
-  });
-
-  assert.match(wrapped, /cd '\/repo'/);
-  assert.match(wrapped, /pwd/);
-  assert.match(wrapped, /__CODEX_DECK_AI_RESULT__/);
-  assert.match(wrapped, /step-7/);
-});
-
 test("buildApprovedAiTerminalInput sends only the approved command", () => {
   const input = buildApprovedAiTerminalInput({
     command: "git status",
@@ -186,47 +171,6 @@ test("getAiTerminalMessageKey prefers stable timestamp identity over chunk-scope
       },
     }),
     "real-message-id",
-  );
-});
-
-test("parseAiTerminalExecutionResult extracts exit code and cwd", () => {
-  const result = parseAiTerminalExecutionResult({
-    stepId: "step-2",
-    rawOutput:
-      "pwd\n/repo\n__CODEX_DECK_AI_RESULT__ step=step-2 exit=0 cwd=/repo\n",
-    timedOut: false,
-    fallbackCwd: "/fallback",
-  });
-
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.cwdAfter, "/repo");
-  assert.equal(result.markerFound, true);
-  assert.match(result.outputSummary, /pwd/);
-});
-
-test("parseAiTerminalExecutionResult strips terminal prompt noise around wrapped output", () => {
-  const result = parseAiTerminalExecutionResult({
-    stepId: "largest-files",
-    rawOutput: [
-      "\u001b[1m\u001b[7m%\u001b[27m\u001b[1m\u001b[0m",
-      'g\bgit ls-files -z | xargs -0 stat -f "%z %N" | sort -nr | head -n 5',
-      "3164935 docs/img/blocks/stacked/all-stacked-vertical.png",
-      "\r(base) Project/codex-deck » ",
-      "__CODEX_DECK_AI_RESULT__ step=largest-files exit=0 cwd=/repo",
-    ].join("\n"),
-    timedOut: false,
-    fallbackCwd: "/fallback",
-  });
-
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.cwdAfter, "/repo");
-  assert.equal(result.markerFound, true);
-  assert.equal(result.rawOutput.includes("\n%\n"), false);
-  assert.equal(result.rawOutput.includes("Project/codex-deck »"), false);
-  assert.match(result.outputSummary, /git ls-files -z/);
-  assert.match(
-    result.outputSummary,
-    /docs\/img\/blocks\/stacked\/all-stacked-vertical\.png/,
   );
 });
 

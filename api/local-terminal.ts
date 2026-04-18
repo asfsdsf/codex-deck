@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import type {
   TerminalSnapshotResponse,
+  TerminalSessionArtifactsResponse,
   TerminalStreamEvent,
   TerminalSummary,
 } from "./storage";
@@ -28,12 +29,12 @@ const TERMINAL_EXECUTION_RESULT_MARKER_PREFIX =
 
 type TerminalListener = (event: TerminalStreamEvent) => void;
 type TerminalSummaryListener = (terminals: TerminalSummary[]) => void;
-type TerminalEventWithoutSeq = {
-  [K in TerminalStreamEvent["type"]]: Omit<
-    Extract<TerminalStreamEvent, { type: K }>,
-    "seq"
-  >;
-}[TerminalStreamEvent["type"]];
+type TerminalEventWithoutSeq =
+  | Omit<Extract<TerminalStreamEvent, { type: "output" }>, "seq">
+  | Omit<Extract<TerminalStreamEvent, { type: "state" }>, "seq">
+  | Omit<Extract<TerminalStreamEvent, { type: "reset" }>, "seq">
+  | Omit<Extract<TerminalStreamEvent, { type: "ownership" }>, "seq">
+  | Omit<Extract<TerminalStreamEvent, { type: "artifacts" }>, "seq">;
 
 export interface LocalTerminalEventBatch {
   events: TerminalStreamEvent[];
@@ -63,6 +64,10 @@ export interface LocalTerminalManager {
   claimWrite: (terminalId: string, clientId: string) => void;
   releaseWrite: (terminalId: string, clientId: string) => void;
   isWriteOwner: (terminalId: string, clientId: string) => boolean;
+  publishArtifacts: (
+    terminalId: string,
+    artifacts: TerminalSessionArtifactsResponse,
+  ) => void;
   executeCommand: (
     terminalId: string,
     input: {
@@ -417,6 +422,14 @@ class TerminalInstance {
     return this.writeOwnerId === clientId;
   }
 
+  public publishArtifacts(artifacts: TerminalSessionArtifactsResponse): void {
+    this.publish({
+      terminalId: this.terminalId,
+      type: "artifacts",
+      artifacts,
+    });
+  }
+
   public async dispose(): Promise<void> {
     this.removed = true;
     this.listeners.clear();
@@ -669,6 +682,13 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
 
   public isWriteOwner(terminalId: string, clientId: string): boolean {
     return this.terminals.get(terminalId)?.isWriteOwner(clientId) ?? false;
+  }
+
+  public publishArtifacts(
+    terminalId: string,
+    artifacts: TerminalSessionArtifactsResponse,
+  ): void {
+    this.terminals.get(terminalId)?.publishArtifacts(artifacts);
   }
 
   public executeCommand(

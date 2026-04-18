@@ -1,13 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildTerminalTimeline,
+  buildTerminalTimelineEntries,
   sanitizeTerminalTranscriptChunk,
-} from "../../web/terminal-timeline";
+} from "../../api/terminal-transcript";
 
-test("buildTerminalTimeline renders ordered blocks before their cards", () => {
-  const timeline = buildTerminalTimeline({
-    output: "prompt> ",
+test("buildTerminalTimelineEntries renders ordered blocks before their cards", () => {
+  const entries = buildTerminalTimelineEntries({
     messageKeys: ["plan", "complete"],
     blocks: [
       {
@@ -44,17 +43,15 @@ test("buildTerminalTimeline renders ordered blocks before their cards", () => {
   });
 
   assert.deepEqual(
-    timeline.entries.map((entry) =>
+    entries.map((entry) =>
       entry.type === "card" ? entry.messageKey : entry.text,
     ),
     ["plan-output", "plan", "final-output", "complete"],
   );
-  assert.equal(timeline.liveOutput, "prompt> ");
 });
 
-test("buildTerminalTimeline appends standalone manual blocks after message-bound cards", () => {
-  const timeline = buildTerminalTimeline({
-    output: "",
+test("buildTerminalTimelineEntries appends standalone manual blocks after message-bound cards", () => {
+  const entries = buildTerminalTimelineEntries({
     messageKeys: ["plan"],
     blocks: [
       {
@@ -76,14 +73,14 @@ test("buildTerminalTimeline appends standalone manual blocks after message-bound
   });
 
   assert.deepEqual(
-    timeline.entries.map((entry) =>
+    entries.map((entry) =>
       entry.type === "card" ? entry.messageKey : entry.text,
     ),
     ["plan", "saved!"],
   );
 });
 
-test("sanitizeTerminalTranscriptChunk strips control sequences and internal helper lines", () => {
+test("sanitizeTerminalTranscriptChunk strips control sequences but preserves literal marker text", () => {
   const raw = [
     "\u001b]2;title\u0007",
     "__CODEX_DECK_AI_EXIT_CODE=$?",
@@ -95,9 +92,9 @@ test("sanitizeTerminalTranscriptChunk strips control sequences and internal help
 
   const sanitized = sanitizeTerminalTranscriptChunk(raw);
 
-  assert.equal(sanitized.includes("__CODEX_DECK_AI_EXIT_CODE"), false);
-  assert.equal(sanitized.includes("__CODEX_DECK_AI_CWD"), false);
-  assert.equal(sanitized.includes("__CODEX_DECK_AI_RESULT__"), false);
+  assert.equal(sanitized.includes("__CODEX_DECK_AI_EXIT_CODE"), true);
+  assert.equal(sanitized.includes("__CODEX_DECK_AI_CWD"), true);
+  assert.equal(sanitized.includes("__CODEX_DECK_AI_RESULT__"), true);
   assert.match(sanitized, /ls -la/);
   assert.match(sanitized, /README\.md/);
 });

@@ -123,9 +123,8 @@ export function AiTerminalExecutionBlock(
         setError: (message) => {
           setError(message);
         },
-        claimWriteIfUnowned: claimWrite,
       }),
-    [claimWrite, execution.terminalId],
+    [execution.terminalId],
   );
 
   useEffect(() => {
@@ -144,11 +143,13 @@ export function AiTerminalExecutionBlock(
         terminalId: execution.terminalId,
         clientId: clientIdRef.current,
         isDisposed: () => isDisposedRef.current,
-        onSnapshot: (snapshot) => {
-          seqRef.current = snapshot.seq;
-          writeOwnerIdRef.current = snapshot.writeOwnerId;
-          setWriteOwnerId(snapshot.writeOwnerId);
-          updateDisplayOutput(snapshot.output.slice(execution.startOffset));
+        onBootstrap: (event) => {
+          seqRef.current = event.snapshot.seq;
+          writeOwnerIdRef.current = event.snapshot.writeOwnerId;
+          setWriteOwnerId(event.snapshot.writeOwnerId);
+          updateDisplayOutput(
+            event.snapshot.output.slice(execution.startOffset),
+          );
         },
         onEvent: (event) => {
           if (event.seq <= seqRef.current) {

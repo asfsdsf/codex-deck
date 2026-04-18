@@ -64,7 +64,7 @@ export interface WorkflowDetailStreamHandlers {
 }
 
 export interface TerminalStreamSubscriptionOptions {
-  fromSeq?: number;
+  bootstrap?: boolean;
   clientId?: string;
   terminalId: string;
 }
@@ -88,7 +88,7 @@ export interface WebTransport {
   ) => () => void;
   subscribeTerminalStream: (
     handlers: TerminalStreamHandlers,
-    options?: TerminalStreamSubscriptionOptions,
+    options: TerminalStreamSubscriptionOptions,
   ) => () => void;
   notifyConversationMutation?: (sessionId: string) => void;
   notifyWorkflowMutation?: (workflowKey?: string | null) => void;

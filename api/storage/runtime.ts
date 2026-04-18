@@ -456,7 +456,19 @@ export interface TerminalExecuteCommandResponse extends TerminalCommandResponse 
   timedOut: boolean;
 }
 
+export interface TerminalBootstrapPayload {
+  snapshot: TerminalSnapshotResponse;
+  artifacts: TerminalSessionArtifactsResponse | null;
+}
+
 export type TerminalStreamEvent =
+  | {
+      terminalId: string;
+      seq: number;
+      type: "bootstrap";
+      snapshot: TerminalSnapshotResponse;
+      artifacts: TerminalSessionArtifactsResponse | null;
+    }
   | {
       terminalId: string;
       seq: number;
@@ -481,12 +493,19 @@ export type TerminalStreamEvent =
       seq: number;
       type: "ownership";
       writeOwnerId: string | null;
+    }
+  | {
+      terminalId: string;
+      seq: number;
+      type: "artifacts";
+      artifacts: TerminalSessionArtifactsResponse;
     };
 
 export interface TerminalEventsResponse {
   events: TerminalStreamEvent[];
   requiresReset: boolean;
   snapshot: TerminalSnapshotResponse | null;
+  bootstrap: TerminalBootstrapPayload | null;
 }
 
 export type TerminalSessionMessageActionDecision = "approved" | "rejected";
@@ -532,6 +551,18 @@ export interface TerminalSessionArtifactsManifest {
   blocks: TerminalSessionBlockRecord[];
 }
 
+export type TerminalTimelineEntry =
+  | {
+      type: "output";
+      key: string;
+      text: string;
+    }
+  | {
+      type: "card";
+      key: string;
+      messageKey: string;
+    };
+
 export interface TerminalPersistFrozenBlockRequest {
   sessionId: string;
   kind?: TerminalSessionBlockKind | null;
@@ -565,6 +596,7 @@ export interface TerminalSessionArtifactsResponse {
   sessionId: string | null;
   manifest: TerminalSessionArtifactsManifest;
   blocks: TerminalSessionBlockRecordWithTranscript[];
+  timelineEntries: TerminalTimelineEntry[];
 }
 
 export interface SessionFileTreeResponse {

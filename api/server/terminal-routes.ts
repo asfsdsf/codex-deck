@@ -16,9 +16,12 @@ import {
   removeTerminalSessionArtifacts,
 } from "../terminal-session-store";
 import {
+  buildEmptyTerminalSessionArtifacts,
   clearTerminalSessionSyncState,
   syncTerminalSessionArtifacts,
+  syncTrackedTerminalSessionArtifacts,
 } from "../terminal-session-sync";
+import { onSessionChange } from "../watcher";
 import type {
   CreateTerminalRequest,
   TerminalBindSessionRequest,
@@ -51,6 +54,101 @@ import {
   toErrorMessage,
   waitForAbortableTimeout,
 } from "./utils";
+
+let terminalArtifactWatchersInstalled = false;
+
+async function loadTerminalArtifacts(
+  terminalId: string,
+): Promise<TerminalSessionArtifactsResponse | null> {
+  const binding = await getTerminalBinding(terminalId);
+  const sessionId = binding.boundSessionId?.trim() ?? "";
+  if (!sessionId) {
+    return null;
+  }
+
+  const manager = getLocalTerminalManager();
+  const snapshot = manager.getSnapshot(terminalId);
+  if (!snapshot) {
+    return null;
+  }
+
+  return syncTerminalSessionArtifacts({
+    terminalId,
+    sessionId,
+    output: snapshot.output,
+  });
+}
+
+async function publishTerminalArtifactsForBinding(
+  terminalId: string,
+): Promise<void> {
+  const manager = getLocalTerminalManager();
+  if (!manager.getSnapshot(terminalId)) {
+    return;
+  }
+
+  const binding = await getTerminalBinding(terminalId);
+  const sessionId = binding.boundSessionId?.trim() ?? "";
+  if (!sessionId) {
+    clearTerminalSessionSyncState(terminalId);
+    manager.publishArtifacts(
+      terminalId,
+      buildEmptyTerminalSessionArtifacts(terminalId),
+    );
+    return;
+  }
+
+  const snapshot = manager.getSnapshot(terminalId);
+  if (!snapshot) {
+    return;
+  }
+
+  const result = await syncTrackedTerminalSessionArtifacts({
+    terminalId,
+    sessionId,
+    output: snapshot.output,
+  });
+  if (result.changed) {
+    manager.publishArtifacts(terminalId, result.artifacts);
+  }
+}
+
+function ensureTerminalArtifactWatchers(): void {
+  if (terminalArtifactWatchersInstalled) {
+    return;
+  }
+  terminalArtifactWatchersInstalled = true;
+
+  onSessionChange((sessionId) => {
+    void (async () => {
+      const manager = getLocalTerminalManager();
+      const terminals = manager.listTerminals();
+      if (terminals.length === 0) {
+        return;
+      }
+      const bindings = await getTerminalBindingsByTerminalIds(
+        terminals.map((terminal) => terminal.terminalId),
+      );
+      await Promise.all(
+        terminals.map(async (terminal) => {
+          if (bindings[terminal.terminalId] !== sessionId) {
+            return;
+          }
+          await publishTerminalArtifactsForBinding(terminal.terminalId);
+        }),
+      );
+    })().catch(() => {});
+  });
+
+  onTerminalBindingChange(() => {
+    const manager = getLocalTerminalManager();
+    for (const terminal of manager.listTerminals()) {
+      void publishTerminalArtifactsForBinding(terminal.terminalId).catch(
+        () => {},
+      );
+    }
+  });
+}
 
 function toTerminalCommandResponse(
   terminalId: string,
@@ -86,6 +184,8 @@ async function withTerminalBindings(
 }
 
 export function registerTerminalRoutes(app: Hono): void {
+  ensureTerminalArtifactWatchers();
+
   app.get("/api/terminals", async (c) => {
     try {
       const manager = getLocalTerminalManager();
@@ -248,18 +348,20 @@ export function registerTerminalRoutes(app: Hono): void {
       }
 
       return c.json(
-        (await syncTerminalSessionArtifacts({
-          terminalId,
-          sessionId,
-          output: snapshot.output,
-          viewport:
-            cols !== null && rows !== null
-              ? {
-                  cols,
-                  rows,
-                }
-              : null,
-        })) satisfies TerminalSessionArtifactsResponse,
+        (
+          await syncTrackedTerminalSessionArtifacts({
+            terminalId,
+            sessionId,
+            output: snapshot.output,
+            viewport:
+              cols !== null && rows !== null
+                ? {
+                    cols,
+                    rows,
+                  }
+                : null,
+          })
+        ).artifacts satisfies TerminalSessionArtifactsResponse,
       );
     } catch (error) {
       return c.json(
@@ -333,8 +435,7 @@ export function registerTerminalRoutes(app: Hono): void {
         return c.json({ error: "stepId must be a string or null" }, 400);
       }
 
-      return c.json(
-        (await persistTerminalSessionFrozenBlock({
+      const response = await persistTerminalSessionFrozenBlock({
           terminalId,
           sessionId,
           kind,
@@ -342,8 +443,9 @@ export function registerTerminalRoutes(app: Hono): void {
           transcript,
           stepId,
           sequence,
-        })) satisfies TerminalPersistFrozenBlockResponse,
-      );
+        });
+      void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
+      return c.json(response satisfies TerminalPersistFrozenBlockResponse);
     } catch (error) {
       return c.json(
         { error: toErrorMessage(error) },
@@ -394,16 +496,16 @@ export function registerTerminalRoutes(app: Hono): void {
         return c.json({ error: "reason must be a string or null" }, 400);
       }
 
-      return c.json(
-        (await persistTerminalSessionMessageAction({
+      const response = await persistTerminalSessionMessageAction({
           terminalId,
           sessionId,
           messageKey,
           stepId,
           decision,
           reason,
-        })) satisfies TerminalPersistMessageActionResponse,
-      );
+        });
+      void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
+      return c.json(response satisfies TerminalPersistMessageActionResponse);
     } catch (error) {
       return c.json(
         { error: toErrorMessage(error) },
@@ -440,6 +542,7 @@ export function registerTerminalRoutes(app: Hono): void {
         terminalId,
         typeof rawSessionId === "string" ? rawSessionId : null,
       );
+      void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
       if (!binding.boundSessionId) {
         const snapshot = manager.getSnapshot(terminalId);
         if (snapshot && !snapshot.running) {
@@ -515,7 +618,11 @@ export function registerTerminalRoutes(app: Hono): void {
       if (!snapshot) {
         return c.json({ error: "terminal not found" }, 404);
       }
-      const currentOwner = manager.getWriteOwnerId(terminalId);
+      let currentOwner = manager.getWriteOwnerId(terminalId);
+      if (!currentOwner && clientId?.trim()) {
+        manager.claimWrite(terminalId, clientId.trim());
+        currentOwner = manager.getWriteOwnerId(terminalId);
+      }
       if (currentOwner && clientId !== currentOwner) {
         return c.json({ error: "another client owns terminal write" }, 403);
       }
@@ -579,18 +686,30 @@ export function registerTerminalRoutes(app: Hono): void {
       if (!snapshot) {
         return c.json({ error: "terminal not found" }, 404);
       }
-      const currentOwner = manager.getWriteOwnerId(terminalId);
+      let autoClaimedWrite = false;
+      let currentOwner = manager.getWriteOwnerId(terminalId);
+      if (!currentOwner && clientId?.trim()) {
+        manager.claimWrite(terminalId, clientId.trim());
+        currentOwner = manager.getWriteOwnerId(terminalId);
+        autoClaimedWrite = currentOwner === clientId.trim();
+      }
       if (currentOwner && clientId !== currentOwner) {
         return c.json({ error: "another client owns terminal write" }, 403);
       }
 
-      const result = await manager.executeCommand(terminalId, {
-        command: body.command,
-        cwd: body.cwd,
-        timeoutMs:
-          typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
-        displayCommand: body.displayCommand,
-      });
+      const result = await manager
+        .executeCommand(terminalId, {
+          command: body.command,
+          cwd: body.cwd,
+          timeoutMs:
+            typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
+          displayCommand: body.displayCommand,
+        })
+        .finally(() => {
+          if (autoClaimedWrite && clientId?.trim()) {
+            manager.releaseWrite(terminalId, clientId.trim());
+          }
+        });
       if (!result) {
         return c.json({ error: "terminal not found" }, 404);
       }
@@ -783,6 +902,7 @@ export function registerTerminalRoutes(app: Hono): void {
       return c.json({ error: "waitMs must be a non-negative integer" }, 400);
     }
     const waitMs = Math.min(parsedWaitMs ?? 0, MAX_LONG_POLL_WAIT_MS);
+    const includeBootstrap = c.req.query("bootstrap") === "1";
 
     try {
       const manager = getLocalTerminalManager();
@@ -853,6 +973,12 @@ export function registerTerminalRoutes(app: Hono): void {
         snapshot: eventBatch.requiresReset
           ? manager.getSnapshot(terminalId)
           : null,
+        bootstrap: includeBootstrap
+          ? {
+              snapshot: manager.getSnapshot(terminalId)!,
+              artifacts: await loadTerminalArtifacts(terminalId),
+            }
+          : null,
       } satisfies TerminalEventsResponse);
     } catch (error) {
       return c.json(
@@ -869,6 +995,7 @@ export function registerTerminalRoutes(app: Hono): void {
     if (fromSeqRaw !== undefined && fromSeq === null) {
       return c.json({ error: "fromSeq must be a non-negative integer" }, 400);
     }
+    const includeBootstrap = c.req.query("bootstrap") === "1";
 
     const streamClientId = c.req.query("clientId") ?? null;
 
@@ -914,6 +1041,23 @@ export function registerTerminalRoutes(app: Hono): void {
       if (!eventBatch) {
         cleanup();
         return;
+      }
+      if (includeBootstrap) {
+        const snapshot = manager.getSnapshot(terminalId);
+        if (!snapshot) {
+          cleanup();
+          return;
+        }
+        await writeTerminalEvent({
+          terminalId,
+          seq: snapshot.seq,
+          type: "bootstrap",
+          snapshot,
+          artifacts: await loadTerminalArtifacts(terminalId),
+        });
+        if (!isConnected) {
+          return;
+        }
       }
       if (eventBatch.requiresReset) {
         const snapshot = manager.getSnapshot(terminalId);

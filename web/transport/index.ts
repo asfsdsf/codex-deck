@@ -87,7 +87,7 @@ export function subscribeTerminalsStream(
 
 export function subscribeTerminalStream(
   handlers: TerminalStreamHandlers,
-  options: TerminalStreamSubscriptionOptions = {},
+  options: TerminalStreamSubscriptionOptions,
 ): () => void {
   return getTransport().subscribeTerminalStream(handlers, options);
 }

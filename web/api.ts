@@ -1431,35 +1431,16 @@ export async function executeTerminalCommand(
 ): Promise<TerminalExecuteCommandResponse> {
   const resolvedClientId = clientId?.trim() || getRunInTerminalClientId();
   const params = `?clientId=${encodeURIComponent(resolvedClientId)}`;
-
-  const sendRequest = () =>
-    requestJson<TerminalExecuteCommandResponse>(
-      `/api/terminals/${encodeURIComponent(terminalId)}/execute${params}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input),
+  return requestJson<TerminalExecuteCommandResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/execute${params}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
-
-  let claimedWrite = false;
-  try {
-    return await sendRequest();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.toLowerCase().includes("owns terminal write")) {
-      throw error;
-    }
-    await claimTerminalWrite(terminalId, resolvedClientId);
-    claimedWrite = true;
-    return await sendRequest();
-  } finally {
-    if (claimedWrite) {
-      void releaseTerminalWrite(terminalId, resolvedClientId).catch(() => {});
-    }
-  }
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export async function resizeTerminal(

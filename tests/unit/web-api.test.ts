@@ -386,6 +386,19 @@ function mockRemoteTerminalEventRequests(
       writeOwnerId?: string | null;
     }>;
     requiresReset: boolean;
+    bootstrap?: {
+      snapshot: {
+        id?: string;
+        terminalId?: string;
+        running: boolean;
+        cwd: string;
+        shell: string;
+        output: string;
+        seq: number;
+        writeOwnerId: string | null;
+      };
+      artifacts: null;
+    } | null;
     snapshot: {
       id?: string;
       terminalId?: string;
@@ -419,6 +432,7 @@ function mockRemoteTerminalEventRequests(
     ] ?? {
       events: [],
       requiresReset: false,
+      bootstrap: null,
       snapshot: null,
     };
     requestIndex += 1;
@@ -2833,12 +2847,25 @@ test("subscribeConversationStream drains multiple chunks in one poll", async () 
   }
 });
 
-test("subscribeTerminalStream replays remote terminal events and reset snapshots", async () => {
+test("subscribeTerminalStream replays remote terminal bootstrap and incremental events", async () => {
   const terminalId = "terminal-1";
   const timerController = new ManualTimerController();
   const restoreTimers = timerController.install();
   const restoreRemoteClient = mockRemoteTerminalEventRequests(terminalId, [
     {
+      bootstrap: {
+        snapshot: {
+          id: terminalId,
+          terminalId,
+          running: true,
+          cwd: "/repo",
+          shell: "zsh",
+          output: "prompt> ",
+          seq: 7,
+          writeOwnerId: null,
+        },
+        artifacts: null,
+      },
       events: [{ terminalId, seq: 8, type: "output", chunk: "hello\n" }],
       requiresReset: false,
       snapshot: null,
@@ -2867,14 +2894,18 @@ test("subscribeTerminalStream replays remote terminal events and reset snapshots
           events.push({ type: event.type, seq: event.seq });
         },
       },
-      { fromSeq: 7, terminalId },
+      { terminalId, bootstrap: true },
     );
 
     await flushAsyncWork();
-    assert.deepEqual(events, [{ type: "output", seq: 8 }]);
+    assert.deepEqual(events, [
+      { type: "bootstrap", seq: 7 },
+      { type: "output", seq: 8 },
+    ]);
 
     await timerController.runNext();
     assert.deepEqual(events, [
+      { type: "bootstrap", seq: 7 },
       { type: "output", seq: 8 },
       { type: "reset", seq: 12 },
       { type: "ownership", seq: 12 },
@@ -3114,6 +3145,18 @@ test("terminal frozen block helper routes request expected endpoints", async () 
             transcript: "pwd\n/repo\n",
           },
         ],
+        timelineEntries: [
+          {
+            type: "output",
+            key: "block:block-1",
+            text: "pwd\n/repo\n",
+          },
+          {
+            type: "card",
+            key: "card:message-1",
+            messageKey: "message-1",
+          },
+        ],
       });
     }
 
@@ -3176,6 +3219,18 @@ test("terminal frozen block helper routes request expected endpoints", async () 
 
   assert.equal(restored.blocks[0]?.transcript, "pwd\n/repo\n");
   assert.equal(restored.blocks[0]?.messageKey, "message-1");
+  assert.deepEqual(restored.timelineEntries, [
+    {
+      type: "output",
+      key: "block:block-1",
+      text: "pwd\n/repo\n",
+    },
+    {
+      type: "card",
+      key: "card:message-1",
+      messageKey: "message-1",
+    },
+  ]);
   assert.equal(persisted.block.blockId, "block-2");
   assert.equal(actionPersisted.action.steps[0]?.decision, "rejected");
   assert.deepEqual(calls, [
@@ -3363,23 +3418,15 @@ test("runInTerminal claims write when current owner blocks input", async () => {
   ]);
 });
 
-test("executeTerminalCommand claims write when current owner blocks execution", async () => {
+test("executeTerminalCommand delegates unowned-write handling to the backend", async () => {
   const terminalId = "terminal-1";
   const calls: string[] = [];
-  let executeAttempts = 0;
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     calls.push(`${path}:${init?.method ?? "GET"}`);
 
     if (path.includes(`/api/terminals/${terminalId}/execute?clientId=`)) {
-      executeAttempts += 1;
-      if (executeAttempts === 1) {
-        return jsonResponse(
-          { error: "another client owns terminal write" },
-          403,
-        );
-      }
       return jsonResponse({
         ok: true,
         id: terminalId,
@@ -3394,28 +3441,6 @@ test("executeTerminalCommand claims write when current owner blocks execution", 
         cwdAfter: "/repo",
         rawOutput: "0 ./a\n0 ./b\n",
         timedOut: false,
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/claim-write`) {
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 5,
-        writeOwnerId: "client-a",
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/release-write`) {
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 9,
-        writeOwnerId: null,
       });
     }
 
@@ -3441,9 +3466,6 @@ test("executeTerminalCommand claims write when current owner blocks execution", 
   assert.equal(result.timedOut, false);
   assert.deepEqual(calls, [
     `/api/terminals/${terminalId}/execute?clientId=client-a:POST`,
-    `/api/terminals/${terminalId}/claim-write:POST`,
-    `/api/terminals/${terminalId}/execute?clientId=client-a:POST`,
-    `/api/terminals/${terminalId}/release-write:POST`,
   ]);
 });
 

@@ -1,12 +1,5 @@
-import type {
-  TerminalSnapshotResponse,
-  TerminalStreamEvent,
-} from "@codex-deck/api";
-import {
-  getTerminalSnapshot,
-  sendTerminalInput,
-  subscribeTerminalStream,
-} from "./api";
+import type { TerminalStreamEvent } from "@codex-deck/api";
+import { sendTerminalInput, subscribeTerminalStream } from "./api";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -50,7 +43,6 @@ interface BufferedTerminalInputControllerInput {
   getWriteOwnerId: () => string | null;
   setError: (message: string) => void;
   onReadOnlyAttempt?: () => void;
-  claimWriteIfUnowned?: () => Promise<void>;
   sendInput?: typeof sendTerminalInput;
 }
 
@@ -64,44 +56,10 @@ export function createBufferedTerminalInputController(
   input: BufferedTerminalInputControllerInput,
 ): BufferedTerminalInputController {
   const sendInput = input.sendInput ?? sendTerminalInput;
-  let bufferedInput = "";
-  let flushPromise: Promise<void> | null = null;
+  let sendQueue = Promise.resolve();
 
   const flush = async () => {
-    if (flushPromise) {
-      return flushPromise;
-    }
-
-    flushPromise = (async () => {
-      while (bufferedInput.length > 0 && !input.isDisposed()) {
-        const writeOwnerId = input.getWriteOwnerId();
-        if (writeOwnerId !== input.clientId) {
-          if (writeOwnerId === null && input.claimWriteIfUnowned) {
-            await input.claimWriteIfUnowned();
-          } else {
-            break;
-          }
-        }
-
-        if (input.getWriteOwnerId() !== input.clientId) {
-          break;
-        }
-
-        const chunk = bufferedInput;
-        bufferedInput = "";
-        try {
-          await sendInput(input.terminalId, { input: chunk }, input.clientId);
-        } catch (error) {
-          input.setError(getErrorMessage(error));
-          bufferedInput = `${chunk}${bufferedInput}`;
-          break;
-        }
-      }
-    })().finally(() => {
-      flushPromise = null;
-    });
-
-    return flushPromise;
+    return sendQueue;
   };
 
   return {
@@ -116,13 +74,22 @@ export function createBufferedTerminalInputController(
         return;
       }
 
-      bufferedInput += chunk;
-      void flush();
+      sendQueue = sendQueue
+        .catch(() => undefined)
+        .then(async () => {
+          if (input.isDisposed()) {
+            return;
+          }
+          try {
+            await sendInput(input.terminalId, { input: chunk }, input.clientId);
+          } catch (error) {
+            input.setError(getErrorMessage(error));
+          }
+        });
     },
     flush,
     reset() {
-      bufferedInput = "";
-      flushPromise = null;
+      sendQueue = Promise.resolve();
     },
   };
 }
@@ -131,28 +98,19 @@ interface ConnectTerminalSessionInput {
   terminalId: string;
   clientId: string;
   isDisposed: () => boolean;
-  onSnapshot: (snapshot: TerminalSnapshotResponse) => void;
+  onBootstrap: (event: Extract<TerminalStreamEvent, { type: "bootstrap" }>) => void;
   onEvent: (event: TerminalStreamEvent) => void;
   onConnectedChange: (connected: boolean) => void;
   onError: (message: string | null) => void;
-  getSnapshot?: typeof getTerminalSnapshot;
   subscribe?: typeof subscribeTerminalStream;
 }
 
 export async function connectTerminalSession(
   input: ConnectTerminalSessionInput,
 ): Promise<() => void> {
-  const loadSnapshot = input.getSnapshot ?? getTerminalSnapshot;
   const subscribe = input.subscribe ?? subscribeTerminalStream;
 
   try {
-    const snapshot = await loadSnapshot(input.terminalId);
-    if (input.isDisposed()) {
-      return () => undefined;
-    }
-
-    input.onSnapshot(snapshot);
-
     const unsubscribe = subscribe(
       {
         onEvent: (event) => {
@@ -161,6 +119,10 @@ export async function connectTerminalSession(
           }
           input.onConnectedChange(true);
           input.onError(null);
+          if (event.type === "bootstrap") {
+            input.onBootstrap(event);
+            return;
+          }
           input.onEvent(event);
         },
         onError: () => {
@@ -172,8 +134,8 @@ export async function connectTerminalSession(
       },
       {
         terminalId: input.terminalId,
-        fromSeq: snapshot.seq,
         clientId: input.clientId,
+        bootstrap: true,
       },
     );
 

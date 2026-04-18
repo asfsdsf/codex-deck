@@ -44,7 +44,6 @@ Need-input block:
 Completion:
 <requirement_finished>further suggestions or precautions</requirement_finished>`;
 
-export const AI_TERMINAL_RESULT_MARKER_PREFIX = "__CODEX_DECK_AI_RESULT__";
 const AI_TERMINAL_PLAN_BLOCK_PATTERN =
   /<ai-terminal-plan>\s*[\s\S]*?<\/ai-terminal-plan>|<ai-terminal-need-input>\s*[\s\S]*?<\/ai-terminal-need-input>|<requirement_finished>\s*[\s\S]*?<\/requirement_finished>/gi;
 const AI_TERMINAL_STEP_PATTERN =
@@ -601,21 +600,6 @@ export function hasAiTerminalDirective(text: string): boolean {
   return parseAiTerminalMessage(text) !== null;
 }
 
-function shellQuote(value: string): string {
-  if (!value) {
-    return "''";
-  }
-  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
-}
-
-function trimMarkerLine(output: string): string {
-  return output
-    .split(/\r?\n/u)
-    .filter((line) => !line.includes(AI_TERMINAL_RESULT_MARKER_PREFIX))
-    .join("\n")
-    .trim();
-}
-
 function stripTerminalPromptNoise(output: string): string {
   const lines = output.split(/\r?\n/u);
 
@@ -661,7 +645,7 @@ export function summarizeAiTerminalOutput(output: string): {
   errorSummary: string | null;
 } {
   const normalized = stripTerminalPromptNoise(
-    sanitizeTerminalTranscriptChunk(trimMarkerLine(output)),
+    sanitizeTerminalTranscriptChunk(output),
   );
   if (!normalized) {
     return {
@@ -685,62 +669,6 @@ export function summarizeAiTerminalOutput(output: string): {
     outputSummary: summarizedLines.join("\n").trim(),
     errorSummary:
       errorLines.length > 0 ? errorLines.slice(0, 6).join("\n") : null,
-  };
-}
-
-export function buildAiTerminalExecutionWrapper(input: {
-  command: string;
-  stepId: string;
-  cwd?: string | null;
-}): string {
-  const normalizedCwd = normalizeText(input.cwd);
-  return [
-    "{",
-    ...(normalizedCwd ? [`cd ${shellQuote(normalizedCwd)} || exit 1`] : []),
-    input.command.trim(),
-    "}",
-    "__CODEX_DECK_AI_EXIT_CODE=$?",
-    '__CODEX_DECK_AI_CWD="$(pwd)"',
-    `printf '\\n${AI_TERMINAL_RESULT_MARKER_PREFIX} step=%s exit=%s cwd=%s\\n' ${shellQuote(
-      input.stepId,
-    )} \"$__CODEX_DECK_AI_EXIT_CODE\" \"$__CODEX_DECK_AI_CWD\"`,
-  ].join("\n");
-}
-
-export function buildAiTerminalExecutionMarkerPrefix(stepId: string): string {
-  return `${AI_TERMINAL_RESULT_MARKER_PREFIX} step=${stepId} `;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-export function parseAiTerminalExecutionResult(input: {
-  stepId: string;
-  rawOutput: string;
-  timedOut: boolean;
-  fallbackCwd: string;
-}): AiTerminalExecutionResult {
-  const normalizedOutput = input.rawOutput.replace(/\r\n/g, "\n");
-  const pattern = new RegExp(
-    `${escapeRegExp(AI_TERMINAL_RESULT_MARKER_PREFIX)} step=${escapeRegExp(input.stepId)} exit=(\\d+) cwd=(.+)$`,
-    "m",
-  );
-  const match = normalizedOutput.match(pattern);
-  const summary = summarizeAiTerminalOutput(normalizedOutput);
-  const sanitizedRawOutput = stripTerminalPromptNoise(
-    sanitizeTerminalTranscriptChunk(trimMarkerLine(normalizedOutput)),
-  );
-
-  return {
-    stepId: input.stepId,
-    exitCode: match ? Number.parseInt(match[1] ?? "", 10) : null,
-    timedOut: input.timedOut,
-    cwdAfter: match?.[2]?.trim() || input.fallbackCwd,
-    outputSummary: summary.outputSummary,
-    errorSummary: summary.errorSummary,
-    rawOutput: sanitizedRawOutput,
-    markerFound: !!match,
   };
 }
 
@@ -901,7 +829,7 @@ export function buildAiTerminalRejectionFeedback(input: {
 export function shouldAttachAiTerminalOutputReference(
   rawOutput: string,
 ): boolean {
-  const normalized = trimMarkerLine(rawOutput);
+  const normalized = rawOutput.trim();
   if (!normalized) {
     return false;
   }

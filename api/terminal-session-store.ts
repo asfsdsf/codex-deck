@@ -631,6 +631,7 @@ export async function getPersistedTerminalSessionArtifacts(
       blocks: filteredBlocks,
     },
     blocks,
+    timelineEntries: [],
   };
 }
 

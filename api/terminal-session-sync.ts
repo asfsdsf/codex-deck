@@ -9,7 +9,12 @@ import {
   getAiTerminalMessageKey,
   parseAiTerminalMessage,
 } from "../web/ai-terminal";
-import { sanitizeTerminalTranscriptChunk } from "../web/terminal-timeline";
+import {
+  buildTerminalTimelineEntries,
+  sanitizeTerminalTranscriptChunk,
+} from "./terminal-transcript";
+
+const lastArtifactsPayloadByTerminalId = new Map<string, string>();
 
 interface EmbeddedTerminalMessage {
   messageKey: string;
@@ -85,6 +90,24 @@ function deriveTranscriptTail(input: {
     remaining = stripPrefix(remaining, transcript);
   }
   return remaining.trim();
+}
+
+export function buildEmptyTerminalSessionArtifacts(
+  terminalId: string,
+): TerminalSessionArtifactsResponse {
+  const timestamp = new Date().toISOString();
+  return {
+    terminalId,
+    sessionId: null,
+    manifest: {
+      terminalId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      blocks: [],
+    },
+    blocks: [],
+    timelineEntries: [],
+  };
 }
 
 export async function syncTerminalSessionArtifacts(input: {
@@ -170,11 +193,43 @@ export async function syncTerminalSessionArtifacts(input: {
     orderedKnownTranscripts.push(transcript);
   }
 
-  return getPersistedTerminalSessionArtifacts(
+  const finalArtifacts = await getPersistedTerminalSessionArtifacts(
     input.terminalId,
     { sessionId: input.sessionId },
     input.codexHome,
   );
+  return {
+    ...finalArtifacts,
+    timelineEntries: buildTerminalTimelineEntries({
+      messageKeys: embeddedMessages.map((item) => item.messageKey),
+      blocks: finalArtifacts.blocks,
+    }),
+  };
 }
 
-export function clearTerminalSessionSyncState(_terminalId: string): void {}
+export async function syncTrackedTerminalSessionArtifacts(input: {
+  terminalId: string;
+  sessionId: string;
+  output: string;
+  codexHome?: string | null;
+  viewport?: {
+    cols: number;
+    rows: number;
+  } | null;
+}): Promise<{
+  artifacts: TerminalSessionArtifactsResponse;
+  changed: boolean;
+}> {
+  const artifacts = await syncTerminalSessionArtifacts(input);
+  const key = JSON.stringify(artifacts);
+  const previous = lastArtifactsPayloadByTerminalId.get(input.terminalId);
+  lastArtifactsPayloadByTerminalId.set(input.terminalId, key);
+  return {
+    artifacts,
+    changed: previous !== key,
+  };
+}
+
+export function clearTerminalSessionSyncState(terminalId: string): void {
+  lastArtifactsPayloadByTerminalId.delete(terminalId.trim());
+}

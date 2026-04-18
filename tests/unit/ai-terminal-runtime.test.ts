@@ -10,16 +10,30 @@ test("cleanLiveAiTerminalExecutionOutput drops wrapper echo noise before visible
       cwd: "/repo",
     },
     [
-      "(base) codex-deck » {",
-      "(base) codex-deck » cd '/repo' || exit 1",
       "(base) codex-deck » pwd",
-      "(base) codex-deck » __CODEX_DECK_AI_STEP_ID=step-1",
       "/repo",
-      "(base) codex-deck » __CODEX_DECK_AI_RESULT__ step=step-1 exit=0 cwd=/repo",
+      "(base) codex-deck »",
     ].join("\n"),
   );
 
   assert.equal(cleaned, "/repo");
+});
+
+test("cleanLiveAiTerminalExecutionOutput preserves literal marker-like output", () => {
+  const cleaned = cleanLiveAiTerminalExecutionOutput(
+    {
+      stepId: "step-3",
+      command: "cat build.log",
+      cwd: "/repo",
+    },
+    [
+      "(base) codex-deck » cat build.log",
+      "__CODEX_DECK_AI_RESULT__ should stay visible now",
+      "(base) codex-deck »",
+    ].join("\n"),
+  );
+
+  assert.equal(cleaned, "__CODEX_DECK_AI_RESULT__ should stay visible now");
 });
 
 test("cleanLiveAiTerminalExecutionOutput keeps meaningful output after prompt fragments", () => {

@@ -5,12 +5,11 @@ import { Bot, MessageSquarePlus, RefreshCw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type {
   ConversationMessage,
-  TerminalSessionBlockRecordWithTranscript,
+  TerminalTimelineEntry,
   TerminalSnapshotResponse,
 } from "@codex-deck/api";
 import {
   claimTerminalWrite,
-  getTerminalFrozenBlocks,
   releaseTerminalWrite,
   restartTerminal,
   resizeTerminal,
@@ -26,10 +25,6 @@ import {
   type AiTerminalStepDirective,
   type AiTerminalStepState,
 } from "../ai-terminal";
-import {
-  buildTerminalTimeline,
-  sanitizeTerminalTranscriptChunk,
-} from "../terminal-timeline";
 import { fitTerminalViewport } from "../terminal-render";
 import { shouldAutoClaimWriteAfterRestart } from "../terminal-write-ownership";
 import MessageBlock from "./message-block";
@@ -86,15 +81,14 @@ function getTerminalTheme(resolvedTheme: ResolvedTheme): {
 }
 
 function TerminalTranscriptOutput(props: { text: string }) {
-  const sanitizedText = sanitizeTerminalTranscriptChunk(props.text);
-  if (!sanitizedText.trim()) {
+  if (!props.text.trim()) {
     return null;
   }
 
   return (
     <div className="shrink-0 rounded-xl border border-zinc-800/80 bg-black/35 px-3 py-2 shadow-[0_0_0_1px_rgba(24,24,27,0.35)]">
       <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-zinc-100">
-        <AnsiText text={sanitizedText} />
+        <AnsiText text={props.text} />
       </pre>
     </div>
   );
@@ -139,17 +133,12 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const [writeOwnerId, setWriteOwnerId] = useState<string | null>(null);
   const [showReadOnlyWarning, setShowReadOnlyWarning] = useState(false);
   const [terminalOutput, setTerminalOutput] = useState("");
-  const [persistedBlocks, setPersistedBlocks] = useState<
-    TerminalSessionBlockRecordWithTranscript[]
-  >([]);
-  const [frozenOutputsLoaded, setFrozenOutputsLoaded] = useState(false);
+  const [timelineEntries, setTimelineEntries] = useState<TerminalTimelineEntry[]>(
+    [],
+  );
   const terminalTheme = useMemo(
     () => getTerminalTheme(resolvedTheme),
     [resolvedTheme],
-  );
-  const embeddedMessagesKey = useMemo(
-    () => embeddedMessages.map((item) => item.messageKey).join("|"),
-    [embeddedMessages],
   );
 
   const isReadOnly =
@@ -165,7 +154,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, []);
 
   const resetFrozenTimelineState = useCallback(() => {
-    setPersistedBlocks([]);
+    setTimelineEntries([]);
   }, []);
 
   const handleReadOnlyAttempt = useCallback(() => {
@@ -226,62 +215,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [isReadOnly, dismissReadOnlyWarning]);
 
   useEffect(() => {
-    const normalizedSessionId = boundSessionId?.trim() ?? "";
-    if (!normalizedSessionId) {
+    if (!(boundSessionId?.trim() ?? "")) {
       resetFrozenTimelineState();
-      setFrozenOutputsLoaded(true);
-      return;
     }
-
-    if (embeddedMessagesLoading && embeddedMessages.length === 0) {
-      setFrozenOutputsLoaded(false);
-      return;
-    }
-
-    let cancelled = false;
-    setFrozenOutputsLoaded(false);
-    const timer = setTimeout(() => {
-      const terminal = terminalRef.current;
-      const viewport =
-        terminal && terminal.cols >= 2 && terminal.rows >= 2
-          ? {
-              cols: terminal.cols,
-              rows: terminal.rows,
-            }
-          : null;
-
-      void getTerminalFrozenBlocks(terminalId, normalizedSessionId, viewport)
-        .then((response) => {
-          if (cancelled) {
-            return;
-          }
-          setPersistedBlocks(response.blocks ?? []);
-        })
-        .catch(() => {
-          if (cancelled) {
-            return;
-          }
-          resetFrozenTimelineState();
-        })
-        .finally(() => {
-          if (!cancelled) {
-            setFrozenOutputsLoaded(true);
-          }
-        });
-    }, 400);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    boundSessionId,
-    embeddedMessages.length,
-    embeddedMessagesLoading,
-    embeddedMessagesKey,
-    terminalId,
-    resetFrozenTimelineState,
-  ]);
+  }, [boundSessionId, resetFrozenTimelineState]);
 
   const applyFullSnapshot = useCallback(
     (snapshot: TerminalSnapshotResponse) => {
@@ -292,6 +229,13 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       seqRef.current = snapshot.seq;
       writeOwnerIdRef.current = snapshot.writeOwnerId;
       setWriteOwnerId(snapshot.writeOwnerId);
+    },
+    [],
+  );
+
+  const applyArtifacts = useCallback(
+    (entries: TerminalTimelineEntry[] | null | undefined) => {
+      setTimelineEntries(entries ?? []);
     },
     [],
   );
@@ -390,11 +334,13 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       } else if (event.type === "ownership") {
         writeOwnerIdRef.current = event.writeOwnerId ?? null;
         setWriteOwnerId(event.writeOwnerId ?? null);
+      } else if (event.type === "artifacts") {
+        applyArtifacts(event.artifacts.timelineEntries);
       }
 
       seqRef.current = event.seq;
     },
-    [],
+    [applyArtifacts],
   );
 
   const bootstrap = useCallback(async () => {
@@ -406,10 +352,11 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         terminalId,
         clientId: clientIdRef.current,
         isDisposed: () => isDisposedRef.current,
-        onSnapshot: (snapshot) => {
-          initialSnapshot = snapshot;
+        onBootstrap: (event) => {
+          initialSnapshot = event.snapshot;
           hasStartedRef.current = true;
-          applyFullSnapshot(snapshot);
+          applyFullSnapshot(event.snapshot);
+          applyArtifacts(event.artifacts?.timelineEntries);
           fitTerminal();
         },
         onEvent: applyStreamEvent,
@@ -451,6 +398,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     }
   }, [
     applyFullSnapshot,
+    applyArtifacts,
     applyStreamEvent,
     closeStream,
     fitTerminal,
@@ -538,7 +486,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       terminalOutputRef.current = "";
       renderedLiveOutputRef.current = "";
       setTerminalOutput("");
-      setPersistedBlocks([]);
+      setTimelineEntries([]);
       setConnected(false);
       setRunning(false);
       setError(null);
@@ -563,21 +511,8 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       new Map(embeddedMessages.map((item) => [item.messageKey, item] as const)),
     [embeddedMessages],
   );
-  const terminalTimeline = useMemo(
-    () =>
-      buildTerminalTimeline({
-        messageKeys: embeddedMessages.map((item) => item.messageKey),
-        blocks: persistedBlocks,
-        output: terminalOutput,
-      }),
-    [
-      embeddedMessages,
-      persistedBlocks,
-      terminalOutput,
-    ],
-  );
-  const hasEmbeddedTimelineEntries = terminalTimeline.entries.length > 0;
-  const hasLiveTerminalOutput = terminalTimeline.liveOutput.trim().length > 0;
+  const hasEmbeddedTimelineEntries = timelineEntries.length > 0;
+  const hasLiveTerminalOutput = terminalOutput.trim().length > 0;
   const shouldShowActivateTerminalCta =
     !running && !hasLiveTerminalOutput && !embeddedMessagesLoading;
 
@@ -587,7 +522,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       return;
     }
 
-    const nextOutput = terminalTimeline.liveOutput;
+    const nextOutput = terminalOutput;
     if (!nextOutput.startsWith(renderedLiveOutputRef.current)) {
       terminal.reset();
       if (nextOutput.length > 0) {
@@ -601,7 +536,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       terminal.write(nextOutput.slice(renderedLiveOutputRef.current.length));
     }
     renderedLiveOutputRef.current = nextOutput;
-  }, [terminalTimeline.liveOutput]);
+  }, [terminalOutput]);
 
   useEffect(() => {
     if (!hasEmbeddedTimelineEntries) {
@@ -615,8 +550,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [
     hasEmbeddedTimelineEntries,
     terminalOutput,
-    terminalTimeline.entries.length,
-    terminalTimeline.liveOutput,
+    timelineEntries.length,
   ]);
 
   const statusText = useMemo(() => {
@@ -772,7 +706,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
                 Loading bound session replies...
               </div>
             ) : null}
-            {terminalTimeline.entries.map((entry) => {
+            {timelineEntries.map((entry) => {
               if (entry.type === "output") {
                 return (
                   <TerminalTranscriptOutput key={entry.key} text={entry.text} />

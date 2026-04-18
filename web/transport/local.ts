@@ -480,17 +480,15 @@ export function createLocalTransport(): WebTransport {
       handlers: TerminalStreamHandlers,
       options: TerminalStreamSubscriptionOptions,
     ): () => void {
-      let fromSeq =
-        typeof options.fromSeq === "number" &&
-        Number.isFinite(options.fromSeq) &&
-        options.fromSeq >= 0
-          ? Math.floor(options.fromSeq)
-          : 0;
+      let fromSeq = 0;
       return createReconnectingEventSource({
         createUrl: () => {
           const params = new URLSearchParams({
             fromSeq: String(fromSeq),
           });
+          if (options.bootstrap) {
+            params.set("bootstrap", "1");
+          }
           if (options.clientId?.trim()) {
             params.set("clientId", options.clientId.trim());
           }
@@ -499,7 +497,12 @@ export function createLocalTransport(): WebTransport {
         configure: (eventSource) => {
           eventSource.addEventListener("terminal", (message) => {
             const event = parseTerminalEvent(message.data);
-            if (!event || event.seq <= fromSeq) {
+            if (
+              !event ||
+              (event.type === "bootstrap"
+                ? event.seq < fromSeq
+                : event.seq <= fromSeq)
+            ) {
               return;
             }
             fromSeq = event.seq;
