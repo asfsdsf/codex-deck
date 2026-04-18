@@ -25,9 +25,6 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const MAX_BUFFERED_EVENTS = 2000;
 const MAX_OUTPUT_CHARS = 1_000_000;
-const DEFAULT_EXECUTE_COMMAND_TIMEOUT_MS = 15_000;
-const TERMINAL_EXECUTION_RESULT_MARKER_PREFIX =
-  "__CODEX_DECK_TERMINAL_EXEC_RESULT__";
 
 type TerminalListener = (event: TerminalStreamEvent) => void;
 type TerminalSummaryListener = (terminals: TerminalSummary[]) => void;
@@ -73,23 +70,6 @@ export interface LocalTerminalManager {
   consumeFrozenBlockSnapshot: (
     terminalId: string,
   ) => Promise<TerminalSerializedSnapshot | null>;
-  executeCommand: (
-    terminalId: string,
-    input: {
-      command: string;
-      cwd?: string | null;
-      timeoutMs?: number;
-      displayCommand?: string | null;
-    },
-  ) => Promise<{
-    startSeq: number;
-    startOffset: number;
-    endSeq: number;
-    exitCode: number | null;
-    cwdAfter: string;
-    rawOutput: string;
-    timedOut: boolean;
-  } | null>;
 }
 
 interface TerminalProcessAdapter {
@@ -113,22 +93,6 @@ interface TerminalInstanceOptions {
   firstCommand?: string | null;
 }
 
-interface TerminalCommandExecutionResult {
-  startSeq: number;
-  startOffset: number;
-  endSeq: number;
-  exitCode: number | null;
-  cwdAfter: string;
-  rawOutput: string;
-  timedOut: boolean;
-}
-
-interface CommandExecutionProcess {
-  onData: (callback: (chunk: string) => void) => void;
-  onExit: (callback: (event: { exitCode: number | null }) => void) => void;
-  kill: () => void;
-}
-
 class TerminalInstance {
   private terminalProcess: TerminalProcessAdapter | null = null;
   private readonly listeners = new Set<TerminalListener>();
@@ -142,7 +106,6 @@ class TerminalInstance {
   private removed = false;
   private firstCommand: string | null = null;
   private pendingFirstCommandInput = "";
-  private activeCommandExecution = false;
   private readonly frozenBlockCapture = new TerminalSnapshotCapture(
     DEFAULT_COLS,
     DEFAULT_ROWS,
@@ -238,133 +201,6 @@ class TerminalInstance {
     }
     this.captureFirstCommand(input);
     this.terminalProcess?.write(input);
-  }
-
-  public async executeCommand(input: {
-    command: string;
-    cwd?: string | null;
-    timeoutMs?: number;
-    displayCommand?: string | null;
-  }): Promise<TerminalCommandExecutionResult> {
-    const command = input.command.trim();
-    if (!command) {
-      throw new Error("command must be a non-empty string");
-    }
-    if (!this.running || !this.terminalProcess) {
-      throw new Error("terminal is not running");
-    }
-    if (this.activeCommandExecution) {
-      throw new Error("terminal already has an active command");
-    }
-
-    this.activeCommandExecution = true;
-    const executionCwd = resolve((input.cwd?.trim() || this.cwd).trim());
-    const displayCommand = input.displayCommand?.trim() || command;
-    const timeoutMs = normalizePositiveInteger(
-      input.timeoutMs,
-      DEFAULT_EXECUTE_COMMAND_TIMEOUT_MS,
-    );
-    const promptTail = this.getPromptTail();
-    const startSeq = this.seq;
-    const startOffset = this.output.length;
-
-    if (!this.firstCommand && displayCommand) {
-      this.firstCommand = displayCommand;
-      this.onStateChange();
-      this.onMetadataChange();
-    }
-
-    this.pushOutput(`${displayCommand}\r\n`);
-
-    const executionProcess = createCommandExecutionProcess({
-      shell: this.shell,
-      cwd: executionCwd,
-      env: this.env,
-      command,
-    });
-
-    const fullChunks: string[] = [];
-    let visibleBuffer = "";
-    let outputEndedWithNewline = true;
-    let timedOut = false;
-    let exitCode: number | null = null;
-
-    const flushVisibleChunk = (chunk: string) => {
-      if (!chunk) {
-        return;
-      }
-      outputEndedWithNewline = /(?:\r\n|\n|\r)$/u.test(chunk);
-      this.pushOutput(normalizeExecutionChunkForTerminal(chunk));
-    };
-
-    const flushVisibleBuffer = (force: boolean) => {
-      const split = splitVisibleExecutionOutput(visibleBuffer, force);
-      visibleBuffer = split.remainder;
-      if (split.visibleChunk) {
-        flushVisibleChunk(split.visibleChunk);
-      }
-    };
-
-    const result = await new Promise<TerminalCommandExecutionResult>(
-      (resolveResult) => {
-        let settled = false;
-        let timeout: NodeJS.Timeout | null = null;
-
-        const finish = (value: TerminalCommandExecutionResult) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          if (timeout) {
-            clearTimeout(timeout);
-          }
-          resolveResult(value);
-        };
-
-        executionProcess.onData((chunk) => {
-          fullChunks.push(chunk);
-          visibleBuffer += chunk;
-          flushVisibleBuffer(false);
-        });
-
-        executionProcess.onExit((event) => {
-          exitCode = event.exitCode;
-          flushVisibleBuffer(true);
-          const parsed = parseExecutionResultMarker(
-            fullChunks.join(""),
-            executionCwd,
-          );
-          if (promptTail) {
-            if (!outputEndedWithNewline && parsed.rawOutput.length > 0) {
-              this.pushOutput("\r\n");
-            }
-            this.pushOutput(promptTail);
-          }
-          finish({
-            startSeq,
-            startOffset,
-            endSeq: this.seq,
-            exitCode,
-            cwdAfter: parsed.cwdAfter,
-            rawOutput: parsed.rawOutput,
-            timedOut,
-          });
-        });
-
-        timeout = setTimeout(() => {
-          timedOut = true;
-          try {
-            executionProcess.kill();
-          } catch {
-            // Ignore command kill failures during timeout handling.
-          }
-        }, timeoutMs);
-      },
-    ).finally(() => {
-      this.activeCommandExecution = false;
-    });
-
-    return result;
   }
 
   public resize(cols: number, rows: number): void {
@@ -716,22 +552,6 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
     );
   }
 
-  public executeCommand(
-    terminalId: string,
-    input: {
-      command: string;
-      cwd?: string | null;
-      timeoutMs?: number;
-      displayCommand?: string | null;
-    },
-  ): Promise<TerminalCommandExecutionResult | null> {
-    const terminal = this.terminals.get(terminalId);
-    if (!terminal) {
-      return Promise.resolve(null);
-    }
-    return terminal.executeCommand(input);
-  }
-
   public async dispose(): Promise<void> {
     const terminals = [...this.terminals.values()];
     this.terminals.clear();
@@ -903,71 +723,6 @@ function normalizePositiveInteger(
   return normalized > 0 ? normalized : fallback;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildCommandExecutionWrapper(command: string): string {
-  return [
-    "{",
-    command.trim(),
-    "}",
-    "__CODEX_DECK_TERMINAL_EXEC_EXIT=$?",
-    '__CODEX_DECK_TERMINAL_EXEC_CWD="$(pwd)"',
-    `printf '\\n${TERMINAL_EXECUTION_RESULT_MARKER_PREFIX} exit=%s cwd=%s\\n' \"$__CODEX_DECK_TERMINAL_EXEC_EXIT\" \"$__CODEX_DECK_TERMINAL_EXEC_CWD\"`,
-    "exit $__CODEX_DECK_TERMINAL_EXEC_EXIT",
-  ].join("\n");
-}
-
-function parseExecutionResultMarker(
-  output: string,
-  fallbackCwd: string,
-): { cwdAfter: string; rawOutput: string } {
-  const normalized = output.replace(/\r\n/g, "\n");
-  const pattern = new RegExp(
-    `${escapeRegExp(TERMINAL_EXECUTION_RESULT_MARKER_PREFIX)} exit=(\\d+) cwd=(.+)$`,
-    "m",
-  );
-  const match = normalized.match(pattern);
-  const rawOutput = normalized
-    .split("\n")
-    .filter((line) => !line.includes(TERMINAL_EXECUTION_RESULT_MARKER_PREFIX))
-    .join("\n")
-    .trimEnd();
-  return {
-    cwdAfter: match?.[2]?.trim() || fallbackCwd,
-    rawOutput,
-  };
-}
-
-function splitVisibleExecutionOutput(
-  buffer: string,
-  force: boolean,
-): { visibleChunk: string; remainder: string } {
-  const markerIndex = buffer.indexOf(TERMINAL_EXECUTION_RESULT_MARKER_PREFIX);
-  if (markerIndex >= 0) {
-    return {
-      visibleChunk: buffer.slice(0, markerIndex),
-      remainder: buffer.slice(markerIndex),
-    };
-  }
-  if (force) {
-    return { visibleChunk: buffer, remainder: "" };
-  }
-  const safeLength = Math.max(
-    0,
-    buffer.length - (TERMINAL_EXECUTION_RESULT_MARKER_PREFIX.length - 1),
-  );
-  return {
-    visibleChunk: buffer.slice(0, safeLength),
-    remainder: buffer.slice(safeLength),
-  };
-}
-
-function normalizeExecutionChunkForTerminal(chunk: string): string {
-  return chunk.replace(/\r?\n/g, "\r\n");
-}
-
 type PtyExitEvent = { exitCode: number; signal?: number };
 
 interface PtyProcess {
@@ -994,14 +749,6 @@ let cachedPtySpawn: PtySpawn | null = null;
 let ptyUnavailableReason: string | null = null;
 let terminalProcessFactoryOverride:
   | ((cwd: string, env: Record<string, string>) => CreatedTerminalProcess)
-  | null = null;
-let commandExecutionProcessFactoryOverride:
-  | ((input: {
-      shell: string;
-      cwd: string;
-      env: Record<string, string>;
-      command: string;
-    }) => CommandExecutionProcess)
   | null = null;
 
 function summarizePtyUnavailableReason(reason: string | null): string {
@@ -1048,106 +795,6 @@ function ensureSpawnHelperExecutable(): void {
   } catch {
     // Best-effort only.
   }
-}
-
-function buildShellCommandInvocation(
-  shell: string,
-  command: string,
-): { file: string; args: string[] } {
-  if (process.platform === "win32") {
-    if (/powershell(?:\.exe)?$/i.test(shell)) {
-      return {
-        file: shell,
-        args: ["-NoLogo", "-NoProfile", "-Command", command],
-      };
-    }
-    if (/cmd(?:\.exe)?$/i.test(shell)) {
-      return {
-        file: shell,
-        args: ["/d", "/s", "/c", command],
-      };
-    }
-  }
-
-  return {
-    file: shell,
-    args: ["-lc", command],
-  };
-}
-
-function createCommandExecutionProcess(input: {
-  shell: string;
-  cwd: string;
-  env: Record<string, string>;
-  command: string;
-}): CommandExecutionProcess {
-  if (commandExecutionProcessFactoryOverride) {
-    return commandExecutionProcessFactoryOverride(input);
-  }
-
-  const wrappedCommand = buildCommandExecutionWrapper(input.command);
-  const invocation = buildShellCommandInvocation(input.shell, wrappedCommand);
-  const child = spawnChild(invocation.file, invocation.args, {
-    cwd: input.cwd,
-    env: input.env,
-    stdio: "pipe",
-  });
-
-  const dataListeners = new Set<(chunk: string) => void>();
-  const exitListeners = new Set<(event: { exitCode: number | null }) => void>();
-  let exited = false;
-
-  const emitData = (chunk: Buffer | string) => {
-    const text = chunk.toString();
-    if (!text) {
-      return;
-    }
-    for (const listener of dataListeners) {
-      try {
-        listener(text);
-      } catch {
-        // Ignore listener errors.
-      }
-    }
-  };
-
-  const emitExit = (nextExitCode: number | null) => {
-    if (exited) {
-      return;
-    }
-    exited = true;
-    for (const listener of exitListeners) {
-      try {
-        listener({ exitCode: nextExitCode });
-      } catch {
-        // Ignore listener errors.
-      }
-    }
-  };
-
-  child.stdout.on("data", emitData);
-  child.stderr.on("data", emitData);
-  child.on("exit", (nextExitCode) => emitExit(nextExitCode));
-  child.on("error", (error) => {
-    emitData(`[codex-deck] command execution error: ${error.message}\n`);
-    emitExit(null);
-  });
-
-  return {
-    onData: (callback) => {
-      dataListeners.add(callback);
-    },
-    onExit: (callback) => {
-      exitListeners.add(callback);
-    },
-    kill: () => {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Ignore kill failures.
-      }
-    },
-  };
 }
 
 function getNodePtySpawn(): PtySpawn | null {
@@ -1389,19 +1036,6 @@ export function setTerminalProcessFactoryForTests(
     | null,
 ): void {
   terminalProcessFactoryOverride = override;
-}
-
-export function setCommandExecutionProcessFactoryForTests(
-  override:
-    | ((input: {
-        shell: string;
-        cwd: string;
-        env: Record<string, string>;
-        command: string;
-      }) => CommandExecutionProcess)
-    | null,
-): void {
-  commandExecutionProcessFactoryOverride = override;
 }
 
 export async function closeLocalTerminalManager(): Promise<void> {

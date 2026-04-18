@@ -17,7 +17,6 @@ import {
   compactCodexThread,
   createCodexThread,
   createTerminal,
-  executeTerminalCommand,
   createWorkflow,
   deleteWorkflow,
   deleteSession,
@@ -40,11 +39,8 @@ import {
   getWorkflowProjectSkills,
   getSessionTerminalRunOutput,
   getSessionTerminalRuns,
-  getTerminalBinding,
-  getTerminalFrozenBlocks,
   getTerminalSessionRoles,
   getSessionSkills,
-  getTerminalSnapshot,
   getWorkflowDaemonStatus,
   getWorkflowBySession,
   getWorkflowDetail,
@@ -53,7 +49,6 @@ import {
   setSessionSkillEnabled,
   setWorkflowProjectSkillEnabled,
   interruptCodexThread,
-  interruptTerminal,
   listCodexAgentThreads,
   listCodexCollaborationModes,
   listCodexModels,
@@ -66,11 +61,9 @@ import {
   reconcileWorkflow,
   restartTerminal,
   resizeTerminal,
-  persistTerminalFrozenBlock,
   persistTerminalMessageAction,
   respondCodexApprovalRequest,
   respondCodexUserInputRequest,
-  runInTerminal,
   searchSessionFiles,
   sendTerminalInput,
   sendCodexMessage,
@@ -3062,152 +3055,46 @@ test("terminal helper routes request expected endpoints", async () => {
 
   const created = await createTerminal({ cwd: "/repo" });
   const list = await listActiveTerminals();
-  const binding = await getTerminalBinding(terminalId);
   const bound = await bindTerminalSession(terminalId, {
     sessionId: "session-1",
   });
   const sessionRoles = await getTerminalSessionRoles(["session-1"]);
-  const snapshot = await getTerminalSnapshot(terminalId);
   const inputResult = await sendTerminalInput(terminalId, { input: "ls\\n" });
   const resizeResult = await resizeTerminal(terminalId, {
     cols: 120,
     rows: 40,
   });
-  const interruptResult = await interruptTerminal(terminalId);
   const restarted = await restartTerminal(terminalId);
   const deleted = await deleteTerminal(terminalId);
 
   assert.equal(created.running, true);
   assert.equal(list.length, 1);
-  assert.equal(binding.boundSessionId, null);
   assert.equal(bound.boundSessionId, "session-1");
   assert.equal(sessionRoles[0]?.terminalId, terminalId);
-  assert.equal(snapshot.running, true);
-  assert.equal(snapshot.shell, "zsh");
   assert.equal(inputResult.seq, 7);
   assert.equal(inputResult.startSeq, 6);
   assert.equal(inputResult.startOffset, 2);
   assert.equal(resizeResult.seq, 8);
-  assert.equal(interruptResult.seq, 9);
   assert.equal(restarted.seq, 10);
   assert.equal(deleted.ok, true);
   assert.deepEqual(calls, [
     "/api/terminals:POST",
     "/api/terminals:GET",
-    `/api/terminals/${terminalId}/binding:GET`,
     `/api/terminals/${terminalId}/binding:POST`,
     "/api/terminals/session-roles:POST",
-    `/api/terminals/${terminalId}:GET`,
     `/api/terminals/${terminalId}/input:POST`,
     `/api/terminals/${terminalId}/resize:POST`,
-    `/api/terminals/${terminalId}/interrupt:POST`,
     `/api/terminals/${terminalId}/restart:POST`,
     `/api/terminals/${terminalId}:DELETE`,
   ]);
 });
 
-test("terminal frozen block helper routes request expected endpoints", async () => {
+test("terminal message action helper route requests expected endpoint", async () => {
   const terminalId = "terminal-1";
   const sessionId = "session-1";
-  const snapshot = {
-    format: "xterm-serialize-v1" as const,
-    cols: 80,
-    rows: 24,
-    data: "pwd snapshot",
-  };
   const calls: string[] = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${String(input)}:${init?.method ?? "GET"}`);
-
-    if (
-      String(input) ===
-        `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}` &&
-      init?.method !== "POST"
-    ) {
-      return jsonResponse({
-        terminalId,
-        sessionId,
-        manifest: {
-          terminalId,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-          blocks: [],
-        },
-        blocks: [
-          {
-            blockId: "block-1",
-            terminalId,
-            sessionId,
-            type: "terminal_snapshot",
-            sequence: 1,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            messageKey: "message-1",
-            stepId: null,
-            snapshotPath: "blocks/block-1.snapshot",
-            snapshotFormat: "xterm-serialize-v1",
-            cols: snapshot.cols,
-            rows: snapshot.rows,
-            snapshotLength: snapshot.data.length,
-            captureKind: "auto",
-            leadingMarkdown: null,
-            trailingMarkdown: null,
-            rawBlock: null,
-            contextNote: null,
-            message: null,
-            question: null,
-            steps: null,
-            stepActions: null,
-            stepFeedback: null,
-            snapshot,
-          },
-        ],
-        timelineEntries: [
-          {
-            type: "snapshot",
-            key: "block:block-1",
-            blockId: "block-1",
-            snapshot,
-          },
-          {
-            type: "card",
-            key: "card:message-1",
-            messageKey: "message-1",
-          },
-        ],
-      });
-    }
-
-    if (String(input) === `/api/terminals/${terminalId}/frozen-blocks`) {
-      return jsonResponse({
-        block: {
-          blockId: "block-2",
-          terminalId,
-          sessionId,
-          type: "terminal_snapshot",
-          sequence: 2,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-          messageKey: "message-2",
-          stepId: null,
-          snapshotPath: "blocks/block-2.snapshot",
-          snapshotFormat: "xterm-serialize-v1",
-          cols: snapshot.cols,
-          rows: snapshot.rows,
-          snapshotLength: 25,
-          captureKind: "manual",
-          leadingMarkdown: null,
-          trailingMarkdown: null,
-          rawBlock: null,
-          contextNote: null,
-          message: null,
-          question: null,
-          steps: null,
-          stepActions: null,
-          stepFeedback: null,
-        },
-      });
-    }
 
     if (String(input) === `/api/terminals/${terminalId}/message-action`) {
       return jsonResponse({
@@ -3228,17 +3115,6 @@ test("terminal frozen block helper routes request expected endpoints", async () 
     return jsonResponse({ error: "unexpected route" }, 404);
   };
 
-  const restored = await getTerminalFrozenBlocks(terminalId, sessionId);
-  const persisted = await persistTerminalFrozenBlock(terminalId, {
-    sessionId,
-    captureKind: "manual",
-    messageKey: "message-2",
-    snapshot: {
-      ...snapshot,
-      data: "prompt snapshot",
-    },
-    sequence: 2,
-  });
   const actionPersisted = await persistTerminalMessageAction(terminalId, {
     sessionId,
     messageKey: "message-1",
@@ -3247,28 +3123,8 @@ test("terminal frozen block helper routes request expected endpoints", async () 
     reason: "Use a safer command.",
   });
 
-  assert.equal(restored.blocks[0]?.snapshot?.data, "pwd snapshot");
-  assert.equal(restored.blocks[0]?.messageKey, "message-1");
-  assert.deepEqual(restored.timelineEntries, [
-    {
-      type: "snapshot",
-      key: "block:block-1",
-      blockId: "block-1",
-      snapshot,
-    },
-    {
-      type: "card",
-      key: "card:message-1",
-      messageKey: "message-1",
-    },
-  ]);
-  assert.equal(persisted.block.blockId, "block-2");
   assert.equal(actionPersisted.stepActions[0]?.decision, "rejected");
-  assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}:GET`,
-    `/api/terminals/${terminalId}/frozen-blocks:POST`,
-    `/api/terminals/${terminalId}/message-action:POST`,
-  ]);
+  assert.deepEqual(calls, [`/api/terminals/${terminalId}/message-action:POST`]);
 });
 
 test("getSystemContext requests expected endpoint", async () => {
@@ -3290,300 +3146,6 @@ test("getSystemContext requests expected endpoint", async () => {
   assert.equal(result.osRelease, "macOS 15.4.1");
   assert.equal(result.defaultShell, "/bin/zsh");
   assert.deepEqual(calls, ["/api/system/context:GET"]);
-});
-
-test("runInTerminal sends command and returns incremental output", async () => {
-  const terminalId = "terminal-1";
-  const calls: string[] = [];
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = String(input);
-    calls.push(`${path}:${init?.method ?? "GET"}`);
-
-    if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 11,
-        writeOwnerId: null,
-        startSeq: 10,
-        startOffset: 2,
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/events?fromSeq=10&waitMs=2000`) {
-      return jsonResponse({
-        events: [
-          {
-            terminalId,
-            seq: 11,
-            type: "output",
-            chunk: "\u001b[32mpwd\u001b[0m\n/repo\n",
-          },
-        ],
-        requiresReset: false,
-        snapshot: null,
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/events?fromSeq=11&waitMs=2000`) {
-      return jsonResponse({
-        events: [],
-        requiresReset: false,
-        snapshot: null,
-      });
-    }
-
-    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
-  };
-
-  const result = await runInTerminal("pwd", {
-    terminalId,
-    clientId: "client-a",
-    waitMs: 2000,
-    timeoutMs: 6000,
-  });
-
-  assert.equal(result.terminalId, terminalId);
-  assert.equal(result.clientId, "client-a");
-  assert.equal(result.startSeq, 10);
-  assert.equal(result.startOffset, 2);
-  assert.equal(result.endSeq, 11);
-  assert.equal(result.timedOut, false);
-  assert.equal(result.output, "\u001b[32mpwd\u001b[0m\n/repo\n");
-  assert.equal(result.rawOutput, "pwd\n/repo\n");
-  assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
-    `/api/terminals/${terminalId}/events?fromSeq=10&waitMs=2000:GET`,
-    `/api/terminals/${terminalId}/events?fromSeq=11&waitMs=2000:GET`,
-  ]);
-});
-
-test("runInTerminal claims write when current owner blocks input", async () => {
-  const terminalId = "terminal-1";
-  const calls: string[] = [];
-  let inputAttempts = 0;
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = String(input);
-    calls.push(`${path}:${init?.method ?? "GET"}`);
-
-    if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
-      inputAttempts += 1;
-      if (inputAttempts === 1) {
-        return jsonResponse(
-          { error: "another client owns terminal write" },
-          403,
-        );
-      }
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 4,
-        writeOwnerId: "client-a",
-        startSeq: 3,
-        startOffset: 2,
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/claim-write`) {
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 4,
-        writeOwnerId: "client-a",
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/release-write`) {
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 4,
-        writeOwnerId: null,
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/events?fromSeq=3&waitMs=1000`) {
-      return jsonResponse({
-        events: [{ terminalId, seq: 4, type: "output", chunk: "ok\n" }],
-        requiresReset: false,
-        snapshot: null,
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/events?fromSeq=4&waitMs=1000`) {
-      return jsonResponse({
-        events: [],
-        requiresReset: false,
-        snapshot: null,
-      });
-    }
-
-    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
-  };
-
-  const result = await runInTerminal("echo ok", {
-    terminalId,
-    clientId: "client-a",
-  });
-
-  assert.equal(result.output, "ok\n");
-  assert.equal(result.rawOutput, "ok\n");
-  assert.equal(result.startSeq, 3);
-  assert.equal(result.startOffset, 2);
-  assert.equal(inputAttempts, 2);
-  assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
-    `/api/terminals/${terminalId}/claim-write:POST`,
-    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
-    `/api/terminals/${terminalId}/events?fromSeq=3&waitMs=1000:GET`,
-    `/api/terminals/${terminalId}/events?fromSeq=4&waitMs=1000:GET`,
-    `/api/terminals/${terminalId}/release-write:POST`,
-  ]);
-});
-
-test("executeTerminalCommand delegates unowned-write handling to the backend", async () => {
-  const terminalId = "terminal-1";
-  const calls: string[] = [];
-
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = String(input);
-    calls.push(`${path}:${init?.method ?? "GET"}`);
-
-    if (path.includes(`/api/terminals/${terminalId}/execute?clientId=`)) {
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 9,
-        writeOwnerId: "client-a",
-        startSeq: 4,
-        startOffset: 2,
-        endSeq: 9,
-        exitCode: 0,
-        cwdAfter: "/repo",
-        rawOutput: "0 ./a\n0 ./b\n",
-        timedOut: false,
-      });
-    }
-
-    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
-  };
-
-  const result = await executeTerminalCommand(
-    terminalId,
-    {
-      command:
-        "find . -type f -print0 | xargs -0 stat -f '%z %N' | sort -n | head -n 4",
-      cwd: "/repo",
-      displayCommand:
-        "find . -type f -print0 | xargs -0 stat -f '%z %N' | sort -n | head -n 4",
-    },
-    "client-a",
-  );
-
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.cwdAfter, "/repo");
-  assert.equal(result.startOffset, 2);
-  assert.equal(result.rawOutput, "0 ./a\n0 ./b\n");
-  assert.equal(result.timedOut, false);
-  assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}/execute?clientId=client-a:POST`,
-  ]);
-});
-
-test("runInTerminal can wait for an explicit completion marker across quiet polls", async () => {
-  const terminalId = "terminal-2";
-  const calls: string[] = [];
-  let eventsCallCount = 0;
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = String(input);
-    calls.push(`${path}:${init?.method ?? "GET"}`);
-
-    if (path.includes(`/api/terminals/${terminalId}/input?clientId=`)) {
-      return jsonResponse({
-        ok: true,
-        id: terminalId,
-        terminalId,
-        running: true,
-        seq: 21,
-        writeOwnerId: "client-a",
-        startSeq: 20,
-        startOffset: 2,
-      });
-    }
-
-    if (path.startsWith(`/api/terminals/${terminalId}/events?fromSeq=21&`)) {
-      eventsCallCount += 1;
-      if (eventsCallCount === 1) {
-        return jsonResponse({
-          events: [],
-          requiresReset: false,
-          snapshot: null,
-        });
-      }
-      return jsonResponse({
-        events: [
-          {
-            terminalId,
-            seq: 22,
-            type: "output",
-            chunk:
-              "__CODEX_DECK_AI_RESULT__ step=largest-files exit=0 cwd=/repo\n",
-          },
-        ],
-        requiresReset: false,
-        snapshot: null,
-      });
-    }
-
-    if (path === `/api/terminals/${terminalId}/events?fromSeq=20&waitMs=1000`) {
-      return jsonResponse({
-        events: [
-          {
-            terminalId,
-            seq: 21,
-            type: "output",
-            chunk: "find . -type f\n",
-          },
-        ],
-        requiresReset: false,
-        snapshot: null,
-      });
-    }
-
-    return jsonResponse({ error: `Unexpected path: ${path}` }, 404);
-  };
-
-  const result = await runInTerminal("find . -type f", {
-    terminalId,
-    clientId: "client-a",
-    waitMs: 1000,
-    timeoutMs: 5000,
-    untilPattern: "__CODEX_DECK_AI_RESULT__ step=largest-files ",
-  });
-
-  assert.equal(result.endSeq, 22);
-  assert.equal(result.startOffset, 2);
-  assert.equal(result.timedOut, false);
-  assert.equal(
-    result.rawOutput,
-    "find . -type f\n__CODEX_DECK_AI_RESULT__ step=largest-files exit=0 cwd=/repo\n",
-  );
-  assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}/input?clientId=client-a:POST`,
-    `/api/terminals/${terminalId}/events?fromSeq=20&waitMs=1000:GET`,
-    `/api/terminals/${terminalId}/events?fromSeq=21&waitMs=1000:GET`,
-    `/api/terminals/${terminalId}/events?fromSeq=21&waitMs=1000:GET`,
-  ]);
 });
 
 test("session skills routes request expected endpoints", async () => {

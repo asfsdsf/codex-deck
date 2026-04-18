@@ -9,7 +9,6 @@ import {
 import {
   closeLocalTerminalManager,
   getLocalTerminalManager,
-  setCommandExecutionProcessFactoryForTests,
   setLocalTerminalManagerForTests,
   setTerminalProcessFactoryForTests,
 } from "../../api/local-terminal";
@@ -83,66 +82,6 @@ function createFakeTerminalProcessFactory() {
             handle.killCalls += 1;
             handle.emitExit();
           },
-        },
-      };
-    },
-  };
-}
-
-function createFakeCommandExecutionProcessFactory() {
-  const handles: Array<{
-    shell: string;
-    cwd: string;
-    command: string;
-    kills: number;
-    emitData: (chunk: string) => void;
-    emitExit: (exitCode: number | null) => void;
-  }> = [];
-
-  return {
-    handles,
-    factory: (input: {
-      shell: string;
-      cwd: string;
-      env: Record<string, string>;
-      command: string;
-    }) => {
-      const dataListeners = new Set<(chunk: string) => void>();
-      const exitListeners = new Set<
-        (event: { exitCode: number | null }) => void
-      >();
-      let exited = false;
-      const handle = {
-        shell: input.shell,
-        cwd: input.cwd,
-        command: input.command,
-        kills: 0,
-        emitData: (chunk: string) => {
-          for (const listener of dataListeners) {
-            listener(chunk);
-          }
-        },
-        emitExit: (exitCode: number | null) => {
-          if (exited) {
-            return;
-          }
-          exited = true;
-          for (const listener of exitListeners) {
-            listener({ exitCode });
-          }
-        },
-      };
-      handles.push(handle);
-      return {
-        onData: (callback: (chunk: string) => void) => {
-          dataListeners.add(callback);
-        },
-        onExit: (callback: (event: { exitCode: number | null }) => void) => {
-          exitListeners.add(callback);
-        },
-        kill: () => {
-          handle.kills += 1;
-          handle.emitExit(null);
         },
       };
     },
@@ -257,80 +196,6 @@ test("bound terminals rehydrate after manager restart as stopped rows", async ()
       await clearTerminalBinding(terminalId);
     }
     await closeLocalTerminalManager();
-    setTerminalProcessFactoryForTests(null);
-    await cleanup();
-  }
-});
-
-test("executeCommand streams visible output without leaking controller marker", async () => {
-  const { rootDir, cleanup } = await createTempCodexDir(
-    "local-terminal-execute",
-  );
-  const processFactory = createFakeTerminalProcessFactory();
-  const commandFactory = createFakeCommandExecutionProcessFactory();
-
-  initStorage(rootDir);
-  await closeLocalTerminalManager();
-  setLocalTerminalManagerForTests(null);
-  setTerminalProcessFactoryForTests(processFactory.factory);
-  setCommandExecutionProcessFactoryForTests(commandFactory.factory);
-
-  try {
-    const manager = getLocalTerminalManager();
-    const created = manager.createTerminal("/repo/app");
-    const statePath = join(
-      rootDir,
-      "codex-deck",
-      "terminal",
-      "state",
-      `${created.terminalId}.json`,
-    );
-    processFactory.handles[0]?.emitData("(base) Project/codex-deck » ");
-
-    const executionPromise = manager.executeCommand(created.terminalId, {
-      command:
-        "find . -type f -print0 | xargs -0 stat -f '%z %N' | sort -n | head -n 4",
-      cwd: "/repo/app",
-      displayCommand:
-        "find . -type f -print0 | xargs -0 stat -f '%z %N' | sort -n | head -n 4",
-    });
-
-    const executionHandle = commandFactory.handles[0];
-    assert.ok(executionHandle);
-    executionHandle.emitData(
-      "0 ./node_modules/.pnpm/example-a\n0 ./node_modules/.pnpm/example-b\n",
-    );
-    executionHandle.emitData(
-      "\n__CODEX_DECK_TERMINAL_EXEC_RESULT__ exit=0 cwd=/repo/app\n",
-    );
-    executionHandle.emitExit(0);
-
-    const result = await executionPromise;
-    assert.ok(result);
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.cwdAfter, "/repo/app");
-    assert.equal(result.timedOut, false);
-    assert.equal(result.startOffset, "(base) Project/codex-deck » ".length);
-    assert.equal(
-      result.rawOutput,
-      "0 ./node_modules/.pnpm/example-a\n0 ./node_modules/.pnpm/example-b",
-    );
-
-    const snapshot = manager.getSnapshot(created.terminalId);
-    assert.ok(snapshot);
-    assert.match(
-      snapshot.output,
-      /Project\/codex-deck » find \. -type f -print0 \| xargs -0 stat -f '%z %N' \| sort -n \| head -n 4\r?\n0 \.\/node_modules\/\.pnpm\/example-a/,
-    );
-    assert.equal(
-      snapshot.output.includes("__CODEX_DECK_TERMINAL_EXEC_RESULT__"),
-      false,
-    );
-    assert.equal(snapshot.output.includes("__CODEX_DECK_AI_RESULT__"), false);
-    await waitFor(() => existsSync(statePath));
-  } finally {
-    await closeLocalTerminalManager();
-    setCommandExecutionProcessFactoryForTests(null);
     setTerminalProcessFactoryForTests(null);
     await cleanup();
   }

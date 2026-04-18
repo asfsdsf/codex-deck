@@ -37,7 +37,6 @@ import type {
   WorkflowSummary,
   SessionSkillConfigWriteResponse,
   SessionSkillsResponse,
-  TerminalEventsResponse,
   TerminalListResponse,
   TerminalSummary,
   TerminalBindingResponse,
@@ -46,16 +45,11 @@ import type {
   TerminalSessionRolesResponse,
   CreateTerminalRequest,
   TerminalCommandResponse,
-  TerminalExecuteCommandRequest,
-  TerminalExecuteCommandResponse,
-  TerminalInputRequest,
   TerminalInputResponse,
-  TerminalPersistFrozenBlockRequest,
-  TerminalPersistFrozenBlockResponse,
+  TerminalInputRequest,
   TerminalPersistMessageActionRequest,
   TerminalPersistMessageActionResponse,
   TerminalResizeRequest,
-  TerminalSessionArtifactsResponse,
   TerminalSnapshotResponse,
   SessionDiffMode,
   SessionDiffResponse,
@@ -154,17 +148,10 @@ export async function getSystemContext(): Promise<SystemContextResponse> {
   return requestJson<SystemContextResponse>("/api/system/context");
 }
 
-const DEFAULT_RUN_IN_TERMINAL_TIMEOUT_MS = 15_000;
-const DEFAULT_RUN_IN_TERMINAL_WAIT_MS = 1_000;
 const READONLY_CLI_CACHE_TTL_MS = 30_000;
 const THREAD_STATE_CACHE_TTL_MS = 250;
 const SESSION_ROLE_CACHE_TTL_MS = 250;
 const WORKFLOW_SESSION_LOOKUP_CACHE_TTL_MS = 250;
-const ANSI_CSI_SEQUENCE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
-const ANSI_OSC_SEQUENCE_PATTERN = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
-const ANSI_SINGLE_CHAR_SEQUENCE_PATTERN = /\u001B[@-Z\\-_]/g;
-
-let runInTerminalClientId: string | null = null;
 
 interface TimedCacheEntry<T> {
   value: T;
@@ -303,63 +290,6 @@ function resetApiRequestCaches(): void {
 export const __TEST_ONLY__ = {
   resetApiRequestCaches,
 };
-
-function getRunInTerminalClientId(): string {
-  if (runInTerminalClientId) {
-    return runInTerminalClientId;
-  }
-
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    runInTerminalClientId = crypto.randomUUID();
-    return runInTerminalClientId;
-  }
-
-  runInTerminalClientId = `run-terminal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  return runInTerminalClientId;
-}
-
-function toPositiveIntegerOrDefault(
-  value: number | undefined,
-  fallback: number,
-) {
-  if (!Number.isFinite(value)) {
-    return fallback;
-  }
-  const normalized = Math.floor(value ?? fallback);
-  return normalized > 0 ? normalized : fallback;
-}
-
-export interface RunInTerminalOptions {
-  terminalId?: string;
-  clientId?: string;
-  waitMs?: number;
-  timeoutMs?: number;
-  appendNewline?: boolean;
-  untilPattern?: string;
-  onStarted?: (input: { startSeq: number; startOffset: number }) => void;
-}
-
-export interface RunInTerminalResult {
-  terminalId: string;
-  clientId: string;
-  command: string;
-  output: string;
-  rawOutput: string;
-  startSeq: number;
-  startOffset: number;
-  endSeq: number;
-  timedOut: boolean;
-}
-
-function stripTerminalAnsiCodes(value: string): string {
-  return value
-    .replace(ANSI_OSC_SEQUENCE_PATTERN, "")
-    .replace(ANSI_CSI_SEQUENCE_PATTERN, "")
-    .replace(ANSI_SINGLE_CHAR_SEQUENCE_PATTERN, "");
-}
 
 async function requestJsonAndNotifyConversation<T>(
   sessionId: string,
@@ -1278,14 +1208,6 @@ export async function listActiveTerminals(): Promise<TerminalSummary[]> {
   return response.terminals;
 }
 
-export async function getTerminalBinding(
-  terminalId: string,
-): Promise<TerminalBindingResponse> {
-  return requestJson<TerminalBindingResponse>(
-    `/api/terminals/${encodeURIComponent(terminalId)}/binding`,
-  );
-}
-
 export async function bindTerminalSession(
   terminalId: string,
   input: TerminalBindSessionRequest,
@@ -1337,40 +1259,6 @@ export async function createTerminal(
   });
 }
 
-export async function getTerminalSnapshot(
-  terminalId: string,
-): Promise<TerminalSnapshotResponse> {
-  return requestJson<TerminalSnapshotResponse>(
-    `/api/terminals/${encodeURIComponent(terminalId)}`,
-  );
-}
-
-export async function getTerminalFrozenBlocks(
-  terminalId: string,
-  sessionId: string,
-): Promise<TerminalSessionArtifactsResponse> {
-  const params = new URLSearchParams({ sessionId });
-  return requestJson<TerminalSessionArtifactsResponse>(
-    `/api/terminals/${encodeURIComponent(terminalId)}/frozen-blocks?${params.toString()}`,
-  );
-}
-
-export async function persistTerminalFrozenBlock(
-  terminalId: string,
-  input: TerminalPersistFrozenBlockRequest,
-): Promise<TerminalPersistFrozenBlockResponse> {
-  return requestJson<TerminalPersistFrozenBlockResponse>(
-    `/api/terminals/${encodeURIComponent(terminalId)}/frozen-blocks`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(input),
-    },
-  );
-}
-
 export async function persistTerminalMessageAction(
   terminalId: string,
   input: TerminalPersistMessageActionRequest,
@@ -1416,25 +1304,6 @@ export async function sendTerminalInput(
   );
 }
 
-export async function executeTerminalCommand(
-  terminalId: string,
-  input: TerminalExecuteCommandRequest,
-  clientId?: string,
-): Promise<TerminalExecuteCommandResponse> {
-  const resolvedClientId = clientId?.trim() || getRunInTerminalClientId();
-  const params = `?clientId=${encodeURIComponent(resolvedClientId)}`;
-  return requestJson<TerminalExecuteCommandResponse>(
-    `/api/terminals/${encodeURIComponent(terminalId)}/execute${params}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(input),
-    },
-  );
-}
-
 export async function resizeTerminal(
   terminalId: string,
   input: TerminalResizeRequest,
@@ -1449,19 +1318,6 @@ export async function resizeTerminal(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(input),
-    },
-  );
-}
-
-export async function interruptTerminal(
-  terminalId: string,
-  clientId?: string,
-): Promise<TerminalCommandResponse> {
-  const params = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
-  return requestJson<TerminalCommandResponse>(
-    `/api/terminals/${encodeURIComponent(terminalId)}/interrupt${params}`,
-    {
-      method: "POST",
     },
   );
 }
@@ -1509,156 +1365,6 @@ export async function releaseTerminalWrite(
       body: JSON.stringify({ clientId }),
     },
   );
-}
-
-export async function runInTerminal(
-  command: string,
-  options: RunInTerminalOptions = {},
-): Promise<RunInTerminalResult> {
-  const normalizedCommand = command.trim();
-  if (!normalizedCommand) {
-    throw new Error("command must be a non-empty string");
-  }
-
-  const requestedTerminalId = options.terminalId?.trim();
-  const terminalId =
-    requestedTerminalId && requestedTerminalId.length > 0
-      ? requestedTerminalId
-      : (await listActiveTerminals())[0]?.terminalId;
-  if (!terminalId) {
-    throw new Error("No active terminal available.");
-  }
-
-  const clientId = options.clientId?.trim() || getRunInTerminalClientId();
-  const timeoutMs = toPositiveIntegerOrDefault(
-    options.timeoutMs,
-    DEFAULT_RUN_IN_TERMINAL_TIMEOUT_MS,
-  );
-  const waitMs = toPositiveIntegerOrDefault(
-    options.waitMs,
-    DEFAULT_RUN_IN_TERMINAL_WAIT_MS,
-  );
-  const untilPattern = options.untilPattern?.trim() || null;
-  const input =
-    options.appendNewline === false || command.endsWith("\n")
-      ? command
-      : `${command}\n`;
-
-  const sendInput = () => sendTerminalInput(terminalId, { input }, clientId);
-
-  let claimedWrite = false;
-  let startResponse: TerminalInputResponse;
-  try {
-    startResponse = await sendInput();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.toLowerCase().includes("owns terminal write")) {
-      throw error;
-    }
-    await claimTerminalWrite(terminalId, clientId);
-    claimedWrite = true;
-    startResponse = await sendInput();
-  }
-
-  options.onStarted?.({
-    startSeq: startResponse.startSeq,
-    startOffset: startResponse.startOffset,
-  });
-
-  const deadline = Date.now() + timeoutMs;
-  let fromSeq = startResponse.startSeq;
-  let output = "";
-  let sawEvent = false;
-  let timedOut = false;
-  let terminalStopped = false;
-  let matchedUntilPattern = false;
-
-  try {
-    while (Date.now() < deadline) {
-      const remainingMs = Math.max(0, deadline - Date.now());
-      const waitForThisPoll = Math.min(waitMs, remainingMs);
-      const params = new URLSearchParams({
-        fromSeq: String(fromSeq),
-        waitMs: String(waitForThisPoll),
-      });
-      const batch = await requestJson<TerminalEventsResponse>(
-        `/api/terminals/${encodeURIComponent(terminalId)}/events?${params.toString()}`,
-      );
-
-      let batchHadEvent = false;
-      if (batch.requiresReset && batch.snapshot) {
-        const resetOutput = batch.snapshot.output;
-        if (typeof resetOutput === "string") {
-          output = resetOutput.slice(startResponse.startOffset);
-          matchedUntilPattern =
-            untilPattern !== null && output.includes(untilPattern);
-        }
-        fromSeq = Math.max(fromSeq, batch.snapshot.seq);
-        batchHadEvent = true;
-        sawEvent = true;
-        terminalStopped = batch.snapshot.running === false;
-      }
-
-      for (const event of batch.events) {
-        if (!event || typeof event !== "object" || event.seq <= fromSeq) {
-          continue;
-        }
-        fromSeq = event.seq;
-        batchHadEvent = true;
-        sawEvent = true;
-        if (event.type === "output" && typeof event.chunk === "string") {
-          output += event.chunk;
-          matchedUntilPattern =
-            untilPattern !== null && output.includes(untilPattern);
-        }
-        if (event.type === "state" && event.running === false) {
-          terminalStopped = true;
-        }
-        if (event.type === "reset" && typeof event.output === "string") {
-          output = event.output.slice(startResponse.startOffset);
-          terminalStopped = event.running === false;
-          matchedUntilPattern =
-            untilPattern !== null && output.includes(untilPattern);
-        }
-      }
-
-      if (terminalStopped || matchedUntilPattern) {
-        break;
-      }
-      if (batchHadEvent) {
-        continue;
-      }
-      if (untilPattern !== null) {
-        continue;
-      }
-      if (sawEvent) {
-        break;
-      }
-    }
-
-    if (
-      Date.now() >= deadline &&
-      (!sawEvent || (untilPattern !== null && !matchedUntilPattern))
-    ) {
-      timedOut = true;
-    }
-  } finally {
-    if (claimedWrite) {
-      void releaseTerminalWrite(terminalId, clientId).catch(() => {});
-    }
-  }
-
-  return {
-    terminalId,
-    clientId,
-    command,
-    output,
-    rawOutput: stripTerminalAnsiCodes(output),
-    startSeq: startResponse.startSeq,
-    startOffset: startResponse.startOffset,
-    endSeq: fromSeq,
-    timedOut,
-  };
 }
 
 export function subscribeTerminalsStream(

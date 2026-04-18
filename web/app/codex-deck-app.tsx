@@ -216,9 +216,6 @@ import {
   persistTerminalMessageAction as persistTerminalMessageActionRequest,
   releaseTerminalWrite as releaseTerminalWriteRequest,
   sendTerminalInput as sendTerminalInputRequest,
-  runInTerminal as runInTerminalRequest,
-  type RunInTerminalOptions,
-  type RunInTerminalResult,
   setCodexThreadName,
   forkCodexThread,
   compactCodexThread,
@@ -526,10 +523,6 @@ const DAEMON_COMMAND_CONSOLE_LOG_GLOBAL_KEY =
 
 interface CodexDeckDebugWindow extends Window {
   __CODEX_DECK_DAEMON_COMMAND_LOG_ENABLED__?: boolean;
-  runInTerminal?: (
-    command: string,
-    options?: RunInTerminalOptions,
-  ) => Promise<RunInTerminalResult>;
 }
 
 function isDaemonCommandConsoleLogEnabled(): boolean {
@@ -7580,34 +7573,6 @@ export default function CodexDeckApp() {
       debugWindow.__CODEX_DECK_DAEMON_COMMAND_LOG_ENABLED__ = true;
     }
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const debugWindow = window as CodexDeckDebugWindow;
-    const boundRunInTerminal = (
-      command: string,
-      options: RunInTerminalOptions = {},
-    ) => {
-      const mergedTerminalId =
-        typeof options.terminalId === "string" && options.terminalId.trim()
-          ? options.terminalId.trim()
-          : (selectedTerminalId ?? undefined);
-      return runInTerminalRequest(command, {
-        ...options,
-        terminalId: mergedTerminalId,
-      });
-    };
-
-    debugWindow.runInTerminal = boundRunInTerminal;
-    return () => {
-      if (debugWindow.runInTerminal === boundRunInTerminal) {
-        delete debugWindow.runInTerminal;
-      }
-    };
-  }, [selectedTerminalId]);
 
   const logDaemonCommandHistoryEntries = useCallback(
     (
