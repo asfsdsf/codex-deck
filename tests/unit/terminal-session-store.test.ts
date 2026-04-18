@@ -6,13 +6,21 @@ import { mkdir, writeFile } from "node:fs/promises";
 import {
   getPersistedTerminalSessionArtifacts,
   persistTerminalSessionFrozenBlock,
+  persistTerminalSessionMessageBlock,
   persistTerminalSessionMessageAction,
   readPersistedTerminalSessionManifestSync,
   removeTerminalSessionArtifacts,
 } from "../../api/terminal-session-store";
 import { createTempCodexDir, waitFor } from "./test-utils";
 
-test("persistTerminalSessionFrozenBlock stores canonical block manifest and transcript", async () => {
+const sampleSnapshot = {
+  format: "xterm-serialize-v1" as const,
+  cols: 80,
+  rows: 24,
+  data: '\u001b[?1049h\u001b[Hpwd\r\n/repo/app\r\n',
+};
+
+test("persistTerminalSessionFrozenBlock stores canonical block manifest and snapshot", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-persist",
   );
@@ -22,9 +30,9 @@ test("persistTerminalSessionFrozenBlock stores canonical block manifest and tran
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        kind: "execution",
+        captureKind: "auto",
         messageKey: "message-1",
-        transcript: "pwd\n/repo/app\n",
+        snapshot: sampleSnapshot,
         sequence: 1,
       },
       rootDir,
@@ -38,7 +46,7 @@ test("persistTerminalSessionFrozenBlock stores canonical block manifest and tran
       "terminal-1",
     );
     const manifestPath = join(sessionDir, "session.json");
-    const blockPath = join(sessionDir, persisted.block.transcriptPath ?? "");
+    const blockPath = join(sessionDir, persisted.block.snapshotPath ?? "");
 
     await waitFor(() => existsSync(manifestPath) && existsSync(blockPath));
 
@@ -48,9 +56,11 @@ test("persistTerminalSessionFrozenBlock stores canonical block manifest and tran
     };
     assert.equal(manifest.terminalId, "terminal-1");
     assert.equal(manifest.blocks.length, 1);
-    assert.equal(manifest.blocks[0]?.kind, "execution");
+    assert.equal(manifest.blocks[0]?.type, "terminal_snapshot");
+    assert.equal(manifest.blocks[0]?.captureKind, "auto");
     assert.equal(manifest.blocks[0]?.messageKey, "message-1");
     assert.equal(manifest.blocks[0]?.sequence, 1);
+    assert.equal(manifest.blocks[0]?.snapshotFormat, "xterm-serialize-v1");
 
     const restored = await getPersistedTerminalSessionArtifacts(
       "terminal-1",
@@ -58,7 +68,7 @@ test("persistTerminalSessionFrozenBlock stores canonical block manifest and tran
       rootDir,
     );
     assert.equal(restored.blocks.length, 1);
-    assert.equal(restored.blocks[0]?.transcript, "pwd\n/repo/app\n");
+    assert.deepEqual(restored.blocks[0]?.snapshot, sampleSnapshot);
   } finally {
     await cleanup();
   }
@@ -74,9 +84,12 @@ test("persistTerminalSessionFrozenBlock updates existing logical block instead o
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        kind: "execution",
+        captureKind: "auto",
         messageKey: "message-1",
-        transcript: "first output\n",
+        snapshot: {
+          ...sampleSnapshot,
+          data: "first output snapshot",
+        },
         sequence: 1,
       },
       rootDir,
@@ -86,9 +99,13 @@ test("persistTerminalSessionFrozenBlock updates existing logical block instead o
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        kind: "execution",
+        captureKind: "auto",
         messageKey: "message-1",
-        transcript: "updated output\n",
+        snapshot: {
+          ...sampleSnapshot,
+          cols: 120,
+          data: "updated output snapshot",
+        },
         sequence: 2,
       },
       rootDir,
@@ -100,7 +117,8 @@ test("persistTerminalSessionFrozenBlock updates existing logical block instead o
       rootDir,
     );
     assert.equal(restored.blocks.length, 1);
-    assert.equal(restored.blocks[0]?.transcript, "updated output\n");
+    assert.equal(restored.blocks[0]?.snapshot?.data, "updated output snapshot");
+    assert.equal(restored.blocks[0]?.cols, 120);
     assert.equal(restored.blocks[0]?.sequence, 2);
     assert.equal(restored.blocks[0]?.blockId, updated.block.blockId);
   } finally {
@@ -118,9 +136,13 @@ test("persistTerminalSessionFrozenBlock stores manual blocks with explicit seque
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        kind: "manual",
+        captureKind: "manual",
         messageKey: "message-2",
-        transcript: "prompt> pwd\n/repo/app\nprompt>\n",
+        snapshot: {
+          ...sampleSnapshot,
+          rows: 12,
+          data: "prompt snapshot",
+        },
         sequence: 3,
       },
       rootDir,
@@ -132,7 +154,8 @@ test("persistTerminalSessionFrozenBlock stores manual blocks with explicit seque
       rootDir,
     );
     assert.equal(restored.blocks.length, 1);
-    assert.equal(restored.blocks[0]?.kind, "manual");
+    assert.equal(restored.blocks[0]?.type, "terminal_snapshot");
+    assert.equal(restored.blocks[0]?.captureKind, "manual");
     assert.equal(restored.blocks[0]?.messageKey, "message-2");
     assert.equal(restored.blocks[0]?.sequence, 3);
   } finally {
@@ -140,12 +163,105 @@ test("persistTerminalSessionFrozenBlock stores manual blocks with explicit seque
   }
 });
 
-test("persistTerminalSessionMessageAction stores decisions on canonical execution block", async () => {
+test("persistTerminalSessionMessageBlock stores canonical AI terminal plan blocks", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "terminal-session-store-plan",
+  );
+
+  try {
+    const persisted = await persistTerminalSessionMessageBlock(
+      {
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        messageKey: "plan-message-1",
+        type: "ai_terminal_plan",
+        sequence: 2,
+        leadingMarkdown: "Inspect the repo first.",
+        trailingMarkdown: "Then continue.",
+        rawBlock: "<ai-terminal-plan>...</ai-terminal-plan>",
+        contextNote: "Review before running.",
+        steps: [
+          {
+            stepId: "check-status",
+            stepGoal: "Inspect status",
+            command: "git status --short",
+            explanation: null,
+            cwd: "/repo/app",
+            shell: "zsh",
+            risk: "low",
+            nextAction: "approve",
+            contextNote: null,
+          },
+        ],
+        stepFeedback: [
+          {
+            kind: "execution",
+            stepId: "check-status",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            status: "success",
+            exitCode: 0,
+            cwdAfter: "/repo/app",
+            outputSummary: "Clean working tree.",
+            errorSummary: null,
+            outputReference: null,
+          },
+        ],
+      },
+      rootDir,
+    );
+
+    const manifest = readPersistedTerminalSessionManifestSync("terminal-1", rootDir);
+    assert.equal(manifest.blocks.length, 1);
+    assert.equal(manifest.blocks[0]?.type, "ai_terminal_plan");
+    assert.equal(manifest.blocks[0]?.leadingMarkdown, "Inspect the repo first.");
+    assert.equal(manifest.blocks[0]?.steps?.[0]?.stepId, "check-status");
+    assert.equal(manifest.blocks[0]?.stepFeedback?.[0]?.kind, "execution");
+    assert.equal(persisted.block.type, "ai_terminal_plan");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("persistTerminalSessionMessageAction stores actions on canonical AI terminal plan blocks", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-action",
   );
 
   try {
+    await persistTerminalSessionMessageBlock(
+      {
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        messageKey: "plan-message-1",
+        type: "ai_terminal_plan",
+        rawBlock: "<ai-terminal-plan>...</ai-terminal-plan>",
+        steps: [
+          {
+            stepId: "check-status",
+            stepGoal: "Inspect status",
+            command: "git status --short",
+            explanation: null,
+            cwd: "/repo/app",
+            shell: "zsh",
+            risk: "low",
+            nextAction: "approve",
+            contextNote: null,
+          },
+          {
+            stepId: "run-tests",
+            stepGoal: "Run tests",
+            command: "pnpm test",
+            explanation: null,
+            cwd: "/repo/app",
+            shell: "zsh",
+            risk: "medium",
+            nextAction: "approve",
+            contextNote: null,
+          },
+        ],
+      },
+      rootDir,
+    );
     const approved = await persistTerminalSessionMessageAction(
       {
         terminalId: "terminal-1",
@@ -171,44 +287,22 @@ test("persistTerminalSessionMessageAction stores decisions on canonical executio
 
     const manifest = readPersistedTerminalSessionManifestSync("terminal-1", rootDir);
     assert.equal(manifest.blocks.length, 1);
-    assert.equal(manifest.blocks[0]?.kind, "execution");
-    assert.deepEqual(manifest.blocks[0]?.action, {
-      kind: "ai-terminal-step-actions",
-      steps: [
+    assert.equal(manifest.blocks[0]?.type, "ai_terminal_plan");
+    assert.deepEqual(manifest.blocks[0]?.stepActions, [
         {
           stepId: "check-status",
           decision: "approved",
           reason: null,
-          updatedAt: approved.action.steps[0]?.updatedAt,
+          updatedAt: approved.stepActions[0]?.updatedAt,
         },
         {
           stepId: "run-tests",
           decision: "rejected",
           reason: "Use the targeted test first.",
-          updatedAt: manifest.blocks[0]?.action?.steps[1]?.updatedAt,
+          updatedAt: manifest.blocks[0]?.stepActions?.[1]?.updatedAt,
         },
-      ],
-    });
-
-    await persistTerminalSessionFrozenBlock(
-      {
-        terminalId: "terminal-1",
-        sessionId: "session-1",
-        kind: "execution",
-        messageKey: "plan-message-1",
-        transcript: "git status\nclean\n",
-        sequence: 1,
-      },
-      rootDir,
-    );
-
-    const updatedManifest = readPersistedTerminalSessionManifestSync(
-      "terminal-1",
-      rootDir,
-    );
-    assert.equal(updatedManifest.blocks.length, 1);
-    assert.equal(updatedManifest.blocks[0]?.transcriptPath, "blocks/" + updatedManifest.blocks[0]?.blockId + ".txt");
-    assert.equal(updatedManifest.blocks[0]?.action?.steps.length, 2);
+      ]);
+    assert.equal(manifest.blocks[0]?.stepFeedback?.[0]?.kind, "rejection");
   } finally {
     await cleanup();
   }
@@ -257,9 +351,12 @@ test("removeTerminalSessionArtifacts deletes the persisted terminal session dire
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        kind: "execution",
+        captureKind: "auto",
         messageKey: "message-1",
-        transcript: "done\n",
+        snapshot: {
+          ...sampleSnapshot,
+          data: "done snapshot",
+        },
         sequence: 1,
       },
       rootDir,

@@ -11,12 +11,14 @@ from typing import Any
 
 from terminal_session_lib import (
     TerminalSessionError,
-    find_conversation_message_content,
+    block_inline_content,
+    block_type,
     line_range_to_text,
     load_terminal_manifest,
     read_text_file,
     resolve_codex_home,
-    resolve_manifest_content_path,
+    resolve_block_snapshot_path,
+    sanitize_terminal_snapshot_text,
 )
 
 
@@ -34,6 +36,11 @@ class BlockContent:
     block_type: str
     source: str
     text: str
+    snapshot_format: str | None
+    cols: int | None
+    rows: int | None
+    snapshot_length: int | None
+    message_key: str | None
 
 
 def parse_line_range(value: str) -> tuple[int | None, int | None]:
@@ -119,52 +126,52 @@ def read_block_content(
     block: dict[str, Any],
     index: int,
     session_dir,
-    codex_home,
 ) -> BlockContent:
     current_block_id = block_id(block, index)
-    block_type = str(block.get("type") or "unknown")
-
-    if block_type == "terminal-frozen-output":
-        content_path = resolve_manifest_content_path(session_dir, block.get("path"))
-        return BlockContent(
-            block_id=current_block_id,
-            block_type=block_type,
-            source=str(content_path),
-            text=read_text_file(content_path),
-        )
-
-    if block_type == "codex-session-message":
-        session_id = block.get("sessionId")
-        message_key = block.get("messageKey")
-        if not isinstance(session_id, str) or not isinstance(message_key, str):
-            raise TerminalSessionError(f"block {current_block_id} requires sessionId and messageKey")
-        message = find_conversation_message_content(session_id, message_key, codex_home)
-        return BlockContent(
-            block_id=current_block_id,
-            block_type=block_type,
-            source=f"{message.session_file}:{message.line_number}",
-            text=message.text,
-        )
-
-    if block_type == "codex-session-block-reference":
-        frozen_artifact = block.get("frozenArtifact")
-        if not isinstance(frozen_artifact, dict) or frozen_artifact.get("kind") != "terminal-frozen-output":
-            raise TerminalSessionError(f"legacy block {current_block_id} has no terminal frozen artifact")
-        content_path = resolve_manifest_content_path(session_dir, frozen_artifact.get("path"))
-        return BlockContent(
-            block_id=current_block_id,
-            block_type=block_type,
-            source=str(content_path),
-            text=read_text_file(content_path),
-        )
-
-    raise TerminalSessionError(f"unsupported block type for {current_block_id}: {block_type}")
+    current_block_type = block_type(block)
+    if current_block_type == "terminal_snapshot":
+        content_path = resolve_block_snapshot_path(block, session_dir)
+        source = str(content_path)
+        text = sanitize_terminal_snapshot_text(read_text_file(content_path))
+        snapshot_format = block.get("snapshotFormat")
+        cols = block.get("cols")
+        rows = block.get("rows")
+        snapshot_length = block.get("snapshotLength")
+    else:
+        source = "manifest.rawBlock"
+        text = block_inline_content(block)
+        snapshot_format = None
+        cols = None
+        rows = None
+        snapshot_length = None
+    message_key = block.get("messageKey")
+    return BlockContent(
+        block_id=current_block_id,
+        block_type=current_block_type,
+        source=source,
+        text=text,
+        snapshot_format=snapshot_format if isinstance(snapshot_format, str) else None,
+        cols=cols if isinstance(cols, int) else None,
+        rows=rows if isinstance(rows, int) else None,
+        snapshot_length=snapshot_length if isinstance(snapshot_length, int) else None,
+        message_key=message_key if isinstance(message_key, str) and message_key.strip() else None,
+    )
 
 
 def print_block_content(content: BlockContent, line_start: int | None, line_end: int | None) -> None:
     visible_text = line_range_to_text(content.text, line_start, line_end)
     print(f"===== {content.block_id} ({content.block_type}) =====")
     print(f"source: {content.source}")
+    if content.snapshot_format:
+        print(f"snapshotFormat: {content.snapshot_format}")
+    if content.cols is not None or content.rows is not None:
+        cols_label = str(content.cols) if content.cols is not None else "?"
+        rows_label = str(content.rows) if content.rows is not None else "?"
+        print(f"size: {cols_label}x{rows_label}")
+    if content.snapshot_length is not None:
+        print(f"snapshotLength: {content.snapshot_length}")
+    if content.message_key:
+        print(f"messageKey: {content.message_key}")
     if line_start is not None or line_end is not None:
         start_label = str(line_start) if line_start is not None else "1"
         end_label = str(line_end) if line_end is not None else "end"
@@ -216,7 +223,7 @@ def main() -> int:
                 line_end = request.line_end
             else:
                 line_start, line_end = default_range
-            content = read_block_content(block, index, manifest_path.parent, codex_home)
+            content = read_block_content(block, index, manifest_path.parent)
             print_block_content(content, line_start, line_end)
     except (TerminalSessionError, argparse.ArgumentTypeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

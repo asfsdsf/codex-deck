@@ -67,15 +67,14 @@ async function loadTerminalArtifacts(
   }
 
   const manager = getLocalTerminalManager();
-  const snapshot = manager.getSnapshot(terminalId);
-  if (!snapshot) {
+  if (!manager.getSnapshot(terminalId)) {
     return null;
   }
 
   return syncTerminalSessionArtifacts({
     terminalId,
     sessionId,
-    output: snapshot.output,
+    consumePendingSnapshot: () => manager.consumeFrozenBlockSnapshot(terminalId),
   });
 }
 
@@ -98,15 +97,14 @@ async function publishTerminalArtifactsForBinding(
     return;
   }
 
-  const snapshot = manager.getSnapshot(terminalId);
-  if (!snapshot) {
+  if (!manager.getSnapshot(terminalId)) {
     return;
   }
 
   const result = await syncTrackedTerminalSessionArtifacts({
     terminalId,
     sessionId,
-    output: snapshot.output,
+    consumePendingSnapshot: () => manager.consumeFrozenBlockSnapshot(terminalId),
   });
   if (result.changed) {
     manager.publishArtifacts(terminalId, result.artifacts);
@@ -322,28 +320,8 @@ export function registerTerminalRoutes(app: Hono): void {
       if (!sessionId) {
         return c.json({ error: "sessionId is required" }, 400);
       }
-      const colsParam = c.req.query("cols");
-      const rowsParam = c.req.query("rows");
-      const cols =
-        colsParam === null || colsParam === undefined
-          ? null
-          : parseNonNegativeInteger(colsParam);
-      const rows =
-        rowsParam === null || rowsParam === undefined
-          ? null
-          : parseNonNegativeInteger(rowsParam);
-      if ((cols === null) !== (rows === null)) {
-        return c.json({ error: "cols and rows must be provided together" }, 400);
-      }
-      if (cols !== null && cols < 2) {
-        return c.json({ error: "cols must be an integer >= 2" }, 400);
-      }
-      if (rows !== null && rows < 2) {
-        return c.json({ error: "rows must be an integer >= 2" }, 400);
-      }
 
-      const snapshot = manager.getSnapshot(terminalId);
-      if (!snapshot) {
+      if (!manager.getSnapshot(terminalId)) {
         return c.json({ error: "terminal not found" }, 404);
       }
 
@@ -352,14 +330,8 @@ export function registerTerminalRoutes(app: Hono): void {
           await syncTrackedTerminalSessionArtifacts({
             terminalId,
             sessionId,
-            output: snapshot.output,
-            viewport:
-              cols !== null && rows !== null
-                ? {
-                    cols,
-                    rows,
-                  }
-                : null,
+            consumePendingSnapshot: () =>
+              manager.consumeFrozenBlockSnapshot(terminalId),
           })
         ).artifacts satisfies TerminalSessionArtifactsResponse,
       );
@@ -387,11 +359,11 @@ export function registerTerminalRoutes(app: Hono): void {
         .json()
         .catch(() => ({}))) as Partial<TerminalPersistFrozenBlockRequest>;
       const sessionId = body.sessionId?.trim();
-      const kind =
-        body.kind === undefined || body.kind === null
+      const captureKind =
+        body.captureKind === undefined || body.captureKind === null
           ? null
-          : body.kind === "execution" || body.kind === "manual"
-            ? body.kind
+          : body.captureKind === "manual" || body.captureKind === "auto"
+            ? body.captureKind
             : undefined;
       const messageKey =
         body.messageKey === undefined || body.messageKey === null
@@ -399,7 +371,7 @@ export function registerTerminalRoutes(app: Hono): void {
           : typeof body.messageKey === "string"
             ? body.messageKey.trim()
             : undefined;
-      const transcript = body.transcript;
+      const snapshot = body.snapshot;
       const stepId =
         body.stepId === undefined || body.stepId === null
           ? null
@@ -416,9 +388,9 @@ export function registerTerminalRoutes(app: Hono): void {
       if (!sessionId) {
         return c.json({ error: "sessionId is required" }, 400);
       }
-      if (kind === undefined) {
+      if (captureKind === undefined) {
         return c.json(
-          { error: "kind must be execution, manual, or null" },
+          { error: "captureKind must be manual, auto, or null" },
           400,
         );
       }
@@ -428,8 +400,17 @@ export function registerTerminalRoutes(app: Hono): void {
       if (sequence === undefined) {
         return c.json({ error: "sequence must be a number or null" }, 400);
       }
-      if (typeof transcript !== "string" || transcript.trim().length === 0) {
-        return c.json({ error: "transcript must be a non-empty string" }, 400);
+      if (
+        !snapshot ||
+        snapshot.format !== "xterm-serialize-v1" ||
+        typeof snapshot.data !== "string" ||
+        snapshot.data.length === 0 ||
+        !Number.isFinite(snapshot.cols) ||
+        snapshot.cols < 2 ||
+        !Number.isFinite(snapshot.rows) ||
+        snapshot.rows < 2
+      ) {
+        return c.json({ error: "snapshot must be a valid serialized snapshot" }, 400);
       }
       if (stepId === undefined) {
         return c.json({ error: "stepId must be a string or null" }, 400);
@@ -438,9 +419,9 @@ export function registerTerminalRoutes(app: Hono): void {
       const response = await persistTerminalSessionFrozenBlock({
           terminalId,
           sessionId,
-          kind,
+          captureKind,
           messageKey,
-          transcript,
+          snapshot,
           stepId,
           sequence,
         });
@@ -495,6 +476,13 @@ export function registerTerminalRoutes(app: Hono): void {
       if (reason === undefined) {
         return c.json({ error: "reason must be a string or null" }, 400);
       }
+
+      await syncTrackedTerminalSessionArtifacts({
+        terminalId,
+        sessionId,
+        consumePendingSnapshot: () =>
+          manager.consumeFrozenBlockSnapshot(terminalId),
+      });
 
       const response = await persistTerminalSessionMessageAction({
           terminalId,

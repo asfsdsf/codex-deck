@@ -335,3 +335,45 @@ test("executeCommand streams visible output without leaking controller marker", 
     await cleanup();
   }
 });
+
+test("consumeFrozenBlockSnapshot returns only the current captured block and keeps resize dimensions", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "local-terminal-snapshot-capture",
+  );
+  const processFactory = createFakeTerminalProcessFactory();
+
+  initStorage(rootDir);
+  await closeLocalTerminalManager();
+  setLocalTerminalManagerForTests(null);
+  setTerminalProcessFactoryForTests(processFactory.factory);
+
+  try {
+    const manager = getLocalTerminalManager();
+    const created = manager.createTerminal("/repo/app");
+
+    processFactory.handles[0]?.emitData("first block\r\n");
+    const firstSnapshot = await manager.consumeFrozenBlockSnapshot(
+      created.terminalId,
+    );
+    assert.ok(firstSnapshot);
+    assert.equal(firstSnapshot.cols, 80);
+    assert.equal(firstSnapshot.rows, 24);
+    assert.match(firstSnapshot.data, /first block/);
+    assert.equal(firstSnapshot.data.includes("second block"), false);
+
+    manager.resize(created.terminalId, 120, 40);
+    processFactory.handles[0]?.emitData("second block\r\n");
+    const secondSnapshot = await manager.consumeFrozenBlockSnapshot(
+      created.terminalId,
+    );
+    assert.ok(secondSnapshot);
+    assert.equal(secondSnapshot.cols, 120);
+    assert.equal(secondSnapshot.rows, 40);
+    assert.match(secondSnapshot.data, /second block/);
+    assert.equal(secondSnapshot.data.includes("first block"), false);
+  } finally {
+    await closeLocalTerminalManager();
+    setTerminalProcessFactoryForTests(null);
+    await cleanup();
+  }
+});

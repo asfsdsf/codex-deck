@@ -510,38 +510,96 @@ export interface TerminalEventsResponse {
 
 export type TerminalSessionMessageActionDecision = "approved" | "rejected";
 
-export interface TerminalSessionMessageActionStep {
+export interface TerminalSessionPlanStepAction {
   stepId: string;
   decision: TerminalSessionMessageActionDecision;
   reason: string | null;
   updatedAt: string;
 }
 
-export interface TerminalSessionMessageAction {
-  kind: "ai-terminal-step-actions";
-  steps: TerminalSessionMessageActionStep[];
+export interface TerminalSessionPlanStep {
+  stepId: string;
+  stepGoal: string | null;
+  command: string;
+  explanation: string | null;
+  cwd: string | null;
+  shell: string | null;
+  risk: "low" | "medium" | "high";
+  nextAction: "approve" | "reject" | "provide_input";
+  contextNote: string | null;
 }
 
-export type TerminalSessionBlockKind = "execution" | "manual";
+export interface TerminalSessionPlanExecutionFeedback {
+  kind: "execution";
+  stepId: string;
+  updatedAt: string;
+  status: "success" | "failed" | "timed_out" | "completed_unknown";
+  exitCode: number | null;
+  cwdAfter: string | null;
+  outputSummary: string | null;
+  errorSummary: string | null;
+  outputReference: string | null;
+}
+
+export interface TerminalSessionPlanRejectionFeedback {
+  kind: "rejection";
+  stepId: string;
+  updatedAt: string;
+  decision: "rejected";
+  reason: string | null;
+}
+
+export type TerminalSessionPlanStepFeedback =
+  | TerminalSessionPlanExecutionFeedback
+  | TerminalSessionPlanRejectionFeedback;
+
+export type TerminalSessionBlockType =
+  | "terminal_snapshot"
+  | "ai_terminal_plan"
+  | "ai_terminal_need_input"
+  | "ai_terminal_complete";
+
+export type TerminalSnapshotCaptureKind = "manual" | "auto";
+
+export type TerminalSnapshotFormat = "xterm-serialize-v1";
+
+export interface TerminalSerializedSnapshot {
+  format: TerminalSnapshotFormat;
+  cols: number;
+  rows: number;
+  data: string;
+}
 
 export interface TerminalSessionBlockRecord {
   blockId: string;
   terminalId: string;
   sessionId: string;
-  kind: TerminalSessionBlockKind;
+  type: TerminalSessionBlockType;
   sequence: number;
   createdAt: string;
   updatedAt: string;
   messageKey: string | null;
   stepId: string | null;
-  transcriptPath: string | null;
-  transcriptLength: number;
-  action: TerminalSessionMessageAction | null;
+  snapshotPath: string | null;
+  snapshotFormat: TerminalSnapshotFormat | null;
+  cols: number | null;
+  rows: number | null;
+  snapshotLength: number | null;
+  captureKind: TerminalSnapshotCaptureKind | null;
+  leadingMarkdown: string | null;
+  trailingMarkdown: string | null;
+  rawBlock: string | null;
+  contextNote: string | null;
+  message: string | null;
+  question: string | null;
+  steps: TerminalSessionPlanStep[] | null;
+  stepActions: TerminalSessionPlanStepAction[] | null;
+  stepFeedback: TerminalSessionPlanStepFeedback[] | null;
 }
 
-export interface TerminalSessionBlockRecordWithTranscript
+export interface TerminalSessionBlockRecordWithSnapshot
   extends TerminalSessionBlockRecord {
-  transcript: string | null;
+  snapshot: TerminalSerializedSnapshot | null;
 }
 
 export interface TerminalSessionArtifactsManifest {
@@ -553,9 +611,10 @@ export interface TerminalSessionArtifactsManifest {
 
 export type TerminalTimelineEntry =
   | {
-      type: "output";
+      type: "snapshot";
       key: string;
-      text: string;
+      blockId: string;
+      snapshot: TerminalSerializedSnapshot;
     }
   | {
       type: "card";
@@ -565,9 +624,9 @@ export type TerminalTimelineEntry =
 
 export interface TerminalPersistFrozenBlockRequest {
   sessionId: string;
-  kind?: TerminalSessionBlockKind | null;
+  captureKind?: TerminalSnapshotCaptureKind | null;
   messageKey?: string | null;
-  transcript: string;
+  snapshot: TerminalSerializedSnapshot;
   stepId?: string | null;
   sequence?: number | null;
 }
@@ -588,14 +647,14 @@ export interface TerminalPersistMessageActionResponse {
   terminalId: string;
   sessionId: string;
   messageKey: string;
-  action: TerminalSessionMessageAction;
+  stepActions: TerminalSessionPlanStepAction[];
 }
 
 export interface TerminalSessionArtifactsResponse {
   terminalId: string;
   sessionId: string | null;
   manifest: TerminalSessionArtifactsManifest;
-  blocks: TerminalSessionBlockRecordWithTranscript[];
+  blocks: TerminalSessionBlockRecordWithSnapshot[];
   timelineEntries: TerminalTimelineEntry[];
 }
 

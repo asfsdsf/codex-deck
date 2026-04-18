@@ -2,7 +2,7 @@ import type {
   ConversationMessage,
   SystemContextResponse,
 } from "@codex-deck/api";
-import { sanitizeTerminalTranscriptChunk } from "./terminal-timeline";
+import { sanitizeTerminalTranscriptChunk } from "../api/terminal-transcript";
 
 export const AI_TERMINAL_DEVELOPER_INSTRUCTIONS = `You are an AI terminal planning assistant.
 

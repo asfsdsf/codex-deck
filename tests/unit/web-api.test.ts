@@ -3109,14 +3109,19 @@ test("terminal helper routes request expected endpoints", async () => {
 test("terminal frozen block helper routes request expected endpoints", async () => {
   const terminalId = "terminal-1";
   const sessionId = "session-1";
-  const viewport = { cols: 120, rows: 40 };
+  const snapshot = {
+    format: "xterm-serialize-v1" as const,
+    cols: 80,
+    rows: 24,
+    data: "pwd snapshot",
+  };
   const calls: string[] = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${String(input)}:${init?.method ?? "GET"}`);
 
     if (
       String(input) ===
-        `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}&cols=${viewport.cols}&rows=${viewport.rows}` &&
+        `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}` &&
       init?.method !== "POST"
     ) {
       return jsonResponse({
@@ -3133,23 +3138,36 @@ test("terminal frozen block helper routes request expected endpoints", async () 
             blockId: "block-1",
             terminalId,
             sessionId,
-            kind: "execution",
+            type: "terminal_snapshot",
             sequence: 1,
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
             messageKey: "message-1",
             stepId: null,
-            transcriptPath: "blocks/block-1.txt",
-            transcriptLength: 10,
-            action: null,
-            transcript: "pwd\n/repo\n",
+            snapshotPath: "blocks/block-1.snapshot",
+            snapshotFormat: "xterm-serialize-v1",
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            snapshotLength: snapshot.data.length,
+            captureKind: "auto",
+            leadingMarkdown: null,
+            trailingMarkdown: null,
+            rawBlock: null,
+            contextNote: null,
+            message: null,
+            question: null,
+            steps: null,
+            stepActions: null,
+            stepFeedback: null,
+            snapshot,
           },
         ],
         timelineEntries: [
           {
-            type: "output",
+            type: "snapshot",
             key: "block:block-1",
-            text: "pwd\n/repo\n",
+            blockId: "block-1",
+            snapshot,
           },
           {
             type: "card",
@@ -3166,15 +3184,27 @@ test("terminal frozen block helper routes request expected endpoints", async () 
           blockId: "block-2",
           terminalId,
           sessionId,
-          kind: "manual",
+          type: "terminal_snapshot",
           sequence: 2,
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           messageKey: "message-2",
           stepId: null,
-          transcriptPath: "blocks/block-2.txt",
-          transcriptLength: 25,
-          action: null,
+          snapshotPath: "blocks/block-2.snapshot",
+          snapshotFormat: "xterm-serialize-v1",
+          cols: snapshot.cols,
+          rows: snapshot.rows,
+          snapshotLength: 25,
+          captureKind: "manual",
+          leadingMarkdown: null,
+          trailingMarkdown: null,
+          rawBlock: null,
+          contextNote: null,
+          message: null,
+          question: null,
+          steps: null,
+          stepActions: null,
+          stepFeedback: null,
         },
       });
     }
@@ -3184,29 +3214,29 @@ test("terminal frozen block helper routes request expected endpoints", async () 
         terminalId,
         sessionId,
         messageKey: "message-1",
-        action: {
-          kind: "ai-terminal-step-actions",
-          steps: [
-            {
-              stepId: "step-1",
-              decision: "rejected",
-              reason: "Use a safer command.",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          ],
-        },
+        stepActions: [
+          {
+            stepId: "step-1",
+            decision: "rejected",
+            reason: "Use a safer command.",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
       });
     }
 
     return jsonResponse({ error: "unexpected route" }, 404);
   };
 
-  const restored = await getTerminalFrozenBlocks(terminalId, sessionId, viewport);
+  const restored = await getTerminalFrozenBlocks(terminalId, sessionId);
   const persisted = await persistTerminalFrozenBlock(terminalId, {
     sessionId,
-    kind: "manual",
+    captureKind: "manual",
     messageKey: "message-2",
-    transcript: "prompt> pwd\n/repo\nprompt>\n",
+    snapshot: {
+      ...snapshot,
+      data: "prompt snapshot",
+    },
     sequence: 2,
   });
   const actionPersisted = await persistTerminalMessageAction(terminalId, {
@@ -3217,13 +3247,14 @@ test("terminal frozen block helper routes request expected endpoints", async () 
     reason: "Use a safer command.",
   });
 
-  assert.equal(restored.blocks[0]?.transcript, "pwd\n/repo\n");
+  assert.equal(restored.blocks[0]?.snapshot?.data, "pwd snapshot");
   assert.equal(restored.blocks[0]?.messageKey, "message-1");
   assert.deepEqual(restored.timelineEntries, [
     {
-      type: "output",
+      type: "snapshot",
       key: "block:block-1",
-      text: "pwd\n/repo\n",
+      blockId: "block-1",
+      snapshot,
     },
     {
       type: "card",
@@ -3232,9 +3263,9 @@ test("terminal frozen block helper routes request expected endpoints", async () 
     },
   ]);
   assert.equal(persisted.block.blockId, "block-2");
-  assert.equal(actionPersisted.action.steps[0]?.decision, "rejected");
+  assert.equal(actionPersisted.stepActions[0]?.decision, "rejected");
   assert.deepEqual(calls, [
-    `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}&cols=${viewport.cols}&rows=${viewport.rows}:GET`,
+    `/api/terminals/${terminalId}/frozen-blocks?sessionId=${sessionId}:GET`,
     `/api/terminals/${terminalId}/frozen-blocks:POST`,
     `/api/terminals/${terminalId}/message-action:POST`,
   ]);

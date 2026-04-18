@@ -28,7 +28,7 @@ import {
 import { fitTerminalViewport } from "../terminal-render";
 import { shouldAutoClaimWriteAfterRestart } from "../terminal-write-ownership";
 import MessageBlock from "./message-block";
-import { AnsiText } from "./tool-renderers/ansi-text";
+import { TerminalSnapshotBlock } from "./terminal-snapshot-block";
 
 interface TerminalViewProps {
   terminalId: string;
@@ -78,20 +78,6 @@ function getTerminalTheme(resolvedTheme: ResolvedTheme): {
     foreground: "#e4e4e7",
     cursor: "#d4d4d8",
   };
-}
-
-function TerminalTranscriptOutput(props: { text: string }) {
-  if (!props.text.trim()) {
-    return null;
-  }
-
-  return (
-    <div className="shrink-0 rounded-xl border border-zinc-800/80 bg-black/35 px-3 py-2 shadow-[0_0_0_1px_rgba(24,24,27,0.35)]">
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-zinc-100">
-        <AnsiText text={props.text} />
-      </pre>
-    </div>
-  );
 }
 
 const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
@@ -707,9 +693,13 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
               </div>
             ) : null}
             {timelineEntries.map((entry) => {
-              if (entry.type === "output") {
+              if (entry.type === "snapshot") {
                 return (
-                  <TerminalTranscriptOutput key={entry.key} text={entry.text} />
+                  <TerminalSnapshotBlock
+                    key={entry.key}
+                    snapshot={entry.snapshot}
+                    resolvedTheme={resolvedTheme}
+                  />
                 );
               }
 

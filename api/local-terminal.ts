@@ -10,6 +10,7 @@ import type {
   TerminalSessionArtifactsResponse,
   TerminalStreamEvent,
   TerminalSummary,
+  TerminalSerializedSnapshot,
 } from "./storage";
 import { getAllTerminalBindingsSync } from "./terminal-bindings";
 import {
@@ -18,6 +19,7 @@ import {
   removeTerminalState,
   removeTerminalStateSync,
 } from "./terminal-state";
+import { TerminalSnapshotCapture } from "./terminal-snapshot";
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -68,6 +70,9 @@ export interface LocalTerminalManager {
     terminalId: string,
     artifacts: TerminalSessionArtifactsResponse,
   ) => void;
+  consumeFrozenBlockSnapshot: (
+    terminalId: string,
+  ) => Promise<TerminalSerializedSnapshot | null>;
   executeCommand: (
     terminalId: string,
     input: {
@@ -138,6 +143,10 @@ class TerminalInstance {
   private firstCommand: string | null = null;
   private pendingFirstCommandInput = "";
   private activeCommandExecution = false;
+  private readonly frozenBlockCapture = new TerminalSnapshotCapture(
+    DEFAULT_COLS,
+    DEFAULT_ROWS,
+  );
 
   public constructor(
     public readonly terminalId: string,
@@ -215,6 +224,7 @@ class TerminalInstance {
 
     this.start();
     this.onStateChange();
+    this.frozenBlockCapture.reset();
     return this.getSnapshot();
   }
 
@@ -359,6 +369,7 @@ class TerminalInstance {
 
   public resize(cols: number, rows: number): void {
     this.terminalProcess?.resize(cols, rows);
+    this.frozenBlockCapture.resize(cols, rows);
   }
 
   public interrupt(): void {
@@ -428,6 +439,10 @@ class TerminalInstance {
       type: "artifacts",
       artifacts,
     });
+  }
+
+  public consumeFrozenBlockSnapshot(): Promise<TerminalSerializedSnapshot | null> {
+    return this.frozenBlockCapture.consume();
   }
 
   public async dispose(): Promise<void> {
@@ -504,6 +519,7 @@ class TerminalInstance {
     if (this.output.length > MAX_OUTPUT_CHARS) {
       this.output = this.output.slice(this.output.length - MAX_OUTPUT_CHARS);
     }
+    this.frozenBlockCapture.write(chunk);
     this.publish({
       terminalId: this.terminalId,
       type: "output",
@@ -689,6 +705,15 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
     artifacts: TerminalSessionArtifactsResponse,
   ): void {
     this.terminals.get(terminalId)?.publishArtifacts(artifacts);
+  }
+
+  public consumeFrozenBlockSnapshot(
+    terminalId: string,
+  ): Promise<TerminalSerializedSnapshot | null> {
+    return (
+      this.terminals.get(terminalId)?.consumeFrozenBlockSnapshot() ??
+      Promise.resolve(null)
+    );
   }
 
   public executeCommand(

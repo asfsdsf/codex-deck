@@ -1348,16 +1348,8 @@ export async function getTerminalSnapshot(
 export async function getTerminalFrozenBlocks(
   terminalId: string,
   sessionId: string,
-  viewport?: {
-    cols: number;
-    rows: number;
-  } | null,
 ): Promise<TerminalSessionArtifactsResponse> {
   const params = new URLSearchParams({ sessionId });
-  if (viewport && viewport.cols >= 2 && viewport.rows >= 2) {
-    params.set("cols", String(viewport.cols));
-    params.set("rows", String(viewport.rows));
-  }
   return requestJson<TerminalSessionArtifactsResponse>(
     `/api/terminals/${encodeURIComponent(terminalId)}/frozen-blocks?${params.toString()}`,
   );

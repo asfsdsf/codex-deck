@@ -384,6 +384,7 @@ test("sessions stream carries sessions, terminals, and workflows snapshots", asy
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlockSnapshot: async () => null,
   };
 
   try {
@@ -467,6 +468,7 @@ test("terminal stream accepts terminal-only subscriptions", async () => {
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlockSnapshot: async () => null,
   };
 
   try {
@@ -2734,6 +2736,7 @@ test("terminal routes return snapshot, control responses, and stream events", as
     },
     isWriteOwner: (requestedTerminalId: string, clientId: string) =>
       requestedTerminalId === terminalId && writeOwnerId === clientId,
+    consumeFrozenBlockSnapshot: async () => null,
   };
 
   try {
@@ -3072,6 +3075,7 @@ test("terminal binding routes persist bindings and expose terminal session roles
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlockSnapshot: async () => null,
   };
 
   const workflowSessionId = "workflow-session-1";
@@ -3186,6 +3190,14 @@ test("terminal frozen block routes derive and persist artifacts under codex home
   const terminalId = "terminal-frozen-1";
   let terminalExists = true;
   let terminalOutput = "plan-output\n";
+  let pendingSnapshots = [
+    {
+      format: "xterm-serialize-v1" as const,
+      cols: 80,
+      rows: 24,
+      data: "plan-output-snapshot",
+    },
+  ];
 
   const planMessage = [
     "<ai-terminal-plan>",
@@ -3245,6 +3257,7 @@ test("terminal frozen block routes derive and persist artifacts under codex home
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlockSnapshot: async () => pendingSnapshots.shift() ?? null,
   };
 
   try {
@@ -3266,25 +3279,31 @@ test("terminal frozen block routes derive and persist artifacts under codex home
     );
     assert.equal(initialRestored.status, 200);
     const initialBlocks =
-      (initialRestored.body as { blocks?: Array<{ messageKey?: string | null; transcript?: string | null; kind?: string }> }).blocks ?? [];
+      (initialRestored.body as {
+        blocks?: Array<{
+          messageKey?: string | null;
+          snapshot?: { data?: string } | null;
+          type?: string;
+        }>;
+      }).blocks ?? [];
     const initialTimelineEntries =
       (initialRestored.body as {
         timelineEntries?: Array<
-          | { type?: "output"; text?: string }
+          | { type?: "snapshot"; snapshot?: { data?: string } }
           | { type?: "card"; messageKey?: string }
         >;
       }).timelineEntries ?? [];
     const planBlock =
-      initialBlocks.find((block) => block.kind === "manual") ?? null;
+      initialBlocks.find((block) => block.type === "terminal_snapshot") ?? null;
     const planMessageKey = planBlock?.messageKey ?? null;
     assert.ok(planMessageKey);
-    assert.equal(planBlock?.transcript, "plan-output");
+    assert.equal(planBlock?.snapshot?.data, "plan-output-snapshot");
     assert.deepEqual(
       initialTimelineEntries.map((entry) =>
-        entry.type === "output"
+        entry.type === "snapshot"
           ? {
               type: entry.type,
-              text: entry.text,
+              data: entry.snapshot?.data,
             }
           : {
               type: entry.type,
@@ -3293,8 +3312,8 @@ test("terminal frozen block routes derive and persist artifacts under codex home
       ),
       [
         {
-          type: "output",
-          text: "plan-output",
+          type: "snapshot",
+          data: "plan-output-snapshot",
         },
         {
           type: "card",
@@ -3314,6 +3333,14 @@ test("terminal frozen block routes derive and persist artifacts under codex home
     assert.equal(existsSync(manifestPath), true);
 
     terminalOutput = "plan-output\nfinal-output\n";
+    pendingSnapshots = [
+      {
+        format: "xterm-serialize-v1" as const,
+        cols: 80,
+        rows: 24,
+        data: "final-output-snapshot",
+      },
+    ];
     await writeSessionFile(sessionsDir, "session-1.jsonl", [
       sessionMetaLine("session-1", "/repo/app", Date.now()),
       responseItemMessageLine(
@@ -3338,51 +3365,81 @@ test("terminal frozen block routes derive and persist artifacts under codex home
         blocks?: Array<{
           blockId?: string;
           messageKey?: string | null;
-          transcript?: string | null;
-          kind?: string;
+          snapshot?: { data?: string } | null;
+          type?: string;
           sequence?: number;
+          captureKind?: string | null;
+          stepActions?: Array<{
+            stepId?: string;
+            decision?: string;
+            reason?: string | null;
+            updatedAt?: string;
+          }> | null;
         }>;
       }).blocks ?? [];
     const restoredTimelineEntries =
       (restored.body as {
         timelineEntries?: Array<
-          | { type?: "output"; text?: string }
+          | { type?: "snapshot"; snapshot?: { data?: string } }
           | { type?: "card"; messageKey?: string }
         >;
       }).timelineEntries ?? [];
     const completionBlock =
-      restoredBlocks.find((block) => block.kind === "execution") ?? null;
+      restoredBlocks.find(
+        (block) => block.type === "ai_terminal_complete",
+      ) ?? null;
     const completionMessageKey = completionBlock?.messageKey ?? null;
     assert.ok(completionMessageKey);
-    assert.equal(completionBlock?.transcript, "final-output");
+    const completionSnapshotBlock =
+      restoredBlocks.find(
+        (block) =>
+          block.type === "terminal_snapshot" &&
+          block.messageKey === completionMessageKey,
+      ) ?? null;
+    assert.equal(
+      completionSnapshotBlock?.snapshot?.data,
+      "final-output-snapshot",
+    );
     assert.deepEqual(
       restoredBlocks.map((block) => ({
-        kind: block.kind,
+        type: block.type,
         messageKey: block.messageKey,
-        transcript: block.transcript,
+        snapshot: block.snapshot?.data,
         sequence: block.sequence,
       })),
       [
         {
-          kind: "manual",
+          type: "terminal_snapshot",
           messageKey: planMessageKey,
-          transcript: "plan-output",
+          snapshot: "plan-output-snapshot",
           sequence: 1,
         },
         {
-          kind: "execution",
-          messageKey: completionMessageKey,
-          transcript: "final-output",
+          type: "ai_terminal_plan",
+          messageKey: planMessageKey,
+          snapshot: undefined,
           sequence: 2,
+        },
+        {
+          type: "terminal_snapshot",
+          messageKey: completionMessageKey,
+          snapshot: "final-output-snapshot",
+          sequence: 3,
+        },
+        {
+          type: "ai_terminal_complete",
+          messageKey: completionMessageKey,
+          snapshot: undefined,
+          sequence: 4,
         },
       ],
     );
     assert.deepEqual(
       restoredTimelineEntries.map((entry) =>
-        entry.type === "output"
+        entry.type === "snapshot"
           ? {
               type: entry.type,
-              text: entry.text,
+              data: entry.snapshot?.data,
             }
           : {
               type: entry.type,
@@ -3391,16 +3448,16 @@ test("terminal frozen block routes derive and persist artifacts under codex home
       ),
       [
         {
-          type: "output",
-          text: "plan-output",
+          type: "snapshot",
+          data: "plan-output-snapshot",
         },
         {
           type: "card",
           messageKey: planMessageKey,
         },
         {
-          type: "output",
-          text: "final-output",
+          type: "snapshot",
+          data: "final-output-snapshot",
         },
         {
           type: "card",
@@ -3417,7 +3474,7 @@ test("terminal frozen block routes derive and persist artifacts under codex home
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId: "session-1",
-          messageKey: completionMessageKey,
+          messageKey: planMessageKey,
           stepId: "check-status",
           decision: "rejected",
           reason: "Use a read-only command.",
@@ -3429,27 +3486,33 @@ test("terminal frozen block routes derive and persist artifacts under codex home
       readFileSync(manifestPath, "utf-8"),
     ) as {
       blocks: Array<{
-        kind?: string;
+        type?: string;
         messageKey?: string;
-        action?: {
-          steps?: Array<{
-            stepId?: string;
-            decision?: string;
-            reason?: string | null;
-            updatedAt?: string;
-          }>;
-        } | null;
+        stepActions?: Array<{
+          stepId?: string;
+          decision?: string;
+          reason?: string | null;
+          updatedAt?: string;
+        }> | null;
       }>;
     };
     const actionBlock = actionManifest.blocks.find(
-      (block) => block.kind === "execution" && block.messageKey === completionMessageKey,
+      (block) =>
+        block.type === "ai_terminal_complete" &&
+        block.messageKey === completionMessageKey,
     );
-    assert.equal(actionBlock?.kind, "execution");
-    assert.deepEqual(actionBlock?.action?.steps?.[0], {
+    assert.equal(actionBlock?.type, "ai_terminal_complete");
+    assert.equal(actionBlock?.stepActions, null);
+    const planActionBlock = actionManifest.blocks.find(
+      (block) =>
+        block.type === "ai_terminal_plan" && block.messageKey === planMessageKey,
+    );
+    assert.equal(planActionBlock?.type, "ai_terminal_plan");
+    assert.deepEqual(planActionBlock?.stepActions?.[0], {
       stepId: "check-status",
       decision: "rejected",
       reason: "Use a read-only command.",
-      updatedAt: actionBlock?.action?.steps?.[0]?.updatedAt,
+      updatedAt: planActionBlock?.stepActions?.[0]?.updatedAt,
     });
 
     const deleted = await requestJson(server, `/api/terminals/${terminalId}`, {

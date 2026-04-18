@@ -115,12 +115,17 @@ Use these feedback blocks to revise the next plan, continue from success, or rec
 
 Use the scripts in `scripts/` when a human or debugging workflow needs to inspect stored terminal artifacts directly. These scripts are read-only.
 
-- `python3 scripts/terminal_session_summary.py <terminal-id> [--codex-home <path>]`
-  - Prints the full JSON content of `<codex-home>/codex-deck/terminal/sessions/<terminal-id>/session.json`.
-  - Enriches each `terminal-frozen-output` block with `contentPreview`, the first 1000 characters from the file named by its `path`.
-  - Enriches each `codex-session-message` block with `contentPreview`, the first 1000 characters of the referenced Codex session message.
+- `python3 scripts/terminal_session_summary.py <terminal-id> [--codex-home <path>] [--recent <N>]`
+  - Prints a compact JSON summary of the terminal-session flow rather than the raw manifest.
+  - Always shows `terminalId`, `sessionId`, and a `blocks` array.
+  - Shows each block's 1-based `index`, `blockId`, and `type`.
+  - For `terminal_snapshot` blocks, includes `captureKind`, optional `stepId`, and a 1000-character `snapshotPreview`.
+  - For AI terminal message blocks, includes only flow-relevant fields such as steps, step actions, step feedback, question, completion message, and surrounding markdown when present.
+  - `--recent <N>` limits the `blocks` array to the most recent N saved blocks.
 - `python3 scripts/terminal_session_blocks.py <terminal-id> <block> [<block> ...] [--codex-home <path>] [--line-range <start>:<end>]`
   - Prints content for one or more blocks in a terminal session.
   - A block selector can be a `blockId` or a 1-based block index from the manifest.
+  - For `terminal_snapshot` blocks, saved block content comes from the serialized snapshot file referenced by `snapshotPath`.
+  - For AI terminal message blocks, saved block content comes from the inline manifest fields, usually `rawBlock`.
   - Add a per-block one-based inclusive line range with `@`, for example `block-mabc123@20:80`, `block-mabc123@20:`, or `3@1:40`.
   - `--line-range` applies to selectors that do not include their own `@` range.

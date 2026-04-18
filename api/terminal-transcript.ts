@@ -1,5 +1,5 @@
 import type {
-  TerminalSessionBlockRecordWithTranscript,
+  TerminalSessionBlockRecordWithSnapshot,
   TerminalTimelineEntry,
 } from "./storage";
 
@@ -92,11 +92,11 @@ export function sanitizeTerminalTranscriptChunk(text: string): string {
 
 export function buildTerminalTimelineEntries(input: {
   messageKeys: string[];
-  blocks: TerminalSessionBlockRecordWithTranscript[];
+  blocks: TerminalSessionBlockRecordWithSnapshot[];
 }): TerminalTimelineEntry[] {
   const entries: TerminalTimelineEntry[] = [];
-  const blocksByMessageKey = new Map<string, TerminalSessionBlockRecordWithTranscript[]>();
-  const standaloneBlocks: TerminalSessionBlockRecordWithTranscript[] = [];
+  const blocksByMessageKey = new Map<string, TerminalSessionBlockRecordWithSnapshot[]>();
+  const standaloneBlocks: TerminalSessionBlockRecordWithSnapshot[] = [];
 
   for (const block of [...input.blocks].sort((left, right) => {
     if (left.sequence !== right.sequence) {
@@ -104,6 +104,9 @@ export function buildTerminalTimelineEntries(input: {
     }
     return left.blockId.localeCompare(right.blockId);
   })) {
+    if (!block.snapshot) {
+      continue;
+    }
     if (block.messageKey) {
       const group = blocksByMessageKey.get(block.messageKey) ?? [];
       group.push(block);
@@ -116,14 +119,14 @@ export function buildTerminalTimelineEntries(input: {
   for (const messageKey of input.messageKeys) {
     const blocks = blocksByMessageKey.get(messageKey) ?? [];
     for (const block of blocks) {
-      const transcript = sanitizeTerminalTranscriptChunk(block.transcript ?? "");
-      if (!transcript.trim()) {
+      if (!block.snapshot) {
         continue;
       }
       entries.push({
-        type: "output",
+        type: "snapshot",
         key: `block:${block.blockId}`,
-        text: transcript,
+        blockId: block.blockId,
+        snapshot: block.snapshot,
       });
     }
     entries.push({
@@ -134,14 +137,14 @@ export function buildTerminalTimelineEntries(input: {
   }
 
   for (const block of standaloneBlocks) {
-    const transcript = sanitizeTerminalTranscriptChunk(block.transcript ?? "");
-    if (!transcript.trim()) {
+    if (!block.snapshot) {
       continue;
     }
     entries.push({
-      type: "output",
+      type: "snapshot",
       key: `block:${block.blockId}`,
-      text: transcript,
+      blockId: block.blockId,
+      snapshot: block.snapshot,
     });
   }
 

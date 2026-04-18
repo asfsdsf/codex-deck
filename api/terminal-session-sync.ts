@@ -1,17 +1,22 @@
-import type { ConversationMessage, TerminalSessionArtifactsResponse } from "./storage";
+import type {
+  ConversationMessage,
+  TerminalSessionArtifactsResponse,
+  TerminalSessionPlanStepFeedback,
+} from "./storage";
 import { getConversation } from "./storage";
 import {
   getPersistedTerminalSessionArtifacts,
   persistTerminalSessionFrozenBlock,
+  persistTerminalSessionMessageBlock,
 } from "./terminal-session-store";
 import {
+  parseAiTerminalUserFeedback,
   extractConversationMessageText,
   getAiTerminalMessageKey,
   parseAiTerminalMessage,
 } from "../web/ai-terminal";
 import {
   buildTerminalTimelineEntries,
-  sanitizeTerminalTranscriptChunk,
 } from "./terminal-transcript";
 
 const lastArtifactsPayloadByTerminalId = new Map<string, string>();
@@ -19,11 +24,7 @@ const lastArtifactsPayloadByTerminalId = new Map<string, string>();
 interface EmbeddedTerminalMessage {
   messageKey: string;
   message: ConversationMessage;
-}
-
-function isTerminalCompletionMessage(message: ConversationMessage): boolean {
-  const parsed = parseAiTerminalMessage(extractConversationMessageText(message));
-  return parsed?.directive.kind === "finished";
+  rendered: NonNullable<ReturnType<typeof parseAiTerminalMessage>>;
 }
 
 function listEmbeddedTerminalMessages(
@@ -37,59 +38,83 @@ function listEmbeddedTerminalMessages(
       }
       return parseAiTerminalMessage(extractConversationMessageText(message)) !== null;
     })
-    .map((message, index) => ({
-      messageKey: getAiTerminalMessageKey(message) ?? `terminal-ai:${sessionId}:${index}`,
-      message,
-    }));
+    .map((message, index) => {
+      const rendered = parseAiTerminalMessage(extractConversationMessageText(message));
+      if (!rendered) {
+        return null;
+      }
+      return {
+        messageKey: getAiTerminalMessageKey(message) ?? `terminal-ai:${sessionId}:${index}`,
+        message,
+        rendered,
+      };
+    })
+    .filter((item): item is EmbeddedTerminalMessage => item !== null);
 }
 
-function shouldFreezeTerminalTranscript(text: string): boolean {
-  const normalized = text.trim();
-  if (!normalized) {
-    return false;
-  }
+function buildPlanFeedbackByMessageKey(
+  sessionId: string,
+  messages: ConversationMessage[],
+): Record<string, TerminalSessionPlanStepFeedback[]> {
+  const plans: Array<{ messageKey: string; stepIds: Set<string> }> = [];
+  const feedbackByMessageKey = new Map<string, TerminalSessionPlanStepFeedback[]>();
 
-  const lines = normalized
-    .split(/\r?\n/u)
-    .filter((line) => line.trim().length > 0);
-  if (lines.length === 0) {
-    return false;
-  }
-  if (lines.length > 1) {
-    return true;
-  }
-  return !(
-    /[#$%>»]$/.test(normalized) &&
-    (normalized.includes("/") ||
-      normalized.includes("~") ||
-      normalized.startsWith("(") ||
-      normalized.startsWith("["))
-  );
-}
+  messages.forEach((message, index) => {
+    const text = extractConversationMessageText(message);
+    if (!text) {
+      return;
+    }
 
-function stripPrefix(output: string, prefix: string): string {
-  if (!prefix) {
-    return output;
-  }
-  if (output.startsWith(prefix)) {
-    return output.slice(prefix.length);
-  }
-  const trimmedPrefix = prefix.trim();
-  if (trimmedPrefix && output.startsWith(trimmedPrefix)) {
-    return output.slice(trimmedPrefix.length);
-  }
-  return output;
-}
+    const parsedDirective = parseAiTerminalMessage(text);
+    if (message.type === "assistant" && parsedDirective?.directive.kind === "plan") {
+      plans.push({
+        messageKey:
+          getAiTerminalMessageKey(message) ?? `terminal-ai:${sessionId}:${index}`,
+        stepIds: new Set(parsedDirective.directive.steps.map((step) => step.stepId)),
+      });
+      return;
+    }
 
-function deriveTranscriptTail(input: {
-  output: string;
-  orderedKnownTranscripts: string[];
-}): string {
-  let remaining = input.output;
-  for (const transcript of input.orderedKnownTranscripts) {
-    remaining = stripPrefix(remaining, transcript);
-  }
-  return remaining.trim();
+    const parsedFeedback = parseAiTerminalUserFeedback(text);
+    if (!parsedFeedback) {
+      return;
+    }
+
+    for (let planIndex = plans.length - 1; planIndex >= 0; planIndex -= 1) {
+      const plan = plans[planIndex];
+      if (!plan?.stepIds.has(parsedFeedback.stepId)) {
+        continue;
+      }
+
+      const items = feedbackByMessageKey.get(plan.messageKey) ?? [];
+      const updatedAt = message.timestamp ?? new Date().toISOString();
+      if (parsedFeedback.kind === "execution") {
+        items.push({
+          kind: "execution",
+          stepId: parsedFeedback.stepId,
+          updatedAt,
+          status: parsedFeedback.status,
+          exitCode: parsedFeedback.exitCode,
+          cwdAfter: parsedFeedback.cwdAfter,
+          outputSummary: parsedFeedback.outputSummary,
+          errorSummary: parsedFeedback.errorSummary,
+          outputReference: parsedFeedback.outputReference,
+        });
+      } else {
+        items.push({
+          kind: "rejection",
+          stepId: parsedFeedback.stepId,
+          updatedAt,
+          decision: "rejected",
+          reason: parsedFeedback.reason,
+        });
+      }
+      feedbackByMessageKey.set(plan.messageKey, items);
+      break;
+    }
+  });
+
+  return Object.fromEntries(feedbackByMessageKey.entries());
 }
 
 export function buildEmptyTerminalSessionArtifacts(
@@ -113,15 +138,17 @@ export function buildEmptyTerminalSessionArtifacts(
 export async function syncTerminalSessionArtifacts(input: {
   terminalId: string;
   sessionId: string;
-  output: string;
+  consumePendingSnapshot: () =>
+    | Promise<TerminalSessionArtifactsResponse["blocks"][number]["snapshot"]>
+    | TerminalSessionArtifactsResponse["blocks"][number]["snapshot"];
   codexHome?: string | null;
-  viewport?: {
-    cols: number;
-    rows: number;
-  } | null;
 }): Promise<TerminalSessionArtifactsResponse> {
   const messages = await getConversation(input.sessionId);
   const embeddedMessages = listEmbeddedTerminalMessages(input.sessionId, messages);
+  const planFeedbackByMessageKey = buildPlanFeedbackByMessageKey(
+    input.sessionId,
+    messages,
+  );
   const persistedArtifacts = await getPersistedTerminalSessionArtifacts(
     input.terminalId,
     { sessionId: input.sessionId },
@@ -129,52 +156,100 @@ export async function syncTerminalSessionArtifacts(input: {
   );
 
   const persistedByLogicalKey = new Map<string, TerminalSessionArtifactsResponse["blocks"][number]>(
-    persistedArtifacts.blocks.map((block) => [
-      `${block.kind}:${block.sessionId}:${block.messageKey ?? ""}:${block.stepId ?? ""}`,
-      block,
-    ] as const),
+    persistedArtifacts.blocks
+      .filter((block) => block.type === "terminal_snapshot")
+      .map((block) => [
+        `${block.type}:${block.sessionId}:${block.messageKey ?? ""}:${block.stepId ?? ""}`,
+        block,
+      ] as const),
   );
-  const output = sanitizeTerminalTranscriptChunk(input.output).trim();
-  const orderedKnownTranscripts: string[] = [];
 
   for (const [index, item] of embeddedMessages.entries()) {
-    const kind = isTerminalCompletionMessage(item.message) ? "execution" : "manual";
-    const logicalKey = `${kind}:${input.sessionId}:${item.messageKey}:`;
-    const existing = persistedByLogicalKey.get(logicalKey);
-    const sequence = index + 1;
-    const existingTranscript = existing?.transcript?.trim() || "";
+    const snapshotSequence = index * 2 + 1;
+    const messageSequence = index * 2 + 2;
+    const directive = item.rendered.directive;
 
-    if (existingTranscript) {
-      orderedKnownTranscripts.push(existingTranscript);
+    if (directive.kind === "plan") {
+      await persistTerminalSessionMessageBlock(
+        {
+          terminalId: input.terminalId,
+          sessionId: input.sessionId,
+          type: "ai_terminal_plan",
+          messageKey: item.messageKey,
+          sequence: messageSequence,
+          leadingMarkdown: item.rendered.leadingMarkdown,
+          trailingMarkdown: item.rendered.trailingMarkdown,
+          rawBlock: item.rendered.rawBlock,
+          contextNote: directive.contextNote,
+          steps: directive.steps,
+          stepFeedback: planFeedbackByMessageKey[item.messageKey] ?? null,
+        },
+        input.codexHome,
+      );
+    } else if (directive.kind === "need_input") {
+      await persistTerminalSessionMessageBlock(
+        {
+          terminalId: input.terminalId,
+          sessionId: input.sessionId,
+          type: "ai_terminal_need_input",
+          messageKey: item.messageKey,
+          sequence: messageSequence,
+          leadingMarkdown: item.rendered.leadingMarkdown,
+          trailingMarkdown: item.rendered.trailingMarkdown,
+          rawBlock: item.rendered.rawBlock,
+          contextNote: directive.contextNote,
+          question: directive.question,
+        },
+        input.codexHome,
+      );
+    } else {
+      await persistTerminalSessionMessageBlock(
+        {
+          terminalId: input.terminalId,
+          sessionId: input.sessionId,
+          type: "ai_terminal_complete",
+          messageKey: item.messageKey,
+          sequence: messageSequence,
+          leadingMarkdown: item.rendered.leadingMarkdown,
+          trailingMarkdown: item.rendered.trailingMarkdown,
+          rawBlock: item.rendered.rawBlock,
+          message: directive.message,
+        },
+        input.codexHome,
+      );
     }
 
+    const captureKind = directive.kind === "finished" ? "auto" : "manual";
+    const logicalKey = `terminal_snapshot:${input.sessionId}:${item.messageKey}:`;
+    const existing = persistedByLogicalKey.get(logicalKey);
+    const existingSnapshot = existing?.snapshot ?? null;
+
     const needsSequenceUpdate =
-      existing && (existing.sequence !== sequence || existing.kind !== kind);
-    if (existingTranscript && needsSequenceUpdate) {
+      existing &&
+      (existing.sequence !== snapshotSequence ||
+        existing.captureKind !== captureKind);
+    if (existingSnapshot && needsSequenceUpdate) {
       await persistTerminalSessionFrozenBlock(
         {
           terminalId: input.terminalId,
           sessionId: input.sessionId,
-          kind,
+          captureKind,
           messageKey: item.messageKey,
           stepId: null,
-          transcript: existingTranscript,
-          sequence,
+          snapshot: existingSnapshot,
+          sequence: snapshotSequence,
         },
         input.codexHome,
       );
       continue;
     }
 
-    if (existingTranscript) {
+    if (existingSnapshot) {
       continue;
     }
 
-    const transcript = deriveTranscriptTail({
-      output,
-      orderedKnownTranscripts,
-    });
-    if (!shouldFreezeTerminalTranscript(transcript)) {
+    const snapshot = await input.consumePendingSnapshot();
+    if (!snapshot) {
       continue;
     }
 
@@ -182,15 +257,14 @@ export async function syncTerminalSessionArtifacts(input: {
       {
         terminalId: input.terminalId,
         sessionId: input.sessionId,
-        kind,
+        captureKind,
         messageKey: item.messageKey,
         stepId: null,
-        transcript,
-        sequence,
+        snapshot,
+        sequence: snapshotSequence,
       },
       input.codexHome,
     );
-    orderedKnownTranscripts.push(transcript);
   }
 
   const finalArtifacts = await getPersistedTerminalSessionArtifacts(
@@ -210,12 +284,10 @@ export async function syncTerminalSessionArtifacts(input: {
 export async function syncTrackedTerminalSessionArtifacts(input: {
   terminalId: string;
   sessionId: string;
-  output: string;
+  consumePendingSnapshot: () =>
+    | Promise<TerminalSessionArtifactsResponse["blocks"][number]["snapshot"]>
+    | TerminalSessionArtifactsResponse["blocks"][number]["snapshot"];
   codexHome?: string | null;
-  viewport?: {
-    cols: number;
-    rows: number;
-  } | null;
 }): Promise<{
   artifacts: TerminalSessionArtifactsResponse;
   changed: boolean;

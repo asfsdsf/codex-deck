@@ -8,6 +8,7 @@ import pathlib
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable
+from rich.text import Text
 
 TERMINAL_SESSIONS_RELATIVE_DIR = pathlib.Path("codex-deck/terminal/sessions")
 TERMINAL_SESSION_MANIFEST_FILE = "session.json"
@@ -94,10 +95,46 @@ def resolve_manifest_content_path(session_dir: pathlib.Path, value: Any) -> path
     return resolved
 
 
+def resolve_block_snapshot_path(block: dict[str, Any], session_dir: pathlib.Path) -> pathlib.Path:
+    snapshot_path = block.get("snapshotPath")
+    if not isinstance(snapshot_path, str) or not snapshot_path.strip():
+        block_id = normalize_text(block.get("blockId")) or "unknown"
+        raise TerminalSessionError(f"block {block_id} has no snapshotPath")
+    return resolve_manifest_content_path(session_dir, snapshot_path)
+
+
+def block_type(block: dict[str, Any]) -> str:
+    value = normalize_text(block.get("type"))
+    return value or "unknown"
+
+
+def block_inline_content(block: dict[str, Any]) -> str:
+    raw_block = block.get("rawBlock")
+    if isinstance(raw_block, str) and raw_block.strip():
+        return raw_block
+
+    if block_type(block) == "ai_terminal_need_input":
+        question = normalize_text(block.get("question"))
+        context_note = normalize_text(block.get("contextNote"))
+        return "\n".join(part for part in [question, context_note] if part).strip()
+
+    if block_type(block) == "ai_terminal_complete":
+        return normalize_text(block.get("message"))
+
+    return ""
+
+
 def read_text_file(path: pathlib.Path) -> str:
     if not path.is_file():
         raise TerminalSessionError(f"content file not found: {path}")
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def sanitize_terminal_snapshot_text(text: str) -> str:
+    if not text:
+        return ""
+    plain = Text.from_ansi(text.replace("\r\n", "\n")).plain
+    return re.sub(r"\n{3,}", "\n\n", plain).lstrip("\n")
 
 
 def load_jsonl_records(path: pathlib.Path) -> list[JsonlRecord]:
