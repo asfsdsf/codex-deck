@@ -28,6 +28,7 @@ import {
 } from "../workflows";
 import type {
   CreateWorkflowRequest,
+  DeleteWorkflowResponse,
   WorkflowActionResponse,
   WorkflowCreateResponse,
   WorkflowDaemonStatusResponse,
@@ -312,6 +313,7 @@ export function registerWorkflowRoutes(
 
   app.delete("/api/workflows/:key", async (c) => {
     const key = c.req.param("key")?.trim();
+    const deleteSessions = c.req.query("deleteSessions") === "true";
     if (!key) {
       return c.json({ error: "workflow key is required" }, 400);
     }
@@ -323,7 +325,9 @@ export function registerWorkflowRoutes(
         );
       }
       return c.json(
-        (await deleteWorkflow(key)) satisfies WorkflowActionResponse,
+        (await deleteWorkflow(key, {
+          deleteSessions,
+        })) satisfies DeleteWorkflowResponse,
       );
     } catch (error) {
       const message = toErrorMessage(error);

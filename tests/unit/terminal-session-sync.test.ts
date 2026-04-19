@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  getCodexDir,
-  initStorage,
-  loadStorage,
-} from "../../api/storage";
+import { getCodexDir, initStorage, loadStorage } from "../../api/storage";
 import { syncTerminalSessionArtifacts } from "../../api/terminal-session-sync";
 import {
   createTempCodexDir,

@@ -109,6 +109,7 @@ interface MessageBlockProps {
     terminalId: string;
     messageKey: string;
     isActionable: boolean;
+    showStepActions?: boolean;
     stepStates?: Record<string, AiTerminalStepState | undefined>;
     onApproveStep?: (input: {
       sessionId: string;
@@ -528,6 +529,51 @@ function getAiTerminalStepStateClasses(
   return "border-zinc-600/35 bg-zinc-800/55 text-zinc-300";
 }
 
+function getAiTerminalRiskClasses(risk: AiTerminalStepDirective["risk"]): {
+  stepCard: string;
+  stepIndex: string;
+  riskBadge: string;
+  commandBox: string;
+  metaChip: string;
+  copyButton: string;
+} {
+  if (risk === "medium") {
+    return {
+      stepCard:
+        "border-orange-500/35 bg-orange-500/10 shadow-[0_0_0_1px_rgba(249,115,22,0.08)]",
+      stepIndex:
+        "border-orange-400/35 bg-orange-500/12 text-orange-100 shadow-[0_0_0_1px_rgba(249,115,22,0.08)]",
+      riskBadge: "border-orange-400/40 bg-orange-500/12 text-orange-100",
+      commandBox: "border-orange-500/25 bg-orange-500/8",
+      metaChip: "border-orange-500/25 bg-orange-500/8 text-orange-100/85",
+      copyButton:
+        "border-orange-500/35 bg-orange-500/10 hover:bg-orange-500/18",
+    };
+  }
+
+  if (risk === "high") {
+    return {
+      stepCard:
+        "border-red-500/35 bg-red-500/10 shadow-[0_0_0_1px_rgba(239,68,68,0.08)]",
+      stepIndex:
+        "border-red-400/35 bg-red-500/12 text-red-100 shadow-[0_0_0_1px_rgba(239,68,68,0.08)]",
+      riskBadge: "border-red-400/40 bg-red-500/12 text-red-100",
+      commandBox: "border-red-500/25 bg-red-500/8",
+      metaChip: "border-red-500/25 bg-red-500/8 text-red-100/85",
+      copyButton: "border-red-500/35 bg-red-500/10 hover:bg-red-500/18",
+    };
+  }
+
+  return {
+    stepCard: "border-zinc-800/80 bg-zinc-900/80",
+    stepIndex: "border-zinc-700 bg-zinc-950 text-zinc-200",
+    riskBadge: "border-zinc-700/70 bg-zinc-950/80 text-zinc-400",
+    commandBox: "border-zinc-800 bg-black/30",
+    metaChip: "border-zinc-800 bg-zinc-950/70 text-zinc-400",
+    copyButton: "border-zinc-700/70 bg-zinc-900/70 hover:bg-zinc-800/70",
+  };
+}
+
 function AiTerminalRejectControl(props: {
   sessionId: string;
   terminalId: string;
@@ -636,7 +682,11 @@ function AiTerminalPlanRenderer(props: {
 
       return changed ? next : current;
     });
-  }, [aiTerminalContext?.isActionable, aiTerminalContext?.stepStates, plan.steps]);
+  }, [
+    aiTerminalContext?.isActionable,
+    aiTerminalContext?.stepStates,
+    plan.steps,
+  ]);
 
   return (
     <div className="my-1 space-y-3">
@@ -667,6 +717,7 @@ function AiTerminalPlanRenderer(props: {
           {plan.steps.map((step, index) => {
             const state = aiTerminalContext?.stepStates?.[step.stepId];
             const pendingAction = pendingActionsByStepId[step.stepId];
+            const riskClasses = getAiTerminalRiskClasses(step.risk);
             const stateLabel = getAiTerminalStepStateLabel(
               state,
               aiTerminalContext?.isActionable === true,
@@ -686,24 +737,30 @@ function AiTerminalPlanRenderer(props: {
               !hasChosenAction &&
               pendingAction !== "approving";
             const shouldRenderActions = shouldRenderAiTerminalStepActions({
-              canApprove,
-              canReject,
+              canApprove:
+                (aiTerminalContext?.showStepActions ?? true) && canApprove,
+              canReject:
+                (aiTerminalContext?.showStepActions ?? true) && canReject,
               pendingAction,
             });
 
             return (
               <div
                 key={step.stepId}
-                className="rounded-xl border border-zinc-800/80 bg-zinc-900/80 p-3"
+                className={`rounded-xl border p-3 ${riskClasses.stepCard}`}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-zinc-700 bg-zinc-950 px-1.5 text-[10px] font-medium text-zinc-200">
+                  <div
+                    className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1.5 text-[10px] font-medium ${riskClasses.stepIndex}`}
+                  >
                     {index + 1}
                   </div>
                   <div className="text-sm font-medium text-zinc-100">
                     {step.stepGoal ?? `Step ${index + 1}`}
                   </div>
-                  <div className="inline-flex items-center rounded-full border border-zinc-700/70 bg-zinc-950/80 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400">
+                  <div
+                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${riskClasses.riskBadge}`}
+                  >
                     Risk {step.risk}
                   </div>
                   {stateLabel ? (
@@ -718,7 +775,9 @@ function AiTerminalPlanRenderer(props: {
                   ) : null}
                 </div>
 
-                <div className="mt-2 rounded-lg border border-zinc-800 bg-black/30 p-3">
+                <div
+                  className={`mt-2 rounded-lg border p-3 ${riskClasses.commandBox}`}
+                >
                   <div className="command-syntax command-syntax-block whitespace-pre-wrap break-all text-sm text-zinc-100">
                     {step.command}
                   </div>
@@ -726,19 +785,23 @@ function AiTerminalPlanRenderer(props: {
 
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
                   {step.cwd ? (
-                    <span className="rounded border border-zinc-800 bg-zinc-950/70 px-2 py-1 font-mono">
+                    <span
+                      className={`rounded border px-2 py-1 font-mono ${riskClasses.metaChip}`}
+                    >
                       {step.cwd}
                     </span>
                   ) : null}
                   {step.shell ? (
-                    <span className="rounded border border-zinc-800 bg-zinc-950/70 px-2 py-1 font-mono">
+                    <span
+                      className={`rounded border px-2 py-1 font-mono ${riskClasses.metaChip}`}
+                    >
                       {step.shell}
                     </span>
                   ) : null}
                   <CopyButton
                     text={step.command}
                     title="Copy command"
-                    className="rounded border border-zinc-700/70 bg-zinc-900/70 hover:bg-zinc-800/70"
+                    className={`rounded border ${riskClasses.copyButton}`}
                   />
                 </div>
 
@@ -780,12 +843,13 @@ function AiTerminalPlanRenderer(props: {
                             ...current,
                             [step.stepId]: "approving",
                           }));
-                          const succeeded = await aiTerminalContext.onApproveStep({
-                            sessionId: aiTerminalContext.sessionId,
-                            terminalId: aiTerminalContext.terminalId,
-                            messageKey: aiTerminalContext.messageKey,
-                            step,
-                          });
+                          const succeeded =
+                            await aiTerminalContext.onApproveStep({
+                              sessionId: aiTerminalContext.sessionId,
+                              terminalId: aiTerminalContext.terminalId,
+                              messageKey: aiTerminalContext.messageKey,
+                              step,
+                            });
                           if (!succeeded) {
                             setPendingActionsByStepId((current) => {
                               const next = { ...current };
@@ -978,6 +1042,103 @@ function AiTerminalFeedbackTextSection(props: {
   );
 }
 
+type FrozenTerminalOutputSegment =
+  | {
+      kind: "text";
+      content: string;
+    }
+  | {
+      kind: "notice";
+      noticeType: "lines" | "characters";
+      count: string | null;
+      message: string;
+    };
+
+const FROZEN_TERMINAL_OUTPUT_NOTICE_PATTERN =
+  /<codex-deck-frozen-terminal-omitted-(lines|characters)-notice\b([^>]*)>([\s\S]*?)<\/codex-deck-frozen-terminal-omitted-(?:lines|characters)-notice>/gi;
+
+function parseFrozenTerminalOutputSegments(
+  content: string,
+): FrozenTerminalOutputSegment[] {
+  const segments: FrozenTerminalOutputSegment[] = [];
+  let lastIndex = 0;
+
+  for (const match of content.matchAll(FROZEN_TERMINAL_OUTPUT_NOTICE_PATTERN)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      segments.push({
+        kind: "text",
+        content: content.slice(lastIndex, index),
+      });
+    }
+
+    const noticeType =
+      match[1] === "lines" ? ("lines" as const) : ("characters" as const);
+    const attributes = match[2] ?? "";
+    const countMatch = attributes.match(
+      noticeType === "lines"
+        ? /\bomitted-lines="([^"]+)"/i
+        : /\bomitted-characters="([^"]+)"/i,
+    );
+    segments.push({
+      kind: "notice",
+      noticeType,
+      count: countMatch?.[1]?.trim() || null,
+      message: (match[3] ?? "").trim(),
+    });
+    lastIndex = index + match[0].length;
+  }
+
+  if (lastIndex < content.length) {
+    segments.push({
+      kind: "text",
+      content: content.slice(lastIndex),
+    });
+  }
+
+  return segments.length > 0 ? segments : [{ kind: "text", content }];
+}
+
+function AiTerminalFrozenOutputSection(props: {
+  label: string;
+  content: string;
+}) {
+  const segments = parseFrozenTerminalOutputSegments(props.content);
+
+  return (
+    <div className="border-t border-zinc-700/55 pt-2 text-zinc-100">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
+        {props.label}
+      </div>
+      <div className="max-h-72 overflow-auto rounded-lg border border-zinc-800/80 bg-zinc-950/80 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-zinc-200">
+        {segments.map((segment, index) =>
+          segment.kind === "text" ? (
+            <span
+              key={`text-${index}`}
+              className="whitespace-pre-wrap break-words"
+            >
+              {segment.content}
+            </span>
+          ) : (
+            <div
+              key={`notice-${index}`}
+              className="my-2 rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 font-sans text-[11px] leading-relaxed text-cyan-100"
+            >
+              <div className="mb-1 inline-flex items-center rounded border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+                {segment.noticeType === "lines"
+                  ? "Lines omitted"
+                  : "Characters omitted"}
+                {segment.count ? ` · ${segment.count}` : ""}
+              </div>
+              <div>{segment.message}</div>
+            </div>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AiTerminalExecutionFeedbackBody(props: {
   feedback: AiTerminalExecutionFeedback;
   onFilePathLinkClick?: (href: string) => boolean;
@@ -1164,10 +1325,9 @@ function AiTerminalBootstrapRenderer(props: {
                   />
                 ) : null}
                 {bootstrap.terminalCommandOutput ? (
-                  <AiTerminalFeedbackTextSection
+                  <AiTerminalFrozenOutputSection
                     label="Frozen output"
                     content={bootstrap.terminalCommandOutput}
-                    onFilePathLinkClick={props.onFilePathLinkClick}
                   />
                 ) : null}
               </>
@@ -1249,10 +1409,9 @@ function AiTerminalCommandOutputRenderer(props: {
                     onFilePathLinkClick={props.onFilePathLinkClick}
                   />
                 ) : null}
-                <AiTerminalFeedbackTextSection
+                <AiTerminalFrozenOutputSection
                   label="Frozen output"
                   content={props.message.commandOutput}
-                  onFilePathLinkClick={props.onFilePathLinkClick}
                 />
               </>
             )}

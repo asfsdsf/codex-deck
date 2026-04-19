@@ -11,10 +11,11 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { getCodexDir } from "./storage";
+import { deleteSession, getCodexDir } from "./storage";
 import { isPathWithinDirectory } from "./path-utils";
 import type {
   CreateWorkflowRequest,
+  DeleteWorkflowResponse,
   WorkflowActionResponse,
   WorkflowBindSessionRequest,
   WorkflowControlMessageRequest,
@@ -1918,7 +1919,8 @@ export async function bindWorkflowSession(
 
 export async function deleteWorkflow(
   key: string,
-): Promise<WorkflowActionResponse> {
+  options?: { deleteSessions?: boolean },
+): Promise<DeleteWorkflowResponse> {
   const { summary, codexHome } = await resolveWorkflowByKey(key);
   const registryPath = join(getRegistryDir(codexHome), `${key}.json`);
   const sessionIndexDir = getSessionIndexDir(codexHome);
@@ -1940,6 +1942,7 @@ export async function deleteWorkflow(
   const worktreeEntries = await listGitWorktrees(summary.projectRoot);
   const localBranches = await listGitBranches(summary.projectRoot);
   const outputLines: string[] = [];
+  const deletedSessionIds: string[] = [];
 
   for (const worktreePath of Array.from(worktreePaths).sort()) {
     const worktreeEntry = worktreeEntries.find(
@@ -2029,11 +2032,31 @@ export async function deleteWorkflow(
     force: true,
   }).catch(() => {});
 
-  return commandResponse(
-    "delete",
-    key,
-    outputLines.length > 0 ? outputLines.join("\n") : "Deleted workflow.",
-  );
+  if (options?.deleteSessions) {
+    for (const sessionId of Array.from(sessionIds).sort()) {
+      try {
+        await deleteSession(sessionId);
+        deletedSessionIds.push(sessionId);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error ?? "");
+        if (!message.toLowerCase().includes("not found")) {
+          outputLines.push(
+            `warning: failed to delete session ${sessionId} (${message})`,
+          );
+        }
+      }
+    }
+  }
+
+  return {
+    ...commandResponse(
+      "delete",
+      key,
+      outputLines.length > 0 ? outputLines.join("\n") : "Deleted workflow.",
+    ),
+    deletedSessionIds,
+  };
 }
 
 export async function startWorkflowDaemon(

@@ -72,6 +72,7 @@ import ProjectSelector from "../components/project-selector";
 import ComposerPicker, {
   type ComposerPickerItem,
 } from "../components/composer-picker";
+import CenteredConfirmDialog from "../components/centered-confirm-dialog";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
@@ -105,9 +106,7 @@ import {
   getWorkflowSkillAvailability,
   type WorkflowSkillInstallChoice,
 } from "../workflow-skill-install";
-import {
-  type TerminalSkillInstallChoice,
-} from "../api/terminal-skill-install";
+import { type TerminalSkillInstallChoice } from "../api/terminal-skill-install";
 import { sendTerminalRestartNoticeToBoundSession } from "../terminal-session-notices";
 import {
   resolveSelectedWorkflowSummary,
@@ -133,6 +132,10 @@ import {
   SESSION_COMPOSER_SLASH_COMMANDS,
   type SlashCommandDefinition,
 } from "../slash-commands";
+import {
+  resolveComposerPrimaryActionState,
+  resolveTerminalComposerContinueText,
+} from "../message-composer-actions";
 import {
   createRemoteAdminSetupToken,
   createCodexThread,
@@ -641,6 +644,7 @@ interface MessageComposerProps {
   idlePrimaryActionBusy?: boolean;
   idlePrimaryActionBusyLabel?: string;
   allowIdlePrimaryActionWithoutContent?: boolean;
+  idlePrimaryActionOnlyWithoutContent?: boolean;
   onIdlePrimaryAction?:
     | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
     | null;
@@ -1840,6 +1844,7 @@ const MessageComposer = memo(function MessageComposer(
     idlePrimaryActionBusy = false,
     idlePrimaryActionBusyLabel,
     allowIdlePrimaryActionWithoutContent = false,
+    idlePrimaryActionOnlyWithoutContent = false,
     onIdlePrimaryAction,
     messageBoxHeight,
     onResizeMessageBoxStart,
@@ -2068,6 +2073,18 @@ const MessageComposer = memo(function MessageComposer(
   const hasIdlePrimaryAction = typeof onIdlePrimaryAction === "function";
   const idlePrimaryActionButtonLabel = idlePrimaryActionLabel || "Send";
   const composerBusy = sendingMessage || idlePrimaryActionBusy;
+  const primaryActionState = resolveComposerPrimaryActionState({
+    hasMessageContent,
+    hasIdlePrimaryAction,
+    idlePrimaryActionButtonLabel,
+    idlePrimaryActionBusy,
+    idlePrimaryActionBusyLabel,
+    idlePrimaryActionOnlyWithoutContent,
+    allowIdlePrimaryActionWithoutContent,
+    sendingMessage,
+    shouldUseStopAction,
+    stoppingTurn,
+  });
 
   const normalizedImageFiles = useMemo(
     () => imageAttachments.map((attachment) => attachment.file),
@@ -2982,7 +2999,7 @@ const MessageComposer = memo(function MessageComposer(
                   void executeSlashCommand(invocation.command, invocation.args);
                   return;
                 }
-                if (hasIdlePrimaryAction) {
+                if (primaryActionState.kind === "idle") {
                   void handleIdlePrimaryAction("textarea-enter");
                   return;
                 }
@@ -3072,24 +3089,17 @@ const MessageComposer = memo(function MessageComposer(
             }
           }}
           onClick={() => {
-            if (shouldUseStopAction) {
+            if (primaryActionState.kind === "stop") {
               void onStopConversation();
               return;
             }
-            if (hasIdlePrimaryAction) {
+            if (primaryActionState.kind === "idle") {
               void handleIdlePrimaryAction("send-button");
               return;
             }
             void handleSendMessage("send-button");
           }}
-          disabled={
-            shouldUseStopAction
-              ? stoppingTurn
-              : hasIdlePrimaryAction
-                ? idlePrimaryActionBusy ||
-                  (!allowIdlePrimaryActionWithoutContent && !hasMessageContent)
-                : sendingMessage || !hasMessageContent
-          }
+          disabled={primaryActionState.disabled}
           className={`flex h-9 items-center justify-center rounded px-3.5 text-sm text-zinc-50 disabled:opacity-50 cursor-pointer ${
             shouldUseStopAction
               ? "bg-red-700/90 hover:bg-red-700"
@@ -3098,18 +3108,7 @@ const MessageComposer = memo(function MessageComposer(
                 : "bg-cyan-700/80 hover:bg-cyan-700"
           }`}
         >
-          {shouldUseStopAction
-            ? stoppingTurn
-              ? "Stopping..."
-              : "Stop"
-            : hasIdlePrimaryAction
-              ? idlePrimaryActionBusy
-                ? (idlePrimaryActionBusyLabel ??
-                  `${idlePrimaryActionButtonLabel}...`)
-                : idlePrimaryActionButtonLabel
-              : sendingMessage
-                ? "Sending..."
-                : "Send"}
+          {primaryActionState.label}
         </button>
       </div>
     </>
@@ -3600,12 +3599,16 @@ export default function CodexDeckApp() {
   const [deleteSessionTargetId, setDeleteSessionTargetId] = useState<
     string | null
   >(null);
-  const [deletingWorkflow, setDeletingWorkflow] = useState(false);
+  const [workflowDeleteMode, setWorkflowDeleteMode] = useState<
+    "workflow" | "workflow-and-sessions" | null
+  >(null);
   const [deleteWorkflowTargetId, setDeleteWorkflowTargetId] = useState<
     string | null
   >(null);
   const newSessionCwd = newSessionCwdState.value;
-  const [deletingTerminal, setDeletingTerminal] = useState(false);
+  const [terminalDeleteMode, setTerminalDeleteMode] = useState<
+    "terminal" | "terminal-and-session" | null
+  >(null);
   const [deleteTerminalTargetId, setDeleteTerminalTargetId] = useState<
     string | null
   >(null);
@@ -3625,6 +3628,8 @@ export default function CodexDeckApp() {
   const remoteAuthenticated = isRemoteAccountAuthenticated();
   const remoteConnected = isRemoteTransportEnabled();
   const remoteLoginBusy = connectingRemote || restoringRemoteLogin;
+  const deletingWorkflow = workflowDeleteMode !== null;
+  const deletingTerminal = terminalDeleteMode !== null;
   const remoteLoginTarget = useMemo(
     () => resolveRemoteLoginTarget(remoteServerUrl, remoteBootstrap),
     [remoteBootstrap, remoteServerUrl],
@@ -4093,6 +4098,21 @@ export default function CodexDeckApp() {
       current === normalizedSessionId ? null : current,
     );
   }, []);
+
+  const removeSessionsFromLocalState = useCallback(
+    (sessionIds: string[]) => {
+      const seen = new Set<string>();
+      for (const sessionId of sessionIds) {
+        const normalizedSessionId = sessionId.trim();
+        if (!normalizedSessionId || seen.has(normalizedSessionId)) {
+          continue;
+        }
+        seen.add(normalizedSessionId);
+        removeSessionFromLocalState(normalizedSessionId);
+      }
+    },
+    [removeSessionFromLocalState],
+  );
 
   const notifyDeletedSessionAndCleanup = useCallback(
     (sessionId: string) => {
@@ -4822,12 +4842,11 @@ export default function CodexDeckApp() {
       ...item,
       isActionable: item.messageKey === latestTerminalPlanMessageKey,
       stepStates:
-        terminalEmbeddedMessages.persistedStepStatesByMessageKey[item.messageKey],
+        terminalEmbeddedMessages.persistedStepStatesByMessageKey[
+          item.messageKey
+        ],
     }));
-  }, [
-    latestTerminalPlanMessageKey,
-    terminalEmbeddedMessages,
-  ]);
+  }, [latestTerminalPlanMessageKey, terminalEmbeddedMessages]);
   const activeComposerSessionId =
     centerView === "workflow"
       ? workflowComposerSessionId
@@ -7949,8 +7968,10 @@ export default function CodexDeckApp() {
       const normalizedImages = (input.payload?.images ?? []).filter(
         (imageUrl) => imageUrl.trim().length > 0,
       );
-      let skillInstallChoice: Exclude<TerminalSkillInstallChoice, "cancel"> | null =
-        null;
+      let skillInstallChoice: Exclude<
+        TerminalSkillInstallChoice,
+        "cancel"
+      > | null = null;
 
       while (true) {
         const response = await sendTerminalChatActionRequest(terminalId, {
@@ -7968,7 +7989,9 @@ export default function CodexDeckApp() {
           return response;
         }
 
-        const choice = await promptForTerminalSkillInstall(response.projectRoot);
+        const choice = await promptForTerminalSkillInstall(
+          response.projectRoot,
+        );
         if (choice === "cancel") {
           return null;
         }
@@ -9338,7 +9361,10 @@ export default function CodexDeckApp() {
         return false;
       }
 
-      const pendingId = enqueuePendingUserMessage(terminalComposerSessionId, payload);
+      const pendingId = enqueuePendingUserMessage(
+        terminalComposerSessionId,
+        payload,
+      );
       setSendingMessage(true);
       setInteractionError(null);
       waitSuppressSessionsRef.current.delete(terminalComposerSessionId);
@@ -9408,6 +9434,15 @@ export default function CodexDeckApp() {
     ],
   );
 
+  const handleTerminalComposerContinue = useCallback(
+    async (payload: MessageComposerSubmitPayload): Promise<boolean> =>
+      handleTerminalComposerSendMessage({
+        ...payload,
+        text: resolveTerminalComposerContinueText(payload.text),
+      }),
+    [handleTerminalComposerSendMessage],
+  );
+
   const handleTerminalRestarted = useCallback(() => {
     void sendTerminalRestartNoticeToBoundSession({
       boundSessionId: terminalComposerSessionId,
@@ -9461,15 +9496,13 @@ export default function CodexDeckApp() {
       setInteractionError(null);
 
       try {
-        const { actionPersistError } = await runApprovedAiTerminalStepInTerminal(
-          input,
-          {
+        const { actionPersistError } =
+          await runApprovedAiTerminalStepInTerminal(input, {
             claimTerminalWrite: claimTerminalWriteRequest,
             persistTerminalMessageAction: persistTerminalMessageActionRequest,
             releaseTerminalWrite: releaseTerminalWriteRequest,
             sendTerminalInput: sendTerminalInputRequest,
-          },
-        );
+          });
 
         if (actionPersistError) {
           setInteractionError(
@@ -10008,27 +10041,23 @@ export default function CodexDeckApp() {
     notifyDeletedSessionAndCleanup,
   ]);
 
-  const handleConfirmDeleteTerminal = useCallback(async () => {
-    if (!deleteTerminalTargetId || deletingTerminal) {
-      return;
-    }
-
-    setDeletingTerminal(true);
-    setInteractionError(null);
-
-    try {
-      await deleteTerminalRequest(deleteTerminalTargetId);
-      setTerminals((current) =>
-        current.filter((terminal) => terminal.id !== deleteTerminalTargetId),
-      );
-      if (selectedTerminalId === deleteTerminalTargetId) {
-        setSelectedTerminalId(null);
+  const handleConfirmDeleteTerminal = useCallback(
+    async (options?: { deleteBoundSession?: boolean }) => {
+      if (!deleteTerminalTargetId || deletingTerminal) {
+        return;
       }
-      setDeleteTerminalTargetId(null);
-      showCommandNoticeForDuration("Terminated terminal.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("terminal not found")) {
+
+      const deleteBoundSession = options?.deleteBoundSession === true;
+      setTerminalDeleteMode(
+        deleteBoundSession ? "terminal-and-session" : "terminal",
+      );
+      setInteractionError(null);
+
+      try {
+        const response = await deleteTerminalRequest(deleteTerminalTargetId, {
+          deleteBoundSession,
+        });
+        removeSessionsFromLocalState(response.deletedSessionIds ?? []);
         setTerminals((current) =>
           current.filter((terminal) => terminal.id !== deleteTerminalTargetId),
         );
@@ -10036,40 +10065,56 @@ export default function CodexDeckApp() {
           setSelectedTerminalId(null);
         }
         setDeleteTerminalTargetId(null);
-      } else {
-        setInteractionError(message);
+        showCommandNoticeForDuration(
+          (response.deletedSessionIds?.length ?? 0) > 0
+            ? "Terminated terminal and deleted bound session."
+            : "Terminated terminal.",
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("terminal not found")) {
+          setTerminals((current) =>
+            current.filter(
+              (terminal) => terminal.id !== deleteTerminalTargetId,
+            ),
+          );
+          if (selectedTerminalId === deleteTerminalTargetId) {
+            setSelectedTerminalId(null);
+          }
+          setDeleteTerminalTargetId(null);
+        } else {
+          setInteractionError(message);
+        }
+      } finally {
+        setTerminalDeleteMode(null);
       }
-    } finally {
-      setDeletingTerminal(false);
-    }
-  }, [
-    deleteTerminalTargetId,
-    deletingTerminal,
-    selectedTerminalId,
-    showCommandNoticeForDuration,
-  ]);
+    },
+    [
+      deleteTerminalTargetId,
+      deletingTerminal,
+      removeSessionsFromLocalState,
+      selectedTerminalId,
+      showCommandNoticeForDuration,
+    ],
+  );
 
-  const handleConfirmDeleteWorkflow = useCallback(async () => {
-    if (!deleteWorkflowTargetId || deletingWorkflow || workflowActionBusy) {
-      return;
-    }
+  const handleConfirmDeleteWorkflow = useCallback(
+    async (options?: { deleteSessions?: boolean }) => {
+      if (!deleteWorkflowTargetId || deletingWorkflow || workflowActionBusy) {
+        return;
+      }
 
-    setDeletingWorkflow(true);
-    setInteractionError(null);
-
-    try {
-      await deleteWorkflowRequest(deleteWorkflowTargetId);
-      setWorkflows((current) =>
-        current.filter((workflow) => workflow.key !== deleteWorkflowTargetId),
+      const deleteSessions = options?.deleteSessions === true;
+      setWorkflowDeleteMode(
+        deleteSessions ? "workflow-and-sessions" : "workflow",
       );
-      if (selectedWorkflowKey === deleteWorkflowTargetId) {
-        setSelectedWorkflowKey(null);
-      }
-      setDeleteWorkflowTargetId(null);
-      showCommandNoticeForDuration("Deleted workflow.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.toLowerCase().includes("workflow not found")) {
+      setInteractionError(null);
+
+      try {
+        const response = await deleteWorkflowRequest(deleteWorkflowTargetId, {
+          deleteSessions,
+        });
+        removeSessionsFromLocalState(response.deletedSessionIds ?? []);
         setWorkflows((current) =>
           current.filter((workflow) => workflow.key !== deleteWorkflowTargetId),
         );
@@ -10077,19 +10122,39 @@ export default function CodexDeckApp() {
           setSelectedWorkflowKey(null);
         }
         setDeleteWorkflowTargetId(null);
-      } else {
-        setInteractionError(message);
+        showCommandNoticeForDuration(
+          (response.deletedSessionIds?.length ?? 0) > 0
+            ? "Deleted workflow and linked sessions."
+            : "Deleted workflow.",
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("workflow not found")) {
+          setWorkflows((current) =>
+            current.filter(
+              (workflow) => workflow.key !== deleteWorkflowTargetId,
+            ),
+          );
+          if (selectedWorkflowKey === deleteWorkflowTargetId) {
+            setSelectedWorkflowKey(null);
+          }
+          setDeleteWorkflowTargetId(null);
+        } else {
+          setInteractionError(message);
+        }
+      } finally {
+        setWorkflowDeleteMode(null);
       }
-    } finally {
-      setDeletingWorkflow(false);
-    }
-  }, [
-    deleteWorkflowTargetId,
-    deletingWorkflow,
-    selectedWorkflowKey,
-    showCommandNoticeForDuration,
-    workflowActionBusy,
-  ]);
+    },
+    [
+      deleteWorkflowTargetId,
+      deletingWorkflow,
+      removeSessionsFromLocalState,
+      selectedWorkflowKey,
+      showCommandNoticeForDuration,
+      workflowActionBusy,
+    ],
+  );
 
   // Fix dangling: triggered ONLY by the user clicking the "Fix dangling"
   // confirmation button. Must never be called automatically.
@@ -10375,6 +10440,7 @@ export default function CodexDeckApp() {
     idlePrimaryActionBusy?: boolean;
     idlePrimaryActionBusyLabel?: string;
     allowIdlePrimaryActionWithoutContent?: boolean;
+    idlePrimaryActionOnlyWithoutContent?: boolean;
     onIdlePrimaryAction?:
       | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
       | null;
@@ -10604,6 +10670,9 @@ export default function CodexDeckApp() {
         idlePrimaryActionBusyLabel={input.idlePrimaryActionBusyLabel}
         allowIdlePrimaryActionWithoutContent={
           input.allowIdlePrimaryActionWithoutContent
+        }
+        idlePrimaryActionOnlyWithoutContent={
+          input.idlePrimaryActionOnlyWithoutContent
         }
         onIdlePrimaryAction={input.onIdlePrimaryAction}
         messageBoxHeight={messageBoxHeight}
@@ -11457,191 +11526,209 @@ export default function CodexDeckApp() {
         )}
 
         {deleteSessionTargetId && (
-          <div className="fixed right-4 bottom-4 z-50 w-[min(30rem,calc(100vw-2rem))] rounded-xl border border-red-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur">
-            <div className="px-4 py-3">
-              <div className="text-sm font-semibold text-red-200">
-                Delete this session?
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-                This will delete the session rollout file, remove matching
-                registry entries, and remove related state-db records.
-              </p>
-              <p className="mt-2 break-all text-[11px] text-zinc-500">
-                {deleteSessionTargetData?.display ?? deleteSessionTargetId}
-              </p>
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeleteSessionTargetId(null)}
-                  disabled={deletingSession}
-                  className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleConfirmDeleteSession();
-                  }}
-                  disabled={deletingSession}
-                  className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {deletingSession ? "Deleting..." : "Delete"}
-                </button>
-              </div>
+          <CenteredConfirmDialog
+            tone="danger"
+            title="Delete this session?"
+            message="This will delete the session rollout file, remove matching registry entries, and remove related state-db records."
+          >
+            <p className="mt-2 break-all text-[11px] text-zinc-500">
+              {deleteSessionTargetData?.display ?? deleteSessionTargetId}
+            </p>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteSessionTargetId(null)}
+                disabled={deletingSession}
+                className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleConfirmDeleteSession();
+                }}
+                disabled={deletingSession}
+                className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deletingSession ? "Deleting..." : "Delete"}
+              </button>
             </div>
-          </div>
+          </CenteredConfirmDialog>
         )}
 
         {deleteWorkflowTargetId && (
-          <div className="fixed right-4 bottom-4 z-50 w-[min(30rem,calc(100vw-2rem))] rounded-xl border border-red-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur">
-            <div className="px-4 py-3">
-              <div className="text-sm font-semibold text-red-200">
-                Delete this workflow?
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-                This will delete the workflow file, remove mirrored registry and
-                session-index entries, and clean up related codex-deck task
-                worktrees and branches when they belong to this workflow.
-              </p>
-              <p className="mt-2 break-all text-[11px] text-zinc-500">
-                {deleteWorkflowTargetData?.title ?? deleteWorkflowTargetId}
-              </p>
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeleteWorkflowTargetId(null)}
-                  disabled={deletingWorkflow || workflowActionBusy}
-                  className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleConfirmDeleteWorkflow();
-                  }}
-                  disabled={deletingWorkflow || workflowActionBusy}
-                  className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {deletingWorkflow ? "Deleting..." : "Delete"}
-                </button>
-              </div>
+          <CenteredConfirmDialog
+            tone="danger"
+            title="Delete this workflow?"
+            message="This will delete the workflow file, remove mirrored registry and session-index entries, and clean up related codex-deck task worktrees and branches when they belong to this workflow. You can also delete the bound session, scheduler session, and task sessions in the same action."
+          >
+            <p className="mt-2 break-all text-[11px] text-zinc-500">
+              {deleteWorkflowTargetData?.title ?? deleteWorkflowTargetId}
+            </p>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteWorkflowTargetId(null)}
+                disabled={deletingWorkflow || workflowActionBusy}
+                className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleConfirmDeleteWorkflow();
+                }}
+                disabled={deletingWorkflow || workflowActionBusy}
+                className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {workflowDeleteMode === "workflow"
+                  ? "Deleting..."
+                  : "Delete workflow only"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleConfirmDeleteWorkflow({ deleteSessions: true });
+                }}
+                disabled={deletingWorkflow || workflowActionBusy}
+                className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {workflowDeleteMode === "workflow-and-sessions"
+                  ? "Deleting..."
+                  : "Delete workflow + sessions"}
+              </button>
             </div>
-          </div>
+          </CenteredConfirmDialog>
         )}
 
         {deleteTerminalTargetId && (
-          <div className="fixed right-4 bottom-4 z-50 w-[min(30rem,calc(100vw-2rem))] rounded-xl border border-red-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur">
-            <div className="px-4 py-3">
-              <div className="text-sm font-semibold text-red-200">
-                Terminate this terminal?
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-                This will terminate the terminal process and remove it from the
-                shared terminal list.
-              </p>
+          <CenteredConfirmDialog
+            tone="danger"
+            title="Terminate this terminal?"
+            message={
+              deleteTerminalTargetData?.boundSessionId?.trim()
+                ? "This will terminate the terminal process and remove it from the shared terminal list. You can also delete its bound session in the same action."
+                : "This will terminate the terminal process and remove it from the shared terminal list."
+            }
+          >
+            <p className="mt-2 break-all text-[11px] text-zinc-500">
+              {deleteTerminalTargetData?.cwd ?? deleteTerminalTargetId}
+            </p>
+            {deleteTerminalTargetData?.boundSessionId?.trim() ? (
               <p className="mt-2 break-all text-[11px] text-zinc-500">
-                {deleteTerminalTargetData?.cwd ?? deleteTerminalTargetId}
+                Bound session: {deleteTerminalTargetData.boundSessionId.trim()}
               </p>
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeleteTerminalTargetId(null)}
-                  disabled={deletingTerminal}
-                  className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Cancel
-                </button>
+            ) : null}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTerminalTargetId(null)}
+                disabled={deletingTerminal}
+                className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleConfirmDeleteTerminal();
+                }}
+                disabled={deletingTerminal}
+                className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {terminalDeleteMode === "terminal"
+                  ? "Terminating..."
+                  : deleteTerminalTargetData?.boundSessionId?.trim()
+                    ? "Terminate only"
+                    : "Terminate"}
+              </button>
+              {deleteTerminalTargetData?.boundSessionId?.trim() ? (
                 <button
                   type="button"
                   onClick={() => {
-                    void handleConfirmDeleteTerminal();
+                    void handleConfirmDeleteTerminal({
+                      deleteBoundSession: true,
+                    });
                   }}
                   disabled={deletingTerminal}
                   className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {deletingTerminal ? "Terminating..." : "Terminate"}
+                  {terminalDeleteMode === "terminal-and-session"
+                    ? "Terminating..."
+                    : "Terminate + delete bound session"}
                 </button>
-              </div>
+              ) : null}
             </div>
-          </div>
+          </CenteredConfirmDialog>
         )}
 
         {showFixDanglingConfirm && fixDanglingTargetSessionId && (
-          <div className="fixed right-4 bottom-4 z-50 w-[min(30rem,calc(100vw-2rem))] rounded-xl border border-amber-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur">
-            <div className="px-4 py-3">
-              <div className="text-sm font-semibold text-amber-200">
-                Fix dangling turns?
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-                Warning: this will modify the session file by appending
-                synthetic ended-turn events.
-              </p>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-                Proceed only if no other Codex instance is interacting with this
-                session.
-              </p>
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowFixDanglingConfirm(false);
-                    setFixDanglingTargetSessionId(null);
-                  }}
-                  disabled={fixingDangling}
-                  className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleConfirmFixDangling();
-                  }}
-                  disabled={fixingDangling}
-                  className="h-8 rounded border border-amber-600/70 bg-amber-700/25 px-3 text-xs text-amber-100 transition-colors hover:bg-amber-700/35 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {fixingDangling ? "Fixing..." : "Proceed"}
-                </button>
-              </div>
+          <CenteredConfirmDialog
+            tone="warning"
+            title="Fix dangling turns?"
+            message="Warning: this will modify the session file by appending synthetic ended-turn events."
+          >
+            <p className="mt-2 text-xs leading-relaxed text-zinc-300">
+              Proceed only if no other Codex instance is interacting with this
+              session.
+            </p>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFixDanglingConfirm(false);
+                  setFixDanglingTargetSessionId(null);
+                }}
+                disabled={fixingDangling}
+                className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleConfirmFixDangling();
+                }}
+                disabled={fixingDangling}
+                className="h-8 rounded border border-amber-600/70 bg-amber-700/25 px-3 text-xs text-amber-100 transition-colors hover:bg-amber-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {fixingDangling ? "Fixing..." : "Proceed"}
+              </button>
             </div>
-          </div>
+          </CenteredConfirmDialog>
         )}
 
         {showWorkflowDangerConfirm && (
-          <div className="fixed right-4 bottom-4 z-50 w-[min(30rem,calc(100vw-2rem))] rounded-xl border border-red-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur">
-            <div className="px-4 py-3">
-              <div className="text-sm font-semibold text-red-200">
-                {showWorkflowDangerConfirm.title}
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-                {showWorkflowDangerConfirm.message}
-              </p>
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowWorkflowDangerConfirm(null)}
-                  disabled={workflowActionBusy}
-                  className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const confirm = showWorkflowDangerConfirm;
-                    setShowWorkflowDangerConfirm(null);
-                    confirm?.onConfirm();
-                  }}
-                  disabled={workflowActionBusy}
-                  className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {workflowActionBusy ? "Working..." : "Proceed"}
-                </button>
-              </div>
+          <CenteredConfirmDialog
+            tone="danger"
+            title={showWorkflowDangerConfirm.title}
+            message={showWorkflowDangerConfirm.message}
+          >
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowWorkflowDangerConfirm(null)}
+                disabled={workflowActionBusy}
+                className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const confirm = showWorkflowDangerConfirm;
+                  setShowWorkflowDangerConfirm(null);
+                  confirm?.onConfirm();
+                }}
+                disabled={workflowActionBusy}
+                className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {workflowActionBusy ? "Working..." : "Proceed"}
+              </button>
             </div>
-          </div>
+          </CenteredConfirmDialog>
         )}
 
         {showWorkflowIdPromptModal && (
@@ -12278,15 +12365,15 @@ export default function CodexDeckApp() {
                       }
                       embeddedMessagesLoading={terminalEmbeddedMessagesLoading}
                       chatBusy={terminalBindingBusy}
-                    onChatInSession={() => {
-                      void handleChatInTerminalSession();
-                    }}
-                    onTerminalRestarted={handleTerminalRestarted}
-                    onFilePathLinkClick={handleFilePathLinkClick}
-                    onApproveAiTerminalStep={handleApproveAiTerminalStep}
-                    onRejectAiTerminalStep={handleRejectAiTerminalStep}
-                  />
-                </div>
+                      onChatInSession={() => {
+                        void handleChatInTerminalSession();
+                      }}
+                      onTerminalRestarted={handleTerminalRestarted}
+                      onFilePathLinkClick={handleFilePathLinkClick}
+                      onApproveAiTerminalStep={handleApproveAiTerminalStep}
+                      onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                    />
+                  </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-zinc-500">
                     No active terminal selected.
@@ -12329,14 +12416,20 @@ export default function CodexDeckApp() {
                     sendingMessage,
                     stoppingTurn,
                     idlePrimaryActionLabel: terminalComposerSessionId
-                      ? undefined
+                      ? "Continue"
                       : "Init",
-                    idlePrimaryActionBusy: terminalBindingBusy,
-                    idlePrimaryActionBusyLabel: "Initializing...",
-                    allowIdlePrimaryActionWithoutContent:
-                      !terminalComposerSessionId,
+                    idlePrimaryActionBusy: terminalComposerSessionId
+                      ? sendingMessage
+                      : terminalBindingBusy,
+                    idlePrimaryActionBusyLabel: terminalComposerSessionId
+                      ? "Sending..."
+                      : "Initializing...",
+                    allowIdlePrimaryActionWithoutContent: true,
+                    idlePrimaryActionOnlyWithoutContent: Boolean(
+                      terminalComposerSessionId,
+                    ),
                     onIdlePrimaryAction: terminalComposerSessionId
-                      ? null
+                      ? handleTerminalComposerContinue
                       : handleTerminalComposerInit,
                     onSendMessage: handleTerminalComposerSendMessage,
                     onRunSlashCommand: handleRunSlashCommand,

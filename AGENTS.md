@@ -125,6 +125,9 @@ For remote-server work tracked in `docs/SERVER_IMPLEMENTATION.md`, preserve the 
 ## Key Details
 
 - The web page may be visited from another machine (and possibly from a mobile phone). Be cautious about this — ensure layouts are responsive, avoid localhost-only assumptions in URLs/assets, and do not rely on features unavailable on mobile browsers.
+- Light mode and dark mode must both be designed intentionally. Do not leave a surface on dark-only classes just because it "looks acceptable" in one theme. When editing UI, check whether the surrounding pane, card, header, and empty states also need explicit light-mode treatment.
+- For theme-specific styling, prefer matching existing repo patterns on comparable surfaces instead of inventing a new palette in isolation. If a component is intentionally dark in both themes (for example, a terminal emulator surface), keep that choice scoped to the true terminal surface and do not accidentally apply the same dark chrome to surrounding light-mode UI.
+- Frozen/read-only blocks in light mode should use the repo's subtle light-theme surface language, not dark-mode zinc backgrounds and not ad-hoc heavy gray layering. The goal is a small but clear distinction from interactive blocks, while remaining visually consistent with adjacent light-mode UI.
 - Interactive mode requires the `codex` binary on PATH (or set `CODEX_CLI_PATH` env var).
 - SSE is used for real-time updates: session list changes and live conversation streaming.
 - The Vite dev server proxies API requests to the backend, so both servers must run during development.

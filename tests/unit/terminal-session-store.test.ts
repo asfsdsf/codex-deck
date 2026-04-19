@@ -17,7 +17,7 @@ const sampleSnapshot = {
   format: "xterm-serialize-v1" as const,
   cols: 80,
   rows: 24,
-  data: '\u001b[?1049h\u001b[Hpwd\r\n/repo/app\r\n',
+  data: "\u001b[?1049h\u001b[Hpwd\r\n/repo/app\r\n",
 };
 
 test("persistTerminalSessionFrozenBlock stores canonical block manifest and snapshot", async () => {
@@ -212,10 +212,16 @@ test("persistTerminalSessionMessageBlock stores canonical AI terminal plan block
       rootDir,
     );
 
-    const manifest = readPersistedTerminalSessionManifestSync("terminal-1", rootDir);
+    const manifest = readPersistedTerminalSessionManifestSync(
+      "terminal-1",
+      rootDir,
+    );
     assert.equal(manifest.blocks.length, 1);
     assert.equal(manifest.blocks[0]?.type, "ai_terminal_plan");
-    assert.equal(manifest.blocks[0]?.leadingMarkdown, "Inspect the repo first.");
+    assert.equal(
+      manifest.blocks[0]?.leadingMarkdown,
+      "Inspect the repo first.",
+    );
     assert.equal(manifest.blocks[0]?.steps?.[0]?.stepId, "check-status");
     assert.equal(manifest.blocks[0]?.stepFeedback?.[0]?.kind, "execution");
     assert.equal(persisted.block.type, "ai_terminal_plan");
@@ -287,23 +293,26 @@ test("persistTerminalSessionMessageAction stores actions on canonical AI termina
       rootDir,
     );
 
-    const manifest = readPersistedTerminalSessionManifestSync("terminal-1", rootDir);
+    const manifest = readPersistedTerminalSessionManifestSync(
+      "terminal-1",
+      rootDir,
+    );
     assert.equal(manifest.blocks.length, 1);
     assert.equal(manifest.blocks[0]?.type, "ai_terminal_plan");
     assert.deepEqual(manifest.blocks[0]?.stepActions, [
-        {
-          stepId: "check-status",
-          decision: "approved",
-          reason: null,
-          updatedAt: approved.stepActions[0]?.updatedAt,
-        },
-        {
-          stepId: "run-tests",
-          decision: "rejected",
-          reason: "Use the targeted test first.",
-          updatedAt: manifest.blocks[0]?.stepActions?.[1]?.updatedAt,
-        },
-      ]);
+      {
+        stepId: "check-status",
+        decision: "approved",
+        reason: null,
+        updatedAt: approved.stepActions[0]?.updatedAt,
+      },
+      {
+        stepId: "run-tests",
+        decision: "rejected",
+        reason: "Use the targeted test first.",
+        updatedAt: manifest.blocks[0]?.stepActions?.[1]?.updatedAt,
+      },
+    ]);
     assert.equal(manifest.blocks[0]?.stepFeedback?.[0]?.kind, "rejection");
   } finally {
     await cleanup();

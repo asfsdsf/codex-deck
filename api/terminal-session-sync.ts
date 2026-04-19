@@ -14,9 +14,7 @@ import {
   getAiTerminalMessageKey,
   parseAiTerminalMessage,
 } from "../web/ai-terminal";
-import {
-  buildTerminalTimelineEntries,
-} from "./terminal-transcript";
+import { buildTerminalTimelineEntries } from "./terminal-transcript";
 
 const lastArtifactsPayloadByTerminalId = new Map<string, string>();
 
@@ -35,15 +33,21 @@ function listEmbeddedTerminalMessages(
       if (message.type !== "assistant") {
         return false;
       }
-      return parseAiTerminalMessage(extractConversationMessageText(message)) !== null;
+      return (
+        parseAiTerminalMessage(extractConversationMessageText(message)) !== null
+      );
     })
     .map((message, index) => {
-      const rendered = parseAiTerminalMessage(extractConversationMessageText(message));
+      const rendered = parseAiTerminalMessage(
+        extractConversationMessageText(message),
+      );
       if (!rendered) {
         return null;
       }
       return {
-        messageKey: getAiTerminalMessageKey(message) ?? `terminal-ai:${sessionId}:${index}`,
+        messageKey:
+          getAiTerminalMessageKey(message) ??
+          `terminal-ai:${sessionId}:${index}`,
         message,
         rendered,
       };
@@ -56,7 +60,10 @@ function buildPlanFeedbackByMessageKey(
   messages: ConversationMessage[],
 ): Record<string, TerminalSessionPlanStepFeedback[]> {
   const plans: Array<{ messageKey: string; stepIds: Set<string> }> = [];
-  const feedbackByMessageKey = new Map<string, TerminalSessionPlanStepFeedback[]>();
+  const feedbackByMessageKey = new Map<
+    string,
+    TerminalSessionPlanStepFeedback[]
+  >();
 
   messages.forEach((message, index) => {
     const text = extractConversationMessageText(message);
@@ -65,11 +72,17 @@ function buildPlanFeedbackByMessageKey(
     }
 
     const parsedDirective = parseAiTerminalMessage(text);
-    if (message.type === "assistant" && parsedDirective?.directive.kind === "plan") {
+    if (
+      message.type === "assistant" &&
+      parsedDirective?.directive.kind === "plan"
+    ) {
       plans.push({
         messageKey:
-          getAiTerminalMessageKey(message) ?? `terminal-ai:${sessionId}:${index}`,
-        stepIds: new Set(parsedDirective.directive.steps.map((step) => step.stepId)),
+          getAiTerminalMessageKey(message) ??
+          `terminal-ai:${sessionId}:${index}`,
+        stepIds: new Set(
+          parsedDirective.directive.steps.map((step) => step.stepId),
+        ),
       });
       return;
     }
@@ -140,7 +153,10 @@ export async function syncTerminalSessionArtifacts(input: {
   codexHome?: string | null;
 }): Promise<TerminalSessionArtifactsResponse> {
   const messages = await getConversation(input.sessionId);
-  const embeddedMessages = listEmbeddedTerminalMessages(input.sessionId, messages);
+  const embeddedMessages = listEmbeddedTerminalMessages(
+    input.sessionId,
+    messages,
+  );
   const planFeedbackByMessageKey = buildPlanFeedbackByMessageKey(
     input.sessionId,
     messages,

@@ -102,9 +102,9 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const [writeOwnerId, setWriteOwnerId] = useState<string | null>(null);
   const [showReadOnlyWarning, setShowReadOnlyWarning] = useState(false);
   const [terminalOutput, setTerminalOutput] = useState("");
-  const [timelineEntries, setTimelineEntries] = useState<TerminalTimelineEntry[]>(
-    [],
-  );
+  const [timelineEntries, setTimelineEntries] = useState<
+    TerminalTimelineEntry[]
+  >([]);
   const [artifactStepStatesByMessageKey, setArtifactStepStatesByMessageKey] =
     useState<Record<string, Record<string, AiTerminalStepState | undefined>>>(
       {},
@@ -287,8 +287,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       } else if (event.type === "state") {
         setRunning(event.running === true);
       } else if (event.type === "reset") {
-        const nextOutput =
-          typeof event.output === "string" ? event.output : "";
+        const nextOutput = typeof event.output === "string" ? event.output : "";
         renderedLiveOutputRef.current = "";
         setTerminalOutput(nextOutput);
         setRunning(event.running === true);
@@ -505,11 +504,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       return;
     }
     viewport.scrollTop = viewport.scrollHeight;
-  }, [
-    hasEmbeddedTimelineEntries,
-    terminalOutput,
-    timelineEntries.length,
-  ]);
+  }, [hasEmbeddedTimelineEntries, terminalOutput, timelineEntries.length]);
 
   const statusText = useMemo(() => {
     if (!connected) {

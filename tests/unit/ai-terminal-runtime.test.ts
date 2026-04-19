@@ -17,11 +17,7 @@ test("cleanLiveAiTerminalExecutionOutput drops wrapper echo noise before visible
       command: "pwd",
       cwd: "/repo",
     },
-    [
-      "(base) codex-deck » pwd",
-      "/repo",
-      "(base) codex-deck »",
-    ].join("\n"),
+    ["(base) codex-deck » pwd", "/repo", "(base) codex-deck »"].join("\n"),
   );
 
   assert.equal(cleaned, "/repo");

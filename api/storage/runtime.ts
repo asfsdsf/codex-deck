@@ -302,6 +302,11 @@ export interface DeleteSessionResponse {
   sqlite: DeleteSessionSqliteResult;
 }
 
+export interface DeleteTerminalResponse {
+  ok: boolean;
+  deletedSessionIds: string[];
+}
+
 export interface SessionsRemovedEvent {
   sessionIds: string[];
   actorClientId: string | null;
@@ -580,8 +585,7 @@ export interface TerminalSessionBlockRecord {
   stepFeedback: TerminalSessionPlanStepFeedback[] | null;
 }
 
-export interface TerminalSessionBlockRecordWithSnapshot
-  extends TerminalSessionBlockRecord {
+export interface TerminalSessionBlockRecordWithSnapshot extends TerminalSessionBlockRecord {
   snapshot: TerminalSerializedSnapshot | null;
 }
 
@@ -906,6 +910,10 @@ export interface WorkflowActionResponse {
   command: string;
   workflowKey: string | null;
   output: string | null;
+}
+
+export interface DeleteWorkflowResponse extends WorkflowActionResponse {
+  deletedSessionIds: string[];
 }
 
 export interface CreateWorkflowRequest {

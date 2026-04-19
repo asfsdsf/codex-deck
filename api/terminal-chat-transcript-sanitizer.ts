@@ -16,9 +16,11 @@ const { Terminal: HeadlessTerminal } = xtermHeadless as {
       active: {
         baseY: number;
         cursorY: number;
-        getLine: (index: number) => {
-          translateToString: (trimRight?: boolean) => string;
-        } | undefined;
+        getLine: (index: number) =>
+          | {
+              translateToString: (trimRight?: boolean) => string;
+            }
+          | undefined;
       };
     };
   };
@@ -111,7 +113,10 @@ export async function sanitizeTerminalChatTranscript(
     });
 
     const activeBuffer = terminal.buffer.active;
-    const lineCount = Math.max(1, activeBuffer.baseY + activeBuffer.cursorY + 1);
+    const lineCount = Math.max(
+      1,
+      activeBuffer.baseY + activeBuffer.cursorY + 1,
+    );
     const lines: string[] = [];
     for (let index = 0; index < lineCount; index += 1) {
       const line = activeBuffer.getLine(index)?.translateToString(true) ?? "";

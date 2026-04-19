@@ -34,7 +34,8 @@ export function fitTerminalViewport(input: {
   input.fitAddon.fit();
 
   const sizeChanged =
-    input.terminal.cols !== previousCols || input.terminal.rows !== previousRows;
+    input.terminal.cols !== previousCols ||
+    input.terminal.rows !== previousRows;
 
   if (sizeChanged && (input.replayOutput?.length ?? 0) > 0) {
     input.terminal.reset();

@@ -1999,6 +1999,7 @@ const SessionView = memo(
                   terminalId: aiTerminalTerminalId,
                   messageKey: aiTerminalMessageKey,
                   isActionable: true,
+                  showStepActions: false,
                   stepStates:
                     persistedAiTerminalStepStatesByMessageKey[
                       aiTerminalMessageKey

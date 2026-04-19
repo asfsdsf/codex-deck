@@ -1288,7 +1288,10 @@ class CodexAppServerClient {
         : null;
 
     return this.readCoalescer.getOrLoad(
-      this.getThreadStateCacheKey(normalizedThreadId, normalizedRequestedTurnId),
+      this.getThreadStateCacheKey(
+        normalizedThreadId,
+        normalizedRequestedTurnId,
+      ),
       THREAD_STATE_CACHE_TTL_MS,
       async () => {
         const result = await this.readThreadWithTurns(normalizedThreadId);

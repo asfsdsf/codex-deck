@@ -103,7 +103,9 @@ interface ConnectTerminalSessionInput {
   terminalId: string;
   clientId: string;
   isDisposed: () => boolean;
-  onBootstrap: (event: Extract<TerminalStreamEvent, { type: "bootstrap" }>) => void;
+  onBootstrap: (
+    event: Extract<TerminalStreamEvent, { type: "bootstrap" }>,
+  ) => void;
   onEvent: (event: TerminalIncrementalStreamEvent) => void;
   onConnectedChange: (connected: boolean) => void;
   onError: (message: string | null) => void;

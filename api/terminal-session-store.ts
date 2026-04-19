@@ -171,7 +171,9 @@ function normalizeSnapshotCaptureKind(
   return value === "manual" ? "manual" : null;
 }
 
-function normalizePlanStepAction(value: unknown): TerminalSessionPlanStepAction | null {
+function normalizePlanStepAction(
+  value: unknown,
+): TerminalSessionPlanStepAction | null {
   const record = asRecord(value);
   const stepId = asString(record.stepId);
   const decision = normalizeDecision(record.decision);
@@ -205,16 +207,21 @@ function normalizePlanStep(value: unknown): TerminalSessionPlanStep | null {
   }
   return {
     stepId,
-    stepGoal: record.stepGoal === null ? null : (asString(record.stepGoal) ?? null),
+    stepGoal:
+      record.stepGoal === null ? null : (asString(record.stepGoal) ?? null),
     command,
     explanation:
-      record.explanation === null ? null : (asString(record.explanation) ?? null),
+      record.explanation === null
+        ? null
+        : (asString(record.explanation) ?? null),
     cwd: record.cwd === null ? null : (asString(record.cwd) ?? null),
     shell: record.shell === null ? null : (asString(record.shell) ?? null),
     risk,
     nextAction,
     contextNote:
-      record.contextNote === null ? null : (asString(record.contextNote) ?? null),
+      record.contextNote === null
+        ? null
+        : (asString(record.contextNote) ?? null),
   };
 }
 
@@ -294,7 +301,9 @@ function normalizePlanStepFeedback(
   return null;
 }
 
-function normalizeBlockRecord(value: unknown): TerminalSessionBlockRecord | null {
+function normalizeBlockRecord(
+  value: unknown,
+): TerminalSessionBlockRecord | null {
   const record = asRecord(value);
   const blockId = asString(record.blockId);
   const terminalId = asString(record.terminalId);
@@ -346,9 +355,7 @@ function normalizeBlockRecord(value: unknown): TerminalSessionBlockRecord | null
   const rawBlock =
     record.rawBlock === null ? null : (asString(record.rawBlock) ?? null);
   const contextNote =
-    record.contextNote === null
-      ? null
-      : (asString(record.contextNote) ?? null);
+    record.contextNote === null ? null : (asString(record.contextNote) ?? null);
   const message =
     record.message === null ? null : (asString(record.message) ?? null);
   const question =
@@ -436,7 +443,9 @@ function normalizeBlockRecord(value: unknown): TerminalSessionBlockRecord | null
   };
 }
 
-function normalizeSnapshotFormat(value: unknown): TerminalSnapshotFormat | null {
+function normalizeSnapshotFormat(
+  value: unknown,
+): TerminalSnapshotFormat | null {
   return value === "xterm-serialize-v1" ? value : null;
 }
 
@@ -452,7 +461,9 @@ function createEmptyManifest(
   };
 }
 
-function sortBlocks(blocks: TerminalSessionBlockRecord[]): TerminalSessionBlockRecord[] {
+function sortBlocks(
+  blocks: TerminalSessionBlockRecord[],
+): TerminalSessionBlockRecord[] {
   return [...blocks].sort((left, right) => {
     if (left.sequence !== right.sequence) {
       return left.sequence - right.sequence;
@@ -524,15 +535,18 @@ async function writeManifest(
   );
 }
 
-function normalizePersistBlockInput(input: {
-  terminalId: string;
-} & TerminalPersistFrozenBlockRequest): NormalizedPersistBlockInput {
+function normalizePersistBlockInput(
+  input: {
+    terminalId: string;
+  } & TerminalPersistFrozenBlockRequest,
+): NormalizedPersistBlockInput {
   const terminalId = input.terminalId.trim();
   const sessionId = input.sessionId.trim();
   const snapshot = input.snapshot;
   const messageKey = input.messageKey?.trim() || null;
   const stepId = input.stepId?.trim() || null;
-  const captureKind = normalizeSnapshotCaptureKind(input.captureKind) ?? "manual";
+  const captureKind =
+    normalizeSnapshotCaptureKind(input.captureKind) ?? "manual";
   const sequence =
     typeof input.sequence === "number" && Number.isFinite(input.sequence)
       ? input.sequence
@@ -645,9 +659,7 @@ function normalizePersistActionInput(
   const stepId = input.stepId.trim();
   const decision = normalizeDecision(input.decision);
   const reason =
-    input.reason === undefined || input.reason === null
-      ? null
-      : input.reason;
+    input.reason === undefined || input.reason === null ? null : input.reason;
 
   if (!terminalId) {
     throw new Error("terminalId is required");
@@ -678,11 +690,11 @@ function normalizePersistActionInput(
 function findExistingBlockIndex(
   blocks: TerminalSessionBlockRecord[],
   input:
+    | Pick<NormalizedPersistBlockInput, "sessionId" | "messageKey" | "stepId">
     | Pick<
-        NormalizedPersistBlockInput,
-        "sessionId" | "messageKey" | "stepId"
-      >
-    | Pick<NormalizedPersistMessageBlockInput, "type" | "sessionId" | "messageKey">,
+        NormalizedPersistMessageBlockInput,
+        "type" | "sessionId" | "messageKey"
+      >,
 ): number {
   if ("type" in input) {
     return blocks.findIndex(
@@ -735,9 +747,8 @@ function createMessageAction(
   existing: TerminalSessionPlanStepAction[] | null,
   step: TerminalSessionPlanStepAction,
 ): TerminalSessionPlanStepAction[] {
-  const steps = existing?.filter(
-    (candidate) => candidate.stepId !== step.stepId,
-  ) ?? [];
+  const steps =
+    existing?.filter((candidate) => candidate.stepId !== step.stepId) ?? [];
   return [...steps, step];
 }
 
@@ -745,14 +756,15 @@ function upsertStepFeedback(
   existing: TerminalSessionPlanStepFeedback[] | null,
   step: TerminalSessionPlanStepFeedback,
 ): TerminalSessionPlanStepFeedback[] {
-  const entries = existing?.filter(
-    (candidate) =>
-      !(
-        candidate.stepId === step.stepId &&
-        ((candidate.kind === "execution" && step.kind === "execution") ||
-          (candidate.kind === "rejection" && step.kind === "rejection"))
-      ),
-  ) ?? [];
+  const entries =
+    existing?.filter(
+      (candidate) =>
+        !(
+          candidate.stepId === step.stepId &&
+          ((candidate.kind === "execution" && step.kind === "execution") ||
+            (candidate.kind === "rejection" && step.kind === "rejection"))
+        ),
+    ) ?? [];
   return [...entries, step];
 }
 
@@ -885,9 +897,7 @@ export async function persistTerminalSessionMessageBlock(
           ? (existingBlock?.stepActions ?? null)
           : null,
       stepFeedback:
-        normalized.type === "ai_terminal_plan"
-          ? normalized.stepFeedback
-          : null,
+        normalized.type === "ai_terminal_plan" ? normalized.stepFeedback : null,
     };
 
     const nextBlocks = [...manifest.blocks];
@@ -961,7 +971,10 @@ export async function persistTerminalSessionMessageAction(
       message: existingBlock.message,
       question: existingBlock.question,
       steps: existingBlock.steps,
-      stepActions: createMessageAction(existingBlock.stepActions ?? null, actionStep),
+      stepActions: createMessageAction(
+        existingBlock.stepActions ?? null,
+        actionStep,
+      ),
       stepFeedback:
         normalized.decision === "rejected"
           ? upsertStepFeedback(existingBlock.stepFeedback ?? null, {

@@ -359,10 +359,7 @@ test("local terminal stream opens a terminal-only EventSource", async () => {
 
     const eventSource = MockEventSource.instances[0];
     assert.ok(eventSource);
-    assert.equal(
-      eventSource.url,
-      "/api/terminals/terminal-1/stream?fromSeq=0",
-    );
+    assert.equal(eventSource.url, "/api/terminals/terminal-1/stream?fromSeq=0");
 
     unsubscribe();
   } finally {

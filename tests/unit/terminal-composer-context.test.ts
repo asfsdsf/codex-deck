@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  FROZEN_TERMINAL_OUTPUT_CHAR_LIMIT,
   buildFrozenTerminalCommandOutputTag,
   buildTerminalBoundUserMessageText,
   buildTerminalChatBootstrapMessage,
@@ -24,6 +25,43 @@ test("buildFrozenTerminalCommandOutputTag wraps transcript in a dedicated tag", 
   );
 });
 
+test("buildFrozenTerminalCommandOutputTag truncates transcript beyond the character limit", () => {
+  const transcript = `>${"x".repeat(FROZEN_TERMINAL_OUTPUT_CHAR_LIMIT + 4)}`;
+  const tag = buildFrozenTerminalCommandOutputTag({
+    terminalId: "terminal-1",
+    transcript,
+  });
+
+  assert.ok(
+    tag.includes(
+      [
+        `${transcript.slice(0, FROZEN_TERMINAL_OUTPUT_CHAR_LIMIT)}`,
+        '<codex-deck-frozen-terminal-omitted-characters-notice omitted-characters="5">5 characters omitted from frozen terminal output.</codex-deck-frozen-terminal-omitted-characters-notice>',
+      ].join(""),
+    ),
+  );
+  assert.doesNotMatch(tag, /codex-deck-frozen-terminal-omitted-lines-notice/);
+});
+
+test("buildFrozenTerminalCommandOutputTag keeps the first and last 20 lines when long output fits the character limit", () => {
+  const transcript = Array.from(
+    { length: 55 },
+    (_, index) => `line-${index + 1}`,
+  ).join("\n");
+  const tag = buildFrozenTerminalCommandOutputTag({
+    terminalId: "terminal-1",
+    transcript,
+  });
+
+  assert.match(
+    tag,
+    /line-20\n<codex-deck-frozen-terminal-omitted-lines-notice omitted-lines="15">15 lines omitted from frozen terminal output\.<\/codex-deck-frozen-terminal-omitted-lines-notice>\nline-36/,
+  );
+  assert.doesNotMatch(tag, /line-21/);
+  assert.doesNotMatch(tag, /line-35/);
+  assert.match(tag, /line-55/);
+});
+
 test("buildTerminalBoundUserMessageText appends the frozen terminal tag after the user's text", () => {
   const message = buildTerminalBoundUserMessageText({
     text: "Please explain the failure.",
@@ -33,7 +71,10 @@ test("buildTerminalBoundUserMessageText appends the frozen terminal tag after th
     },
   });
 
-  assert.match(message, /^Please explain the failure\.\n\n<terminal-command-output>/);
+  assert.match(
+    message,
+    /^Please explain the failure\.\n\n<terminal-command-output>/,
+  );
   assert.match(message, /<terminal_id>terminal-1<\/terminal_id>/);
   assert.match(message, /FAIL src\/example\.test\.ts/);
 });
@@ -76,9 +117,13 @@ test("buildTerminalChatBootstrapMessage places frozen terminal context after con
     },
   });
 
-  const controllerContextEnd = message.indexOf("</ai-terminal-controller-context>");
+  const controllerContextEnd = message.indexOf(
+    "</ai-terminal-controller-context>",
+  );
   const terminalContextStart = message.indexOf("<terminal-command-output>");
-  const firstRequestStart = message.indexOf("Treat the next section as the user's first request");
+  const firstRequestStart = message.indexOf(
+    "Treat the next section as the user's first request",
+  );
 
   assert.ok(controllerContextEnd >= 0);
   assert.ok(terminalContextStart > controllerContextEnd);

@@ -1231,6 +1231,32 @@ test("workflow routes request expected endpoints over local transport", async ()
   });
 });
 
+test("deleteWorkflow forwards deleteSessions query when requested", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return jsonResponse({
+      ok: true,
+      command: "delete",
+      workflowKey: "workflow-key",
+      output: "Deleted workflow.",
+      deletedSessionIds: ["session-1", "session-2"],
+    });
+  };
+
+  const deleted = await deleteWorkflow("workflow-key", {
+    deleteSessions: true,
+  });
+
+  assert.equal(deleted.ok, true);
+  assert.deepEqual(deleted.deletedSessionIds, ["session-1", "session-2"]);
+  assert.deepEqual(
+    calls.map(({ url, init }) => `${url}:${init?.method ?? "GET"}`),
+    ["/api/workflows/workflow-key?deleteSessions=true:DELETE"],
+  );
+});
+
 test("workflow routes delegate to remote transport when connected", async () => {
   const summary = createWorkflowSummaryFixture();
   const detail = createWorkflowDetailFixture();
@@ -3087,6 +3113,29 @@ test("terminal helper routes request expected endpoints", async () => {
     `/api/terminals/${terminalId}/resize:POST`,
     `/api/terminals/${terminalId}/restart:POST`,
     `/api/terminals/${terminalId}:DELETE`,
+  ]);
+});
+
+test("deleteTerminal forwards deleteBoundSession query when requested", async () => {
+  const terminalId = "terminal-1";
+  const calls: string[] = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(`${String(input)}:${init?.method ?? "GET"}`);
+    return jsonResponse({
+      ok: true,
+      deletedSessionIds: ["session-1"],
+    });
+  };
+
+  const deleted = await deleteTerminal(terminalId, {
+    deleteBoundSession: true,
+  });
+
+  assert.equal(deleted.ok, true);
+  assert.deepEqual(deleted.deletedSessionIds, ["session-1"]);
+  assert.deepEqual(calls, [
+    `/api/terminals/${terminalId}?deleteBoundSession=true:DELETE`,
   ]);
 });
 

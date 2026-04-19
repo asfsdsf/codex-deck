@@ -13,6 +13,8 @@ import type {
   CodexModelOption,
   CodexConfigDefaultsResponse,
   CodexSessionContextResponse,
+  DeleteTerminalResponse,
+  DeleteWorkflowResponse,
   DeleteSessionResponse,
   FixDanglingSessionResponse,
   SessionExistsResponse,
@@ -248,10 +250,13 @@ function createKeyedTimedLoader<T>(ttlMs: number) {
   };
 }
 
-const loadCodexModels = createTimedLoader(READONLY_CLI_CACHE_TTL_MS, async () => {
-  const payload = await requestJson<CodexModelsResponse>("/api/codex/models");
-  return Array.isArray(payload.models) ? payload.models : [];
-});
+const loadCodexModels = createTimedLoader(
+  READONLY_CLI_CACHE_TTL_MS,
+  async () => {
+    const payload = await requestJson<CodexModelsResponse>("/api/codex/models");
+    return Array.isArray(payload.models) ? payload.models : [];
+  },
+);
 
 const loadCodexCollaborationModes = createTimedLoader(
   READONLY_CLI_CACHE_TTL_MS,
@@ -268,16 +273,19 @@ const loadCodexConfigDefaults = createTimedLoader(
   () => requestJson<CodexConfigDefaultsResponse>("/api/codex/defaults"),
 );
 
-const codexThreadStateLoader =
-  createKeyedTimedLoader<CodexThreadStateResponse>(THREAD_STATE_CACHE_TTL_MS);
+const codexThreadStateLoader = createKeyedTimedLoader<CodexThreadStateResponse>(
+  THREAD_STATE_CACHE_TTL_MS,
+);
 const workflowBySessionLoader =
   createKeyedTimedLoader<WorkflowSessionLookupResponse | null>(
     WORKFLOW_SESSION_LOOKUP_CACHE_TTL_MS,
   );
-const workflowSessionRolesLoader =
-  createKeyedTimedLoader<WorkflowSessionRoleSummary[]>(SESSION_ROLE_CACHE_TTL_MS);
-const terminalSessionRolesLoader =
-  createKeyedTimedLoader<TerminalSessionRoleSummary[]>(SESSION_ROLE_CACHE_TTL_MS);
+const workflowSessionRolesLoader = createKeyedTimedLoader<
+  WorkflowSessionRoleSummary[]
+>(SESSION_ROLE_CACHE_TTL_MS);
+const terminalSessionRolesLoader = createKeyedTimedLoader<
+  TerminalSessionRoleSummary[]
+>(SESSION_ROLE_CACHE_TTL_MS);
 
 function resetApiRequestCaches(): void {
   loadCodexModels.clear();
@@ -696,10 +704,12 @@ export async function createWorkflow(
 
 export async function deleteWorkflow(
   key: string,
-): Promise<WorkflowActionResponse> {
-  return requestJsonAndNotifyWorkflow<WorkflowActionResponse>(
+  options?: { deleteSessions?: boolean },
+): Promise<DeleteWorkflowResponse> {
+  const query = options?.deleteSessions ? "?deleteSessions=true" : "";
+  return requestJsonAndNotifyWorkflow<DeleteWorkflowResponse>(
     key,
-    `/api/workflows/${encodeURIComponent(key)}`,
+    `/api/workflows/${encodeURIComponent(key)}${query}`,
     { method: "DELETE" },
   );
 }
@@ -1295,9 +1305,11 @@ export async function sendTerminalChatAction(
 
 export async function deleteTerminal(
   terminalId: string,
-): Promise<{ ok: boolean }> {
-  return requestJson<{ ok: boolean }>(
-    `/api/terminals/${encodeURIComponent(terminalId)}`,
+  options?: { deleteBoundSession?: boolean },
+): Promise<DeleteTerminalResponse> {
+  const query = options?.deleteBoundSession ? "?deleteBoundSession=true" : "";
+  return requestJson<DeleteTerminalResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}${query}`,
     {
       method: "DELETE",
     },

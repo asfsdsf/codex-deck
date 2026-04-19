@@ -352,8 +352,9 @@ test("conversation chunk route returns bounded chunks with offsets", async () =>
 });
 
 test("sessions stream carries sessions, terminals, and workflows snapshots", async () => {
-  const { rootDir, sessionsDir, cleanup } =
-    await createTempCodexDir("server-global-stream");
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-global-stream",
+  );
   const server = createServer({ port: 13018, codexDir: rootDir, open: false });
   const terminalId = "terminal-global-1";
   const manager: LocalTerminalManager = {
@@ -418,7 +419,9 @@ test("sessions stream carries sessions, terminals, and workflows snapshots", asy
     const terminals = JSON.parse(eventMap.get("terminals") ?? "[]") as Array<{
       terminalId: string;
     }>;
-    const workflows = JSON.parse(eventMap.get("workflows") ?? "[]") as unknown[];
+    const workflows = JSON.parse(
+      eventMap.get("workflows") ?? "[]",
+    ) as unknown[];
 
     assert.equal(
       sessions.some((session) => session.id === SESSION_ID),
@@ -437,8 +440,9 @@ test("sessions stream carries sessions, terminals, and workflows snapshots", asy
 });
 
 test("terminal stream accepts terminal-only subscriptions", async () => {
-  const { rootDir, cleanup } =
-    await createTempCodexDir("server-terminal-bound-session-stream");
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-bound-session-stream",
+  );
   const server = createServer({ port: 13019, codexDir: rootDir, open: false });
   const terminalId = "terminal-bound-1";
   const manager: LocalTerminalManager = {
@@ -477,7 +481,9 @@ test("terminal stream accepts terminal-only subscriptions", async () => {
     setLocalTerminalManagerForTests(manager);
     await loadStorage();
 
-    const response = await server.app.request(`/api/terminals/${terminalId}/stream?fromSeq=0`);
+    const response = await server.app.request(
+      `/api/terminals/${terminalId}/stream?fromSeq=0`,
+    );
     assert.equal(response.status, 200);
 
     const events = await readSseEvents(response, ["heartbeat"]);
@@ -1598,6 +1604,130 @@ test("workflow list refreshes stale registry bound session from canonical workfl
     } else {
       process.env.CODEX_HOME = previousCodexHome;
     }
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("workflow delete route can remove bound, scheduler, and task sessions together", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-workflow-delete-sessions",
+  );
+  const projectDir = join(rootDir, "repo");
+  const workflowDir = join(projectDir, ".codex-deck");
+  const workflowPath = join(workflowDir, "delete-flow.json");
+  const registryDir = join(rootDir, "codex-deck", "workflows");
+  const sessionIndexDir = join(registryDir, "session-index");
+  const boundSessionId = "bound-session-1";
+  const schedulerSessionId = "scheduler-session-1";
+  const taskSessionId = "task-session-1";
+  const server = createServer({ port: 13020, codexDir: rootDir, open: false });
+
+  try {
+    await mkdir(projectDir, { recursive: true });
+    await mkdir(workflowDir, { recursive: true });
+    await mkdir(sessionIndexDir, { recursive: true });
+    await writeSessionFile(sessionsDir, `${boundSessionId}.jsonl`, [
+      sessionMetaLine(boundSessionId, projectDir, Date.now()),
+    ]);
+    await writeSessionFile(sessionsDir, `${schedulerSessionId}.jsonl`, [
+      sessionMetaLine(schedulerSessionId, projectDir, Date.now()),
+    ]);
+    await writeSessionFile(sessionsDir, `${taskSessionId}.jsonl`, [
+      sessionMetaLine(taskSessionId, projectDir, Date.now()),
+    ]);
+    await writeFile(
+      workflowPath,
+      `${JSON.stringify(
+        {
+          workflow: {
+            id: "delete-flow",
+            title: "Delete Flow",
+            status: "running",
+            projectRoot: projectDir,
+            updatedAt: "2026-03-25T00:05:00Z",
+            createdAt: "2026-03-25T00:00:00Z",
+            request: "Delete everything",
+            boundSession: boundSessionId,
+          },
+          scheduler: {
+            running: false,
+            pendingTrigger: false,
+            lastSessionId: schedulerSessionId,
+            threadId: schedulerSessionId,
+          },
+          tasks: [
+            {
+              id: "task-a",
+              name: "Task A",
+              prompt: "Do task A",
+              dependsOn: [],
+              status: "success",
+              sessionId: taskSessionId,
+              branchName: "flow/delete-flow/task-a",
+              worktreePath: null,
+              baseCommit: null,
+              resultCommit: null,
+              startedAt: null,
+              finishedAt: null,
+              summary: null,
+              failureReason: null,
+              noOp: false,
+              stopPending: false,
+              runnerPid: null,
+            },
+          ],
+          history: [],
+          settings: {
+            codexHome: rootDir,
+            maxParallel: 1,
+            mergePolicy: "integration-branch",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
+    await writeFile(
+      join(registryDir, "delete-flow.json"),
+      `${JSON.stringify(
+        {
+          key: "delete-flow",
+          workflowPath,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
+
+    await loadStorage();
+
+    const deleteResponse = await requestJson(
+      server,
+      "/api/workflows/delete-flow?deleteSessions=true",
+      { method: "DELETE" },
+    );
+    assert.equal(deleteResponse.status, 200);
+    assert.deepEqual(
+      (deleteResponse.body as { deletedSessionIds?: string[] })
+        .deletedSessionIds,
+      [boundSessionId, schedulerSessionId, taskSessionId],
+    );
+    assert.equal(
+      existsSync(join(sessionsDir, `${boundSessionId}.jsonl`)),
+      false,
+    );
+    assert.equal(
+      existsSync(join(sessionsDir, `${schedulerSessionId}.jsonl`)),
+      false,
+    );
+    assert.equal(
+      existsSync(join(sessionsDir, `${taskSessionId}.jsonl`)),
+      false,
+    );
+  } finally {
     server.stop();
     await cleanup();
   }
@@ -2965,9 +3095,11 @@ test("terminal routes return snapshot, control responses, and stream events", as
       { method: "DELETE" },
     );
     assert.equal(closeResponse.status, 200);
-    assert.deepEqual(closeResponse.body, { ok: true });
+    assert.deepEqual(closeResponse.body, {
+      ok: true,
+      deletedSessionIds: [],
+    });
     assert.equal(closeCalls, 1);
-
   } finally {
     setLocalTerminalManagerForTests(null);
     server.stop();
@@ -3139,6 +3271,117 @@ test("terminal binding routes persist bindings and expose terminal session roles
   }
 });
 
+test("terminal delete route can remove the bound session together", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-terminal-delete-bound-session",
+  );
+  const server = createServer({ port: 13020, codexDir: rootDir, open: false });
+  const terminalId = "terminal-delete-1";
+  const terminalSessionId = "terminal-session-1";
+  let terminalExists = true;
+  const manager: LocalTerminalManager = {
+    listTerminals: () =>
+      terminalExists
+        ? [
+            {
+              id: terminalId,
+              terminalId,
+              display: "app",
+              firstCommand: null,
+              timestamp: 1,
+              project: "/repo/app",
+              projectName: "app",
+              cwd: "/repo/app",
+              shell: "zsh",
+              running: true,
+            },
+          ]
+        : [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: true,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "",
+      seq: 1,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async (requestedTerminalId: string) => {
+      if (requestedTerminalId !== terminalId || !terminalExists) {
+        return false;
+      }
+      terminalExists = false;
+      return true;
+    },
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId && terminalExists
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    consumeFrozenBlock: async () => null,
+  };
+
+  try {
+    await writeSessionFile(sessionsDir, `${terminalSessionId}.jsonl`, [
+      sessionMetaLine(terminalSessionId, "/repo/app", Date.now()),
+    ]);
+    setLocalTerminalManagerForTests(manager);
+    await loadStorage();
+
+    const bindResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/binding`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: terminalSessionId }),
+      },
+    );
+    assert.equal(bindResponse.status, 200);
+
+    const deleteResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}?deleteBoundSession=true`,
+      { method: "DELETE" },
+    );
+    assert.equal(deleteResponse.status, 200);
+    assert.deepEqual(
+      (deleteResponse.body as { deletedSessionIds?: string[] })
+        .deletedSessionIds,
+      [terminalSessionId],
+    );
+    assert.equal(
+      existsSync(join(sessionsDir, `${terminalSessionId}.jsonl`)),
+      false,
+    );
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("terminal message action route derives artifacts under codex home and deletes them with the terminal", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "server-terminal-frozen-blocks",
@@ -3277,9 +3520,7 @@ test("terminal message action route derives artifacts under codex home and delet
     );
     assert.equal(actionPersisted.status, 200);
     assert.equal(existsSync(manifestPath), true);
-    const actionManifest = JSON.parse(
-      readFileSync(manifestPath, "utf-8"),
-    ) as {
+    const actionManifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
       blocks: Array<{
         type?: string;
         messageKey?: string;
@@ -3437,9 +3678,7 @@ test("terminal message action route does not create frozen blocks while approvin
       terminalId,
       "session.json",
     );
-    const actionManifest = JSON.parse(
-      readFileSync(manifestPath, "utf-8"),
-    ) as {
+    const actionManifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
       blocks: Array<{
         type?: string;
         messageKey?: string;
@@ -3608,12 +3847,34 @@ test("terminal chat action send route freezes terminal output and forwards the e
     assert.equal(sendMessageInput?.threadId, sessionId);
     assert.equal(sendMessageInput?.collaborationMode?.mode, "plan");
     assert.equal(sendMessageInput?.input[1]?.type, "image");
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /Please explain the failure\./);
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /<terminal-command-output>/);
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /FAIL src\/example\.test\.ts/);
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /__CODEX_DECK_AI_CWD="\$\(pwd\)"/);
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /Please explain the failure\./,
+    );
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /<terminal-command-output>/,
+    );
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /FAIL src\/example\.test\.ts/,
+    );
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /__CODEX_DECK_AI_CWD="\$\(pwd\)"/,
+    );
     assert.doesNotMatch(
-      sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "",
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
       /\u001b|\n%\n|\]2;pnpm test/,
     );
   } finally {
@@ -3728,7 +3989,10 @@ test("terminal chat action send route appends immutable frozen blocks for succes
       body: JSON.stringify({ sessionId }),
     });
 
-    for (const text of ["Describe the current directory.", "Explain the failure."]) {
+    for (const text of [
+      "Describe the current directory.",
+      "Explain the failure.",
+    ]) {
       const response = await requestJson(
         server,
         `/api/terminals/${terminalId}/chat-action`,
@@ -4050,12 +4314,34 @@ test("terminal chat action init route creates, boots, and binds a session after 
     assert.equal(createThreadInput?.effort, "high");
     assert.equal(sendMessageInput?.threadId, "thread-init-1");
     assert.equal(sendMessageInput?.input[1]?.type, "image");
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /\$skill-installer install the codex-deck-terminal skill/);
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /<ai-terminal-controller-context>/);
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /<terminal-command-output>/);
-    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /\$ pwd\n\/repo\/app/);
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /\$skill-installer install the codex-deck-terminal skill/,
+    );
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /<ai-terminal-controller-context>/,
+    );
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /<terminal-command-output>/,
+    );
+    assert.match(
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
+      /\$ pwd\n\/repo\/app/,
+    );
     assert.doesNotMatch(
-      sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "",
+      sendMessageInput?.input[0]?.type === "text"
+        ? sendMessageInput.input[0].text
+        : "",
       /\u001b|\n%\n|\]2;pwd/,
     );
 

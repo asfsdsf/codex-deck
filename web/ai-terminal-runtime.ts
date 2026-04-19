@@ -72,8 +72,7 @@ export async function runApprovedAiTerminalStepInTerminal(
   const normalizedInput = buildApprovedAiTerminalInput(input.step);
   const clientId =
     dependencies.createClientId?.() ??
-    (typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `terminal-approve-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
 
@@ -99,9 +98,9 @@ export async function runApprovedAiTerminalStepInTerminal(
     );
   } finally {
     if (claimedWrite) {
-      void dependencies.releaseTerminalWrite(input.terminalId, clientId).catch(
-        () => {},
-      );
+      void dependencies
+        .releaseTerminalWrite(input.terminalId, clientId)
+        .catch(() => {});
     }
   }
 

@@ -29,7 +29,10 @@ function normalizeTerminalSize(value: number, fallback: number): number {
   return normalized >= 2 ? normalized : fallback;
 }
 
-function createHeadlessSnapshotTerminal(cols: number, rows: number): {
+function createHeadlessSnapshotTerminal(
+  cols: number,
+  rows: number,
+): {
   terminal: InstanceType<typeof HeadlessTerminal>;
   serializeAddon: SerializeAddon;
 } {

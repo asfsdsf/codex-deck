@@ -177,6 +177,51 @@ Then continue.`,
   assert.doesNotMatch(html, /&lt;ai-terminal-plan&gt;/);
 });
 
+test("MessageBlock renders ai terminal risk styling for medium and high risk steps", () => {
+  const message: ConversationMessage = {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: `<ai-terminal-plan>
+  <ai-terminal-step>
+    <step_id>dangerous-preview</step_id>
+    <step_goal>Preview dangerous operation</step_goal>
+    <command><![CDATA[rm -rf ./cache]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>medium</risk>
+    <next_action>approve</next_action>
+    <explanation>This needs confirmation.</explanation>
+  </ai-terminal-step>
+  <ai-terminal-step>
+    <step_id>dangerous-run</step_id>
+    <step_goal>Run dangerous operation</step_goal>
+    <command><![CDATA[rm -rf /important]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>high</risk>
+    <next_action>approve</next_action>
+    <explanation>This is destructive.</explanation>
+  </ai-terminal-step>
+</ai-terminal-plan>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Risk medium/);
+  assert.match(html, /Risk high/);
+  assert.match(
+    html,
+    /border-orange-500\/35 bg-orange-500\/10 shadow-\[0_0_0_1px_rgba\(249,115,22,0\.08\)\]/,
+  );
+  assert.match(html, /border-orange-400\/40 bg-orange-500\/12 text-orange-100/);
+  assert.match(
+    html,
+    /border-red-500\/35 bg-red-500\/10 shadow-\[0_0_0_1px_rgba\(239,68,68,0\.08\)\]/,
+  );
+  assert.match(html, /border-red-400\/40 bg-red-500\/12 text-red-100/);
+});
+
 test("MessageBlock renders ai terminal action buttons when the plan is actionable", () => {
   const message: ConversationMessage = {
     type: "assistant",
@@ -215,6 +260,47 @@ test("MessageBlock renders ai terminal action buttons when the plan is actionabl
   assert.match(html, /Reject/);
   assert.match(html, /Tell the bound session why this step should change/);
   assert.match(html, /aria-label="Reject reason"/);
+  assert.match(html, /Pending/);
+});
+
+test("MessageBlock hides ai terminal action buttons when step actions are visually disabled", () => {
+  const message: ConversationMessage = {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: `<ai-terminal-plan>
+  <ai-terminal-step>
+    <step_id>check-mem</step_id>
+    <step_goal>Check memory</step_goal>
+    <command><![CDATA[free -m]]></command>
+    <cwd>/repo</cwd>
+    <shell>zsh</shell>
+    <risk>low</risk>
+    <next_action>approve</next_action>
+    <explanation>Summarize memory usage.</explanation>
+  </ai-terminal-step>
+</ai-terminal-plan>`,
+    },
+  };
+
+  const html = renderMessageBlock(message, {
+    aiTerminalContext: {
+      sessionId: "session-1",
+      terminalId: "terminal-1",
+      messageKey: "msg-1",
+      isActionable: true,
+      showStepActions: false,
+      stepStates: {
+        "check-mem": "pending",
+      },
+      onApproveStep: async () => true,
+      onRejectStep: async () => true,
+    },
+  });
+
+  assert.doesNotMatch(html, /Approve and run/);
+  assert.doesNotMatch(html, /Reject/);
+  assert.doesNotMatch(html, /aria-label="Reject reason"/);
   assert.match(html, /Pending/);
 });
 
@@ -434,6 +520,46 @@ FAIL src/example.test.ts]]></content>
   assert.match(html, /\$ pnpm test/);
   assert.match(html, /FAIL src\/example\.test\.ts/);
   assert.doesNotMatch(html, /&lt;terminal-command-output&gt;/);
+});
+
+test("MessageBlock renders frozen output as scrollable plain text with styled omission notices", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: `Please inspect the captured output.
+
+<terminal-command-output>
+<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<content><![CDATA[line 1
+**literal markdown**
+<codex-deck-frozen-terminal-omitted-lines-notice omitted-lines="15">15 lines omitted from frozen terminal output.</codex-deck-frozen-terminal-omitted-lines-notice>
+line 40
+<codex-deck-frozen-terminal-omitted-characters-notice omitted-characters="120">120 characters omitted from frozen terminal output.</codex-deck-frozen-terminal-omitted-characters-notice>
+line 80]]></content>
+</terminal-command-output>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Terminal Context/);
+  assert.match(html, /Please inspect the captured output\./);
+  assert.match(
+    html,
+    /max-h-72 overflow-auto rounded-lg border border-zinc-800\/80 bg-zinc-950\/80/,
+  );
+  assert.match(html, /15 lines omitted from frozen terminal output\./);
+  assert.match(html, /120 characters omitted from frozen terminal output\./);
+  assert.match(html, /line 1/);
+  assert.match(html, /line 40/);
+  assert.match(html, /line 80/);
+  assert.match(html, /\*\*literal markdown\*\*/);
+  assert.doesNotMatch(html, /<strong[^>]*>literal markdown<\/strong>/);
+  assert.doesNotMatch(html, /codex-deck-frozen-terminal-omitted-lines-notice/);
+  assert.doesNotMatch(
+    html,
+    /codex-deck-frozen-terminal-omitted-characters-notice/,
+  );
 });
 
 test("MessageBlock keeps normal user markdown rendering for unrelated messages", () => {

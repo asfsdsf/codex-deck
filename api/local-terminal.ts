@@ -68,9 +68,7 @@ export interface LocalTerminalManager {
     terminalId: string,
     artifacts: TerminalSessionArtifactsResponse,
   ) => void;
-  consumeFrozenBlock: (
-    terminalId: string,
-  ) => Promise<{
+  consumeFrozenBlock: (terminalId: string) => Promise<{
     snapshot: TerminalSerializedSnapshot;
     transcript: string | null;
   } | null>;
@@ -567,13 +565,14 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
     this.terminals.get(terminalId)?.publishArtifacts(artifacts);
   }
 
-  public consumeFrozenBlock(
-    terminalId: string,
-  ): Promise<{
+  public consumeFrozenBlock(terminalId: string): Promise<{
     snapshot: TerminalSerializedSnapshot;
     transcript: string | null;
   } | null> {
-    return this.terminals.get(terminalId)?.consumeFrozenBlock() ?? Promise.resolve(null);
+    return (
+      this.terminals.get(terminalId)?.consumeFrozenBlock() ??
+      Promise.resolve(null)
+    );
   }
 
   public async dispose(): Promise<void> {

@@ -33,9 +33,11 @@ import {
   syncTerminalSessionArtifacts,
   syncTrackedTerminalSessionArtifacts,
 } from "../terminal-session-sync";
+import { deleteSession } from "../storage";
 import { onSessionChange } from "../watcher";
 import type {
   CreateTerminalRequest,
+  DeleteTerminalResponse,
   TerminalBindSessionRequest,
   TerminalBindingResponse,
   TerminalClaimWriteRequest,
@@ -121,8 +123,13 @@ function parseOptionalCollaborationMode(
   }
 
   const settingsValue =
-    "settings" in value ? (value.settings as Record<string, unknown>) : undefined;
-  if (settingsValue !== undefined && (typeof settingsValue !== "object" || settingsValue === null)) {
+    "settings" in value
+      ? (value.settings as Record<string, unknown>)
+      : undefined;
+  if (
+    settingsValue !== undefined &&
+    (typeof settingsValue !== "object" || settingsValue === null)
+  ) {
     return undefined;
   }
 
@@ -156,9 +163,7 @@ function parseOptionalCollaborationMode(
       ? undefined
       : {
           ...(model !== undefined ? { model } : {}),
-          ...(reasoningEffort !== undefined
-            ? { reasoningEffort }
-            : {}),
+          ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
           ...(developerInstructions !== undefined
             ? { developerInstructions }
             : {}),
@@ -170,7 +175,9 @@ function parseOptionalCollaborationMode(
   };
 }
 
-function toTerminalTextInput(text: string): Array<{ type: "text"; text: string }> {
+function toTerminalTextInput(
+  text: string,
+): Array<{ type: "text"; text: string }> {
   const normalizedText = text.trim();
   if (!normalizedText) {
     return [];
@@ -504,13 +511,13 @@ export function registerTerminalRoutes(app: Hono): void {
       });
 
       const response = await persistTerminalSessionMessageAction({
-          terminalId,
-          sessionId,
-          messageKey,
-          stepId,
-          decision,
-          reason,
-        });
+        terminalId,
+        sessionId,
+        messageKey,
+        stepId,
+        decision,
+        reason,
+      });
       void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
       return c.json(response satisfies TerminalPersistMessageActionResponse);
     } catch (error) {
@@ -602,10 +609,7 @@ export function registerTerminalRoutes(app: Hono): void {
 
       if (action === "send") {
         if (!boundSessionId) {
-          return c.json(
-            { error: "terminal is not bound to a session" },
-            409,
-          );
+          return c.json({ error: "terminal is not bound to a session" }, 409);
         }
 
         const terminalContext = await consumeFrozenTerminalContext(
@@ -729,7 +733,10 @@ export function registerTerminalRoutes(app: Hono): void {
         ...(effort !== undefined ? { effort } : {}),
       });
 
-      const terminalBinding = await setTerminalBinding(terminalId, createdThreadId);
+      const terminalBinding = await setTerminalBinding(
+        terminalId,
+        createdThreadId,
+      );
       void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
       const response: TerminalChatActionResponse =
         buildCompletedTerminalChatActionResponse({
@@ -822,7 +829,12 @@ export function registerTerminalRoutes(app: Hono): void {
   app.delete("/api/terminals/:terminalId", async (c) => {
     try {
       const terminalId = c.req.param("terminalId");
+      const deleteBoundSession = c.req.query("deleteBoundSession") === "true";
       const manager = getLocalTerminalManager();
+      const binding = deleteBoundSession
+        ? await getTerminalBinding(terminalId)
+        : null;
+      const boundSessionId = binding?.boundSessionId?.trim() ?? "";
       const closed = await manager.closeTerminal(terminalId);
       if (!closed) {
         return c.json({ error: "terminal not found" }, 404);
@@ -830,7 +842,26 @@ export function registerTerminalRoutes(app: Hono): void {
       await clearTerminalBinding(terminalId);
       clearTerminalSessionSyncState(terminalId);
       await removeTerminalSessionArtifacts(terminalId);
-      return c.json({ ok: true });
+      const deletedSessionIds: string[] = [];
+      if (deleteBoundSession && boundSessionId) {
+        try {
+          await deleteSession(boundSessionId);
+          deletedSessionIds.push(boundSessionId);
+        } catch (error) {
+          const message = toErrorMessage(error).toLowerCase();
+          if (!message.includes("not found")) {
+            console.warn(
+              `[codex-deck] failed to delete bound session ${boundSessionId} while deleting terminal ${terminalId}: ${toErrorMessage(
+                error,
+              )}`,
+            );
+          }
+        }
+      }
+      return c.json({
+        ok: true,
+        deletedSessionIds,
+      } satisfies DeleteTerminalResponse);
     } catch (error) {
       return c.json(
         { error: toErrorMessage(error) },

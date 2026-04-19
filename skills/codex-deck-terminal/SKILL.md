@@ -72,6 +72,17 @@ Rules:
 
 The controller may send structured follow-up blocks in user messages.
 
+### Frozen terminal context in user messages
+
+User messages may include a frozen `<terminal-command-output>` block that captures terminal context for the request.
+
+Notes:
+
+- The frozen transcript may be partial.
+- When character truncation happens, the transcript may include a `<codex-deck-frozen-terminal-omitted-characters-notice>` tag describing how many trailing characters were skipped.
+- When middle-line truncation happens, the transcript may include a `<codex-deck-frozen-terminal-omitted-lines-notice>` tag describing how many middle lines were skipped.
+- Treat those omission tags as controller metadata, not shell output.
+
 ### Step execution result
 
 ```xml
@@ -108,12 +119,19 @@ Use these feedback blocks to revise the next plan, continue from success, or rec
 ## Long-output rule
 
 - Do not rely on full raw terminal output being fed back into context.
-- Reason primarily from the provided summaries.
+- Reason primarily from the provided summaries and any visible frozen transcript text.
 - If an `output_reference` is present, treat it as metadata only; do not assume the raw output text is available.
+- Frozen `<terminal-command-output>` content may also be partial even when inline text is present.
+- Omitted frozen-output sections may be marked with long custom notice tags for omitted characters or omitted middle lines; treat those notices as authoritative controller metadata and do not infer hidden content.
+- If omitted frozen content would materially affect the next step, inspect the saved terminal artifacts with the helper scripts yourself instead of guessing.
 
 ## Local inspection scripts
 
-Use the scripts in `scripts/` when a human or debugging workflow needs to inspect stored terminal artifacts directly. These scripts are read-only.
+Use the scripts in `scripts/` as skill helper scripts when you need to inspect stored terminal artifacts directly. These scripts are read-only.
+
+- Run these scripts yourself from the repo workspace as part of the skill workflow.
+- Do not emit these script invocations inside `<ai-terminal-plan>`.
+- Do not ask the terminal controller to run these scripts unless the user explicitly wants that.
 
 - `python3 scripts/terminal_session_summary.py <terminal-id> [--codex-home <path>] [--recent <N>]`
   - Prints a compact JSON summary of the terminal-session flow rather than the raw manifest.
@@ -127,5 +145,6 @@ Use the scripts in `scripts/` when a human or debugging workflow needs to inspec
   - A block selector can be a `blockId` or a 1-based block index from the manifest.
   - For `terminal_snapshot` blocks, saved block content comes from the serialized snapshot file referenced by `snapshotPath`.
   - For AI terminal message blocks, saved block content comes from the inline manifest fields, usually `rawBlock`.
+  - When omission tags in a frozen `<terminal-command-output>` block are not enough, use this helper script to inspect the underlying saved text, but only when the omitted content is needed for the next step.
   - Add a per-block one-based inclusive line range with `@`, for example `block-mabc123@20:80`, `block-mabc123@20:`, or `3@1:40`.
   - `--line-range` applies to selectors that do not include their own `@` range.

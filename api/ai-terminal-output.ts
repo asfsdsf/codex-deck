@@ -18,9 +18,7 @@ function stripLikelyPromptPrefix(line: string): string {
 }
 
 function normalizeShellLineForComparison(line: string): string {
-  return stripLikelyPromptPrefix(line)
-    .replace(/\s+/gu, " ")
-    .trim();
+  return stripLikelyPromptPrefix(line).replace(/\s+/gu, " ").trim();
 }
 
 function shouldDropWrapperLine(line: string, command: string): boolean {
@@ -112,8 +110,7 @@ export function cleanLiveAiTerminalExecutionOutput(
     const looksLikeEditingNoise = /^[=&X>%]+$/u.test(strippedLine);
     const looksLikeShellNoisePrefix = /^[&X>=-]/u.test(strippedLine);
     const looksLikeShellSyntaxFragment =
-      /['"$;&=]/u.test(strippedLine) ||
-      strippedLine.includes("&&");
+      /['"$;&=]/u.test(strippedLine) || strippedLine.includes("&&");
     const matchesExpectedLine = (value: string) =>
       value.length > 0 &&
       expectedLines.some(
