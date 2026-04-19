@@ -54,10 +54,8 @@ import {
   deriveAiTerminalStepStatesByMessageKey,
   extractConversationMessageText,
   getAiTerminalMessageKey,
-  mergeAiTerminalStepStates,
   parseAiTerminalMessage,
   type AiTerminalStepDirective,
-  type AiTerminalStepState,
 } from "../ai-terminal";
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
@@ -248,24 +246,19 @@ interface SessionViewProps {
   onConversationSearchStatusChange?: (status: SessionSearchStatus) => void;
   onStreamConnect?: (sessionId: string) => void;
   aiTerminalTerminalId?: string | null;
-  aiTerminalLockedMessageKey?: string | null;
-  aiTerminalStepStatesByMessageKey?: Record<
-    string,
-    Record<string, AiTerminalStepState | undefined>
-  >;
   onApproveAiTerminalStep?: (input: {
     sessionId: string;
     terminalId: string;
     messageKey: string;
     step: AiTerminalStepDirective;
-  }) => void;
+  }) => Promise<boolean>;
   onRejectAiTerminalStep?: (input: {
     sessionId: string;
     terminalId: string;
     messageKey: string;
     step: AiTerminalStepDirective;
     reason: string;
-  }) => void;
+  }) => Promise<boolean>;
 }
 
 function clearConversationSearchHighlights(root: ParentNode): void {
@@ -750,8 +743,6 @@ const SessionView = memo(
         onConversationSearchStatusChange,
         onStreamConnect,
         aiTerminalTerminalId = null,
-        aiTerminalLockedMessageKey = null,
-        aiTerminalStepStatesByMessageKey = {},
         onApproveAiTerminalStep,
         onRejectAiTerminalStep,
       } = props;
@@ -2002,19 +1993,16 @@ const SessionView = memo(
           const aiTerminalContext =
             message.type === "assistant" &&
             aiTerminalTerminalId &&
-            entry.entryKey === latestAiTerminalPlanEntryKey &&
-            aiTerminalLockedMessageKey !== aiTerminalMessageKey
+            entry.entryKey === latestAiTerminalPlanEntryKey
               ? {
                   sessionId,
                   terminalId: aiTerminalTerminalId,
                   messageKey: aiTerminalMessageKey,
                   isActionable: true,
-                  stepStates: mergeAiTerminalStepStates(
+                  stepStates:
                     persistedAiTerminalStepStatesByMessageKey[
                       aiTerminalMessageKey
                     ],
-                    aiTerminalStepStatesByMessageKey[aiTerminalMessageKey],
-                  ),
                   onApproveStep: onApproveAiTerminalStep,
                   onRejectStep: onRejectAiTerminalStep,
                 }
@@ -2094,8 +2082,6 @@ const SessionView = memo(
         },
         [
           activeSearchMatch,
-          aiTerminalLockedMessageKey,
-          aiTerminalStepStatesByMessageKey,
           aiTerminalTerminalId,
           agentsBootstrapMessage,
           handleChangeUserInputOtherText,

@@ -20,7 +20,6 @@ import {
   removeTerminalStateSync,
 } from "./terminal-state";
 import { TerminalSnapshotCapture } from "./terminal-snapshot";
-import { sanitizeTerminalTranscriptChunk } from "./terminal-transcript";
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -75,9 +74,6 @@ export interface LocalTerminalManager {
     snapshot: TerminalSerializedSnapshot;
     transcript: string | null;
   } | null>;
-  consumeFrozenBlockSnapshot: (
-    terminalId: string,
-  ) => Promise<TerminalSerializedSnapshot | null>;
 }
 
 interface TerminalProcessAdapter {
@@ -292,7 +288,7 @@ class TerminalInstance {
     transcript: string | null;
   } | null> {
     const snapshot = await this.frozenBlockCapture.consume();
-    const transcript = sanitizeTerminalTranscriptChunk(this.frozenBlockTranscript);
+    const transcript = this.frozenBlockTranscript.trim();
     this.frozenBlockTranscript = "";
     if (!snapshot) {
       return null;
@@ -301,10 +297,6 @@ class TerminalInstance {
       snapshot,
       transcript: transcript || null,
     };
-  }
-
-  public consumeFrozenBlockSnapshot(): Promise<TerminalSerializedSnapshot | null> {
-    return this.consumeFrozenBlock().then((capture) => capture?.snapshot ?? null);
   }
 
   public async dispose(): Promise<void> {
@@ -573,15 +565,6 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
     artifacts: TerminalSessionArtifactsResponse,
   ): void {
     this.terminals.get(terminalId)?.publishArtifacts(artifacts);
-  }
-
-  public consumeFrozenBlockSnapshot(
-    terminalId: string,
-  ): Promise<TerminalSerializedSnapshot | null> {
-    return (
-      this.terminals.get(terminalId)?.consumeFrozenBlockSnapshot() ??
-      Promise.resolve(null)
-    );
   }
 
   public consumeFrozenBlock(

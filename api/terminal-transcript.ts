@@ -76,8 +76,13 @@ export function sanitizeTerminalTranscriptChunk(text: string): string {
     .replace(CONTROL_CHAR_PATTERN, "")
     .replace(/[ \t]+$/gm, "");
 
-  return sanitized
-    .split("\n")
+  return normalizeSanitizedTerminalLines(sanitized.split("\n"));
+}
+
+export function normalizeSanitizedTerminalLines(
+  lines: readonly string[],
+): string {
+  return lines
     .filter((line) => {
       const trimmed = line.trim();
       return (
@@ -91,34 +96,16 @@ export function sanitizeTerminalTranscriptChunk(text: string): string {
 }
 
 export function buildTerminalTimelineEntries(input: {
-  messageKeys: string[];
   blocks: TerminalSessionBlockRecordWithSnapshot[];
 }): TerminalTimelineEntry[] {
   const entries: TerminalTimelineEntry[] = [];
-  const blocksByMessageKey = new Map<string, TerminalSessionBlockRecordWithSnapshot[]>();
-  const standaloneBlocks: TerminalSessionBlockRecordWithSnapshot[] = [];
-
   for (const block of [...input.blocks].sort((left, right) => {
     if (left.sequence !== right.sequence) {
       return left.sequence - right.sequence;
     }
     return left.blockId.localeCompare(right.blockId);
   })) {
-    if (!block.snapshot) {
-      continue;
-    }
-    if (block.messageKey) {
-      const group = blocksByMessageKey.get(block.messageKey) ?? [];
-      group.push(block);
-      blocksByMessageKey.set(block.messageKey, group);
-    } else {
-      standaloneBlocks.push(block);
-    }
-  }
-
-  for (const messageKey of input.messageKeys) {
-    const blocks = blocksByMessageKey.get(messageKey) ?? [];
-    for (const block of blocks) {
+    if (block.type === "terminal_snapshot") {
       if (!block.snapshot) {
         continue;
       }
@@ -128,23 +115,16 @@ export function buildTerminalTimelineEntries(input: {
         blockId: block.blockId,
         snapshot: block.snapshot,
       });
+      continue;
     }
-    entries.push({
-      type: "card",
-      key: `card:${messageKey}`,
-      messageKey,
-    });
-  }
 
-  for (const block of standaloneBlocks) {
-    if (!block.snapshot) {
+    if (!block.messageKey) {
       continue;
     }
     entries.push({
-      type: "snapshot",
-      key: `block:${block.blockId}`,
-      blockId: block.blockId,
-      snapshot: block.snapshot,
+      type: "card",
+      key: `card:${block.blockId}`,
+      messageKey: block.messageKey,
     });
   }
 

@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import type { TerminalSerializedSnapshot } from "@codex-deck/api";
 import { TERMINAL_FONT_FAMILY } from "../terminal-font";
+import { getTerminalTheme } from "../terminal-theme";
 import type { ResolvedTheme } from "../theme";
 
 const MIN_VISIBLE_SNAPSHOT_ROWS = 1;
@@ -13,26 +14,6 @@ interface SnapshotViewportLayout {
   height: number;
   overflowX: "auto" | "hidden";
   overflowY: "auto" | "hidden";
-}
-
-function getSnapshotTerminalTheme(resolvedTheme: ResolvedTheme): {
-  background: string;
-  foreground: string;
-  cursor: string;
-} {
-  if (resolvedTheme === "light") {
-    return {
-      background: "#f8fafc",
-      foreground: "#1f2937",
-      cursor: "#0f172a",
-    };
-  }
-
-  return {
-    background: "#09090b",
-    foreground: "#e4e4e7",
-    cursor: "#d4d4d8",
-  };
 }
 
 export const TerminalSnapshotBlock = memo(function TerminalSnapshotBlock(props: {
@@ -46,7 +27,7 @@ export const TerminalSnapshotBlock = memo(function TerminalSnapshotBlock(props: 
     MAX_VISIBLE_SNAPSHOT_ROWS,
   );
   const terminalTheme = useMemo(
-    () => getSnapshotTerminalTheme(props.resolvedTheme),
+    () => getTerminalTheme(props.resolvedTheme),
     [props.resolvedTheme],
   );
   const fallbackViewportHeight = useMemo(

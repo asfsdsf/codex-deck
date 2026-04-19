@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ConversationMessage } from "@codex-deck/api";
-import MessageBlock from "../../web/components/message-block";
+import MessageBlock, {
+  shouldClearAiTerminalPendingAction,
+  shouldRenderAiTerminalStepActions,
+} from "../../web/components/message-block";
 
 (globalThis as { React?: typeof React }).React = React;
 
@@ -203,8 +206,8 @@ test("MessageBlock renders ai terminal action buttons when the plan is actionabl
       stepStates: {
         "check-mem": "pending",
       },
-      onApproveStep: () => undefined,
-      onRejectStep: () => undefined,
+      onApproveStep: async () => true,
+      onRejectStep: async () => true,
     },
   });
 
@@ -213,6 +216,41 @@ test("MessageBlock renders ai terminal action buttons when the plan is actionabl
   assert.match(html, /Tell the bound session why this step should change/);
   assert.match(html, /aria-label="Reject reason"/);
   assert.match(html, /Pending/);
+});
+
+test("MessageBlock keeps terminal step actions mounted while approval is pending", () => {
+  assert.equal(
+    shouldRenderAiTerminalStepActions({
+      canApprove: false,
+      canReject: false,
+      pendingAction: "approving",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRenderAiTerminalStepActions({
+      canApprove: false,
+      canReject: false,
+    }),
+    false,
+  );
+});
+
+test("MessageBlock clears local pending action once CLI-backed step state advances", () => {
+  assert.equal(
+    shouldClearAiTerminalPendingAction({
+      isActionable: true,
+      persistedState: "running",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldClearAiTerminalPendingAction({
+      isActionable: true,
+      persistedState: undefined,
+    }),
+    false,
+  );
 });
 
 test("MessageBlock hides ai terminal action buttons after a terminal step is decided", () => {
@@ -244,8 +282,8 @@ test("MessageBlock hides ai terminal action buttons after a terminal step is dec
       stepStates: {
         "check-mem": "failed",
       },
-      onApproveStep: () => undefined,
-      onRejectStep: () => undefined,
+      onApproveStep: async () => true,
+      onRejectStep: async () => true,
     },
   });
 

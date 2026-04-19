@@ -3,6 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { getCodexAppServerClient } from "../codex-app-server";
 import { getLocalTerminalManager } from "../local-terminal";
 import { getSystemContextSnapshot } from "../system-context";
+import { sanitizeTerminalChatTranscript } from "../terminal-chat-transcript-sanitizer";
 import {
   buildTerminalBoundUserMessageText,
   buildTerminalChatBootstrapMessage,
@@ -43,8 +44,6 @@ import type {
   TerminalChatActionResponse,
   TerminalChatActionCompletedResponse,
   TerminalChatActionNeedsSkillInstallResponse,
-  TerminalFreezeBlockRequest,
-  TerminalFreezeBlockResponse,
   TerminalEventsResponse,
   TerminalInputRequest,
   TerminalInputResponse,
@@ -201,9 +200,16 @@ async function consumeFrozenTerminalContext(
   if (!transcript) {
     return null;
   }
+  const sanitizedTranscript = await sanitizeTerminalChatTranscript(transcript, {
+    cols: capture.snapshot.cols,
+    rows: capture.snapshot.rows,
+  });
+  if (!sanitizedTranscript) {
+    return null;
+  }
   return {
     terminalId,
-    transcript,
+    transcript: sanitizedTranscript,
   };
 }
 
@@ -224,7 +230,6 @@ async function loadTerminalArtifacts(
   return syncTerminalSessionArtifacts({
     terminalId,
     sessionId,
-    consumePendingSnapshot: () => manager.consumeFrozenBlockSnapshot(terminalId),
   });
 }
 
@@ -254,7 +259,6 @@ async function publishTerminalArtifactsForBinding(
   const result = await syncTrackedTerminalSessionArtifacts({
     terminalId,
     sessionId,
-    consumePendingSnapshot: () => manager.consumeFrozenBlockSnapshot(terminalId),
   });
   if (result.changed) {
     manager.publishArtifacts(terminalId, result.artifacts);
@@ -497,8 +501,6 @@ export function registerTerminalRoutes(app: Hono): void {
       await syncTrackedTerminalSessionArtifacts({
         terminalId,
         sessionId,
-        consumePendingSnapshot: () =>
-          manager.consumeFrozenBlockSnapshot(terminalId),
       });
 
       const response = await persistTerminalSessionMessageAction({
@@ -511,70 +513,6 @@ export function registerTerminalRoutes(app: Hono): void {
         });
       void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
       return c.json(response satisfies TerminalPersistMessageActionResponse);
-    } catch (error) {
-      return c.json(
-        { error: toErrorMessage(error) },
-        responseStatusForError(error),
-      );
-    }
-  });
-
-  app.post("/api/terminals/:terminalId/freeze-block", async (c) => {
-    try {
-      const terminalId = c.req.param("terminalId")?.trim();
-      if (!terminalId) {
-        return c.json({ error: "terminal id is required" }, 400);
-      }
-
-      const manager = getLocalTerminalManager();
-      if (!manager.getSnapshot(terminalId)) {
-        return c.json({ error: "terminal not found" }, 404);
-      }
-
-      const body = (await c.req
-        .json()
-        .catch(() => ({}))) as Partial<TerminalFreezeBlockRequest>;
-      const sessionId = body.sessionId?.trim();
-      if (!sessionId) {
-        return c.json({ error: "sessionId is required" }, 400);
-      }
-
-      const binding = await getTerminalBinding(terminalId);
-      const boundSessionId = binding.boundSessionId?.trim() ?? "";
-      if (boundSessionId && boundSessionId !== sessionId) {
-        return c.json(
-          {
-            error:
-              "terminal is already bound to a different session and cannot freeze into this session",
-          },
-          409,
-        );
-      }
-
-      const capture = await manager.consumeFrozenBlock(terminalId);
-      if (!capture) {
-        return c.json({
-          terminalId,
-          sessionId,
-          transcript: null,
-          block: null,
-        } satisfies TerminalFreezeBlockResponse);
-      }
-
-      const response = await persistTerminalSessionFrozenBlock({
-        terminalId,
-        sessionId,
-        captureKind: "manual",
-        snapshot: capture.snapshot,
-      });
-
-      void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
-      return c.json({
-        terminalId,
-        sessionId,
-        transcript: capture.transcript,
-        block: response.block,
-      } satisfies TerminalFreezeBlockResponse);
     } catch (error) {
       return c.json(
         { error: toErrorMessage(error) },

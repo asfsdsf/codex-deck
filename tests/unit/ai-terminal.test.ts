@@ -8,6 +8,7 @@ import {
   buildAiTerminalExecutionFeedback,
   buildAiTerminalRejectionFeedback,
   buildAiTerminalTurnPrompt,
+  deriveAiTerminalStepStatesByArtifactMessageKey,
   deriveAiTerminalStepStatesByMessageKey,
   getAiTerminalMessageKey,
   parseAiTerminalBootstrapMessage,
@@ -482,6 +483,74 @@ test("deriveAiTerminalStepStatesByMessageKey reconstructs terminal card state fr
     },
     "plan-2": {
       "check-mem": "completed",
+    },
+  });
+});
+
+test("deriveAiTerminalStepStatesByArtifactMessageKey maps approved actions and feedback", () => {
+  const statesByMessageKey = deriveAiTerminalStepStatesByArtifactMessageKey([
+    {
+      type: "ai_terminal_plan",
+      messageKey: "plan-1",
+      stepActions: [
+        {
+          stepId: "check-mem",
+          decision: "approved",
+          reason: null,
+          updatedAt: "2026-04-19T00:00:00.000Z",
+        },
+      ],
+      stepFeedback: null,
+    },
+    {
+      type: "ai_terminal_plan",
+      messageKey: "plan-2",
+      stepActions: [
+        {
+          stepId: "run-tests",
+          decision: "approved",
+          reason: null,
+          updatedAt: "2026-04-19T00:00:01.000Z",
+        },
+      ],
+      stepFeedback: [
+        {
+          kind: "execution",
+          stepId: "run-tests",
+          updatedAt: "2026-04-19T00:00:02.000Z",
+          status: "failed",
+          exitCode: 1,
+          cwdAfter: "/repo",
+          outputSummary: "tests failed",
+          errorSummary: "1 failing test",
+          outputReference: null,
+        },
+      ],
+    },
+    {
+      type: "ai_terminal_plan",
+      messageKey: "plan-3",
+      stepActions: [
+        {
+          stepId: "change-plan",
+          decision: "rejected",
+          reason: "need a safer command",
+          updatedAt: "2026-04-19T00:00:03.000Z",
+        },
+      ],
+      stepFeedback: null,
+    },
+  ]);
+
+  assert.deepEqual(statesByMessageKey, {
+    "plan-1": {
+      "check-mem": "running",
+    },
+    "plan-2": {
+      "run-tests": "failed",
+    },
+    "plan-3": {
+      "change-plan": "rejected",
     },
   });
 });

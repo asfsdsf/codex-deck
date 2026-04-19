@@ -1,6 +1,11 @@
 import type { TerminalStreamEvent } from "@codex-deck/api";
 import { sendTerminalInput, subscribeTerminalStream } from "./api";
 
+export type TerminalIncrementalStreamEvent = Exclude<
+  TerminalStreamEvent,
+  { type: "bootstrap" }
+>;
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -99,7 +104,7 @@ interface ConnectTerminalSessionInput {
   clientId: string;
   isDisposed: () => boolean;
   onBootstrap: (event: Extract<TerminalStreamEvent, { type: "bootstrap" }>) => void;
-  onEvent: (event: TerminalStreamEvent) => void;
+  onEvent: (event: TerminalIncrementalStreamEvent) => void;
   onConnectedChange: (connected: boolean) => void;
   onError: (message: string | null) => void;
   subscribe?: typeof subscribeTerminalStream;

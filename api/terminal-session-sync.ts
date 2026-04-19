@@ -6,7 +6,6 @@ import type {
 import { getConversation } from "./storage";
 import {
   getPersistedTerminalSessionArtifacts,
-  persistTerminalSessionFrozenBlock,
   persistTerminalSessionMessageBlock,
 } from "./terminal-session-store";
 import {
@@ -138,9 +137,6 @@ export function buildEmptyTerminalSessionArtifacts(
 export async function syncTerminalSessionArtifacts(input: {
   terminalId: string;
   sessionId: string;
-  consumePendingSnapshot: () =>
-    | Promise<TerminalSessionArtifactsResponse["blocks"][number]["snapshot"]>
-    | TerminalSessionArtifactsResponse["blocks"][number]["snapshot"];
   codexHome?: string | null;
 }): Promise<TerminalSessionArtifactsResponse> {
   const messages = await getConversation(input.sessionId);
@@ -149,26 +145,9 @@ export async function syncTerminalSessionArtifacts(input: {
     input.sessionId,
     messages,
   );
-  const persistedArtifacts = await getPersistedTerminalSessionArtifacts(
-    input.terminalId,
-    { sessionId: input.sessionId },
-    input.codexHome,
-  );
 
-  const persistedByLogicalKey = new Map<string, TerminalSessionArtifactsResponse["blocks"][number]>(
-    persistedArtifacts.blocks
-      .filter((block) => block.type === "terminal_snapshot")
-      .map((block) => [
-        `${block.type}:${block.sessionId}:${block.messageKey ?? ""}:${block.stepId ?? ""}`,
-        block,
-      ] as const),
-  );
-
-  for (const [index, item] of embeddedMessages.entries()) {
-    const snapshotSequence = index * 2 + 1;
-    const messageSequence = index * 2 + 2;
+  for (const item of embeddedMessages) {
     const directive = item.rendered.directive;
-
     if (directive.kind === "plan") {
       await persistTerminalSessionMessageBlock(
         {
@@ -176,7 +155,6 @@ export async function syncTerminalSessionArtifacts(input: {
           sessionId: input.sessionId,
           type: "ai_terminal_plan",
           messageKey: item.messageKey,
-          sequence: messageSequence,
           leadingMarkdown: item.rendered.leadingMarkdown,
           trailingMarkdown: item.rendered.trailingMarkdown,
           rawBlock: item.rendered.rawBlock,
@@ -193,7 +171,6 @@ export async function syncTerminalSessionArtifacts(input: {
           sessionId: input.sessionId,
           type: "ai_terminal_need_input",
           messageKey: item.messageKey,
-          sequence: messageSequence,
           leadingMarkdown: item.rendered.leadingMarkdown,
           trailingMarkdown: item.rendered.trailingMarkdown,
           rawBlock: item.rendered.rawBlock,
@@ -209,7 +186,6 @@ export async function syncTerminalSessionArtifacts(input: {
           sessionId: input.sessionId,
           type: "ai_terminal_complete",
           messageKey: item.messageKey,
-          sequence: messageSequence,
           leadingMarkdown: item.rendered.leadingMarkdown,
           trailingMarkdown: item.rendered.trailingMarkdown,
           rawBlock: item.rendered.rawBlock,
@@ -218,53 +194,6 @@ export async function syncTerminalSessionArtifacts(input: {
         input.codexHome,
       );
     }
-
-    const captureKind = directive.kind === "finished" ? "auto" : "manual";
-    const logicalKey = `terminal_snapshot:${input.sessionId}:${item.messageKey}:`;
-    const existing = persistedByLogicalKey.get(logicalKey);
-    const existingSnapshot = existing?.snapshot ?? null;
-
-    const needsSequenceUpdate =
-      existing &&
-      (existing.sequence !== snapshotSequence ||
-        existing.captureKind !== captureKind);
-    if (existingSnapshot && needsSequenceUpdate) {
-      await persistTerminalSessionFrozenBlock(
-        {
-          terminalId: input.terminalId,
-          sessionId: input.sessionId,
-          captureKind,
-          messageKey: item.messageKey,
-          stepId: null,
-          snapshot: existingSnapshot,
-          sequence: snapshotSequence,
-        },
-        input.codexHome,
-      );
-      continue;
-    }
-
-    if (existingSnapshot) {
-      continue;
-    }
-
-    const snapshot = await input.consumePendingSnapshot();
-    if (!snapshot) {
-      continue;
-    }
-
-    await persistTerminalSessionFrozenBlock(
-      {
-        terminalId: input.terminalId,
-        sessionId: input.sessionId,
-        captureKind,
-        messageKey: item.messageKey,
-        stepId: null,
-        snapshot,
-        sequence: snapshotSequence,
-      },
-      input.codexHome,
-    );
   }
 
   const finalArtifacts = await getPersistedTerminalSessionArtifacts(
@@ -275,7 +204,6 @@ export async function syncTerminalSessionArtifacts(input: {
   return {
     ...finalArtifacts,
     timelineEntries: buildTerminalTimelineEntries({
-      messageKeys: embeddedMessages.map((item) => item.messageKey),
       blocks: finalArtifacts.blocks,
     }),
   };
@@ -284,9 +212,6 @@ export async function syncTerminalSessionArtifacts(input: {
 export async function syncTrackedTerminalSessionArtifacts(input: {
   terminalId: string;
   sessionId: string;
-  consumePendingSnapshot: () =>
-    | Promise<TerminalSessionArtifactsResponse["blocks"][number]["snapshot"]>
-    | TerminalSessionArtifactsResponse["blocks"][number]["snapshot"];
   codexHome?: string | null;
 }): Promise<{
   artifacts: TerminalSessionArtifactsResponse;

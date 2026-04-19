@@ -5,6 +5,7 @@ import { Bot, MessageSquarePlus, RefreshCw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type {
   ConversationMessage,
+  TerminalSessionArtifactsResponse,
   TerminalTimelineEntry,
   TerminalSnapshotResponse,
 } from "@codex-deck/api";
@@ -19,13 +20,16 @@ import {
   connectTerminalSession,
   createBufferedTerminalInputController,
   createTerminalClientId,
+  type TerminalIncrementalStreamEvent,
 } from "../terminal-session-client";
 import type { ResolvedTheme } from "../theme";
 import {
+  deriveAiTerminalStepStatesByArtifactMessageKey,
   type AiTerminalStepDirective,
   type AiTerminalStepState,
 } from "../ai-terminal";
 import { fitTerminalViewport } from "../terminal-render";
+import { getTerminalTheme } from "../terminal-theme";
 import { shouldAutoClaimWriteAfterRestart } from "../terminal-write-ownership";
 import MessageBlock from "./message-block";
 import { TerminalSnapshotBlock } from "./terminal-snapshot-block";
@@ -50,34 +54,14 @@ interface TerminalViewProps {
     terminalId: string;
     messageKey: string;
     step: AiTerminalStepDirective;
-  }) => void;
+  }) => Promise<boolean>;
   onRejectAiTerminalStep?: (input: {
     sessionId: string;
     terminalId: string;
     messageKey: string;
     step: AiTerminalStepDirective;
     reason: string;
-  }) => void;
-}
-
-function getTerminalTheme(resolvedTheme: ResolvedTheme): {
-  background: string;
-  foreground: string;
-  cursor: string;
-} {
-  if (resolvedTheme === "light") {
-    return {
-      background: "#f8fafc",
-      foreground: "#1f2937",
-      cursor: "#0f172a",
-    };
-  }
-
-  return {
-    background: "#09090b",
-    foreground: "#e4e4e7",
-    cursor: "#d4d4d8",
-  };
+  }) => Promise<boolean>;
 }
 
 const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
@@ -111,7 +95,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const readOnlyWarningVisibleRef = useRef(false);
   const readOnlyWarningShownAtRef = useRef(0);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
-  const terminalOutputRef = useRef("");
   const renderedLiveOutputRef = useRef("");
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -122,6 +105,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const [timelineEntries, setTimelineEntries] = useState<TerminalTimelineEntry[]>(
     [],
   );
+  const [artifactStepStatesByMessageKey, setArtifactStepStatesByMessageKey] =
+    useState<Record<string, Record<string, AiTerminalStepState | undefined>>>(
+      {},
+    );
   const terminalTheme = useMemo(
     () => getTerminalTheme(resolvedTheme),
     [resolvedTheme],
@@ -139,8 +126,9 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     }
   }, []);
 
-  const resetFrozenTimelineState = useCallback(() => {
+  const clearArtifactTimelineState = useCallback(() => {
     setTimelineEntries([]);
+    setArtifactStepStatesByMessageKey({});
   }, []);
 
   const handleReadOnlyAttempt = useCallback(() => {
@@ -183,10 +171,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [writeOwnerId]);
 
   useEffect(() => {
-    terminalOutputRef.current = terminalOutput;
-  }, [terminalOutput]);
-
-  useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) {
       return;
@@ -202,13 +186,12 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
   useEffect(() => {
     if (!(boundSessionId?.trim() ?? "")) {
-      resetFrozenTimelineState();
+      clearArtifactTimelineState();
     }
-  }, [boundSessionId, resetFrozenTimelineState]);
+  }, [boundSessionId, clearArtifactTimelineState]);
 
   const applyFullSnapshot = useCallback(
     (snapshot: TerminalSnapshotResponse) => {
-      terminalOutputRef.current = snapshot.output;
       renderedLiveOutputRef.current = "";
       setTerminalOutput(snapshot.output);
       setRunning(snapshot.running);
@@ -220,8 +203,11 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   );
 
   const applyArtifacts = useCallback(
-    (entries: TerminalTimelineEntry[] | null | undefined) => {
-      setTimelineEntries(entries ?? []);
+    (artifacts: TerminalSessionArtifactsResponse | null | undefined) => {
+      setTimelineEntries(artifacts?.timelineEntries ?? []);
+      setArtifactStepStatesByMessageKey(
+        deriveAiTerminalStepStatesByArtifactMessageKey(artifacts?.blocks ?? []),
+      );
     },
     [],
   );
@@ -286,14 +272,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, []);
 
   const applyStreamEvent = useCallback(
-    (event: {
-      seq: number;
-      type: "output" | "state" | "reset" | "ownership";
-      chunk?: string;
-      running?: boolean;
-      output?: string;
-      writeOwnerId?: string | null;
-    }) => {
+    (event: TerminalIncrementalStreamEvent) => {
       setConnected(true);
       setError(null);
 
@@ -303,25 +282,21 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
       if (event.type === "output") {
         if (typeof event.chunk === "string" && event.chunk.length > 0) {
-          setTerminalOutput((current) => {
-            const next = `${current}${event.chunk ?? ""}`;
-            terminalOutputRef.current = next;
-            return next;
-          });
+          setTerminalOutput((current) => `${current}${event.chunk ?? ""}`);
         }
       } else if (event.type === "state") {
         setRunning(event.running === true);
       } else if (event.type === "reset") {
-        terminalOutputRef.current =
+        const nextOutput =
           typeof event.output === "string" ? event.output : "";
         renderedLiveOutputRef.current = "";
-        setTerminalOutput(terminalOutputRef.current);
+        setTerminalOutput(nextOutput);
         setRunning(event.running === true);
       } else if (event.type === "ownership") {
         writeOwnerIdRef.current = event.writeOwnerId ?? null;
         setWriteOwnerId(event.writeOwnerId ?? null);
       } else if (event.type === "artifacts") {
-        applyArtifacts(event.artifacts.timelineEntries);
+        applyArtifacts(event.artifacts);
       }
 
       seqRef.current = event.seq;
@@ -333,16 +308,14 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     setError(null);
 
     try {
-      let initialSnapshot: TerminalSnapshotResponse | null = null;
       const unsubscribe = await connectTerminalSession({
         terminalId,
         clientId: clientIdRef.current,
         isDisposed: () => isDisposedRef.current,
         onBootstrap: (event) => {
-          initialSnapshot = event.snapshot;
           hasStartedRef.current = true;
           applyFullSnapshot(event.snapshot);
-          applyArtifacts(event.artifacts?.timelineEntries);
+          applyArtifacts(event.artifacts);
           fitTerminal();
         },
         onEvent: applyStreamEvent,
@@ -360,12 +333,12 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       closeStream();
       streamCleanupRef.current = unsubscribe;
 
-      const snapshot = initialSnapshot;
-      if (!snapshot) {
+      if (!hasStartedRef.current) {
         return;
       }
 
-      if (snapshot.writeOwnerId === null) {
+      const currentWriteOwnerId = writeOwnerIdRef.current;
+      if (currentWriteOwnerId === null) {
         const claim = await claimTerminalWrite(terminalId, clientIdRef.current);
         writeOwnerIdRef.current = claim.writeOwnerId;
         setWriteOwnerId(claim.writeOwnerId);
@@ -373,7 +346,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         return;
       }
 
-      if (snapshot.writeOwnerId === clientIdRef.current) {
+      if (currentWriteOwnerId === clientIdRef.current) {
         await sendResize();
       }
     } catch (error) {
@@ -469,7 +442,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminalInputController.reset();
-      terminalOutputRef.current = "";
       renderedLiveOutputRef.current = "";
       setTerminalOutput("");
       setTimelineEntries([]);
@@ -722,7 +694,9 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
                             terminalId,
                             messageKey: item.messageKey,
                             isActionable: item.isActionable,
-                            stepStates: item.stepStates,
+                            stepStates:
+                              artifactStepStatesByMessageKey[item.messageKey] ??
+                              item.stepStates,
                             onApproveStep: onApproveAiTerminalStep,
                             onRejectStep: onRejectAiTerminalStep,
                           }

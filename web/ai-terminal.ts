@@ -1,6 +1,7 @@
 import type {
   ConversationMessage,
   SystemContextResponse,
+  TerminalSessionBlockRecordWithSnapshot,
 } from "@codex-deck/api";
 import { sanitizeTerminalTranscriptChunk } from "../api/terminal-transcript";
 
@@ -633,19 +634,48 @@ export function deriveAiTerminalStepStatesByMessageKey<T>(
   return stepStatesByMessageKey;
 }
 
-export function mergeAiTerminalStepStates(
-  persistedStates?: Record<string, AiTerminalStepState | undefined> | null,
-  overlayStates?: Record<string, AiTerminalStepState | undefined> | null,
-): Record<string, AiTerminalStepState | undefined> | undefined {
-  const normalizedPersisted = persistedStates ?? undefined;
-  const normalizedOverlay = overlayStates ?? undefined;
-  if (!normalizedPersisted && !normalizedOverlay) {
-    return undefined;
+export function deriveAiTerminalStepStatesByArtifactMessageKey(
+  blocks: Array<
+    Pick<
+      TerminalSessionBlockRecordWithSnapshot,
+      "type" | "messageKey" | "stepActions" | "stepFeedback"
+    >
+  >,
+): Record<string, Record<string, AiTerminalStepState | undefined>> {
+  const stepStatesByMessageKey: Record<
+    string,
+    Record<string, AiTerminalStepState | undefined>
+  > = {};
+
+  for (const block of blocks) {
+    if (block.type !== "ai_terminal_plan" || !block.messageKey) {
+      continue;
+    }
+
+    const messageKey = block.messageKey;
+    const nextStates = { ...(stepStatesByMessageKey[messageKey] ?? {}) };
+
+    for (const action of block.stepActions ?? []) {
+      nextStates[action.stepId] =
+        action.decision === "approved" ? "running" : "rejected";
+    }
+
+    for (const feedback of block.stepFeedback ?? []) {
+      nextStates[feedback.stepId] =
+        feedback.kind === "execution"
+          ? feedback.status === "success" ||
+            feedback.status === "completed_unknown"
+            ? "completed"
+            : "failed"
+          : "rejected";
+    }
+
+    if (Object.keys(nextStates).length > 0) {
+      stepStatesByMessageKey[messageKey] = nextStates;
+    }
   }
-  return {
-    ...(normalizedOverlay ?? {}),
-    ...(normalizedPersisted ?? {}),
-  };
+
+  return stepStatesByMessageKey;
 }
 
 export function hasAiTerminalDirective(text: string): boolean {

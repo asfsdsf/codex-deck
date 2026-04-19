@@ -30,7 +30,7 @@ test("persistTerminalSessionFrozenBlock stores canonical block manifest and snap
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        captureKind: "auto",
+        captureKind: "manual",
         messageKey: "message-1",
         snapshot: sampleSnapshot,
         sequence: 1,
@@ -57,7 +57,7 @@ test("persistTerminalSessionFrozenBlock stores canonical block manifest and snap
     assert.equal(manifest.terminalId, "terminal-1");
     assert.equal(manifest.blocks.length, 1);
     assert.equal(manifest.blocks[0]?.type, "terminal_snapshot");
-    assert.equal(manifest.blocks[0]?.captureKind, "auto");
+    assert.equal(manifest.blocks[0]?.captureKind, "manual");
     assert.equal(manifest.blocks[0]?.messageKey, "message-1");
     assert.equal(manifest.blocks[0]?.sequence, 1);
     assert.equal(manifest.blocks[0]?.snapshotFormat, "xterm-serialize-v1");
@@ -74,18 +74,17 @@ test("persistTerminalSessionFrozenBlock stores canonical block manifest and snap
   }
 });
 
-test("persistTerminalSessionFrozenBlock updates existing logical block instead of duplicating it", async () => {
+test("persistTerminalSessionFrozenBlock appends a new manual block instead of mutating an existing frozen block", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "terminal-session-store-update",
   );
 
   try {
-    await persistTerminalSessionFrozenBlock(
+    const first = await persistTerminalSessionFrozenBlock(
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        captureKind: "auto",
-        messageKey: "message-1",
+        captureKind: "manual",
         snapshot: {
           ...sampleSnapshot,
           data: "first output snapshot",
@@ -95,16 +94,15 @@ test("persistTerminalSessionFrozenBlock updates existing logical block instead o
       rootDir,
     );
 
-    const updated = await persistTerminalSessionFrozenBlock(
+    const second = await persistTerminalSessionFrozenBlock(
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        captureKind: "auto",
-        messageKey: "message-1",
+        captureKind: "manual",
         snapshot: {
           ...sampleSnapshot,
           cols: 120,
-          data: "updated output snapshot",
+          data: "second output snapshot",
         },
         sequence: 2,
       },
@@ -116,11 +114,15 @@ test("persistTerminalSessionFrozenBlock updates existing logical block instead o
       { sessionId: "session-1" },
       rootDir,
     );
-    assert.equal(restored.blocks.length, 1);
-    assert.equal(restored.blocks[0]?.snapshot?.data, "updated output snapshot");
-    assert.equal(restored.blocks[0]?.cols, 120);
-    assert.equal(restored.blocks[0]?.sequence, 2);
-    assert.equal(restored.blocks[0]?.blockId, updated.block.blockId);
+    assert.equal(restored.blocks.length, 2);
+    assert.equal(restored.blocks[0]?.snapshot?.data, "first output snapshot");
+    assert.equal(restored.blocks[0]?.cols, sampleSnapshot.cols);
+    assert.equal(restored.blocks[0]?.sequence, 1);
+    assert.equal(restored.blocks[0]?.blockId, first.block.blockId);
+    assert.equal(restored.blocks[1]?.snapshot?.data, "second output snapshot");
+    assert.equal(restored.blocks[1]?.cols, 120);
+    assert.equal(restored.blocks[1]?.sequence, 2);
+    assert.equal(restored.blocks[1]?.blockId, second.block.blockId);
   } finally {
     await cleanup();
   }
@@ -351,7 +353,7 @@ test("removeTerminalSessionArtifacts deletes the persisted terminal session dire
       {
         terminalId: "terminal-1",
         sessionId: "session-1",
-        captureKind: "auto",
+        captureKind: "manual",
         messageKey: "message-1",
         snapshot: {
           ...sampleSnapshot,

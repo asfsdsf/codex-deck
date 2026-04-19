@@ -107,7 +107,7 @@ import {
 } from "../workflow-skill-install";
 import {
   type TerminalSkillInstallChoice,
-} from "../terminal-skill-install";
+} from "../api/terminal-skill-install";
 import { sendTerminalRestartNoticeToBoundSession } from "../terminal-session-notices";
 import {
   resolveSelectedWorkflowSummary,
@@ -225,7 +225,6 @@ import {
   deriveAiTerminalStepStatesByMessageKey,
   extractConversationMessageText,
   getAiTerminalMessageKey,
-  mergeAiTerminalStepStates,
   parseAiTerminalMessage,
   type AiTerminalStepDirective,
   type AiTerminalStepState,
@@ -3474,16 +3473,6 @@ export default function CodexDeckApp() {
   const [terminalEmbeddedMessagesLoading, setTerminalEmbeddedMessagesLoading] =
     useState(false);
   const terminalEmbeddedRawMessagesRef = useRef<ConversationMessage[]>([]);
-  const [aiTerminalStepStatesBySession, setAiTerminalStepStatesBySession] =
-    useState<
-      Record<
-        string,
-        Record<string, Record<string, AiTerminalStepState | undefined>>
-      >
-    >({});
-  const [aiTerminalLockedMessageKeyBySession] = useState<
-    Record<string, string | null>
-  >({});
   const [centerView, setCenterView] = useState<CenterViewMode>("session");
   const [loading, setLoading] = useState(true);
   const [loadingTerminals, setLoadingTerminals] = useState(true);
@@ -4829,28 +4818,14 @@ export default function CodexDeckApp() {
     return null;
   }, [terminalEmbeddedMessages]);
   const terminalEmbeddedMessageCards = useMemo(() => {
-    const sessionId = terminalComposerSessionId ?? "";
-    const lockedMessageKey =
-      aiTerminalLockedMessageKeyBySession[sessionId] ?? null;
-    const sessionStates = aiTerminalStepStatesBySession[sessionId] ?? {};
     return terminalEmbeddedMessages.messages.map((item) => ({
       ...item,
-      isActionable:
-        item.messageKey === latestTerminalPlanMessageKey &&
-        lockedMessageKey !== item.messageKey,
-      stepStates: mergeAiTerminalStepStates(
-        terminalEmbeddedMessages.persistedStepStatesByMessageKey[
-          item.messageKey
-        ],
-        sessionStates[item.messageKey],
-      ),
+      isActionable: item.messageKey === latestTerminalPlanMessageKey,
+      stepStates:
+        terminalEmbeddedMessages.persistedStepStatesByMessageKey[item.messageKey],
     }));
   }, [
-    aiTerminalLockedMessageKeyBySession,
-    aiTerminalStepStatesBySession,
     latestTerminalPlanMessageKey,
-    mergeAiTerminalStepStates,
-    terminalComposerSessionId,
     terminalEmbeddedMessages,
   ]);
   const activeComposerSessionId =
@@ -7823,27 +7798,6 @@ export default function CodexDeckApp() {
     [],
   );
 
-  const setAiTerminalStepState = useCallback(
-    (
-      sessionId: string,
-      messageKey: string,
-      stepId: string,
-      state: AiTerminalStepState,
-    ) => {
-      setAiTerminalStepStatesBySession((current) => ({
-        ...current,
-        [sessionId]: {
-          ...(current[sessionId] ?? {}),
-          [messageKey]: {
-            ...((current[sessionId] ?? {})[messageKey] ?? {}),
-            [stepId]: state,
-          },
-        },
-      }));
-    },
-    [],
-  );
-
   const initializeWorkflowChatSession = useCallback(
     async (options?: {
       openInSessionView?: boolean;
@@ -9503,13 +9457,7 @@ export default function CodexDeckApp() {
       terminalId: string;
       messageKey: string;
       step: AiTerminalStepDirective;
-    }) => {
-      setAiTerminalStepState(
-        input.sessionId,
-        input.messageKey,
-        input.step.stepId,
-        "running",
-      );
+    }): Promise<boolean> => {
       setInteractionError(null);
 
       try {
@@ -9523,27 +9471,17 @@ export default function CodexDeckApp() {
           },
         );
 
-        setAiTerminalStepState(
-          input.sessionId,
-          input.messageKey,
-          input.step.stepId,
-          "completed",
-        );
         if (actionPersistError) {
           setInteractionError(
             `Command was approved, but the approval was not saved: ${actionPersistError}`,
           );
         }
+        return true;
       } catch (error) {
-        setAiTerminalStepState(
-          input.sessionId,
-          input.messageKey,
-          input.step.stepId,
-          "failed",
-        );
         setInteractionError(
           error instanceof Error ? error.message : String(error),
         );
+        return false;
       }
     },
     [
@@ -9551,7 +9489,6 @@ export default function CodexDeckApp() {
       persistTerminalMessageActionRequest,
       releaseTerminalWriteRequest,
       sendTerminalInputRequest,
-      setAiTerminalStepState,
     ],
   );
 
@@ -9562,13 +9499,7 @@ export default function CodexDeckApp() {
       messageKey: string;
       step: AiTerminalStepDirective;
       reason: string;
-    }) => {
-      setAiTerminalStepState(
-        input.sessionId,
-        input.messageKey,
-        input.step.stepId,
-        "rejected",
-      );
+    }): Promise<boolean> => {
       setInteractionError(null);
 
       let actionPersistError: string | null = null;
@@ -9605,17 +9536,18 @@ export default function CodexDeckApp() {
         setInteractionError(
           "Failed to send the terminal step rejection back to the session.",
         );
+        return false;
       } else if (actionPersistError) {
         setInteractionError(
           `Step was rejected, but the rejection was not saved: ${actionPersistError}`,
         );
       }
+      return true;
     },
     [
       persistTerminalMessageActionRequest,
       selectedSessionData?.project,
       sendMessageText,
-      setAiTerminalStepState,
     ],
   );
 
@@ -12456,17 +12388,6 @@ export default function CodexDeckApp() {
                   onStreamConnect={handleStreamConnect}
                   aiTerminalTerminalId={
                     selectedSessionTerminalRole?.terminalId ?? null
-                  }
-                  aiTerminalLockedMessageKey={
-                    selectedSession
-                      ? (aiTerminalLockedMessageKeyBySession[selectedSession] ??
-                        null)
-                      : null
-                  }
-                  aiTerminalStepStatesByMessageKey={
-                    selectedSession
-                      ? (aiTerminalStepStatesBySession[selectedSession] ?? {})
-                      : {}
                   }
                   onApproveAiTerminalStep={handleApproveAiTerminalStep}
                   onRejectAiTerminalStep={handleRejectAiTerminalStep}

@@ -168,7 +168,7 @@ function normalizeDecision(
 function normalizeSnapshotCaptureKind(
   value: unknown,
 ): TerminalSnapshotCaptureKind | null {
-  return value === "manual" || value === "auto" ? value : null;
+  return value === "manual" ? "manual" : null;
 }
 
 function normalizePlanStepAction(value: unknown): TerminalSessionPlanStepAction | null {
@@ -766,15 +766,11 @@ export async function persistTerminalSessionFrozenBlock(
 
   return queueTerminalSessionOperation(normalized.terminalId, async () => {
     const manifest = await readManifest(normalized.terminalId, codexHome);
-    const existingIndex = findExistingBlockIndex(manifest.blocks, normalized);
-    const existingBlock =
-      existingIndex >= 0 ? manifest.blocks[existingIndex] : null;
-    const blockId = existingBlock?.blockId ?? generateBlockId();
-    const createdAt = existingBlock?.createdAt ?? new Date().toISOString();
-    const updatedAt = new Date().toISOString();
+    const blockId = generateBlockId();
+    const createdAt = new Date().toISOString();
+    const updatedAt = createdAt;
     const sequence =
       normalized.sequence ??
-      existingBlock?.sequence ??
       (manifest.blocks.length > 0
         ? Math.max(...manifest.blocks.map((block) => block.sequence)) + 1
         : 1);
@@ -816,12 +812,7 @@ export async function persistTerminalSessionFrozenBlock(
       stepFeedback: null,
     };
 
-    const nextBlocks = [...manifest.blocks];
-    if (existingIndex >= 0) {
-      nextBlocks[existingIndex] = block;
-    } else {
-      nextBlocks.push(block);
-    }
+    const nextBlocks = [...manifest.blocks, block];
 
     const nextManifest: TerminalSessionArtifactsManifest = {
       terminalId: normalized.terminalId,

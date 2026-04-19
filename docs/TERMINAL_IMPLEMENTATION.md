@@ -221,9 +221,8 @@ The sync flow is:
 1. Load the session conversation.
 2. Parse assistant messages that embed AI terminal directives.
 3. Persist message blocks for plan / need-input / complete cards.
-4. Consume any pending frozen terminal snapshot from `TerminalSnapshotCapture`.
-5. Persist snapshot blocks and rebuild timeline entries.
-6. Publish an `artifacts` event if the payload changed.
+4. Rebuild timeline entries from persisted blocks.
+5. Publish an `artifacts` event if the payload changed.
 
 Artifact publication is triggered from two places:
 
@@ -234,27 +233,27 @@ This keeps the terminal pane eventually consistent with session updates even whe
 
 ### When a terminal block is frozen
 
-There is no separate "freeze this block now" endpoint. Freeze is an artifact-sync side effect.
+Frozen blocks are created only by explicit terminal chat actions.
 
 The actual mechanism is:
 
 1. `TerminalInstance` mirrors every live output chunk into `TerminalSnapshotCapture`.
 2. That capture buffer stays pending in memory while the terminal continues running.
-3. When artifact sync runs for a bound terminal/session pair, the sync logic walks AI-terminal assistant messages in conversation order.
-4. For each parsed AI-terminal directive, it checks whether a `terminal_snapshot` block already exists for that message key.
-5. If no snapshot exists yet, sync calls `consumePendingSnapshot()`.
-6. If the capture buffer has content, the returned serialized xterm snapshot is persisted as a frozen block and inserted into the timeline before the corresponding AI card.
+3. When the user triggers terminal chat through `POST /api/terminals/:terminalId/chat-action`, the route may call `consumeFrozenTerminalContext(...)`.
+4. `consumeFrozenTerminalContext(...)` consumes the pending capture once, persists a `terminal_snapshot` block, sanitizes transcript text for `<terminal-command-output>`, and attaches that context to the outgoing Codex message.
+5. Later artifact sync runs only persist AI terminal message blocks and feedback; they do not consume snapshots.
 
-In code terms, freezing is driven by `syncTerminalSessionArtifacts(...)` in `api/terminal-session-sync.ts`, not by the frontend renderer.
+In code terms, freezing is driven by `consumeFrozenTerminalContext(...)` in `api/server/terminal-routes.ts`, not by the frontend renderer and not by passive artifact sync.
 
 Important consequences:
 
-- A snapshot is frozen only when there is both:
-  - a bound session with a parsed AI-terminal directive message, and
-  - pending captured terminal output that has not already been consumed
-- `consumePendingSnapshot()` is destructive. Once sync consumes a snapshot, the capture buffer resets and later sync runs need fresh terminal output to create another frozen block.
-- If there is already a snapshot block for the same logical message key, sync reuses it and does not capture a new one.
-- If there is no pending output when sync runs, no frozen block is created for that directive.
+- A snapshot is frozen only when the user explicitly triggers one of:
+  - `Send` into an already bound terminal chat session
+  - `Init` for terminal chat
+  - the first `Chat in session` click that initializes terminal chat
+- Approving or rejecting an AI terminal step must not create a frozen block.
+- Session watcher refreshes, terminal stream bootstrap, reconnects, and binding-change artifact republish must not create frozen blocks.
+- Consuming the capture is destructive. Once one of the explicit chat actions consumes it, later sync runs do not recreate anything unless a future explicit chat action captures fresh output.
 
 ### Freeze timing and capture kinds
 
@@ -263,14 +262,22 @@ Artifact sync can run in several situations:
 - when the terminal stream bootstraps and loads artifacts
 - when session files change and the watcher publishes updates
 - when terminal binding changes
-- immediately before persisting a plan step approval/rejection via `POST /api/terminals/:terminalId/message-action`
 
-The current capture-kind rule is code-defined:
+Those sync paths are metadata-only:
 
-- `captureKind: "manual"` for `plan` and `need_input` directives
-- `captureKind: "auto"` for `finished` directives
+- they rebuild AI terminal cards from conversation state
+- they publish persisted frozen blocks that already exist
+- they do **not** consume `TerminalSnapshotCapture`
 
-That naming is implementation metadata, not a literal UI button distinction. In current code, "manual" means the snapshot is associated with an actionable or user-gated AI terminal directive rather than a terminal-complete message.
+Plan step approval/rejection is also metadata-only:
+
+- `POST /api/terminals/:terminalId/message-action` first syncs AI terminal message blocks so the persisted card metadata is up to date
+- that route does **not** consume pending snapshots
+- approving or rejecting a step must not create a new frozen block by itself
+
+The current production capture-kind rule is simple:
+
+- frozen blocks created through terminal chat handoff are persisted as `captureKind: "manual"`
 
 Timeline ordering is also explicit:
 
@@ -382,7 +389,6 @@ This is the branch used when the AI cannot safely propose a command yet.
 If the assistant emits `<requirement_finished>`:
 
 - the pane renders an "AI Terminal Complete" card
-- artifact sync labels its associated snapshot `captureKind: "auto"`
 - no approval buttons are shown
 
 This is the terminal-chat terminal state for the current request, although the bound chat session can still continue later.
@@ -406,7 +412,7 @@ The intended controller loop is:
 3. user approves, rejects, or answers
 4. controller sends structured execution or rejection feedback back into the bound session
 5. AI emits the next block
-6. artifact sync freezes snapshots around those milestones and republishes the timeline
+6. artifact sync republishes the timeline without creating new frozen blocks
 
 This loop is why terminal chat is implemented as a session-bound protocol layered on top of the live terminal rather than as raw shell I/O alone.
 
@@ -420,6 +426,14 @@ Notable cleanup behavior:
 - applies backspace corrections
 - removes transient prompt artifacts
 - compresses blank-line noise
+
+For terminal-chat handoff text, frozen transcript cleanup uses `api/terminal-chat-transcript-sanitizer.ts`, which replays the captured text through `@xterm/headless` before embedding it into `<terminal-command-output>`. That path is used for:
+
+- `Send` into an already bound terminal chat session
+- `Init` terminal chat bootstrap
+- first `Chat in session` terminal chat bootstrap
+
+This is separate from card/timeline sanitization because bound-session handoff text needs terminal-emulator-aware cleanup, not just regex stripping.
 
 `buildTerminalTimelineEntries(...)` then interleaves snapshots and AI message cards by message key and sequence.
 
@@ -603,5 +617,6 @@ If you add features to the terminal pane, keep the following boundaries:
 - `api/terminal-session-sync.ts`
 - `api/terminal-session-store.ts`
 - `api/terminal-snapshot.ts`
+- `api/terminal-chat-transcript-sanitizer.ts`
 - `api/terminal-transcript.ts`
 - `api/storage/runtime.ts`

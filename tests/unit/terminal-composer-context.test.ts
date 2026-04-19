@@ -4,7 +4,7 @@ import {
   buildFrozenTerminalCommandOutputTag,
   buildTerminalBoundUserMessageText,
   buildTerminalChatBootstrapMessage,
-} from "../../web/terminal-composer-context";
+} from "../../api/terminal-chat-context";
 
 test("buildFrozenTerminalCommandOutputTag wraps transcript in a dedicated tag", () => {
   const tag = buildFrozenTerminalCommandOutputTag({

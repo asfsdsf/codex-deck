@@ -12,18 +12,44 @@ const sampleSnapshot = {
   data: "serialized-snapshot",
 };
 
-test("buildTerminalTimelineEntries renders ordered blocks before their cards", () => {
+test("buildTerminalTimelineEntries follows manifest sequence order for snapshots and cards", () => {
   const entries = buildTerminalTimelineEntries({
-    messageKeys: ["plan", "complete"],
     blocks: [
+      {
+        blockId: "card-2",
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        type: "ai_terminal_complete",
+        sequence: 4,
+        createdAt: "2026-01-01T00:00:04.000Z",
+        updatedAt: "2026-01-01T00:00:04.000Z",
+        messageKey: "complete",
+        stepId: null,
+        snapshotPath: null,
+        snapshotFormat: null,
+        cols: null,
+        rows: null,
+        snapshotLength: null,
+        captureKind: null,
+        leadingMarkdown: null,
+        trailingMarkdown: null,
+        rawBlock: "<requirement_finished>done</requirement_finished>",
+        contextNote: null,
+        message: "done",
+        question: null,
+        steps: null,
+        stepActions: null,
+        stepFeedback: null,
+        snapshot: null,
+      },
       {
         blockId: "block-2",
         terminalId: "terminal-1",
         sessionId: "session-1",
         type: "terminal_snapshot",
-        sequence: 2,
-        createdAt: "2026-01-01T00:00:02.000Z",
-        updatedAt: "2026-01-01T00:00:02.000Z",
+        sequence: 3,
+        createdAt: "2026-01-01T00:00:03.000Z",
+        updatedAt: "2026-01-01T00:00:03.000Z",
         messageKey: "complete",
         stepId: null,
         snapshotPath: "blocks/block-2.snapshot",
@@ -31,7 +57,7 @@ test("buildTerminalTimelineEntries renders ordered blocks before their cards", (
         cols: 80,
         rows: 24,
         snapshotLength: 14,
-        captureKind: "auto",
+        captureKind: "manual",
         leadingMarkdown: null,
         trailingMarkdown: null,
         rawBlock: null,
@@ -45,6 +71,33 @@ test("buildTerminalTimelineEntries renders ordered blocks before their cards", (
           ...sampleSnapshot,
           data: "final-output-snapshot",
         },
+      },
+      {
+        blockId: "card-1",
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        type: "ai_terminal_plan",
+        sequence: 2,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        messageKey: "plan",
+        stepId: null,
+        snapshotPath: null,
+        snapshotFormat: null,
+        cols: null,
+        rows: null,
+        snapshotLength: null,
+        captureKind: null,
+        leadingMarkdown: null,
+        trailingMarkdown: null,
+        rawBlock: "<ai-terminal-plan></ai-terminal-plan>",
+        contextNote: null,
+        message: null,
+        question: null,
+        steps: [],
+        stepActions: null,
+        stepFeedback: null,
+        snapshot: null,
       },
       {
         blockId: "block-1",
@@ -87,9 +140,8 @@ test("buildTerminalTimelineEntries renders ordered blocks before their cards", (
   );
 });
 
-test("buildTerminalTimelineEntries appends standalone manual blocks after message-bound cards", () => {
+test("buildTerminalTimelineEntries keeps standalone snapshots in manifest sequence order", () => {
   const entries = buildTerminalTimelineEntries({
-    messageKeys: ["plan"],
     blocks: [
       {
         blockId: "block-1",
@@ -121,6 +173,33 @@ test("buildTerminalTimelineEntries appends standalone manual blocks after messag
           data: "saved!",
         },
       },
+      {
+        blockId: "card-1",
+        terminalId: "terminal-1",
+        sessionId: "session-1",
+        type: "ai_terminal_plan",
+        sequence: 2,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        messageKey: "plan",
+        stepId: null,
+        snapshotPath: null,
+        snapshotFormat: null,
+        cols: null,
+        rows: null,
+        snapshotLength: null,
+        captureKind: null,
+        leadingMarkdown: null,
+        trailingMarkdown: null,
+        rawBlock: "<ai-terminal-plan></ai-terminal-plan>",
+        contextNote: null,
+        message: null,
+        question: null,
+        steps: [],
+        stepActions: null,
+        stepFeedback: null,
+        snapshot: null,
+      },
     ],
   });
 
@@ -128,7 +207,7 @@ test("buildTerminalTimelineEntries appends standalone manual blocks after messag
     entries.map((entry) =>
       entry.type === "card" ? entry.messageKey : entry.snapshot.data,
     ),
-    ["plan", "saved!"],
+    ["saved!", "plan"],
   );
 });
 

@@ -115,14 +115,14 @@ interface MessageBlockProps {
       terminalId: string;
       messageKey: string;
       step: AiTerminalStepDirective;
-    }) => void;
+    }) => Promise<boolean>;
     onRejectStep?: (input: {
       sessionId: string;
       terminalId: string;
       messageKey: string;
       step: AiTerminalStepDirective;
       reason: string;
-    }) => void;
+    }) => Promise<boolean>;
   };
   resolvedUserInputAnswersByItemId?: Map<
     string,
@@ -533,12 +533,14 @@ function AiTerminalRejectControl(props: {
   terminalId: string;
   messageKey: string;
   step: AiTerminalStepDirective;
+  pendingAction?: "approving" | "rejecting";
   onRejectStep: NonNullable<
     NonNullable<MessageBlockProps["aiTerminalContext"]>["onRejectStep"]
   >;
 }) {
   const [reason, setReason] = useState("");
   const normalizedReason = reason.trim();
+  const isRejecting = props.pendingAction === "rejecting";
 
   return (
     <div className="relative min-h-12 w-full min-w-0 flex-1 rounded-lg border border-zinc-500/35 bg-zinc-950/70 focus-within:border-zinc-400/60 focus-within:ring-1 focus-within:ring-zinc-400/20 sm:min-w-[16rem]">
@@ -548,25 +550,52 @@ function AiTerminalRejectControl(props: {
         rows={2}
         aria-label="Reject reason"
         placeholder="Tell the bound session why this step should change..."
+        disabled={isRejecting}
         className="block min-h-12 w-full resize-none bg-transparent py-2 pl-24 pr-2.5 text-[11px] leading-4 text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
       />
       <button
         type="button"
-        onClick={() =>
-          props.onRejectStep({
+        onClick={async () => {
+          await props.onRejectStep({
             sessionId: props.sessionId,
             terminalId: props.terminalId,
             messageKey: props.messageKey,
             step: props.step,
             reason: normalizedReason,
-          })
-        }
-        disabled={!normalizedReason}
+          });
+        }}
+        disabled={!normalizedReason || isRejecting}
         className="absolute left-1.5 top-1.5 rounded-lg border border-rose-500/45 bg-rose-500/15 px-3 py-1.5 text-[11px] text-rose-100 transition-colors hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-45"
       >
-        Reject
+        {isRejecting ? "Rejecting..." : "Reject"}
       </button>
     </div>
+  );
+}
+
+export function shouldRenderAiTerminalStepActions(input: {
+  canApprove: boolean;
+  canReject: boolean;
+  pendingAction?: "approving" | "rejecting";
+}): boolean {
+  return (
+    input.canApprove ||
+    input.canReject ||
+    input.pendingAction === "approving" ||
+    input.pendingAction === "rejecting"
+  );
+}
+
+export function shouldClearAiTerminalPendingAction(input: {
+  isActionable: boolean;
+  persistedState?: AiTerminalStepState;
+}): boolean {
+  return (
+    !input.isActionable ||
+    input.persistedState === "running" ||
+    input.persistedState === "completed" ||
+    input.persistedState === "failed" ||
+    input.persistedState === "rejected"
   );
 }
 
@@ -578,6 +607,36 @@ function AiTerminalPlanRenderer(props: {
   onFilePathLinkClick?: (href: string) => boolean;
 }) {
   const { plan, trailingMarkdown, leadingMarkdown, aiTerminalContext } = props;
+  const [pendingActionsByStepId, setPendingActionsByStepId] = useState<
+    Record<string, "approving" | "rejecting" | undefined>
+  >({});
+
+  useEffect(() => {
+    setPendingActionsByStepId((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const step of plan.steps) {
+        const pendingAction = next[step.stepId];
+        if (!pendingAction) {
+          continue;
+        }
+
+        const persistedState = aiTerminalContext?.stepStates?.[step.stepId];
+        if (
+          shouldClearAiTerminalPendingAction({
+            isActionable: aiTerminalContext?.isActionable === true,
+            persistedState,
+          })
+        ) {
+          delete next[step.stepId];
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [aiTerminalContext?.isActionable, aiTerminalContext?.stepStates, plan.steps]);
 
   return (
     <div className="my-1 space-y-3">
@@ -607,6 +666,7 @@ function AiTerminalPlanRenderer(props: {
         <div className="mt-3 space-y-3">
           {plan.steps.map((step, index) => {
             const state = aiTerminalContext?.stepStates?.[step.stepId];
+            const pendingAction = pendingActionsByStepId[step.stepId];
             const stateLabel = getAiTerminalStepStateLabel(
               state,
               aiTerminalContext?.isActionable === true,
@@ -619,9 +679,17 @@ function AiTerminalPlanRenderer(props: {
             const canApprove =
               aiTerminalContext?.isActionable === true &&
               step.nextAction !== "provide_input" &&
-              !hasChosenAction;
+              !hasChosenAction &&
+              !pendingAction;
             const canReject =
-              aiTerminalContext?.isActionable === true && !hasChosenAction;
+              aiTerminalContext?.isActionable === true &&
+              !hasChosenAction &&
+              pendingAction !== "approving";
+            const shouldRenderActions = shouldRenderAiTerminalStepActions({
+              canApprove,
+              canReject,
+              pendingAction,
+            });
 
             return (
               <div
@@ -699,22 +767,44 @@ function AiTerminalPlanRenderer(props: {
                   </div>
                 ) : null}
 
-                {(canApprove || canReject) && (
+                {shouldRenderActions && (
                   <div className="mt-3 flex flex-wrap items-start gap-2">
                     {canApprove ? (
                       <button
                         type="button"
-                        onClick={() =>
-                          aiTerminalContext?.onApproveStep?.({
+                        onClick={async () => {
+                          if (!aiTerminalContext?.onApproveStep) {
+                            return;
+                          }
+                          setPendingActionsByStepId((current) => ({
+                            ...current,
+                            [step.stepId]: "approving",
+                          }));
+                          const succeeded = await aiTerminalContext.onApproveStep({
                             sessionId: aiTerminalContext.sessionId,
                             terminalId: aiTerminalContext.terminalId,
                             messageKey: aiTerminalContext.messageKey,
                             step,
-                          })
-                        }
+                          });
+                          if (!succeeded) {
+                            setPendingActionsByStepId((current) => {
+                              const next = { ...current };
+                              delete next[step.stepId];
+                              return next;
+                            });
+                          }
+                        }}
                         className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-500/25"
                       >
                         Approve and run
+                      </button>
+                    ) : pendingAction === "approving" ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 opacity-70"
+                      >
+                        Approving...
                       </button>
                     ) : null}
                     {canReject && aiTerminalContext?.onRejectStep ? (
@@ -723,6 +813,7 @@ function AiTerminalPlanRenderer(props: {
                         terminalId={aiTerminalContext.terminalId}
                         messageKey={aiTerminalContext.messageKey}
                         step={step}
+                        pendingAction={pendingAction}
                         onRejectStep={aiTerminalContext.onRejectStep}
                       />
                     ) : null}

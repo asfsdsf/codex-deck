@@ -542,7 +542,7 @@ export type TerminalSessionBlockType =
   | "ai_terminal_need_input"
   | "ai_terminal_complete";
 
-export type TerminalSnapshotCaptureKind = "manual" | "auto";
+export type TerminalSnapshotCaptureKind = "manual";
 
 export type TerminalSnapshotFormat = "xterm-serialize-v1";
 
@@ -616,17 +616,6 @@ export interface TerminalPersistFrozenBlockRequest {
 
 export interface TerminalPersistFrozenBlockResponse {
   block: TerminalSessionBlockRecord;
-}
-
-export interface TerminalFreezeBlockRequest {
-  sessionId: string;
-}
-
-export interface TerminalFreezeBlockResponse {
-  terminalId: string;
-  sessionId: string;
-  transcript: string | null;
-  block: TerminalSessionBlockRecord | null;
 }
 
 export type TerminalChatAction = "send" | "init" | "chat-in-session";
