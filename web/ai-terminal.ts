@@ -167,6 +167,16 @@ export interface AiTerminalBootstrapMessage {
   architecture: string | null;
   platform: string | null;
   userRequest: string | null;
+  terminalCommandOutput: string | null;
+}
+
+export interface AiTerminalCommandOutputMessage {
+  kind: "command_output";
+  terminalId: string;
+  commandOutput: string;
+  leadingMarkdown: string;
+  trailingMarkdown: string;
+  rawBlock: string;
 }
 
 interface AiTerminalPersistedStepState {
@@ -508,6 +518,48 @@ export function parseAiTerminalBootstrapMessage(
     architecture: extractTagValue(contextBlock, "architecture"),
     platform: extractTagValue(contextBlock, "platform"),
     userRequest: extractTagValue(normalized, "user-request"),
+    terminalCommandOutput: extractTagValue(normalized, "content"),
+  };
+}
+
+export function parseAiTerminalCommandOutputMessage(
+  text: string,
+): AiTerminalCommandOutputMessage | null {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const matches = Array.from(
+    normalized.matchAll(
+      /<terminal-command-output>\s*[\s\S]*?<\/terminal-command-output>/gi,
+    ),
+  );
+  if (matches.length !== 1) {
+    return null;
+  }
+
+  const match = matches[0];
+  const rawBlock = match?.[0]?.trim() ?? "";
+  const terminalId = extractTagValue(rawBlock, "terminal_id");
+  const commandOutput = extractTagValue(rawBlock, "content");
+  if (!terminalId || !commandOutput) {
+    return null;
+  }
+
+  const startIndex = match.index ?? 0;
+  const leadingMarkdown = normalized.slice(0, startIndex).trim();
+  const trailingMarkdown = normalized
+    .slice(startIndex + rawBlock.length)
+    .trim();
+
+  return {
+    kind: "command_output",
+    terminalId,
+    commandOutput,
+    leadingMarkdown,
+    trailingMarkdown,
+    rawBlock,
   };
 }
 

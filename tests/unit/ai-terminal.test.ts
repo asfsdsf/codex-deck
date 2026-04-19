@@ -11,6 +11,7 @@ import {
   deriveAiTerminalStepStatesByMessageKey,
   getAiTerminalMessageKey,
   parseAiTerminalBootstrapMessage,
+  parseAiTerminalCommandOutputMessage,
   parseAiTerminalMessage,
   parseAiTerminalPersistedStepState,
   parseAiTerminalUserFeedback,
@@ -312,6 +313,12 @@ User first request:
 <user-request>
 Show largest 10 files
 </user-request>
+
+<terminal-command-output>
+<terminal_id>terminal-1</terminal_id>
+<content><![CDATA[$ ls
+package.json]]></content>
+</terminal-command-output>
   `);
 
   assert.deepEqual(parsed, {
@@ -324,6 +331,7 @@ Show largest 10 files
     architecture: "arm64",
     platform: "darwin",
     userRequest: "Show largest 10 files",
+    terminalCommandOutput: "$ ls\npackage.json",
   });
 });
 
@@ -337,6 +345,31 @@ test("parseAiTerminalBootstrapMessage rejects unrelated or incomplete messages",
     `),
     null,
   );
+});
+
+test("parseAiTerminalCommandOutputMessage parses user text plus frozen output tag", () => {
+  const parsed = parseAiTerminalCommandOutputMessage(`
+Please explain the failure.
+
+<terminal-command-output>
+<terminal_id>terminal-1</terminal_id>
+<content><![CDATA[$ pnpm test
+FAIL src/example.test.ts]]></content>
+</terminal-command-output>
+  `);
+
+  assert.deepEqual(parsed, {
+    kind: "command_output",
+    terminalId: "terminal-1",
+    commandOutput: "$ pnpm test\nFAIL src/example.test.ts",
+    leadingMarkdown: "Please explain the failure.",
+    trailingMarkdown: "",
+    rawBlock: `<terminal-command-output>
+<terminal_id>terminal-1</terminal_id>
+<content><![CDATA[$ pnpm test
+FAIL src/example.test.ts]]></content>
+</terminal-command-output>`,
+  });
 });
 
 test("buildAiTerminalExecutionFeedback marks unknown exit code as completed_unknown", () => {

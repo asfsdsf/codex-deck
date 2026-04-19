@@ -618,6 +618,52 @@ export interface TerminalPersistFrozenBlockResponse {
   block: TerminalSessionBlockRecord;
 }
 
+export interface TerminalFreezeBlockRequest {
+  sessionId: string;
+}
+
+export interface TerminalFreezeBlockResponse {
+  terminalId: string;
+  sessionId: string;
+  transcript: string | null;
+  block: TerminalSessionBlockRecord | null;
+}
+
+export type TerminalChatAction = "send" | "init" | "chat-in-session";
+
+export type TerminalChatActionSkillInstallChoice = "local" | "global";
+
+export interface TerminalChatActionRequest {
+  action: TerminalChatAction;
+  text?: string;
+  images?: string[];
+  model?: string | null;
+  effort?: CodexReasoningEffort | null;
+  collaborationMode?: CodexCollaborationModeInput | null;
+  skillInstallChoice?: TerminalChatActionSkillInstallChoice | null;
+}
+
+export interface TerminalChatActionCompletedResponse {
+  status: "completed";
+  action: TerminalChatAction;
+  terminalId: string;
+  sessionId: string;
+  boundSessionId: string | null;
+  turnId: string | null;
+  createdSession: boolean;
+}
+
+export interface TerminalChatActionNeedsSkillInstallResponse {
+  status: "needs_skill_install";
+  action: "init" | "chat-in-session";
+  terminalId: string;
+  projectRoot: string;
+}
+
+export type TerminalChatActionResponse =
+  | TerminalChatActionCompletedResponse
+  | TerminalChatActionNeedsSkillInstallResponse;
+
 export interface TerminalPersistMessageActionRequest {
   sessionId: string;
   messageKey: string;

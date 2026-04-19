@@ -34,9 +34,11 @@ import { formatDurationFromTimestamps, sanitizeText } from "../utils";
 import { getPathTail } from "../path-utils";
 import {
   parseAiTerminalBootstrapMessage,
+  parseAiTerminalCommandOutputMessage,
   parseAiTerminalMessage,
   parseAiTerminalUserFeedback,
   type AiTerminalBootstrapMessage,
+  type AiTerminalCommandOutputMessage,
   type AiTerminalDirective,
   type AiTerminalExecutionFeedback,
   type AiTerminalExecutionStatus,
@@ -302,6 +304,27 @@ function getMessageCopyText(
   const text = content
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => sanitizeText(block.text ?? ""))
+    .filter((value) => value.length > 0)
+    .join("\n\n");
+
+  return text.length > 0 ? text : null;
+}
+
+function getMessageRawText(
+  content: string | ContentBlock[] | undefined,
+): string | null {
+  if (typeof content === "string") {
+    const normalized = content.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const text = content
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text?.trim() ?? "")
     .filter((value) => value.length > 0)
     .join("\n\n");
 
@@ -1049,6 +1072,97 @@ function AiTerminalBootstrapRenderer(props: {
                     onFilePathLinkClick={props.onFilePathLinkClick}
                   />
                 ) : null}
+                {bootstrap.terminalCommandOutput ? (
+                  <AiTerminalFeedbackTextSection
+                    label="Frozen output"
+                    content={bootstrap.terminalCommandOutput}
+                    onFilePathLinkClick={props.onFilePathLinkClick}
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AiTerminalCommandOutputRenderer(props: {
+  message: AiTerminalCommandOutputMessage;
+  copyText: string;
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  const [viewMode, setViewMode] = useState<JsonViewMode>("formatted");
+  const requestText = [
+    props.message.leadingMarkdown,
+    props.message.trailingMarkdown,
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+
+  return (
+    <div className="flex justify-end min-w-0">
+      <div className="max-w-[92%] min-w-0">
+        <div className="overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-900/90 text-zinc-100 shadow-[0_0_0_1px_rgba(99,102,241,0.08)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-700/55 px-3 py-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-200">
+                <Terminal size={13} className="shrink-0 opacity-75" />
+                <span>Terminal Context</span>
+              </div>
+              <span
+                className="min-w-0 truncate rounded border border-zinc-700/70 bg-zinc-950/60 px-2 py-0.5 font-mono text-[10px] text-zinc-300"
+                title={props.message.terminalId}
+              >
+                {props.message.terminalId}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <CopyButton
+                text={props.copyText}
+                title="Copy message"
+                className="rounded-lg border border-zinc-600/55 bg-zinc-950/70 hover:bg-zinc-900/80"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setViewMode((current) =>
+                    current === "formatted" ? "raw" : "formatted",
+                  )
+                }
+                className={`rounded-lg border px-2 py-1 text-[11px] font-mono transition-colors ${
+                  viewMode === "raw"
+                    ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-200"
+                    : "border-zinc-600/55 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-900/80"
+                }`}
+                title={
+                  viewMode === "raw" ? "Show formatted view" : "Show raw text"
+                }
+              >
+                {"</>"}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2 px-3.5 py-2.5">
+            {viewMode === "raw" ? (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-300">
+                {props.copyText}
+              </pre>
+            ) : (
+              <>
+                {requestText ? (
+                  <AiTerminalFeedbackTextSection
+                    label="Message"
+                    content={requestText}
+                    onFilePathLinkClick={props.onFilePathLinkClick}
+                  />
+                ) : null}
+                <AiTerminalFeedbackTextSection
+                  label="Frozen output"
+                  content={props.message.commandOutput}
+                  onFilePathLinkClick={props.onFilePathLinkClick}
+                />
               </>
             )}
           </div>
@@ -1349,14 +1463,19 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const hasPrimary = hasVisiblePrimary();
   const hasAuxiliary = auxiliaryBlocks.length > 0;
   const messageCopyText = getMessageCopyText(content);
+  const rawMessageText = getMessageRawText(content);
   const showMessageCopyButton =
     (isUser || message.type === "assistant") && !!messageCopyText;
   const terminalUserFeedback = isUser
-    ? parseAiTerminalUserFeedback(messageCopyText ?? "")
+    ? parseAiTerminalUserFeedback(rawMessageText ?? "")
     : null;
   const terminalBootstrap = isUser
-    ? parseAiTerminalBootstrapMessage(messageCopyText ?? "")
+    ? parseAiTerminalBootstrapMessage(rawMessageText ?? "")
     : null;
+  const terminalCommandOutput =
+    isUser && !terminalBootstrap
+      ? parseAiTerminalCommandOutputMessage(rawMessageText ?? "")
+      : null;
 
   const toolMap = Array.isArray(content)
     ? buildToolMap(content)
@@ -1421,7 +1540,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     );
   }
 
-  if (!hasPrimary && !hasAuxiliary) {
+  if (!hasPrimary && !hasAuxiliary && !terminalCommandOutput) {
     return null;
   }
 
@@ -1563,12 +1682,12 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     );
   }
 
-  if (isUser && terminalUserFeedback && messageCopyText) {
+  if (isUser && terminalUserFeedback && rawMessageText) {
     return (
       <div className="min-w-0">
         <AiTerminalUserFeedbackRenderer
           feedback={terminalUserFeedback}
-          copyText={messageCopyText}
+          copyText={rawMessageText}
           onFilePathLinkClick={onFilePathLinkClick}
         />
 
@@ -1613,12 +1732,62 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     );
   }
 
-  if (isUser && terminalBootstrap && messageCopyText) {
+  if (isUser && terminalBootstrap && rawMessageText) {
     return (
       <div className="min-w-0">
         <AiTerminalBootstrapRenderer
           bootstrap={terminalBootstrap}
-          copyText={messageCopyText}
+          copyText={rawMessageText}
+          onFilePathLinkClick={onFilePathLinkClick}
+        />
+
+        {hasAuxiliary && (
+          <div className="flex flex-col gap-1 mt-1.5">
+            {auxiliaryBlocks.map((block, index) => (
+              <ContentBlockRenderer
+                key={index}
+                block={block}
+                blockIndex={
+                  Array.isArray(content) ? content.indexOf(block) : null
+                }
+                forceExpanded={shouldForceExpandBlock(block)}
+                toolMap={toolMap}
+                toolInputMap={toolInputMap}
+                toolTimestampMap={toolTimestampMap}
+                fallbackToolMap={fallbackToolMap}
+                fallbackToolInputMap={fallbackToolInputMap}
+                fallbackToolTimestampMap={fallbackToolTimestampMap}
+                onPlanAction={planActionHandler}
+                aiTerminalContext={aiTerminalContext}
+                onFilePathLinkClick={onFilePathLinkClick}
+                pendingUserInputRequestByItemId={
+                  pendingUserInputRequestByItemId
+                }
+                pendingApprovalRequestByItemId={pendingApprovalRequestByItemId}
+                selectedUserInputAnswers={selectedUserInputAnswers}
+                resolvedUserInputAnswersByItemId={
+                  resolvedUserInputAnswersByItemId
+                }
+                submittingUserInputRequestIds={submittingRequestIdSet}
+                submittingApprovalRequestIds={submittingApprovalRequestIdSet}
+                onSelectUserInputOption={onSelectUserInputOption}
+                onChangeUserInputOtherText={onChangeUserInputOtherText}
+                onSubmitUserInputAnswers={onSubmitUserInputAnswers}
+                onRespondApprovalRequest={onRespondApprovalRequest}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (isUser && terminalCommandOutput && rawMessageText) {
+    return (
+      <div className="min-w-0">
+        <AiTerminalCommandOutputRenderer
+          message={terminalCommandOutput}
+          copyText={rawMessageText}
           onFilePathLinkClick={onFilePathLinkClick}
         />
 

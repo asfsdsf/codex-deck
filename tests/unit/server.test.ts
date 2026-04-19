@@ -25,6 +25,7 @@ import {
   setLocalTerminalManagerForTests,
   type LocalTerminalManager,
 } from "../../api/local-terminal";
+import { getTerminalBinding } from "../../api/terminal-bindings";
 import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../../api/remote/internal-proxy";
 import { createServer } from "../../api/server";
 import { loadStorage } from "../../api/storage";
@@ -385,6 +386,7 @@ test("sessions stream carries sessions, terminals, and workflows snapshots", asy
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlock: async () => null,
     consumeFrozenBlockSnapshot: async () => null,
   };
 
@@ -469,6 +471,7 @@ test("terminal stream accepts terminal-only subscriptions", async () => {
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlock: async () => null,
     consumeFrozenBlockSnapshot: async () => null,
   };
 
@@ -2730,6 +2733,7 @@ test("terminal routes return snapshot, control responses, and stream events", as
     },
     isWriteOwner: (requestedTerminalId: string, clientId: string) =>
       requestedTerminalId === terminalId && writeOwnerId === clientId,
+    consumeFrozenBlock: async () => null,
     consumeFrozenBlockSnapshot: async () => null,
   };
 
@@ -3043,6 +3047,7 @@ test("terminal binding routes persist bindings and expose terminal session roles
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlock: async () => null,
     consumeFrozenBlockSnapshot: async () => null,
   };
 
@@ -3214,6 +3219,15 @@ test("terminal message action route derives artifacts under codex home and delet
     claimWrite: () => undefined,
     releaseWrite: () => undefined,
     isWriteOwner: () => false,
+    consumeFrozenBlock: async () => {
+      const snapshot = pendingSnapshots.shift() ?? null;
+      return snapshot
+        ? {
+            snapshot,
+            transcript: null,
+          }
+        : null;
+    },
     consumeFrozenBlockSnapshot: async () => pendingSnapshots.shift() ?? null,
   };
 
@@ -3339,6 +3353,521 @@ test("terminal message action route derives artifacts under codex home and delet
     assert.equal(deleted.status, 200);
     assert.equal(existsSync(manifestPath), false);
   } finally {
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal freeze block route persists a manual snapshot and returns transcript", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-freeze-block",
+  );
+  const server = createServer({ port: 13018, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-freeze-1";
+  const sessionId = "session-1";
+  let terminalExists = true;
+  let consumeCalls = 0;
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: true,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "$ pnpm test\nFAIL src/example.test.ts\n",
+      seq: 1,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId && terminalExists
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "$ pnpm test\nFAIL src/example.test.ts\n",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    consumeFrozenBlock: async () => {
+      consumeCalls += 1;
+      return {
+        snapshot: {
+          format: "xterm-serialize-v1",
+          cols: 80,
+          rows: 24,
+          data: "serialized terminal snapshot",
+        },
+        transcript: "$ pnpm test\nFAIL src/example.test.ts",
+      };
+    },
+    consumeFrozenBlockSnapshot: async () => null,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    await loadStorage();
+
+    await requestJson(server, `/api/terminals/${terminalId}/binding`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+
+    const response = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/freeze-block`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(
+      (response.body as { transcript?: string | null }).transcript,
+      "$ pnpm test\nFAIL src/example.test.ts",
+    );
+    assert.equal(
+      (response.body as { block?: { type?: string } | null }).block?.type,
+      "terminal_snapshot",
+    );
+    assert.equal(consumeCalls, 1);
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal chat action send route freezes terminal output and forwards the embedded transcript", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-chat-action-send",
+  );
+  const server = createServer({ port: 13019, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-chat-send-1";
+  const sessionId = "session-send-1";
+  let consumeCalls = 0;
+  let sendMessageInput:
+    | Parameters<CodexAppServerClientFacade["sendMessage"]>[0]
+    | null = null;
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: true,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "$ pnpm test\nFAIL src/example.test.ts\n",
+      seq: 1,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "$ pnpm test\nFAIL src/example.test.ts\n",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    consumeFrozenBlock: async () => {
+      consumeCalls += 1;
+      return {
+        snapshot: {
+          format: "xterm-serialize-v1",
+          cols: 80,
+          rows: 24,
+          data: "serialized terminal snapshot",
+        },
+        transcript: "$ pnpm test\nFAIL src/example.test.ts",
+      };
+    },
+    consumeFrozenBlockSnapshot: async () => null,
+  };
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "unused-thread",
+    sendMessage: async (input) => {
+      sendMessageInput = input;
+      return { turnId: "turn-send-1" };
+    },
+    getThreadState: async () => ({
+      threadId: sessionId,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: sessionId,
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    setCodexAppServerClientForTests(mockClient);
+    await loadStorage();
+
+    await requestJson(server, `/api/terminals/${terminalId}/binding`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+
+    const response = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/chat-action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send",
+          text: "Please explain the failure.",
+          images: ["data:image/png;base64,abc"],
+          collaborationMode: {
+            mode: "plan",
+            settings: {
+              developerInstructions: "Use read-only commands.",
+            },
+          },
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      status: "completed",
+      action: "send",
+      terminalId,
+      sessionId,
+      boundSessionId: sessionId,
+      turnId: "turn-send-1",
+      createdSession: false,
+    });
+    assert.equal(consumeCalls, 1);
+    assert.equal(sendMessageInput?.threadId, sessionId);
+    assert.equal(sendMessageInput?.collaborationMode?.mode, "plan");
+    assert.equal(sendMessageInput?.input[1]?.type, "image");
+    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /Please explain the failure\./);
+    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /<terminal-command-output>/);
+    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /FAIL src\/example\.test\.ts/);
+  } finally {
+    setCodexAppServerClientForTests(null);
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal chat action init route requests skill installation before creating a session", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-chat-action-init-skill",
+  );
+  const server = createServer({ port: 13020, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-chat-init-1";
+  let createThreadCalls = 0;
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: true,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "$ ",
+      seq: 1,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "$ ",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    consumeFrozenBlock: async () => null,
+    consumeFrozenBlockSnapshot: async () => null,
+  };
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    listSkills: async () => [
+      {
+        cwd: "/repo/app",
+        skills: [],
+        errors: [],
+      },
+    ],
+    createThread: async () => {
+      createThreadCalls += 1;
+      return "thread-should-not-be-created";
+    },
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: "thread-should-not-be-created",
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-should-not-be-created",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    setCodexAppServerClientForTests(mockClient);
+    await loadStorage();
+
+    const response = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/chat-action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "init",
+          text: "Find the failing test.",
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      status: "needs_skill_install",
+      action: "init",
+      terminalId,
+      projectRoot: "/repo/app",
+    });
+    assert.equal(createThreadCalls, 0);
+  } finally {
+    setCodexAppServerClientForTests(null);
+    setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal chat action init route creates, boots, and binds a session after skill choice is provided", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-chat-action-init-complete",
+  );
+  const server = createServer({ port: 13021, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-chat-init-2";
+  let createThreadInput:
+    | Parameters<CodexAppServerClientFacade["createThread"]>[0]
+    | null = null;
+  let sendMessageInput:
+    | Parameters<CodexAppServerClientFacade["sendMessage"]>[0]
+    | null = null;
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: true,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "$ pwd\n/repo/app\n",
+      seq: 1,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "$ pwd\n/repo/app\n",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: () => null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    consumeFrozenBlock: async () => ({
+      snapshot: {
+        format: "xterm-serialize-v1",
+        cols: 80,
+        rows: 24,
+        data: "serialized terminal snapshot",
+      },
+      transcript: "$ pwd\n/repo/app",
+    }),
+    consumeFrozenBlockSnapshot: async () => null,
+  };
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    listSkills: async () => [
+      {
+        cwd: "/repo/app",
+        skills: [],
+        errors: [],
+      },
+    ],
+    createThread: async (input) => {
+      createThreadInput = input;
+      return "thread-init-1";
+    },
+    sendMessage: async (input) => {
+      sendMessageInput = input;
+      return { turnId: "turn-init-1" };
+    },
+    getThreadState: async () => ({
+      threadId: "thread-init-1",
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-init-1",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    setCodexAppServerClientForTests(mockClient);
+    await loadStorage();
+
+    const response = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/chat-action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "init",
+          text: "Find the failing test.",
+          images: ["data:image/png;base64,abc"],
+          skillInstallChoice: "local",
+          model: "gpt-5.4",
+          effort: "high",
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      status: "completed",
+      action: "init",
+      terminalId,
+      sessionId: "thread-init-1",
+      boundSessionId: "thread-init-1",
+      turnId: "turn-init-1",
+      createdSession: true,
+    });
+    assert.equal(createThreadInput?.cwd, "/repo/app");
+    assert.equal(createThreadInput?.model, "gpt-5.4");
+    assert.equal(createThreadInput?.effort, "high");
+    assert.equal(sendMessageInput?.threadId, "thread-init-1");
+    assert.equal(sendMessageInput?.input[1]?.type, "image");
+    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /\$skill-installer install the codex-deck-terminal skill/);
+    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /<ai-terminal-controller-context>/);
+    assert.match(sendMessageInput?.input[0]?.type === "text" ? sendMessageInput.input[0].text : "", /<terminal-command-output>/);
+
+    const binding = await getTerminalBinding(terminalId, rootDir);
+    assert.equal(binding.boundSessionId, "thread-init-1");
+  } finally {
+    setCodexAppServerClientForTests(null);
     setLocalTerminalManagerForTests(null);
     server.stop();
     await cleanup();

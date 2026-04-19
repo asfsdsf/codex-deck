@@ -1,6 +1,17 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { getCodexAppServerClient } from "../codex-app-server";
 import { getLocalTerminalManager } from "../local-terminal";
+import { getSystemContextSnapshot } from "../system-context";
+import {
+  buildTerminalBoundUserMessageText,
+  buildTerminalChatBootstrapMessage,
+  type FrozenTerminalCommandContext,
+} from "../terminal-chat-context";
+import {
+  buildTerminalSkillInstallMessagePrefix,
+  getTerminalSkillAvailability,
+} from "../terminal-skill-install";
 import {
   clearTerminalBinding,
   getTerminalBinding,
@@ -11,6 +22,7 @@ import {
   TerminalBindingConflictError,
 } from "../terminal-bindings";
 import {
+  persistTerminalSessionFrozenBlock,
   persistTerminalSessionMessageAction,
   removeTerminalSessionArtifacts,
 } from "../terminal-session-store";
@@ -27,6 +39,12 @@ import type {
   TerminalBindingResponse,
   TerminalClaimWriteRequest,
   TerminalCommandResponse,
+  TerminalChatActionRequest,
+  TerminalChatActionResponse,
+  TerminalChatActionCompletedResponse,
+  TerminalChatActionNeedsSkillInstallResponse,
+  TerminalFreezeBlockRequest,
+  TerminalFreezeBlockResponse,
   TerminalEventsResponse,
   TerminalInputRequest,
   TerminalInputResponse,
@@ -51,6 +69,143 @@ import {
 } from "./utils";
 
 let terminalArtifactWatchersInstalled = false;
+const VALID_REASONING_EFFORTS = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+
+function parseOptionalString(value: unknown): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return typeof value === "string" ? value : undefined;
+}
+
+function parseOptionalEffort(
+  value: unknown,
+): TerminalChatActionRequest["effort"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return typeof value === "string" && VALID_REASONING_EFFORTS.has(value)
+    ? value
+    : undefined;
+}
+
+function parseOptionalCollaborationMode(
+  value: unknown,
+): TerminalChatActionRequest["collaborationMode"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const mode =
+    "mode" in value && typeof value.mode === "string" ? value.mode.trim() : "";
+  if (!mode) {
+    return undefined;
+  }
+
+  const settingsValue =
+    "settings" in value ? (value.settings as Record<string, unknown>) : undefined;
+  if (settingsValue !== undefined && (typeof settingsValue !== "object" || settingsValue === null)) {
+    return undefined;
+  }
+
+  const model = parseOptionalString(settingsValue?.model);
+  if (settingsValue && "model" in settingsValue && model === undefined) {
+    return undefined;
+  }
+
+  const reasoningEffort = parseOptionalEffort(settingsValue?.reasoningEffort);
+  if (
+    settingsValue &&
+    "reasoningEffort" in settingsValue &&
+    reasoningEffort === undefined
+  ) {
+    return undefined;
+  }
+
+  const developerInstructions = parseOptionalString(
+    settingsValue?.developerInstructions,
+  );
+  if (
+    settingsValue &&
+    "developerInstructions" in settingsValue &&
+    developerInstructions === undefined
+  ) {
+    return undefined;
+  }
+
+  const normalizedSettings =
+    settingsValue === undefined
+      ? undefined
+      : {
+          ...(model !== undefined ? { model } : {}),
+          ...(reasoningEffort !== undefined
+            ? { reasoningEffort }
+            : {}),
+          ...(developerInstructions !== undefined
+            ? { developerInstructions }
+            : {}),
+        };
+
+  return {
+    mode,
+    ...(normalizedSettings ? { settings: normalizedSettings } : {}),
+  };
+}
+
+function toTerminalTextInput(text: string): Array<{ type: "text"; text: string }> {
+  const normalizedText = text.trim();
+  if (!normalizedText) {
+    return [];
+  }
+  return [{ type: "text", text: normalizedText }];
+}
+
+async function consumeFrozenTerminalContext(
+  terminalId: string,
+  sessionId: string,
+): Promise<FrozenTerminalCommandContext | null> {
+  const manager = getLocalTerminalManager();
+  const capture = await manager.consumeFrozenBlock(terminalId);
+  if (!capture) {
+    return null;
+  }
+
+  await persistTerminalSessionFrozenBlock({
+    terminalId,
+    sessionId,
+    captureKind: "manual",
+    snapshot: capture.snapshot,
+  });
+  void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
+
+  const transcript = capture.transcript?.trim() ?? "";
+  if (!transcript) {
+    return null;
+  }
+  return {
+    terminalId,
+    transcript,
+  };
+}
 
 async function loadTerminalArtifacts(
   terminalId: string,
@@ -174,6 +329,38 @@ async function withTerminalBindings(
     ...terminal,
     boundSessionId: bindings[terminal.terminalId] ?? null,
   }));
+}
+
+function buildCompletedTerminalChatActionResponse(input: {
+  action: TerminalChatActionRequest["action"];
+  terminalId: string;
+  sessionId: string;
+  boundSessionId: string | null;
+  turnId: string | null;
+  createdSession: boolean;
+}): TerminalChatActionCompletedResponse {
+  return {
+    status: "completed",
+    action: input.action,
+    terminalId: input.terminalId,
+    sessionId: input.sessionId,
+    boundSessionId: input.boundSessionId,
+    turnId: input.turnId,
+    createdSession: input.createdSession,
+  };
+}
+
+function buildNeedsSkillInstallResponse(input: {
+  action: "init" | "chat-in-session";
+  terminalId: string;
+  projectRoot: string;
+}): TerminalChatActionNeedsSkillInstallResponse {
+  return {
+    status: "needs_skill_install",
+    action: input.action,
+    terminalId: input.terminalId,
+    projectRoot: input.projectRoot,
+  };
 }
 
 export function registerTerminalRoutes(app: Hono): void {
@@ -324,6 +511,298 @@ export function registerTerminalRoutes(app: Hono): void {
         });
       void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
       return c.json(response satisfies TerminalPersistMessageActionResponse);
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/terminals/:terminalId/freeze-block", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId")?.trim();
+      if (!terminalId) {
+        return c.json({ error: "terminal id is required" }, 400);
+      }
+
+      const manager = getLocalTerminalManager();
+      if (!manager.getSnapshot(terminalId)) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+
+      const body = (await c.req
+        .json()
+        .catch(() => ({}))) as Partial<TerminalFreezeBlockRequest>;
+      const sessionId = body.sessionId?.trim();
+      if (!sessionId) {
+        return c.json({ error: "sessionId is required" }, 400);
+      }
+
+      const binding = await getTerminalBinding(terminalId);
+      const boundSessionId = binding.boundSessionId?.trim() ?? "";
+      if (boundSessionId && boundSessionId !== sessionId) {
+        return c.json(
+          {
+            error:
+              "terminal is already bound to a different session and cannot freeze into this session",
+          },
+          409,
+        );
+      }
+
+      const capture = await manager.consumeFrozenBlock(terminalId);
+      if (!capture) {
+        return c.json({
+          terminalId,
+          sessionId,
+          transcript: null,
+          block: null,
+        } satisfies TerminalFreezeBlockResponse);
+      }
+
+      const response = await persistTerminalSessionFrozenBlock({
+        terminalId,
+        sessionId,
+        captureKind: "manual",
+        snapshot: capture.snapshot,
+      });
+
+      void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
+      return c.json({
+        terminalId,
+        sessionId,
+        transcript: capture.transcript,
+        block: response.block,
+      } satisfies TerminalFreezeBlockResponse);
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/terminals/:terminalId/chat-action", async (c) => {
+    try {
+      const terminalId = c.req.param("terminalId")?.trim();
+      if (!terminalId) {
+        return c.json({ error: "terminal id is required" }, 400);
+      }
+
+      const manager = getLocalTerminalManager();
+      const terminal = manager.getSnapshot(terminalId);
+      if (!terminal) {
+        return c.json({ error: "terminal not found" }, 404);
+      }
+
+      const body = (await c.req
+        .json()
+        .catch(() => ({}))) as Partial<TerminalChatActionRequest>;
+      const action = body.action?.trim();
+      if (
+        action !== "send" &&
+        action !== "init" &&
+        action !== "chat-in-session"
+      ) {
+        return c.json(
+          { error: "action must be send, init, or chat-in-session" },
+          400,
+        );
+      }
+
+      if (body.text !== undefined && typeof body.text !== "string") {
+        return c.json({ error: "text must be a string" }, 400);
+      }
+      if (
+        body.images !== undefined &&
+        (!Array.isArray(body.images) ||
+          body.images.some((image) => typeof image !== "string"))
+      ) {
+        return c.json({ error: "images must be an array of strings" }, 400);
+      }
+
+      const model = parseOptionalString(body.model);
+      if (body.model !== undefined && model === undefined) {
+        return c.json({ error: "model must be a string or null" }, 400);
+      }
+
+      const effort = parseOptionalEffort(body.effort);
+      if (body.effort !== undefined && effort === undefined) {
+        return c.json({ error: "effort is invalid" }, 400);
+      }
+
+      const collaborationMode = parseOptionalCollaborationMode(
+        body.collaborationMode,
+      );
+      if (
+        body.collaborationMode !== undefined &&
+        collaborationMode === undefined
+      ) {
+        return c.json({ error: "collaborationMode is invalid" }, 400);
+      }
+
+      const skillInstallChoice = body.skillInstallChoice;
+      if (
+        skillInstallChoice !== undefined &&
+        skillInstallChoice !== null &&
+        skillInstallChoice !== "local" &&
+        skillInstallChoice !== "global"
+      ) {
+        return c.json(
+          { error: "skillInstallChoice must be local, global, or null" },
+          400,
+        );
+      }
+
+      const normalizedImages = (body.images ?? []).filter(
+        (image) => image.trim().length > 0,
+      );
+      const normalizedText = body.text?.trim() ?? "";
+      const binding = await getTerminalBinding(terminalId);
+      const boundSessionId = binding.boundSessionId?.trim() ?? "";
+
+      if (action === "send") {
+        if (!boundSessionId) {
+          return c.json(
+            { error: "terminal is not bound to a session" },
+            409,
+          );
+        }
+
+        const terminalContext = await consumeFrozenTerminalContext(
+          terminalId,
+          boundSessionId,
+        );
+        const text = buildTerminalBoundUserMessageText({
+          text: normalizedText,
+          terminalContext,
+        });
+        const input = [
+          ...toTerminalTextInput(text),
+          ...normalizedImages.map((url) => ({ type: "image", url }) as const),
+        ];
+        if (input.length === 0) {
+          return c.json(
+            {
+              error: "text, images, or a frozen terminal block is required",
+            },
+            400,
+          );
+        }
+
+        const result = await getCodexAppServerClient().sendMessage({
+          threadId: boundSessionId,
+          input,
+          ...(terminal.cwd ? { cwd: terminal.cwd } : {}),
+          ...(model !== undefined ? { model } : {}),
+          ...(effort !== undefined ? { effort } : {}),
+          ...(collaborationMode !== undefined ? { collaborationMode } : {}),
+        });
+
+        const response: TerminalChatActionResponse =
+          buildCompletedTerminalChatActionResponse({
+            action,
+            terminalId,
+            sessionId: boundSessionId,
+            boundSessionId,
+            turnId: result.turnId,
+            createdSession: false,
+          });
+        return c.json(response);
+      }
+
+      if (boundSessionId) {
+        const response: TerminalChatActionResponse =
+          buildCompletedTerminalChatActionResponse({
+            action,
+            terminalId,
+            sessionId: boundSessionId,
+            boundSessionId,
+            turnId: null,
+            createdSession: false,
+          });
+        return c.json(response);
+      }
+
+      const listSkills = getCodexAppServerClient().listSkills;
+      if (typeof listSkills !== "function") {
+        return c.json({ error: "Skills listing is unavailable." }, 501);
+      }
+
+      const skillEntries = await listSkills({
+        cwd: terminal.cwd,
+      });
+      const selectedSkillEntry =
+        skillEntries.find((entry) => entry.cwd === terminal.cwd) ??
+        skillEntries[0] ??
+        null;
+      const availability = getTerminalSkillAvailability(
+        selectedSkillEntry?.skills ?? [],
+        terminal.cwd,
+      );
+      if (!availability.isInstalled && !skillInstallChoice) {
+        const response: TerminalChatActionResponse =
+          buildNeedsSkillInstallResponse({
+            action,
+            terminalId,
+            projectRoot: terminal.cwd,
+          });
+        return c.json(response);
+      }
+
+      const createdThreadId = await getCodexAppServerClient().createThread({
+        cwd: terminal.cwd,
+        ...(model !== undefined ? { model } : {}),
+        ...(effort !== undefined ? { effort } : {}),
+      });
+      const terminalContext = await consumeFrozenTerminalContext(
+        terminalId,
+        createdThreadId,
+      );
+      const system = getSystemContextSnapshot();
+      const bootstrapMessage = buildTerminalChatBootstrapMessage({
+        terminalId,
+        cwd: terminal.cwd,
+        shell: terminal.shell.trim() || system.defaultShell || "sh",
+        osName: system.osName,
+        osRelease: system.osRelease,
+        architecture: system.architecture,
+        platform: system.platform,
+        initialUserMessage: normalizedText,
+        imageCount: normalizedImages.length,
+        terminalContext,
+      });
+      const skillInstallPrefix =
+        availability.isInstalled || !skillInstallChoice
+          ? ""
+          : buildTerminalSkillInstallMessagePrefix(skillInstallChoice);
+      const result = await getCodexAppServerClient().sendMessage({
+        threadId: createdThreadId,
+        input: [
+          {
+            type: "text",
+            text: `${skillInstallPrefix}${bootstrapMessage}`,
+          },
+          ...normalizedImages.map((url) => ({ type: "image", url }) as const),
+        ],
+        ...(terminal.cwd ? { cwd: terminal.cwd } : {}),
+        ...(model !== undefined ? { model } : {}),
+        ...(effort !== undefined ? { effort } : {}),
+      });
+
+      const terminalBinding = await setTerminalBinding(terminalId, createdThreadId);
+      void publishTerminalArtifactsForBinding(terminalId).catch(() => {});
+      const response: TerminalChatActionResponse =
+        buildCompletedTerminalChatActionResponse({
+          action,
+          terminalId,
+          sessionId: createdThreadId,
+          boundSessionId: terminalBinding.boundSessionId,
+          turnId: result.turnId,
+          createdSession: true,
+        });
+      return c.json(response);
     } catch (error) {
       return c.json(
         { error: toErrorMessage(error) },

@@ -345,6 +345,12 @@ test("MessageBlock renders terminal bootstrap user messages and hides raw tags",
 <platform>darwin</platform>
 </ai-terminal-controller-context>
 
+<terminal-command-output>
+<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<content><![CDATA[$ ls
+package.json]]></content>
+</terminal-command-output>
+
 Treat the next section as the user's first request for this terminal chat session.
 
 User first request:
@@ -363,9 +369,33 @@ Show larget 10 fiels
   assert.match(html, /arm64/);
   assert.match(html, /darwin/);
   assert.match(html, /Show larget 10 fiels/);
+  assert.match(html, /package\.json/);
   assert.match(html, /title="Show raw text"/);
   assert.doesNotMatch(html, /&lt;ai-terminal-controller-context&gt;/);
   assert.doesNotMatch(html, /&lt;user-request&gt;/);
+});
+
+test("MessageBlock renders terminal command output user messages and hides raw tags", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: `Please explain the failure.
+
+<terminal-command-output>
+<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<content><![CDATA[$ pnpm test
+FAIL src/example.test.ts]]></content>
+</terminal-command-output>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Terminal Context/);
+  assert.match(html, /Please explain the failure\./);
+  assert.match(html, /\$ pnpm test/);
+  assert.match(html, /FAIL src\/example\.test\.ts/);
+  assert.doesNotMatch(html, /&lt;terminal-command-output&gt;/);
 });
 
 test("MessageBlock keeps normal user markdown rendering for unrelated messages", () => {

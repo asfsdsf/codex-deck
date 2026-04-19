@@ -40,6 +40,8 @@ import {
   getSessionTerminalRunOutput,
   getSessionTerminalRuns,
   getTerminalSessionRoles,
+  sendTerminalChatAction,
+  freezeTerminalBlock,
   getSessionSkills,
   getWorkflowDaemonStatus,
   getWorkflowBySession,
@@ -3125,6 +3127,95 @@ test("terminal message action helper route requests expected endpoint", async ()
 
   assert.equal(actionPersisted.stepActions[0]?.decision, "rejected");
   assert.deepEqual(calls, [`/api/terminals/${terminalId}/message-action:POST`]);
+});
+
+test("freezeTerminalBlock requests expected endpoint", async () => {
+  const terminalId = "terminal-1";
+  const sessionId = "session-1";
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(`${String(input)}:${init?.method ?? "GET"}`);
+
+    if (String(input) === `/api/terminals/${terminalId}/freeze-block`) {
+      return jsonResponse({
+        terminalId,
+        sessionId,
+        transcript: "$ pnpm test\nFAIL src/example.test.ts",
+        block: {
+          blockId: "block-1",
+          terminalId,
+          sessionId,
+          type: "terminal_snapshot",
+          sequence: 1,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          messageKey: null,
+          stepId: null,
+          snapshotPath: "blocks/block-1.snapshot",
+          snapshotFormat: "xterm-serialize-v1",
+          cols: 80,
+          rows: 24,
+          snapshotLength: 12,
+          captureKind: "manual",
+          leadingMarkdown: null,
+          trailingMarkdown: null,
+          rawBlock: null,
+          contextNote: null,
+          message: null,
+          question: null,
+          steps: null,
+          stepActions: null,
+          stepFeedback: null,
+        },
+      });
+    }
+
+    return jsonResponse({ error: "unexpected route" }, 404);
+  };
+
+  const frozen = await freezeTerminalBlock(terminalId, { sessionId });
+
+  assert.equal(frozen.transcript, "$ pnpm test\nFAIL src/example.test.ts");
+  assert.equal(frozen.block?.blockId, "block-1");
+  assert.deepEqual(calls, [`/api/terminals/${terminalId}/freeze-block:POST`]);
+});
+
+test("sendTerminalChatAction requests expected endpoint", async () => {
+  const terminalId = "terminal-1";
+  const calls: string[] = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(`${String(input)}:${init?.method ?? "GET"}`);
+
+    if (String(input) === `/api/terminals/${terminalId}/chat-action`) {
+      return jsonResponse({
+        status: "completed",
+        action: "send",
+        terminalId,
+        sessionId: "session-1",
+        boundSessionId: "session-1",
+        turnId: "turn-1",
+        createdSession: false,
+      });
+    }
+
+    return jsonResponse({ error: "unexpected route" }, 404);
+  };
+
+  const response = await sendTerminalChatAction(terminalId, {
+    action: "send",
+    text: "Please explain the failure.",
+    images: ["data:image/png;base64,abc"],
+    collaborationMode: {
+      mode: "plan",
+      settings: {
+        developerInstructions: "Use read-only commands.",
+      },
+    },
+  });
+
+  assert.equal(response.status, "completed");
+  assert.equal(response.turnId, "turn-1");
+  assert.deepEqual(calls, [`/api/terminals/${terminalId}/chat-action:POST`]);
 });
 
 test("getSystemContext requests expected endpoint", async () => {

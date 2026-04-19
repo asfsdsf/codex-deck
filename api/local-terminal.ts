@@ -20,11 +20,13 @@ import {
   removeTerminalStateSync,
 } from "./terminal-state";
 import { TerminalSnapshotCapture } from "./terminal-snapshot";
+import { sanitizeTerminalTranscriptChunk } from "./terminal-transcript";
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const MAX_BUFFERED_EVENTS = 2000;
 const MAX_OUTPUT_CHARS = 1_000_000;
+const MAX_FROZEN_TRANSCRIPT_CHARS = 200_000;
 
 type TerminalListener = (event: TerminalStreamEvent) => void;
 type TerminalSummaryListener = (terminals: TerminalSummary[]) => void;
@@ -67,6 +69,12 @@ export interface LocalTerminalManager {
     terminalId: string,
     artifacts: TerminalSessionArtifactsResponse,
   ) => void;
+  consumeFrozenBlock: (
+    terminalId: string,
+  ) => Promise<{
+    snapshot: TerminalSerializedSnapshot;
+    transcript: string | null;
+  } | null>;
   consumeFrozenBlockSnapshot: (
     terminalId: string,
   ) => Promise<TerminalSerializedSnapshot | null>;
@@ -110,6 +118,7 @@ class TerminalInstance {
     DEFAULT_COLS,
     DEFAULT_ROWS,
   );
+  private frozenBlockTranscript = "";
 
   public constructor(
     public readonly terminalId: string,
@@ -188,6 +197,7 @@ class TerminalInstance {
     this.start();
     this.onStateChange();
     this.frozenBlockCapture.reset();
+    this.frozenBlockTranscript = "";
     return this.getSnapshot();
   }
 
@@ -277,8 +287,24 @@ class TerminalInstance {
     });
   }
 
+  public async consumeFrozenBlock(): Promise<{
+    snapshot: TerminalSerializedSnapshot;
+    transcript: string | null;
+  } | null> {
+    const snapshot = await this.frozenBlockCapture.consume();
+    const transcript = sanitizeTerminalTranscriptChunk(this.frozenBlockTranscript);
+    this.frozenBlockTranscript = "";
+    if (!snapshot) {
+      return null;
+    }
+    return {
+      snapshot,
+      transcript: transcript || null,
+    };
+  }
+
   public consumeFrozenBlockSnapshot(): Promise<TerminalSerializedSnapshot | null> {
-    return this.frozenBlockCapture.consume();
+    return this.consumeFrozenBlock().then((capture) => capture?.snapshot ?? null);
   }
 
   public async dispose(): Promise<void> {
@@ -356,6 +382,12 @@ class TerminalInstance {
       this.output = this.output.slice(this.output.length - MAX_OUTPUT_CHARS);
     }
     this.frozenBlockCapture.write(chunk);
+    this.frozenBlockTranscript += chunk;
+    if (this.frozenBlockTranscript.length > MAX_FROZEN_TRANSCRIPT_CHARS) {
+      this.frozenBlockTranscript = this.frozenBlockTranscript.slice(
+        this.frozenBlockTranscript.length - MAX_FROZEN_TRANSCRIPT_CHARS,
+      );
+    }
     this.publish({
       terminalId: this.terminalId,
       type: "output",
@@ -550,6 +582,15 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
       this.terminals.get(terminalId)?.consumeFrozenBlockSnapshot() ??
       Promise.resolve(null)
     );
+  }
+
+  public consumeFrozenBlock(
+    terminalId: string,
+  ): Promise<{
+    snapshot: TerminalSerializedSnapshot;
+    transcript: string | null;
+  } | null> {
+    return this.terminals.get(terminalId)?.consumeFrozenBlock() ?? Promise.resolve(null);
   }
 
   public async dispose(): Promise<void> {

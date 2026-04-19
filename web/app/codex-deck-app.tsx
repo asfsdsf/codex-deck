@@ -106,8 +106,6 @@ import {
   type WorkflowSkillInstallChoice,
 } from "../workflow-skill-install";
 import {
-  buildTerminalSkillInstallMessagePrefix,
-  getTerminalSkillAvailability,
   type TerminalSkillInstallChoice,
 } from "../terminal-skill-install";
 import { sendTerminalRestartNoticeToBoundSession } from "../terminal-session-notices";
@@ -166,7 +164,6 @@ import {
   createWorkflow as createWorkflowRequest,
   launchWorkflowTask as launchWorkflowTaskRequest,
   bindWorkflowSession as bindWorkflowSessionRequest,
-  bindTerminalSession as bindTerminalSessionRequest,
   sendWorkflowControlMessage as sendWorkflowControlMessageRequest,
   startWorkflowDaemon as startWorkflowDaemonRequest,
   stopWorkflowProcesses as stopWorkflowProcessesRequest,
@@ -182,6 +179,7 @@ import {
   restoreSavedRemoteAccount,
   rotateRemoteAdminPassword,
   sendCodexMessage,
+  sendTerminalChatAction as sendTerminalChatActionRequest,
   setSelectedRemoteMachineId,
   setRemoteLatencyLoggingEnabled,
   notifyWorkflowMutation,
@@ -196,7 +194,6 @@ import {
   type RemoteServerTrustPins,
   updateRemoteAdminSetupToken,
   getConversation,
-  getSystemContext,
   getCodexConfigDefaults,
   getSessionFileContent,
   getWorkflowProjectFileContent,
@@ -224,9 +221,6 @@ import {
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
 } from "../api";
 import {
-  buildApprovedAiTerminalInput,
-  buildAiTerminalEnvironment,
-  buildAiTerminalExecutionFeedback,
   buildAiTerminalRejectionFeedback,
   deriveAiTerminalStepStatesByMessageKey,
   extractConversationMessageText,
@@ -252,6 +246,7 @@ import {
   type PendingUserMessage,
 } from "../pending-user-messages";
 import { mergeDisplayConversationMessages } from "../conversation-message-merge";
+import { runApprovedAiTerminalStepInTerminal } from "../ai-terminal-runtime";
 import {
   applyResolvedTheme,
   getNextThemePreference,
@@ -716,63 +711,6 @@ function buildWorkflowChatBootstrapMessage(input: {
   const parts = [baseMessage];
   parts.push(
     "After loading workflow context, treat the next section as the user's first request in this session.",
-  );
-  if (input.imageCount > 0) {
-    parts.push(
-      `The user also attached ${input.imageCount} image${input.imageCount === 1 ? "" : "s"} in this same message. Use them as context for the first request.`,
-    );
-  }
-  if (normalizedUserMessage) {
-    parts.push(
-      `User first request:\n<user-request>\n${normalizedUserMessage}\n</user-request>`,
-    );
-  }
-
-  return parts.join("\n\n");
-}
-
-function buildTerminalChatBootstrapMessage(input: {
-  terminalId: string;
-  cwd: string;
-  shell: string;
-  osName: string;
-  osRelease: string;
-  architecture: string;
-  platform: string;
-  initialUserMessage: string;
-  imageCount: number;
-}): string {
-  const baseMessage = `(Use skill codex-deck-terminal) This chat is bound to terminal ${input.terminalId}. The controller will parse markdown replies that contain one terminal tag block such as <ai-terminal-plan>, <ai-terminal-need-input>, or <requirement_finished>. Inside <ai-terminal-plan>, you may emit multiple ordered <ai-terminal-step> blocks, but each step must contain exactly one non-interactive shell command. Wait for explicit approval before execution.`;
-  const normalizedUserMessage = input.initialUserMessage.trim();
-  if (!normalizedUserMessage && input.imageCount === 0) {
-    return [
-      baseMessage,
-      "<ai-terminal-controller-context>",
-      `<terminal_id>${input.terminalId}</terminal_id>`,
-      `<cwd>${input.cwd}</cwd>`,
-      `<shell>${input.shell}</shell>`,
-      `<os_name>${input.osName}</os_name>`,
-      `<os_release>${input.osRelease}</os_release>`,
-      `<architecture>${input.architecture}</architecture>`,
-      `<platform>${input.platform}</platform>`,
-      "</ai-terminal-controller-context>",
-    ].join("\n\n");
-  }
-
-  const parts = [
-    baseMessage,
-    "<ai-terminal-controller-context>",
-    `<terminal_id>${input.terminalId}</terminal_id>`,
-    `<cwd>${input.cwd}</cwd>`,
-    `<shell>${input.shell}</shell>`,
-    `<os_name>${input.osName}</os_name>`,
-    `<os_release>${input.osRelease}</os_release>`,
-    `<architecture>${input.architecture}</architecture>`,
-    `<platform>${input.platform}</platform>`,
-    "</ai-terminal-controller-context>",
-  ];
-  parts.push(
-    "Treat the next section as the user's first request for this terminal chat session.",
   );
   if (input.imageCount > 0) {
     parts.push(
@@ -7885,30 +7823,6 @@ export default function CodexDeckApp() {
     [],
   );
 
-  const resolveTerminalSkillInstallMessagePrefix = useCallback(
-    async (sessionId: string, projectRoot: string): Promise<string | null> => {
-      const response = await getSessionSkills(sessionId);
-      if (response.unavailableReason) {
-        throw new Error(response.unavailableReason);
-      }
-
-      const availability = getTerminalSkillAvailability(
-        response.skills,
-        projectRoot,
-      );
-      if (availability.isInstalled) {
-        return "";
-      }
-
-      const choice = await promptForTerminalSkillInstall(projectRoot);
-      if (choice === "cancel") {
-        return null;
-      }
-      return buildTerminalSkillInstallMessagePrefix(choice);
-    },
-    [promptForTerminalSkillInstall],
-  );
-
   const setAiTerminalStepState = useCallback(
     (
       sessionId: string,
@@ -8067,8 +7981,57 @@ export default function CodexDeckApp() {
     });
   }, [initializeWorkflowChatSession]);
 
+  const runTerminalChatAction = useCallback(
+    async (input: {
+      action: "send" | "init" | "chat-in-session";
+      payload?: MessageComposerSubmitPayload;
+      collaborationMode?: ReturnType<typeof getCollaborationModeRequestValue>;
+    }) => {
+      if (!selectedTerminalData) {
+        return null;
+      }
+
+      const terminalId = selectedTerminalData.terminalId;
+      const normalizedImages = (input.payload?.images ?? []).filter(
+        (imageUrl) => imageUrl.trim().length > 0,
+      );
+      let skillInstallChoice: Exclude<TerminalSkillInstallChoice, "cancel"> | null =
+        null;
+
+      while (true) {
+        const response = await sendTerminalChatActionRequest(terminalId, {
+          action: input.action,
+          text: input.payload?.text ?? "",
+          images: normalizedImages,
+          ...(selectedModelId ? { model: selectedModelId } : {}),
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(input.collaborationMode !== undefined
+            ? { collaborationMode: input.collaborationMode }
+            : {}),
+          ...(skillInstallChoice ? { skillInstallChoice } : {}),
+        });
+        if (response.status === "completed") {
+          return response;
+        }
+
+        const choice = await promptForTerminalSkillInstall(response.projectRoot);
+        if (choice === "cancel") {
+          return null;
+        }
+        skillInstallChoice = choice;
+      }
+    },
+    [
+      promptForTerminalSkillInstall,
+      selectedEffort,
+      selectedModelId,
+      selectedTerminalData,
+    ],
+  );
+
   const initializeTerminalChatSession = useCallback(
     async (options?: {
+      action?: "init" | "chat-in-session";
       openInSessionView?: boolean;
       initialMessagePayload?: MessageComposerSubmitPayload;
     }): Promise<string | null> => {
@@ -8076,9 +8039,9 @@ export default function CodexDeckApp() {
         return null;
       }
 
+      const action = options?.action ?? "init";
       const terminalId = selectedTerminalData.terminalId;
       const projectRoot = selectedTerminalData.cwd.trim();
-      const shell = selectedTerminalData.shell.trim() || "sh";
       const existingSessionId =
         selectedTerminalData.boundSessionId?.trim() || null;
 
@@ -8096,76 +8059,28 @@ export default function CodexDeckApp() {
         return existingSessionId;
       }
 
-      const initialMessagePayload = options?.initialMessagePayload;
-      const normalizedUserFirstMessage =
-        initialMessagePayload?.text.trim() ?? "";
-      const normalizedImages = (initialMessagePayload?.images ?? []).filter(
-        (imageUrl) => imageUrl.trim().length > 0,
-      );
-
       setTerminalBindingBusy(true);
       try {
-        const system = await getSystemContext();
-        const environment = buildAiTerminalEnvironment({
-          system,
-          cwd: projectRoot,
-          shell,
+        const response = await runTerminalChatAction({
+          action,
+          payload: options?.initialMessagePayload,
         });
-        const created = await createCodexThread({
-          cwd: projectRoot,
-          ...(selectedModelId ? { model: selectedModelId } : {}),
-          ...(selectedEffort ? { effort: selectedEffort } : {}),
-        });
-        await ensureSessionVisibleInLocalState(created.threadId, projectRoot);
-
-        const skillInstallPrefix =
-          await resolveTerminalSkillInstallMessagePrefix(
-            created.threadId,
-            projectRoot,
-          );
-        if (skillInstallPrefix === null) {
+        if (!response) {
           return null;
         }
 
-        const bootstrapMessage = buildTerminalChatBootstrapMessage({
-          terminalId,
-          cwd: environment.cwd,
-          shell: environment.shell,
-          osName: environment.osName,
-          osRelease: environment.osRelease,
-          architecture: environment.architecture,
-          platform: environment.platform,
-          initialUserMessage: normalizedUserFirstMessage,
-          imageCount: normalizedImages.length,
-        });
-
-        const bootstrapMessageWithSkillInstall = `${skillInstallPrefix}${bootstrapMessage}`;
-        const response = await sendCodexMessage(created.threadId, {
-          input: [
-            {
-              type: "text",
-              text: bootstrapMessageWithSkillInstall,
-            },
-            ...normalizedImages.map((url) => ({ type: "image", url }) as const),
-          ],
-          cwd: projectRoot,
-          ...(selectedModelId ? { model: selectedModelId } : {}),
-          ...(selectedEffort ? { effort: selectedEffort } : {}),
-        });
-        waitSuppressSessionsRef.current.delete(created.threadId);
         if (response.turnId) {
           setPendingTurn({
-            sessionId: created.threadId,
+            sessionId: response.sessionId,
             turnId: response.turnId,
           });
         }
+        waitSuppressSessionsRef.current.delete(response.sessionId);
+        await ensureSessionVisibleInLocalState(response.sessionId, projectRoot);
 
-        const binding = await bindTerminalSessionRequest(terminalId, {
-          sessionId: created.threadId,
-        });
-        if (binding.boundSessionId) {
+        if (response.boundSessionId) {
           setSessionMode(
-            binding.boundSessionId,
+            response.boundSessionId,
             normalizeModeKey(selectedModeKey),
           );
         }
@@ -8173,15 +8088,15 @@ export default function CodexDeckApp() {
         setTerminals((current) =>
           current.map((terminal) =>
             terminal.terminalId === terminalId
-              ? { ...terminal, boundSessionId: binding.boundSessionId }
+              ? { ...terminal, boundSessionId: response.boundSessionId }
               : terminal,
           ),
         );
 
         if (options?.openInSessionView) {
-          openTerminalSession(created.threadId);
+          openTerminalSession(response.sessionId);
         }
-        return created.threadId;
+        return response.sessionId;
       } catch (error) {
         setInteractionError(
           error instanceof Error ? error.message : String(error),
@@ -8194,9 +8109,8 @@ export default function CodexDeckApp() {
     [
       ensureSessionVisibleInLocalState,
       normalizeModeKey,
-      resolveTerminalSkillInstallMessagePrefix,
+      runTerminalChatAction,
       selectedEffort,
-      selectedModelId,
       selectedModeKey,
       selectedTerminalData,
       selectSessionIfAvailable,
@@ -8206,6 +8120,7 @@ export default function CodexDeckApp() {
 
   const handleChatInTerminalSession = useCallback(async () => {
     await initializeTerminalChatSession({
+      action: "chat-in-session",
       openInSessionView: true,
     });
   }, [initializeTerminalChatSession]);
@@ -9429,29 +9344,114 @@ export default function CodexDeckApp() {
         return false;
       }
 
-      const sent = await sendMessageText(payload, {
-        sessionIdOverride: terminalComposerSessionId,
-        cwdOverride: selectedTerminalData.cwd,
-      });
-      if (!sent) {
+      const normalizedText = payload.text.trim();
+      const normalizedImages = payload.images.filter(
+        (imageUrl) =>
+          typeof imageUrl === "string" && imageUrl.trim().length > 0,
+      );
+      if (!normalizedText && normalizedImages.length === 0) {
         return false;
       }
 
-      const normalizedText = payload.text.trim();
-      if (!normalizedText) {
-        return true;
+      const requestedMode = getSessionMode(terminalComposerSessionId);
+      const modeToUse = normalizeModeKey(requestedMode);
+      const modeOption =
+        collaborationModes.find((mode) => mode.mode === modeToUse) ?? null;
+      const effectiveModelIdForRequest = getEffectiveModelId({
+        selectedModelId,
+        selectedModeOption: modeOption,
+        configDefaults,
+        models,
+      });
+      const effectiveReasoningEffortForRequest = getEffectiveReasoningEffort({
+        selectedEffort,
+        selectedModeKey: modeToUse,
+        selectedModeOption: modeOption,
+        configDefaults,
+        models,
+        effectiveModelId: effectiveModelIdForRequest,
+      });
+      const collaborationMode = getCollaborationModeRequestValue({
+        selectedModeKey: modeToUse,
+        selectedModeOption: modeOption,
+        effectiveModelId: effectiveModelIdForRequest,
+        effectiveReasoningEffort: effectiveReasoningEffortForRequest,
+      });
+      if (modeToUse !== DEFAULT_MODE_KEY && !collaborationMode) {
+        setInteractionError(
+          "Selected collaboration mode is not ready yet. Wait for model info to load and try again.",
+        );
+        return false;
       }
 
-      setMessageHistoryBySession((current) => {
-        const sessionHistory = current[terminalComposerSessionId] ?? [];
-        return {
-          ...current,
-          [terminalComposerSessionId]: [...sessionHistory, normalizedText],
-        };
-      });
-      return true;
+      const pendingId = enqueuePendingUserMessage(terminalComposerSessionId, payload);
+      setSendingMessage(true);
+      setInteractionError(null);
+      waitSuppressSessionsRef.current.delete(terminalComposerSessionId);
+
+      try {
+        const response = await runTerminalChatAction({
+          action: "send",
+          payload,
+          collaborationMode,
+        });
+        if (!response) {
+          removePendingUserMessageById(terminalComposerSessionId, pendingId);
+          return false;
+        }
+
+        setSessionMode(terminalComposerSessionId, modeToUse);
+        markPendingUserMessageAwaitingConfirmation(
+          terminalComposerSessionId,
+          pendingId,
+        );
+        if (response.turnId) {
+          setPendingTurn({
+            sessionId: terminalComposerSessionId,
+            turnId: response.turnId,
+          });
+        }
+
+        if (normalizedText) {
+          setMessageHistoryBySession((current) => {
+            const sessionHistory = current[terminalComposerSessionId] ?? [];
+            return {
+              ...current,
+              [terminalComposerSessionId]: [...sessionHistory, normalizedText],
+            };
+          });
+        }
+        return true;
+      } catch (error) {
+        removePendingUserMessageById(terminalComposerSessionId, pendingId);
+        const message = error instanceof Error ? error.message : String(error);
+        if (isSessionUnavailableMessage(message)) {
+          notifySessionUnavailable();
+          return false;
+        }
+        setInteractionError(message);
+        return false;
+      } finally {
+        setSendingMessage(false);
+      }
     },
-    [selectedTerminalData, sendMessageText, terminalComposerSessionId],
+    [
+      collaborationModes,
+      configDefaults,
+      enqueuePendingUserMessage,
+      getSessionMode,
+      markPendingUserMessageAwaitingConfirmation,
+      models,
+      normalizeModeKey,
+      notifySessionUnavailable,
+      removePendingUserMessageById,
+      runTerminalChatAction,
+      selectedTerminalData,
+      selectedEffort,
+      selectedModelId,
+      setSessionMode,
+      terminalComposerSessionId,
+    ],
   );
 
   const handleTerminalRestarted = useCallback(() => {
@@ -9480,6 +9480,7 @@ export default function CodexDeckApp() {
   const handleTerminalComposerInit = useCallback(
     async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
       const sessionId = await initializeTerminalChatSession({
+        action: "init",
         openInSessionView: false,
         initialMessagePayload: payload,
       });
@@ -9512,89 +9513,21 @@ export default function CodexDeckApp() {
       setInteractionError(null);
 
       try {
-        const normalizedInput = buildApprovedAiTerminalInput(input.step);
-        const clientId =
-          typeof crypto !== "undefined" &&
-          typeof crypto.randomUUID === "function"
-            ? crypto.randomUUID()
-            : `terminal-approve-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-        let claimedWrite = false;
-        try {
-          await sendTerminalInputRequest(
-            input.terminalId,
-            { input: normalizedInput },
-            clientId,
-          );
-        } catch (sendError) {
-          const message =
-            sendError instanceof Error ? sendError.message : String(sendError);
-          if (!message.toLowerCase().includes("owns terminal write")) {
-            throw sendError;
-          }
-          await claimTerminalWriteRequest(input.terminalId, clientId);
-          claimedWrite = true;
-          await sendTerminalInputRequest(
-            input.terminalId,
-            { input: normalizedInput },
-            clientId,
-          );
-        } finally {
-          if (claimedWrite) {
-            void releaseTerminalWriteRequest(input.terminalId, clientId).catch(
-              () => {},
-            );
-          }
-        }
+        const { actionPersistError } = await runApprovedAiTerminalStepInTerminal(
+          input,
+          {
+            claimTerminalWrite: claimTerminalWriteRequest,
+            persistTerminalMessageAction: persistTerminalMessageActionRequest,
+            releaseTerminalWrite: releaseTerminalWriteRequest,
+            sendTerminalInput: sendTerminalInputRequest,
+          },
+        );
 
-        let actionPersistError: string | null = null;
-        try {
-          await persistTerminalMessageActionRequest(input.terminalId, {
-            sessionId: input.sessionId,
-            messageKey: input.messageKey,
-            stepId: input.step.stepId,
-            decision: "approved",
-            reason: null,
-          });
-        } catch (persistError) {
-          actionPersistError =
-            persistError instanceof Error
-              ? persistError.message
-              : String(persistError);
-        }
-
-        const parsedResult = {
-          stepId: input.step.stepId,
-          exitCode: null,
-          timedOut: false,
-          cwdAfter:
-            selectedTerminalData?.cwd?.trim() ||
-            selectedSessionData?.project ||
-            ".",
-          outputSummary:
-            "Command was sent to the shared interactive terminal. Watch live output in the terminal pane and interact there (including Ctrl+C or manual input) if needed.",
-          errorSummary: null as string | null,
-          rawOutput: "",
-          markerFound: false,
-        };
-        const stepFailed = false;
         setAiTerminalStepState(
           input.sessionId,
           input.messageKey,
           input.step.stepId,
-          stepFailed ? "failed" : "completed",
-        );
-
-        await sendMessageText(
-          {
-            text: buildAiTerminalExecutionFeedback({
-              result: parsedResult,
-            }),
-            images: [],
-          },
-          {
-            sessionIdOverride: input.sessionId,
-            cwdOverride: parsedResult.cwdAfter,
-          },
+          "completed",
         );
         if (actionPersistError) {
           setInteractionError(
@@ -9618,9 +9551,6 @@ export default function CodexDeckApp() {
       persistTerminalMessageActionRequest,
       releaseTerminalWriteRequest,
       sendTerminalInputRequest,
-      selectedTerminalData?.cwd,
-      selectedSessionData?.project,
-      sendMessageText,
       setAiTerminalStepState,
     ],
   );

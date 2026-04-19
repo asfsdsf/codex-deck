@@ -49,6 +49,10 @@ import type {
   TerminalInputRequest,
   TerminalPersistMessageActionRequest,
   TerminalPersistMessageActionResponse,
+  TerminalFreezeBlockRequest,
+  TerminalFreezeBlockResponse,
+  TerminalChatActionRequest,
+  TerminalChatActionResponse,
   TerminalResizeRequest,
   TerminalSnapshotResponse,
   SessionDiffMode,
@@ -1265,6 +1269,38 @@ export async function persistTerminalMessageAction(
 ): Promise<TerminalPersistMessageActionResponse> {
   return requestJson<TerminalPersistMessageActionResponse>(
     `/api/terminals/${encodeURIComponent(terminalId)}/message-action`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function freezeTerminalBlock(
+  terminalId: string,
+  input: TerminalFreezeBlockRequest,
+): Promise<TerminalFreezeBlockResponse> {
+  return requestJson<TerminalFreezeBlockResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/freeze-block`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function sendTerminalChatAction(
+  terminalId: string,
+  input: TerminalChatActionRequest,
+): Promise<TerminalChatActionResponse> {
+  return requestJson<TerminalChatActionResponse>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/chat-action`,
     {
       method: "POST",
       headers: {
