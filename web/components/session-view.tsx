@@ -250,6 +250,7 @@ interface SessionViewProps {
     sessionId: string;
     terminalId: string;
     messageKey: string;
+    clientId?: string;
     step: AiTerminalStepDirective;
   }) => Promise<boolean>;
   onRejectAiTerminalStep?: (input: {

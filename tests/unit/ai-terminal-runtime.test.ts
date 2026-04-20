@@ -112,6 +112,61 @@ test("runApprovedAiTerminalStepInTerminal sends the approved command and persist
   ]);
 });
 
+test("runApprovedAiTerminalStepInTerminal reuses the active terminal client id when provided", async () => {
+  const calls: string[] = [];
+
+  const result = await runApprovedAiTerminalStepInTerminal(
+    {
+      sessionId: "session-active-client",
+      terminalId: "terminal-active-client",
+      messageKey: "message-active-client",
+      clientId: "terminal-pane-client",
+      step: {
+        stepId: "step-active-client",
+        command: "pwd",
+      },
+    },
+    {
+      createClientId: () => {
+        throw new Error("createClientId should not be used when clientId is provided");
+      },
+      sendTerminalInput: async (terminalId, request, clientId) => {
+        calls.push(
+          `send:${terminalId}:${request.input.replace("\n", "\\n")}:${clientId ?? "none"}`,
+        );
+        return {
+          ok: true,
+          startSeq: 18,
+          startOffset: 0,
+        } as TerminalInputResponse;
+      },
+      claimTerminalWrite: async () => {
+        calls.push("claim");
+        return { ok: true } as TerminalCommandResponse;
+      },
+      releaseTerminalWrite: async () => {
+        calls.push("release");
+        return { ok: true } as TerminalCommandResponse;
+      },
+      persistTerminalMessageAction: async (terminalId, request) => {
+        calls.push(`persist:${terminalId}:${request.decision}`);
+        return {
+          terminalId,
+          sessionId: request.sessionId,
+          messageKey: request.messageKey,
+          stepActions: [],
+        } as TerminalPersistMessageActionResponse;
+      },
+    },
+  );
+
+  assert.equal(result.actionPersistError, null);
+  assert.deepEqual(calls, [
+    "send:terminal-active-client:pwd\r:terminal-pane-client",
+    "persist:terminal-active-client:approved",
+  ]);
+});
+
 test("runApprovedAiTerminalStepInTerminal claims and releases terminal write when required", async () => {
   const calls: string[] = [];
   let attempts = 0;

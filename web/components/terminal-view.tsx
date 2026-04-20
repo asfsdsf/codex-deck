@@ -53,6 +53,7 @@ interface TerminalViewProps {
     sessionId: string;
     terminalId: string;
     messageKey: string;
+    clientId?: string;
     bracketedPasteMode?: boolean | null;
     step: AiTerminalStepDirective;
   }) => Promise<boolean>;
@@ -599,6 +600,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       }
       return onApproveAiTerminalStep({
         ...input,
+        clientId: clientIdRef.current,
         bracketedPasteMode: terminalRef.current?.modes.bracketedPasteMode,
       });
     },

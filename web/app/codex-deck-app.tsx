@@ -9469,6 +9469,7 @@ export default function CodexDeckApp() {
       sessionId: string;
       terminalId: string;
       messageKey: string;
+      clientId?: string;
       bracketedPasteMode?: boolean | null;
       step: AiTerminalStepDirective;
     }): Promise<boolean> => {
