@@ -4,6 +4,7 @@ import type {
   TerminalSessionBlockRecordWithSnapshot,
 } from "@codex-deck/api";
 import { sanitizeTerminalTranscriptChunk } from "../api/terminal-transcript";
+import { buildTerminalPasteInput } from "./terminal-user-input";
 
 export const AI_TERMINAL_DEVELOPER_INSTRUCTIONS = `You are an AI terminal planning assistant.
 
@@ -195,8 +196,14 @@ function normalizeText(value: string | null | undefined): string | null {
 
 export function buildApprovedAiTerminalInput(
   step: Pick<AiTerminalStepDirective, "command">,
+  options?: {
+    bracketedPasteMode?: boolean | null;
+  },
 ): string {
-  return step.command.endsWith("\n") ? step.command : `${step.command}\n`;
+  const command = step.command.replace(/(?:\r?\n)+$/u, "");
+  return `${buildTerminalPasteInput(command, {
+    bracketedPasteMode: options?.bracketedPasteMode,
+  })}\r`;
 }
 
 function decodeXmlText(value: string): string {

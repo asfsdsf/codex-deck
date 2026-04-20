@@ -107,7 +107,6 @@ import {
   type WorkflowSkillInstallChoice,
 } from "../workflow-skill-install";
 import { type TerminalSkillInstallChoice } from "../api/terminal-skill-install";
-import { sendTerminalRestartNoticeToBoundSession } from "../terminal-session-notices";
 import {
   resolveSelectedWorkflowSummary,
   resolveWorkflowSelection,
@@ -225,12 +224,9 @@ import {
 } from "../api";
 import {
   buildAiTerminalRejectionFeedback,
-  deriveAiTerminalStepStatesByMessageKey,
   extractConversationMessageText,
-  getAiTerminalMessageKey,
   parseAiTerminalMessage,
   type AiTerminalStepDirective,
-  type AiTerminalStepState,
 } from "../ai-terminal";
 import {
   getCollaborationModeRequestValue,
@@ -240,6 +236,11 @@ import {
   getModelControlLabel,
   getModelDisplayName,
 } from "../session-config-utils";
+import {
+  deriveTerminalEmbeddedMessagesState,
+  EMPTY_TERMINAL_EMBEDDED_MESSAGES_STATE,
+  type TerminalEmbeddedMessagesState,
+} from "../terminal-embedded-messages";
 import {
   appendPendingUserMessage,
   consumeConfirmedPendingUserMessages,
@@ -3454,21 +3455,10 @@ export default function CodexDeckApp() {
     workflowLatestSessionPreviewLoading,
     setWorkflowLatestSessionPreviewLoading,
   ] = useState(false);
-  const [terminalEmbeddedMessages, setTerminalEmbeddedMessages] = useState<{
-    sessionId: string | null;
-    messages: Array<{
-      messageKey: string;
-      message: ConversationMessage;
-    }>;
-    persistedStepStatesByMessageKey: Record<
-      string,
-      Record<string, AiTerminalStepState | undefined>
-    >;
-  }>({
-    sessionId: null,
-    messages: [],
-    persistedStepStatesByMessageKey: {},
-  });
+  const [terminalEmbeddedMessages, setTerminalEmbeddedMessages] =
+    useState<TerminalEmbeddedMessagesState>(
+      EMPTY_TERMINAL_EMBEDDED_MESSAGES_STATE,
+    );
   const [terminalEmbeddedMessagesLoading, setTerminalEmbeddedMessagesLoading] =
     useState(false);
   const terminalEmbeddedRawMessagesRef = useRef<ConversationMessage[]>([]);
@@ -9443,18 +9433,6 @@ export default function CodexDeckApp() {
     [handleTerminalComposerSendMessage],
   );
 
-  const handleTerminalRestarted = useCallback(() => {
-    void sendTerminalRestartNoticeToBoundSession({
-      boundSessionId: terminalComposerSessionId,
-      cwd: selectedTerminalData?.cwd ?? null,
-      sendMessage: sendMessageText,
-    }).catch((error) => {
-      setInteractionError(
-        error instanceof Error ? error.message : String(error),
-      );
-    });
-  }, [selectedTerminalData?.cwd, sendMessageText, terminalComposerSessionId]);
-
   const handleWorkflowComposerInit = useCallback(
     async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
       const sessionId = await initializeWorkflowChatSession({
@@ -9491,6 +9469,7 @@ export default function CodexDeckApp() {
       sessionId: string;
       terminalId: string;
       messageKey: string;
+      bracketedPasteMode?: boolean | null;
       step: AiTerminalStepDirective;
     }): Promise<boolean> => {
       setInteractionError(null);
@@ -9692,35 +9671,13 @@ export default function CodexDeckApp() {
         newMessages,
         batch?.insertion ?? "append",
       );
-      const mergedMessages = terminalEmbeddedRawMessagesRef.current;
-      const persistedStepStatesByMessageKey =
-        deriveAiTerminalStepStatesByMessageKey(mergedMessages, {
-          getMessage: (message) => message,
-          getMessageKey: (message, _messageIndex, planIndex) =>
-            getAiTerminalMessageKey(message) ??
-            `terminal-ai:${sessionId}:${planIndex}`,
-        });
-      setTerminalEmbeddedMessages({
-        sessionId,
-        messages: mergedMessages
-          .filter((message) => {
-            if (message.type !== "assistant") {
-              return false;
-            }
-            return (
-              parseAiTerminalMessage(
-                extractConversationMessageText(message),
-              ) !== null
-            );
-          })
-          .map((message, index) => ({
-            messageKey:
-              getAiTerminalMessageKey(message) ??
-              `terminal-ai:${sessionId}:${index}`,
-            message,
-          })),
-        persistedStepStatesByMessageKey,
-      });
+      setTerminalEmbeddedMessages((current) =>
+        deriveTerminalEmbeddedMessagesState({
+          current,
+          sessionId,
+          mergedMessages: terminalEmbeddedRawMessagesRef.current,
+        }),
+      );
       setTerminalEmbeddedMessagesLoading(false);
       handleConversationActivity(sessionId, {
         ...getConversationActivityDetails(
@@ -9732,13 +9689,7 @@ export default function CodexDeckApp() {
         done: batch?.done ?? true,
       });
     },
-    [
-      deriveAiTerminalStepStatesByMessageKey,
-      extractConversationMessageText,
-      getAiTerminalMessageKey,
-      handleConversationActivity,
-      parseAiTerminalMessage,
-    ],
+    [handleConversationActivity],
   );
 
   const handleTerminalEmbeddedMessagesHeartbeat = useCallback(() => {
@@ -9825,11 +9776,7 @@ export default function CodexDeckApp() {
     const normalizedSessionId = terminalComposerSessionId?.trim() ?? "";
     if (centerView !== "terminal" || !normalizedSessionId) {
       terminalEmbeddedRawMessagesRef.current = [];
-      setTerminalEmbeddedMessages({
-        sessionId: null,
-        messages: [],
-        persistedStepStatesByMessageKey: {},
-      });
+      setTerminalEmbeddedMessages(EMPTY_TERMINAL_EMBEDDED_MESSAGES_STATE);
       setTerminalEmbeddedMessagesLoading(false);
       return;
     }
@@ -9845,9 +9792,8 @@ export default function CodexDeckApp() {
       current.sessionId === normalizedSessionId
         ? current
         : {
+            ...EMPTY_TERMINAL_EMBEDDED_MESSAGES_STATE,
             sessionId: normalizedSessionId,
-            messages: [],
-            persistedStepStatesByMessageKey: {},
           },
     );
 
@@ -12368,7 +12314,6 @@ export default function CodexDeckApp() {
                       onChatInSession={() => {
                         void handleChatInTerminalSession();
                       }}
-                      onTerminalRestarted={handleTerminalRestarted}
                       onFilePathLinkClick={handleFilePathLinkClick}
                       onApproveAiTerminalStep={handleApproveAiTerminalStep}
                       onRejectAiTerminalStep={handleRejectAiTerminalStep}

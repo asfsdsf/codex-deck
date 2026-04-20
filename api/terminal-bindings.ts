@@ -18,6 +18,7 @@ interface TerminalBindingRecord {
   terminalId: string;
   sessionId: string;
   updatedAt: string;
+  pendingRestartNoticeForNextMessage?: boolean;
 }
 
 const terminalBindingChangeListeners = new Set<() => void>();
@@ -102,6 +103,12 @@ function normalizeTerminalBindingRecord(
     terminalId,
     sessionId,
     updatedAt,
+    ...(typeof record.pendingRestartNoticeForNextMessage === "boolean"
+      ? {
+          pendingRestartNoticeForNextMessage:
+            record.pendingRestartNoticeForNextMessage,
+        }
+      : {}),
   };
 }
 
@@ -142,6 +149,21 @@ async function ensureTerminalBindingDirs(
     mkdir(getTerminalBindingsDir(codexHome), { recursive: true }),
     mkdir(getTerminalSessionIndexDir(codexHome), { recursive: true }),
   ]);
+}
+
+async function writeBindingRecord(
+  record: TerminalBindingRecord,
+  codexHome?: string | null,
+): Promise<void> {
+  const payload = JSON.stringify(record, null, 2) + "\n";
+  await writeTextFileAtomic(
+    getTerminalBindingPath(record.terminalId, codexHome),
+    payload,
+  );
+  await writeTextFileAtomic(
+    getTerminalSessionIndexPath(record.sessionId, codexHome),
+    payload,
+  );
 }
 
 function normalizeId(value: string, label: string): string {
@@ -363,15 +385,7 @@ export async function setTerminalBinding(
     updatedAt: new Date().toISOString(),
   };
 
-  const payload = JSON.stringify(nextBinding, null, 2) + "\n";
-  await writeTextFileAtomic(
-    getTerminalBindingPath(normalizedTerminalId, codexHome),
-    payload,
-  );
-  await writeTextFileAtomic(
-    getTerminalSessionIndexPath(normalizedSessionId, codexHome),
-    payload,
-  );
+  await writeBindingRecord(nextBinding, codexHome);
 
   emitTerminalBindingChange();
 
@@ -379,6 +393,57 @@ export async function setTerminalBinding(
     terminalId: normalizedTerminalId,
     boundSessionId: normalizedSessionId,
   };
+}
+
+export async function setTerminalRestartNoticePending(
+  terminalId: string,
+  pending: boolean,
+  codexHome?: string | null,
+): Promise<boolean> {
+  const normalizedTerminalId = normalizeId(terminalId, "terminal id");
+  const existing = await readOptionalBindingRecord(
+    getTerminalBindingPath(normalizedTerminalId, codexHome),
+  );
+  if (!existing) {
+    return false;
+  }
+
+  const nextPending = pending === true;
+  if (Boolean(existing.pendingRestartNoticeForNextMessage) === nextPending) {
+    return true;
+  }
+
+  const nextBinding: TerminalBindingRecord = {
+    ...existing,
+    updatedAt: new Date().toISOString(),
+    ...(nextPending ? { pendingRestartNoticeForNextMessage: true } : {}),
+  };
+  if (!nextPending) {
+    delete nextBinding.pendingRestartNoticeForNextMessage;
+  }
+
+  await writeBindingRecord(nextBinding, codexHome);
+  emitTerminalBindingChange();
+  return true;
+}
+
+export async function getTerminalRestartNoticePending(
+  terminalId: string,
+  sessionId?: string | null,
+  codexHome?: string | null,
+): Promise<boolean> {
+  const normalizedTerminalId = normalizeId(terminalId, "terminal id");
+  const normalizedSessionId = sessionId?.trim() ?? "";
+  const existing = await readOptionalBindingRecord(
+    getTerminalBindingPath(normalizedTerminalId, codexHome),
+  );
+  if (!existing) {
+    return false;
+  }
+  if (normalizedSessionId && existing.sessionId !== normalizedSessionId) {
+    return false;
+  }
+  return existing.pendingRestartNoticeForNextMessage === true;
 }
 
 export async function getTerminalSessionRoles(

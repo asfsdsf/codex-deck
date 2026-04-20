@@ -144,8 +144,25 @@ test("buildApprovedAiTerminalInput sends only the approved command", () => {
     command: "git status",
   });
 
-  assert.equal(input, "git status\n");
+  assert.equal(input, "git status\r");
   assert.doesNotMatch(input, /^cd\s+/m);
+});
+
+test("buildApprovedAiTerminalInput uses bracketed paste for special-character commands when available", () => {
+  const input = buildApprovedAiTerminalInput(
+    {
+      command:
+        "find . -type f -exec stat -f '%z %N' {} + | sort -nr | head -n 100\"\"",
+    },
+    {
+      bracketedPasteMode: true,
+    },
+  );
+
+  assert.equal(
+    input,
+    "\u001b[200~find . -type f -exec stat -f '%z %N' {} + | sort -nr | head -n 100\"\"\u001b[201~\r",
+  );
 });
 
 test("getAiTerminalMessageKey prefers stable timestamp identity over chunk-scoped message uuids", () => {

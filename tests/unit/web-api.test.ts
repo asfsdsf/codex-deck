@@ -3092,6 +3092,7 @@ test("terminal helper routes request expected endpoints", async () => {
     rows: 40,
   });
   const restarted = await restartTerminal(terminalId);
+  const activated = await restartTerminal(terminalId, undefined, "activate");
   const deleted = await deleteTerminal(terminalId);
 
   assert.equal(created.running, true);
@@ -3103,6 +3104,7 @@ test("terminal helper routes request expected endpoints", async () => {
   assert.equal(inputResult.startOffset, 2);
   assert.equal(resizeResult.seq, 8);
   assert.equal(restarted.seq, 10);
+  assert.equal(activated.seq, 10);
   assert.equal(deleted.ok, true);
   assert.deepEqual(calls, [
     "/api/terminals:POST",
@@ -3112,6 +3114,7 @@ test("terminal helper routes request expected endpoints", async () => {
     `/api/terminals/${terminalId}/input:POST`,
     `/api/terminals/${terminalId}/resize:POST`,
     `/api/terminals/${terminalId}/restart:POST`,
+    `/api/terminals/${terminalId}/restart?source=activate:POST`,
     `/api/terminals/${terminalId}:DELETE`,
   ]);
 });

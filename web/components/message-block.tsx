@@ -63,6 +63,7 @@ import {
   TodoRenderer,
   WriteRenderer,
 } from "./tool-renderers";
+import { parseTerminalRestartNoticeMessage } from "../terminal-session-notices";
 
 interface MessageBlockProps {
   message: ConversationMessage;
@@ -647,12 +648,14 @@ export function shouldClearAiTerminalPendingAction(input: {
 
 function AiTerminalPlanRenderer(props: {
   plan: AiTerminalPlanDirective;
+  rawBlock: string;
   trailingMarkdown: string;
   leadingMarkdown: string;
   aiTerminalContext?: MessageBlockProps["aiTerminalContext"];
   onFilePathLinkClick?: (href: string) => boolean;
 }) {
   const { plan, trailingMarkdown, leadingMarkdown, aiTerminalContext } = props;
+  const [viewMode, setViewMode] = useState<JsonViewMode>("formatted");
   const [pendingActionsByStepId, setPendingActionsByStepId] = useState<
     Record<string, "approving" | "rejecting" | undefined>
   >({});
@@ -701,192 +704,220 @@ function AiTerminalPlanRenderer(props: {
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/90">
             AI Terminal Plan
           </div>
-          <div className="text-[10px] text-zinc-500">
-            {plan.steps.length} step{plan.steps.length === 1 ? "" : "s"}
+          <div className="flex items-center gap-1.5">
+            <div className="text-[10px] text-zinc-500">
+              {plan.steps.length} step{plan.steps.length === 1 ? "" : "s"}
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                setViewMode((current) =>
+                  current === "formatted" ? "raw" : "formatted",
+                )
+              }
+              className={`rounded-lg border px-2 py-1 text-[11px] font-mono transition-colors ${
+                viewMode === "raw"
+                  ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-200"
+                  : "border-zinc-600/55 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-900/80"
+              }`}
+              title={
+                viewMode === "raw" ? "Show formatted view" : "Show raw text"
+              }
+            >
+              {"</>"}
+            </button>
           </div>
         </div>
-        {plan.contextNote ? (
-          <div className="mt-2 text-xs leading-relaxed text-zinc-300">
-            <MarkdownRenderer
-              content={plan.contextNote}
-              onFilePathLinkClick={props.onFilePathLinkClick}
-            />
-          </div>
-        ) : null}
-        <div className="mt-3 space-y-3">
-          {plan.steps.map((step, index) => {
-            const state = aiTerminalContext?.stepStates?.[step.stepId];
-            const pendingAction = pendingActionsByStepId[step.stepId];
-            const riskClasses = getAiTerminalRiskClasses(step.risk);
-            const stateLabel = getAiTerminalStepStateLabel(
-              state,
-              aiTerminalContext?.isActionable === true,
-            );
-            const hasChosenAction =
-              state === "running" ||
-              state === "completed" ||
-              state === "failed" ||
-              state === "rejected";
-            const canApprove =
-              aiTerminalContext?.isActionable === true &&
-              step.nextAction !== "provide_input" &&
-              !hasChosenAction &&
-              !pendingAction;
-            const canReject =
-              aiTerminalContext?.isActionable === true &&
-              !hasChosenAction &&
-              pendingAction !== "approving";
-            const shouldRenderActions = shouldRenderAiTerminalStepActions({
-              canApprove:
-                (aiTerminalContext?.showStepActions ?? true) && canApprove,
-              canReject:
-                (aiTerminalContext?.showStepActions ?? true) && canReject,
-              pendingAction,
-            });
-
-            return (
-              <div
-                key={step.stepId}
-                className={`rounded-xl border p-3 ${riskClasses.stepCard}`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <div
-                    className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1.5 text-[10px] font-medium ${riskClasses.stepIndex}`}
-                  >
-                    {index + 1}
-                  </div>
-                  <div className="text-sm font-medium text-zinc-100">
-                    {step.stepGoal ?? `Step ${index + 1}`}
-                  </div>
-                  <div
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${riskClasses.riskBadge}`}
-                  >
-                    Risk {step.risk}
-                  </div>
-                  {stateLabel ? (
-                    <div
-                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${getAiTerminalStepStateClasses(
-                        state,
-                        aiTerminalContext?.isActionable === true,
-                      )}`}
-                    >
-                      {stateLabel}
-                    </div>
-                  ) : null}
-                </div>
-
-                <div
-                  className={`mt-2 rounded-lg border p-3 ${riskClasses.commandBox}`}
-                >
-                  <div className="command-syntax command-syntax-block whitespace-pre-wrap break-all text-sm text-zinc-100">
-                    {step.command}
-                  </div>
-                </div>
-
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
-                  {step.cwd ? (
-                    <span
-                      className={`rounded border px-2 py-1 font-mono ${riskClasses.metaChip}`}
-                    >
-                      {step.cwd}
-                    </span>
-                  ) : null}
-                  {step.shell ? (
-                    <span
-                      className={`rounded border px-2 py-1 font-mono ${riskClasses.metaChip}`}
-                    >
-                      {step.shell}
-                    </span>
-                  ) : null}
-                  <CopyButton
-                    text={step.command}
-                    title="Copy command"
-                    className={`rounded border ${riskClasses.copyButton}`}
-                  />
-                </div>
-
-                {step.explanation ? (
-                  <div className="mt-2 text-xs leading-relaxed text-zinc-300">
-                    <MarkdownRenderer
-                      content={step.explanation}
-                      onFilePathLinkClick={props.onFilePathLinkClick}
-                    />
-                  </div>
-                ) : null}
-
-                {step.contextNote ? (
-                  <div className="mt-2 text-xs leading-relaxed text-zinc-400">
-                    <MarkdownRenderer
-                      content={step.contextNote}
-                      onFilePathLinkClick={props.onFilePathLinkClick}
-                    />
-                  </div>
-                ) : null}
-
-                {step.nextAction === "provide_input" ? (
-                  <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
-                    This step needs more user input. Reply in the chat composer
-                    to continue.
-                  </div>
-                ) : null}
-
-                {shouldRenderActions && (
-                  <div className="mt-3 flex flex-wrap items-start gap-2">
-                    {canApprove ? (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (!aiTerminalContext?.onApproveStep) {
-                            return;
-                          }
-                          setPendingActionsByStepId((current) => ({
-                            ...current,
-                            [step.stepId]: "approving",
-                          }));
-                          const succeeded =
-                            await aiTerminalContext.onApproveStep({
-                              sessionId: aiTerminalContext.sessionId,
-                              terminalId: aiTerminalContext.terminalId,
-                              messageKey: aiTerminalContext.messageKey,
-                              step,
-                            });
-                          if (!succeeded) {
-                            setPendingActionsByStepId((current) => {
-                              const next = { ...current };
-                              delete next[step.stepId];
-                              return next;
-                            });
-                          }
-                        }}
-                        className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-500/25"
-                      >
-                        Approve and run
-                      </button>
-                    ) : pendingAction === "approving" ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 opacity-70"
-                      >
-                        Approving...
-                      </button>
-                    ) : null}
-                    {canReject && aiTerminalContext?.onRejectStep ? (
-                      <AiTerminalRejectControl
-                        sessionId={aiTerminalContext.sessionId}
-                        terminalId={aiTerminalContext.terminalId}
-                        messageKey={aiTerminalContext.messageKey}
-                        step={step}
-                        pendingAction={pendingAction}
-                        onRejectStep={aiTerminalContext.onRejectStep}
-                      />
-                    ) : null}
-                  </div>
-                )}
+        {viewMode === "raw" ? (
+          <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-zinc-800/70 bg-zinc-950/60 p-3 text-xs leading-relaxed text-zinc-300">
+            {props.rawBlock}
+          </pre>
+        ) : (
+          <>
+            {plan.contextNote ? (
+              <div className="mt-2 text-xs leading-relaxed text-zinc-300">
+                <MarkdownRenderer
+                  content={plan.contextNote}
+                  onFilePathLinkClick={props.onFilePathLinkClick}
+                />
               </div>
-            );
-          })}
-        </div>
+            ) : null}
+            <div className="mt-3 space-y-3">
+              {plan.steps.map((step, index) => {
+                const state = aiTerminalContext?.stepStates?.[step.stepId];
+                const pendingAction = pendingActionsByStepId[step.stepId];
+                const riskClasses = getAiTerminalRiskClasses(step.risk);
+                const stateLabel = getAiTerminalStepStateLabel(
+                  state,
+                  aiTerminalContext?.isActionable === true,
+                );
+                const hasChosenAction =
+                  state === "running" ||
+                  state === "completed" ||
+                  state === "failed" ||
+                  state === "rejected";
+                const canApprove =
+                  aiTerminalContext?.isActionable === true &&
+                  step.nextAction !== "provide_input" &&
+                  !hasChosenAction &&
+                  !pendingAction;
+                const canReject =
+                  aiTerminalContext?.isActionable === true &&
+                  !hasChosenAction &&
+                  pendingAction !== "approving";
+                const shouldRenderActions = shouldRenderAiTerminalStepActions({
+                  canApprove:
+                    (aiTerminalContext?.showStepActions ?? true) && canApprove,
+                  canReject:
+                    (aiTerminalContext?.showStepActions ?? true) && canReject,
+                  pendingAction,
+                });
+
+                return (
+                  <div
+                    key={step.stepId}
+                    className={`rounded-xl border p-3 ${riskClasses.stepCard}`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div
+                        className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1.5 text-[10px] font-medium ${riskClasses.stepIndex}`}
+                      >
+                        {index + 1}
+                      </div>
+                      <div className="text-sm font-medium text-zinc-100">
+                        {step.stepGoal ?? `Step ${index + 1}`}
+                      </div>
+                      <div
+                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${riskClasses.riskBadge}`}
+                      >
+                        Risk {step.risk}
+                      </div>
+                      {stateLabel ? (
+                        <div
+                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${getAiTerminalStepStateClasses(
+                            state,
+                            aiTerminalContext?.isActionable === true,
+                          )}`}
+                        >
+                          {stateLabel}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div
+                      className={`mt-2 rounded-lg border p-3 ${riskClasses.commandBox}`}
+                    >
+                      <div className="command-syntax command-syntax-block whitespace-pre-wrap break-all text-sm text-zinc-100">
+                        {step.command}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+                      {step.cwd ? (
+                        <span
+                          className={`rounded border px-2 py-1 font-mono ${riskClasses.metaChip}`}
+                        >
+                          {step.cwd}
+                        </span>
+                      ) : null}
+                      {step.shell ? (
+                        <span
+                          className={`rounded border px-2 py-1 font-mono ${riskClasses.metaChip}`}
+                        >
+                          {step.shell}
+                        </span>
+                      ) : null}
+                      <CopyButton
+                        text={step.command}
+                        title="Copy command"
+                        className={`rounded border ${riskClasses.copyButton}`}
+                      />
+                    </div>
+
+                    {step.explanation ? (
+                      <div className="mt-2 text-xs leading-relaxed text-zinc-300">
+                        <MarkdownRenderer
+                          content={step.explanation}
+                          onFilePathLinkClick={props.onFilePathLinkClick}
+                        />
+                      </div>
+                    ) : null}
+
+                    {step.contextNote ? (
+                      <div className="mt-2 text-xs leading-relaxed text-zinc-400">
+                        <MarkdownRenderer
+                          content={step.contextNote}
+                          onFilePathLinkClick={props.onFilePathLinkClick}
+                        />
+                      </div>
+                    ) : null}
+
+                    {step.nextAction === "provide_input" ? (
+                      <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
+                        This step needs more user input. Reply in the chat
+                        composer to continue.
+                      </div>
+                    ) : null}
+
+                    {shouldRenderActions && (
+                      <div className="mt-3 flex flex-wrap items-start gap-2">
+                        {canApprove ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!aiTerminalContext?.onApproveStep) {
+                                return;
+                              }
+                              setPendingActionsByStepId((current) => ({
+                                ...current,
+                                [step.stepId]: "approving",
+                              }));
+                              const succeeded =
+                                await aiTerminalContext.onApproveStep({
+                                  sessionId: aiTerminalContext.sessionId,
+                                  terminalId: aiTerminalContext.terminalId,
+                                  messageKey: aiTerminalContext.messageKey,
+                                  step,
+                                });
+                              if (!succeeded) {
+                                setPendingActionsByStepId((current) => {
+                                  const next = { ...current };
+                                  delete next[step.stepId];
+                                  return next;
+                                });
+                              }
+                            }}
+                            className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-500/25"
+                          >
+                            Approve and run
+                          </button>
+                        ) : pendingAction === "approving" ? (
+                          <button
+                            type="button"
+                            disabled
+                            className="rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-[11px] text-cyan-100 opacity-70"
+                          >
+                            Approving...
+                          </button>
+                        ) : null}
+                        {canReject && aiTerminalContext?.onRejectStep ? (
+                          <AiTerminalRejectControl
+                            sessionId={aiTerminalContext.sessionId}
+                            terminalId={aiTerminalContext.terminalId}
+                            messageKey={aiTerminalContext.messageKey}
+                            step={step}
+                            pendingAction={pendingAction}
+                            onRejectStep={aiTerminalContext.onRejectStep}
+                          />
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
       {trailingMarkdown ? (
         <MarkdownRenderer
@@ -900,6 +931,7 @@ function AiTerminalPlanRenderer(props: {
 
 function AiTerminalDirectiveRenderer(props: {
   directive: AiTerminalDirective;
+  rawBlock: string;
   leadingMarkdown: string;
   trailingMarkdown: string;
   aiTerminalContext?: MessageBlockProps["aiTerminalContext"];
@@ -909,6 +941,7 @@ function AiTerminalDirectiveRenderer(props: {
     return (
       <AiTerminalPlanRenderer
         plan={props.directive}
+        rawBlock={props.rawBlock}
         leadingMarkdown={props.leadingMarkdown}
         trailingMarkdown={props.trailingMarkdown}
         aiTerminalContext={props.aiTerminalContext}
@@ -1033,11 +1066,65 @@ function AiTerminalFeedbackTextSection(props: {
         {props.label}
       </div>
       <div className="text-xs leading-relaxed">
-        <MarkdownRenderer
+        <RestartNoticeAwareMarkdown
           content={props.content}
           onFilePathLinkClick={props.onFilePathLinkClick}
         />
       </div>
+    </div>
+  );
+}
+
+function TerminalRestartNoticeCallout(props: { notice: string }) {
+  return (
+    <div className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-2.5 text-amber-50 shadow-[0_0_0_1px_rgba(251,191,36,0.08)]">
+      <div className="flex items-start gap-2">
+        <AlertTriangle
+          size={14}
+          className="mt-0.5 shrink-0 text-amber-200/90"
+        />
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200/90">
+            Terminal restarted
+          </div>
+          <div className="mt-1 text-xs leading-relaxed text-amber-50/95">
+            <MarkdownRenderer content={props.notice} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RestartNoticeAwareMarkdown(props: {
+  content: string;
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  const parsedRestartNotice = parseTerminalRestartNoticeMessage(props.content);
+  if (!parsedRestartNotice) {
+    return (
+      <MarkdownRenderer
+        content={sanitizeText(props.content)}
+        onFilePathLinkClick={props.onFilePathLinkClick}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {parsedRestartNotice.leadingMarkdown ? (
+        <MarkdownRenderer
+          content={sanitizeText(parsedRestartNotice.leadingMarkdown)}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
+      <TerminalRestartNoticeCallout notice={parsedRestartNotice.notice} />
+      {parsedRestartNotice.trailingMarkdown ? (
+        <MarkdownRenderer
+          content={sanitizeText(parsedRestartNotice.trailingMarkdown)}
+          onFilePathLinkClick={props.onFilePathLinkClick}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1691,7 +1778,11 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const getVisiblePrimaryBlocks = (): ContentBlock[] => {
     return getPrimaryBlocks().filter((block) => {
       if (block.type === "text") {
-        return !!block.text && sanitizeText(block.text).length > 0;
+        return (
+          !!block.text &&
+          (sanitizeText(block.text).length > 0 ||
+            parseTerminalRestartNoticeMessage(block.text) !== null)
+        );
       }
       return (
         block.type === "image" &&
@@ -1703,7 +1794,10 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
 
   const hasVisiblePrimary = (): boolean => {
     if (typeof content === "string") {
-      return sanitizeText(content).length > 0;
+      return (
+        sanitizeText(content).length > 0 ||
+        parseTerminalRestartNoticeMessage(content) !== null
+      );
     }
     return getVisiblePrimaryBlocks().length > 0;
   };
@@ -2282,6 +2376,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                   return (
                     <AiTerminalDirectiveRenderer
                       directive={aiTerminalMessage.directive}
+                      rawBlock={aiTerminalMessage.rawBlock}
                       leadingMarkdown={aiTerminalMessage.leadingMarkdown}
                       trailingMarkdown={aiTerminalMessage.trailingMarkdown}
                       aiTerminalContext={aiTerminalContext}
@@ -2301,8 +2396,8 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                   );
                 }
                 return (
-                  <MarkdownRenderer
-                    content={sanitized}
+                  <RestartNoticeAwareMarkdown
+                    content={content}
                     onFilePathLinkClick={onFilePathLinkClick}
                   />
                 );
@@ -3572,8 +3667,9 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
   };
 
   if (block.type === "text" && block.text) {
+    const parsedRestartNotice = parseTerminalRestartNoticeMessage(block.text);
     const sanitized = sanitizeText(block.text);
-    if (!sanitized) {
+    if (!sanitized && !parsedRestartNotice) {
       return null;
     }
     const aiTerminalMessage = parseAiTerminalMessage(sanitized);
@@ -3581,6 +3677,7 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
       return wrapSearchableBlock(
         <AiTerminalDirectiveRenderer
           directive={aiTerminalMessage.directive}
+          rawBlock={aiTerminalMessage.rawBlock}
           leadingMarkdown={aiTerminalMessage.leadingMarkdown}
           trailingMarkdown={aiTerminalMessage.trailingMarkdown}
           aiTerminalContext={aiTerminalContext}
@@ -3600,8 +3697,8 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
       );
     }
     return wrapSearchableBlock(
-      <MarkdownRenderer
-        content={sanitized}
+      <RestartNoticeAwareMarkdown
+        content={block.text}
         onFilePathLinkClick={onFilePathLinkClick}
       />,
     );

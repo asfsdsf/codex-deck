@@ -304,6 +304,7 @@ const SANITIZE_PATTERNS = [
   /<command-message>[^<]*<\/command-message>/g,
   /<command-args>[^<]*<\/command-args>/g,
   /<local-command-stdout>[^<]*<\/local-command-stdout>/g,
+  /<terminal-restart-message>[\s\S]*?<\/terminal-restart-message>/g,
   /<terminal-command-output>[\s\S]*?<\/terminal-command-output>/g,
   /<system-reminder>[\s\S]*?<\/system-reminder>/g,
   /^\s*Caveat:.*?unless the user explicitly asks you to\./s,

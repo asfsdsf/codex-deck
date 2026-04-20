@@ -17,8 +17,10 @@ import {
   clearTerminalBinding,
   getTerminalBinding,
   getTerminalBindingsByTerminalIds,
+  getTerminalRestartNoticePending,
   getTerminalSessionRoles,
   onTerminalBindingChange,
+  setTerminalRestartNoticePending,
   setTerminalBinding,
   TerminalBindingConflictError,
 } from "../terminal-bindings";
@@ -68,6 +70,10 @@ import {
   toErrorMessage,
   waitForAbortableTimeout,
 } from "./utils";
+import {
+  buildTerminalRestartNoticeTag,
+  prependTerminalRestartNoticeToMessage,
+} from "../../web/terminal-session-notices";
 
 let terminalArtifactWatchersInstalled = false;
 const VALID_REASONING_EFFORTS = new Set([
@@ -183,6 +189,37 @@ function toTerminalTextInput(
     return [];
   }
   return [{ type: "text", text: normalizedText }];
+}
+
+type TerminalRestartSource = "restart" | "activate";
+
+function parseTerminalRestartSource(
+  value: string | null | undefined,
+): TerminalRestartSource | null {
+  if (!value || value === "restart") {
+    return "restart";
+  }
+  if (value === "activate") {
+    return "activate";
+  }
+  return null;
+}
+
+async function sendImmediateTerminalRestartNotice(input: {
+  terminalId: string;
+  cwd: string;
+  boundSessionId: string | null;
+}): Promise<void> {
+  const sessionId = input.boundSessionId?.trim() ?? "";
+  if (!sessionId) {
+    return;
+  }
+
+  await getCodexAppServerClient().sendMessage({
+    threadId: sessionId,
+    input: [{ type: "text", text: buildTerminalRestartNoticeTag() }],
+    ...(input.cwd.trim() ? { cwd: input.cwd.trim() } : {}),
+  });
 }
 
 async function consumeFrozenTerminalContext(
@@ -612,12 +649,17 @@ export function registerTerminalRoutes(app: Hono): void {
           return c.json({ error: "terminal is not bound to a session" }, 409);
         }
 
+        const shouldPrependRestartNotice =
+          await getTerminalRestartNoticePending(terminalId, boundSessionId);
         const terminalContext = await consumeFrozenTerminalContext(
           terminalId,
           boundSessionId,
         );
+        const textWithRestartNotice = shouldPrependRestartNotice
+          ? prependTerminalRestartNoticeToMessage(normalizedText)
+          : normalizedText;
         const text = buildTerminalBoundUserMessageText({
-          text: normalizedText,
+          text: textWithRestartNotice,
           terminalContext,
         });
         const input = [
@@ -641,6 +683,9 @@ export function registerTerminalRoutes(app: Hono): void {
           ...(effort !== undefined ? { effort } : {}),
           ...(collaborationMode !== undefined ? { collaborationMode } : {}),
         });
+        if (shouldPrependRestartNotice) {
+          await setTerminalRestartNoticePending(terminalId, false);
+        }
 
         const response: TerminalChatActionResponse =
           buildCompletedTerminalChatActionResponse({
@@ -961,6 +1006,13 @@ export function registerTerminalRoutes(app: Hono): void {
     try {
       const terminalId = c.req.param("terminalId");
       const clientId = c.req.query("clientId");
+      const source = parseTerminalRestartSource(c.req.query("source"));
+      if (!source) {
+        return c.json(
+          { error: "source must be 'restart' or 'activate'" },
+          400,
+        );
+      }
       const manager = getLocalTerminalManager();
       const currentOwner = manager.getWriteOwnerId(terminalId);
       if (currentOwner && clientId !== currentOwner) {
@@ -971,6 +1023,23 @@ export function registerTerminalRoutes(app: Hono): void {
       if (!snapshot) {
         return c.json({ error: "terminal not found" }, 404);
       }
+
+      const binding = await getTerminalBinding(terminalId);
+      const boundSessionId = binding.boundSessionId?.trim() ?? "";
+      if (source === "activate") {
+        await setTerminalRestartNoticePending(
+          terminalId,
+          boundSessionId.length > 0,
+        );
+      } else {
+        await setTerminalRestartNoticePending(terminalId, false);
+        await sendImmediateTerminalRestartNotice({
+          terminalId,
+          cwd: snapshot.cwd,
+          boundSessionId,
+        });
+      }
+
       return c.json(snapshot satisfies TerminalSnapshotResponse);
     } catch (error) {
       return c.json(

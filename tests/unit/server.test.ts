@@ -31,6 +31,9 @@ import { createServer } from "../../api/server";
 import { loadStorage } from "../../api/storage";
 import { syncTrackedTerminalSessionArtifacts } from "../../api/terminal-session-sync";
 import {
+  buildTerminalRestartNoticeTag,
+} from "../../web/terminal-session-notices";
+import {
   createTempCodexDir,
   eventMsgLine,
   responseItemMessageLine,
@@ -3880,6 +3883,291 @@ test("terminal chat action send route freezes terminal output and forwards the e
   } finally {
     setCodexAppServerClientForTests(null);
     setLocalTerminalManagerForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal restart route sends the restart notice immediately for default restarts", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-restart-notice-immediate",
+  );
+  const server = createServer({ port: 13020, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-restart-notice-1";
+  const sessionId = "session-restart-notice-1";
+  const sendMessageCalls: Array<
+    Parameters<CodexAppServerClientFacade["sendMessage"]>[0]
+  > = [];
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: false,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "",
+      seq: 0,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: false,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 0,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    consumeFrozenBlock: async () => null,
+  };
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "unused-thread",
+    sendMessage: async (input) => {
+      sendMessageCalls.push(input);
+      return { turnId: "turn-restart-1" };
+    },
+    getThreadState: async () => ({
+      threadId: sessionId,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: sessionId,
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    setCodexAppServerClientForTests(mockClient);
+    await loadStorage();
+
+    await requestJson(server, `/api/terminals/${terminalId}/binding`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+
+    const restartResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/restart`,
+      { method: "POST" },
+    );
+
+    assert.equal(restartResponse.status, 200);
+    assert.equal(sendMessageCalls.length, 1);
+    assert.equal(sendMessageCalls[0]?.threadId, sessionId);
+    assert.equal(
+      sendMessageCalls[0]?.input[0]?.type === "text"
+        ? sendMessageCalls[0].input[0].text
+        : "",
+      buildTerminalRestartNoticeTag(),
+    );
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("terminal activate restart defers the restart notice until the next send and prefixes it once", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-restart-notice-deferred",
+  );
+  const server = createServer({ port: 13021, codexDir: rootDir, open: false });
+
+  const terminalId = "terminal-restart-notice-deferred-1";
+  const sessionId = "session-restart-notice-deferred-1";
+  const sendMessageCalls: Array<
+    Parameters<CodexAppServerClientFacade["sendMessage"]>[0]
+  > = [];
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: () => ({
+      id: terminalId,
+      terminalId,
+      running: false,
+      cwd: "/repo/app",
+      shell: "zsh",
+      output: "",
+      seq: 0,
+      writeOwnerId: null,
+    }),
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: false,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 0,
+            writeOwnerId: null,
+          }
+        : null,
+    restart: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId
+        ? {
+            id: terminalId,
+            terminalId,
+            running: true,
+            cwd: "/repo/app",
+            shell: "zsh",
+            output: "",
+            seq: 1,
+            writeOwnerId: null,
+          }
+        : null,
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    consumeFrozenBlock: async () => null,
+  };
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "unused-thread",
+    sendMessage: async (input) => {
+      sendMessageCalls.push(input);
+      return { turnId: `turn-restart-${sendMessageCalls.length}` };
+    },
+    getThreadState: async () => ({
+      threadId: sessionId,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: sessionId,
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    setCodexAppServerClientForTests(mockClient);
+    await loadStorage();
+
+    await requestJson(server, `/api/terminals/${terminalId}/binding`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+
+    const activateResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/restart?source=activate`,
+      { method: "POST" },
+    );
+
+    assert.equal(activateResponse.status, 200);
+    assert.equal(sendMessageCalls.length, 0);
+
+    const firstSendResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/chat-action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send",
+          text: "Please continue from the previous output.",
+        }),
+      },
+    );
+
+    assert.equal(firstSendResponse.status, 200);
+    assert.equal(sendMessageCalls.length, 1);
+    assert.match(
+      sendMessageCalls[0]?.input[0]?.type === "text"
+        ? sendMessageCalls[0].input[0].text
+        : "",
+      /^<terminal-restart-message>[\s\S]*<\/terminal-restart-message>\n\nPlease continue from the previous output\.$/,
+    );
+
+    const secondSendResponse = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/chat-action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send",
+          text: "Summarize the next failure.",
+        }),
+      },
+    );
+
+    assert.equal(secondSendResponse.status, 200);
+    assert.equal(sendMessageCalls.length, 2);
+    assert.doesNotMatch(
+      sendMessageCalls[1]?.input[0]?.type === "text"
+        ? sendMessageCalls[1].input[0].text
+        : "",
+      /<terminal-restart-message>/,
+    );
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    setCodexAppServerClientForTests(null);
     server.stop();
     await cleanup();
   }

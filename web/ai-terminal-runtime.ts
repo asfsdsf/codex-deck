@@ -35,6 +35,7 @@ interface RunApprovedAiTerminalStepInput {
   sessionId: string;
   terminalId: string;
   messageKey: string;
+  bracketedPasteMode?: boolean | null;
   step: Pick<AiTerminalStepDirective, "stepId" | "command">;
 }
 
@@ -69,7 +70,9 @@ export async function runApprovedAiTerminalStepInTerminal(
   input: RunApprovedAiTerminalStepInput,
   dependencies: RunApprovedAiTerminalStepDependencies,
 ): Promise<{ actionPersistError: string | null }> {
-  const normalizedInput = buildApprovedAiTerminalInput(input.step);
+  const normalizedInput = buildApprovedAiTerminalInput(input.step, {
+    bracketedPasteMode: input.bracketedPasteMode,
+  });
   const clientId =
     dependencies.createClientId?.() ??
     (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"

@@ -107,7 +107,7 @@ test("runApprovedAiTerminalStepInTerminal sends the approved command and persist
 
   assert.equal(result.actionPersistError, null);
   assert.deepEqual(calls, [
-    "send:terminal-1:pnpm test\\n:client-1",
+    "send:terminal-1:pnpm test\r:client-1",
     "persist:terminal-1:session-1:message-1:step-1:approved:null",
   ]);
 });
@@ -164,10 +164,62 @@ test("runApprovedAiTerminalStepInTerminal claims and releases terminal write whe
 
   assert.equal(result.actionPersistError, null);
   assert.deepEqual(calls, [
-    "send:1:terminal-2:git status\\n:client-2",
+    "send:1:terminal-2:git status\r:client-2",
     "claim:terminal-2:client-2",
-    "send:2:terminal-2:git status\\n:client-2",
+    "send:2:terminal-2:git status\r:client-2",
     "release:terminal-2:client-2",
     "persist:terminal-2:approved",
+  ]);
+});
+
+test("runApprovedAiTerminalStepInTerminal brackets approved paste input when the terminal supports it", async () => {
+  const calls: string[] = [];
+
+  const result = await runApprovedAiTerminalStepInTerminal(
+    {
+      sessionId: "session-3",
+      terminalId: "terminal-3",
+      messageKey: "message-3",
+      bracketedPasteMode: true,
+      step: {
+        stepId: "step-3",
+        command:
+          "find . -type f -exec stat -f '%z %N' {} + | sort -nr | head -n 100\"\"",
+      },
+    },
+    {
+      createClientId: () => "client-3",
+      sendTerminalInput: async (terminalId, request, clientId) => {
+        calls.push(`send:${terminalId}:${request.input}:${clientId ?? "none"}`);
+        return {
+          ok: true,
+          startSeq: 30,
+          startOffset: 0,
+        } as TerminalInputResponse;
+      },
+      claimTerminalWrite: async () => {
+        assert.fail("approved bracketed paste should not need claim in this test");
+      },
+      releaseTerminalWrite: async () => {
+        assert.fail(
+          "approved bracketed paste should not need release in this test",
+        );
+      },
+      persistTerminalMessageAction: async (terminalId, request) => {
+        calls.push(`persist:${terminalId}:${request.decision}`);
+        return {
+          terminalId,
+          sessionId: request.sessionId,
+          messageKey: request.messageKey,
+          stepActions: [],
+        } as TerminalPersistMessageActionResponse;
+      },
+    },
+  );
+
+  assert.equal(result.actionPersistError, null);
+  assert.deepEqual(calls, [
+    "send:terminal-3:\u001b[200~find . -type f -exec stat -f '%z %N' {} + | sort -nr | head -n 100\"\"\u001b[201~\r:client-3",
+    "persist:terminal-3:approved",
   ]);
 });

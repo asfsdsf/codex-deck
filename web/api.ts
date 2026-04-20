@@ -1355,10 +1355,19 @@ export async function resizeTerminal(
 export async function restartTerminal(
   terminalId: string,
   clientId?: string,
+  source: "restart" | "activate" = "restart",
 ): Promise<TerminalSnapshotResponse> {
-  const params = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
+  const params = new URLSearchParams();
+  if (clientId) {
+    params.set("clientId", clientId);
+  }
+  if (source !== "restart") {
+    params.set("source", source);
+  }
   return requestJson<TerminalSnapshotResponse>(
-    `/api/terminals/${encodeURIComponent(terminalId)}/restart${params}`,
+    `/api/terminals/${encodeURIComponent(terminalId)}/restart${
+      params.size > 0 ? `?${params.toString()}` : ""
+    }`,
     {
       method: "POST",
     },

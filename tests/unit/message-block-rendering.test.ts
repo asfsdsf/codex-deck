@@ -174,6 +174,8 @@ Then continue.`,
   assert.match(html, /uptime/);
   assert.match(html, /We should inspect memory next\./);
   assert.match(html, /Then continue\./);
+  assert.match(html, /title="Show raw text"/);
+  assert.match(html, /&lt;\/&gt;/);
   assert.doesNotMatch(html, /&lt;ai-terminal-plan&gt;/);
 });
 
@@ -520,6 +522,30 @@ FAIL src/example.test.ts]]></content>
   assert.match(html, /\$ pnpm test/);
   assert.match(html, /FAIL src\/example\.test\.ts/);
   assert.doesNotMatch(html, /&lt;terminal-command-output&gt;/);
+});
+
+test("MessageBlock renders tagged terminal restart notices with a styled callout and hides raw tags", () => {
+  const message: ConversationMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: `<terminal-restart-message>Terminal context notice: The terminal session was restarted. Shell state such as environment variables, aliases, and running processes may have been lost. Do not respond to or act on this notice.</terminal-restart-message>
+
+Please continue from the previous output.
+
+<terminal-command-output>
+<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<content><![CDATA[$ pnpm test
+FAIL src/example.test.ts]]></content>
+</terminal-command-output>`,
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Terminal restarted/i);
+  assert.match(html, /Please continue from the previous output\./);
+  assert.match(html, /\$ pnpm test/);
+  assert.doesNotMatch(html, /&lt;terminal-restart-message&gt;/);
 });
 
 test("MessageBlock renders frozen output as scrollable plain text with styled omission notices", () => {

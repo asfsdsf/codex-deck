@@ -22,6 +22,7 @@ import {
   createTerminalClientId,
   type TerminalIncrementalStreamEvent,
 } from "../terminal-session-client";
+import { bindTerminalExplicitInputHandlers } from "../terminal-user-input";
 import type { ResolvedTheme } from "../theme";
 import {
   deriveAiTerminalStepStatesByArtifactMessageKey,
@@ -47,12 +48,12 @@ interface TerminalViewProps {
   embeddedMessagesLoading?: boolean;
   chatBusy?: boolean;
   onChatInSession?: () => void;
-  onTerminalRestarted?: () => void;
   onFilePathLinkClick?: (href: string) => boolean;
   onApproveAiTerminalStep?: (input: {
     sessionId: string;
     terminalId: string;
     messageKey: string;
+    bracketedPasteMode?: boolean | null;
     step: AiTerminalStepDirective;
   }) => Promise<boolean>;
   onRejectAiTerminalStep?: (input: {
@@ -73,7 +74,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     embeddedMessagesLoading = false,
     chatBusy = false,
     onChatInSession,
-    onTerminalRestarted,
     onFilePathLinkClick,
     onApproveAiTerminalStep,
     onRejectAiTerminalStep,
@@ -382,10 +382,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     fitAddonRef.current = fitAddon;
 
     const container = containerRef.current;
-
-    const disposable = terminal.onData((chunk) => {
-      terminalInputController.queueInput(chunk);
-    });
+    let explicitInputCleanup: (() => void) | null = null;
 
     if (container && typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => {
@@ -407,6 +404,10 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       }
 
       terminal.open(container);
+      explicitInputCleanup = bindTerminalExplicitInputHandlers({
+        terminal,
+        controller: terminalInputController,
+      });
       fitTerminal();
 
       // Schedule retry fits for cases where the first measurement isn't stable.
@@ -436,7 +437,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       closeStream();
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
-      disposable.dispose();
+      explicitInputCleanup?.();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -513,7 +514,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     return running ? "Running" : "Stopped";
   }, [connected, running]);
 
-  const handleRestart = useCallback(() => {
+  const handleRestart = useCallback((source: "restart" | "activate") => {
     void (async () => {
       const previousWriteOwnerId = writeOwnerIdRef.current;
       const shouldClaimWrite = shouldAutoClaimWriteAfterRestart(
@@ -523,7 +524,11 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
       restartInFlightRef.current = true;
       try {
-        const snapshot = await restartTerminal(terminalId, clientIdRef.current);
+        const snapshot = await restartTerminal(
+          terminalId,
+          clientIdRef.current,
+          source,
+        );
         if (isDisposedRef.current) {
           return;
         }
@@ -549,7 +554,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         if (nextWriteOwnerId === clientIdRef.current) {
           await sendResize();
         }
-        onTerminalRestarted?.();
       } catch (reconnectError) {
         setError(
           reconnectError instanceof Error
@@ -563,7 +567,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   }, [
     applyFullSnapshot,
     fitTerminal,
-    onTerminalRestarted,
     sendResize,
     terminalId,
   ]);
@@ -584,6 +587,24 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     })();
   }, [fitTerminal, sendResize, terminalId]);
 
+  const handleApproveStep = useCallback(
+    async (input: {
+      sessionId: string;
+      terminalId: string;
+      messageKey: string;
+      step: AiTerminalStepDirective;
+    }): Promise<boolean> => {
+      if (!onApproveAiTerminalStep) {
+        return false;
+      }
+      return onApproveAiTerminalStep({
+        ...input,
+        bracketedPasteMode: terminalRef.current?.modes.bracketedPasteMode,
+      });
+    },
+    [onApproveAiTerminalStep],
+  );
+
   return (
     <div className="h-full flex flex-col bg-zinc-950">
       <div className="h-10 border-b border-zinc-800/60 px-3 flex items-center gap-2 text-xs">
@@ -600,7 +621,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         />
         <button
           type="button"
-          onClick={handleRestart}
+          onClick={() => handleRestart("restart")}
           className="h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
           aria-label="Restart terminal"
           title="Restart terminal"
@@ -692,7 +713,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
                             stepStates:
                               artifactStepStatesByMessageKey[item.messageKey] ??
                               item.stepStates,
-                            onApproveStep: onApproveAiTerminalStep,
+                            onApproveStep: handleApproveStep,
                             onRejectStep: onRejectAiTerminalStep,
                           }
                         : undefined
@@ -743,7 +764,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
               </p>
               <button
                 type="button"
-                onClick={handleRestart}
+                onClick={() => handleRestart("activate")}
                 className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-5 text-sm font-medium text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:border-cyan-400/55 hover:bg-cyan-500/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
                 aria-label="Activate terminal emulator"
                 title="Activate terminal emulator"

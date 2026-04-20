@@ -135,6 +135,7 @@ test("sanitizeText removes internal command and reminder tags", () => {
     "<command-args>--debug</command-args>",
     "<local-command-stdout>stdout</local-command-stdout>",
     "<terminal-command-output><content><![CDATA[hidden]]></content></terminal-command-output>",
+    "<terminal-restart-message>hidden</terminal-restart-message>",
     "<system-reminder>hidden</system-reminder>",
   ].join("\n");
 

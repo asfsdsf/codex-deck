@@ -83,6 +83,9 @@ Notes:
 - When middle-line truncation happens, the transcript may include a `<codex-deck-frozen-terminal-omitted-lines-notice>` tag describing how many middle lines were skipped.
 - Treat those omission tags as controller metadata, not shell output.
 
+- User messages may include `<terminal-restart-message>...</terminal-restart-message>`.
+- This means the terminal was restarted and shell state may be lost, for example environment variables or aliases.
+
 ### Step execution result
 
 ```xml
