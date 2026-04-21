@@ -1008,10 +1008,7 @@ export function registerTerminalRoutes(app: Hono): void {
       const clientId = c.req.query("clientId");
       const source = parseTerminalRestartSource(c.req.query("source"));
       if (!source) {
-        return c.json(
-          { error: "source must be 'restart' or 'activate'" },
-          400,
-        );
+        return c.json({ error: "source must be 'restart' or 'activate'" }, 400);
       }
       const manager = getLocalTerminalManager();
       const currentOwner = manager.getWriteOwnerId(terminalId);

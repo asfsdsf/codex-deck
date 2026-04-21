@@ -30,9 +30,7 @@ import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../../api/remote/internal-p
 import { createServer } from "../../api/server";
 import { loadStorage } from "../../api/storage";
 import { syncTrackedTerminalSessionArtifacts } from "../../api/terminal-session-sync";
-import {
-  buildTerminalRestartNoticeTag,
-} from "../../web/terminal-session-notices";
+import { buildTerminalRestartNoticeTag } from "../../web/terminal-session-notices";
 import {
   createTempCodexDir,
   eventMsgLine,

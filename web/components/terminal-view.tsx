@@ -515,62 +515,60 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     return running ? "Running" : "Stopped";
   }, [connected, running]);
 
-  const handleRestart = useCallback((source: "restart" | "activate") => {
-    void (async () => {
-      const previousWriteOwnerId = writeOwnerIdRef.current;
-      const shouldClaimWrite = shouldAutoClaimWriteAfterRestart(
-        previousWriteOwnerId,
-        clientIdRef.current,
-      );
-
-      restartInFlightRef.current = true;
-      try {
-        const snapshot = await restartTerminal(
-          terminalId,
+  const handleRestart = useCallback(
+    (source: "restart" | "activate") => {
+      void (async () => {
+        const previousWriteOwnerId = writeOwnerIdRef.current;
+        const shouldClaimWrite = shouldAutoClaimWriteAfterRestart(
+          previousWriteOwnerId,
           clientIdRef.current,
-          source,
         );
-        if (isDisposedRef.current) {
-          return;
-        }
 
-        applyFullSnapshot(snapshot);
-        let nextWriteOwnerId = snapshot.writeOwnerId;
-
-        if (shouldClaimWrite && nextWriteOwnerId === null) {
-          const claim = await claimTerminalWrite(
+        restartInFlightRef.current = true;
+        try {
+          const snapshot = await restartTerminal(
             terminalId,
             clientIdRef.current,
+            source,
           );
           if (isDisposedRef.current) {
             return;
           }
-          nextWriteOwnerId = claim.writeOwnerId;
-          writeOwnerIdRef.current = claim.writeOwnerId;
-          setWriteOwnerId(claim.writeOwnerId);
-        }
 
-        restartInFlightRef.current = false;
-        fitTerminal();
-        if (nextWriteOwnerId === clientIdRef.current) {
-          await sendResize();
+          applyFullSnapshot(snapshot);
+          let nextWriteOwnerId = snapshot.writeOwnerId;
+
+          if (shouldClaimWrite && nextWriteOwnerId === null) {
+            const claim = await claimTerminalWrite(
+              terminalId,
+              clientIdRef.current,
+            );
+            if (isDisposedRef.current) {
+              return;
+            }
+            nextWriteOwnerId = claim.writeOwnerId;
+            writeOwnerIdRef.current = claim.writeOwnerId;
+            setWriteOwnerId(claim.writeOwnerId);
+          }
+
+          restartInFlightRef.current = false;
+          fitTerminal();
+          if (nextWriteOwnerId === clientIdRef.current) {
+            await sendResize();
+          }
+        } catch (reconnectError) {
+          setError(
+            reconnectError instanceof Error
+              ? reconnectError.message
+              : String(reconnectError),
+          );
+        } finally {
+          restartInFlightRef.current = false;
         }
-      } catch (reconnectError) {
-        setError(
-          reconnectError instanceof Error
-            ? reconnectError.message
-            : String(reconnectError),
-        );
-      } finally {
-        restartInFlightRef.current = false;
-      }
-    })();
-  }, [
-    applyFullSnapshot,
-    fitTerminal,
-    sendResize,
-    terminalId,
-  ]);
+      })();
+    },
+    [applyFullSnapshot, fitTerminal, sendResize, terminalId],
+  );
 
   const handleTakeOver = useCallback(() => {
     void (async () => {

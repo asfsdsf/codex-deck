@@ -114,7 +114,10 @@ export function deriveTerminalEmbeddedMessagesState(input: {
 
   if (
     input.current.sessionId === input.sessionId &&
-    areTerminalEmbeddedMessageItemsEqual(input.current.messages, nextMessages) &&
+    areTerminalEmbeddedMessageItemsEqual(
+      input.current.messages,
+      nextMessages,
+    ) &&
     areStepStatesEqual(
       input.current.persistedStepStatesByMessageKey,
       persistedStepStatesByMessageKey,

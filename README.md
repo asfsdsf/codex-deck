@@ -11,6 +11,7 @@ Browse and interact with Codex more easily, and connect Codex with your terminal
 
 [![npm version](https://img.shields.io/npm/v/codex-deck.svg)](https://www.npmjs.com/package/codex-deck)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 <div align="center">
 <img src="docs/img/terminal.png" alt="Terminal pane preview" width="600" />
 </div>
@@ -279,6 +280,7 @@ To use AI Terminal:
 3. Alternate between typing shell commands and chatting with the Codex session.
 
 You can also:
+
 - Click `Chat in session` to see the detailed steps in the Codex session.
 - Click `Continue` to let the Codex session continue.
 

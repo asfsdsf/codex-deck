@@ -99,7 +99,8 @@ export function bindTerminalExplicitInputHandlers(input: {
 
   const handlePaste = (event: Event) => {
     const clipboardEvent = event as ClipboardEvent;
-    const pastedText = clipboardEvent.clipboardData?.getData("text/plain") ?? "";
+    const pastedText =
+      clipboardEvent.clipboardData?.getData("text/plain") ?? "";
     if (!pastedText) {
       return;
     }

@@ -128,7 +128,9 @@ test("runApprovedAiTerminalStepInTerminal reuses the active terminal client id w
     },
     {
       createClientId: () => {
-        throw new Error("createClientId should not be used when clientId is provided");
+        throw new Error(
+          "createClientId should not be used when clientId is provided",
+        );
       },
       sendTerminalInput: async (terminalId, request, clientId) => {
         calls.push(
@@ -253,7 +255,9 @@ test("runApprovedAiTerminalStepInTerminal brackets approved paste input when the
         } as TerminalInputResponse;
       },
       claimTerminalWrite: async () => {
-        assert.fail("approved bracketed paste should not need claim in this test");
+        assert.fail(
+          "approved bracketed paste should not need claim in this test",
+        );
       },
       releaseTerminalWrite: async () => {
         assert.fail(
