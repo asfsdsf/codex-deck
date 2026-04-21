@@ -1,6 +1,6 @@
 {
   "name": "codex-deck",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browse and interact with Codex more easily, and orchestrate multiple tasks from a dedicated workflow board.",
   "type": "module",
   "bin": {
@@ -35,7 +35,7 @@
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
-    "@zuoyehaoduoa/wire": "workspace:*",
+    "@zuoyehaoduoa/wire": "^0.1.0",
     "chokidar": "^4.0.3",
     "commander": "^13.1.0",
     "diff": "^8.0.2",
