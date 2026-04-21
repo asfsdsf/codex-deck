@@ -6,11 +6,24 @@
 </p>
 
 <h3 align="center">
-Browse and interact with Codex more easily, and orchestrate multiple tasks from a dedicated workflow board.
+Browse and interact with Codex more easily, and connect Codex with your terminal and workflow in one place.
 </h3>
 
 [![npm version](https://img.shields.io/npm/v/codex-deck.svg)](https://www.npmjs.com/package/codex-deck)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+<div align="center">
+<img src="docs/img/terminal.png" alt="Terminal pane preview" width="600" />
+</div>
+<h4 align="center">
+AI Terminal brings Codex's AI capabilities to your terminal.
+</h4>
+
+<div align="center">
+<img src="docs/img/workflow.png" alt="Workflow board preview" width="600" />
+</div>
+<h4 align="center">
+AI Workflow lets you queue tasks, keep Codex working 24/7, and add new tasks at any time.
+</h4>
 
 ## Features
 
@@ -252,6 +265,22 @@ codex-deck \
 ### 4. Web page: sign in
 
 Open `https://your-server-host/` in a browser and sign in with the same remote username and password used for that local machine.
+
+## AI Terminal usage
+
+You can chat with Codex at any time while working in the terminal.
+
+<img title="" src="docs/img/ai-terminal.png" alt="Codex Deck Flow preview" width="641">
+
+To use AI Terminal:
+
+1. Click `Terminal` in the left pane.
+2. Click `New Terminal`.
+3. Alternate between typing shell commands and chatting with the Codex session.
+
+You can also:
+- Click `Chat in session` to see the detailed steps in the Codex session.
+- Click `Continue` to let the Codex session continue.
 
 ## Workflow usage
 
