@@ -11,6 +11,7 @@ import {
   type Interface as ReadlineInterface,
 } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
+import type { CodexAppServerEvent, CodexTurnError } from "./storage";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MODEL_LIMIT = 200;
@@ -526,15 +527,6 @@ class AppServerStdoutMessageParser {
   }
 }
 
-export const __TEST_ONLY__ = {
-  AppServerStdoutMessageParser,
-  createCodexAppServerSpawnSpec,
-  createReadCoalescer,
-  pickPreferredWindowsCommandPath,
-  resolveWindowsCommandPath,
-  sanitizeAppServerJsonText,
-};
-
 function createReadCoalescer() {
   const cache = new Map<string, ReadCacheEntry<unknown>>();
   const inFlight = new Map<string, Promise<unknown>>();
@@ -642,6 +634,9 @@ class CodexAppServerClient {
   private liveTerminalPendingDeltaByItemByThread = new Map<
     string,
     Map<string, string>
+  >();
+  private appServerEventListeners = new Set<
+    (event: CodexAppServerEvent) => void
   >();
   private readonly readCoalescer = createReadCoalescer();
 
@@ -1323,7 +1318,6 @@ class CodexAppServerClient {
         }
 
         const threadRuntimeStatus = extractThreadStatusFromReadResult(result);
-
         return {
           threadId: normalizedThreadId,
           activeTurnId,
@@ -1528,6 +1522,15 @@ class CodexAppServerClient {
     return [...runs.values()].sort(
       (left, right) => right.updatedAt - left.updatedAt,
     );
+  }
+
+  public subscribeAppServerEvents(
+    listener: (event: CodexAppServerEvent) => void,
+  ): () => void {
+    this.appServerEventListeners.add(listener);
+    return () => {
+      this.appServerEventListeners.delete(listener);
+    };
   }
 
   public getLiveTerminalRun(
@@ -1833,8 +1836,47 @@ class CodexAppServerClient {
       return;
     }
 
+    if (method === "error") {
+      this.handleErrorNotification(params);
+      return;
+    }
+
     if (method === "serverRequest/resolved") {
       this.handleServerRequestResolved(params);
+    }
+  }
+
+  private handleErrorNotification(params: unknown): void {
+    const notification = asRecord(params);
+    if (!notification) {
+      return;
+    }
+
+    const threadId = asTrimmedString(
+      notification.threadId ?? notification.thread_id,
+    );
+    const turnId = asTrimmedString(notification.turnId ?? notification.turn_id);
+    if (!threadId || !turnId) {
+      return;
+    }
+
+    const error = parseTurnError(notification.error);
+    const willRetry =
+      notification.willRetry === true || notification.will_retry === true;
+    this.emitAppServerEvent({
+      type: "error",
+      threadId,
+      turnId,
+      willRetry,
+      error,
+    });
+
+    this.clearThreadStateCache(threadId);
+  }
+
+  private emitAppServerEvent(event: CodexAppServerEvent): void {
+    for (const listener of this.appServerEventListeners) {
+      listener(event);
     }
   }
 
@@ -3040,6 +3082,26 @@ function toTurnStatus(value: unknown): CodexTurnStatus | null {
   return null;
 }
 
+function parseTurnError(value: unknown): CodexTurnError | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const message = asString(record.message)?.trim() ?? "";
+  const additionalDetails = asString(
+    record.additionalDetails ?? record.additional_details,
+  );
+  if (!message && additionalDetails === null) {
+    return null;
+  }
+
+  return {
+    message,
+    additionalDetails,
+  };
+}
+
 function shouldRetryAfterResume(error: unknown): boolean {
   if (!(error instanceof CodexAppServerRpcError)) {
     return false;
@@ -3337,6 +3399,9 @@ export interface CodexAppServerClientFacade {
     threadId: string,
     processId: string,
   ) => CodexLiveTerminalRun | null;
+  subscribeAppServerEvents?: (
+    listener: (event: CodexAppServerEvent) => void,
+  ) => () => void;
 }
 
 export function getCodexAppServerClient(): CodexAppServerClientFacade {
@@ -3387,6 +3452,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.listLiveTerminalRuns(threadId),
     getLiveTerminalRun: (threadId: string, processId: string) =>
       client!.getLiveTerminalRun(threadId, processId),
+    subscribeAppServerEvents: (
+      listener: (event: CodexAppServerEvent) => void,
+    ) => client!.subscribeAppServerEvents(listener),
   };
 }
 
@@ -3415,3 +3483,13 @@ export function isCodexReasoningEffort(
 export function isCodexServiceTier(value: unknown): value is CodexServiceTier {
   return toServiceTier(value) !== null;
 }
+
+export const __TEST_ONLY__ = {
+  AppServerStdoutMessageParser,
+  CodexAppServerClient,
+  createCodexAppServerSpawnSpec,
+  createReadCoalescer,
+  pickPreferredWindowsCommandPath,
+  resolveWindowsCommandPath,
+  sanitizeAppServerJsonText,
+};

@@ -232,3 +232,53 @@ test("read coalescer can clear matching cached keys", async () => {
   assert.equal(await coalescer.getOrLoad("thread-state:a:", 1_000, load), 2);
   assert.equal(callCount, 2);
 });
+
+test("app-server notifications are emitted as live codex events", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient({
+    requestTimeoutMs: 100,
+  });
+  const events: unknown[] = [];
+  const unsubscribe = client.subscribeAppServerEvents((event) => {
+    events.push(event);
+  });
+  const handleNotification = (
+    client as unknown as {
+      handleServerNotification: (method: string, params: unknown) => void;
+    }
+  ).handleServerNotification.bind(client);
+
+  handleNotification("error", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    willRetry: true,
+    error: {
+      message: "Reconnecting... 1/5",
+      additionalDetails: "Idle timeout waiting for SSE",
+    },
+  });
+
+  assert.deepEqual(events, [
+    {
+      type: "error",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      willRetry: true,
+      error: {
+        message: "Reconnecting... 1/5",
+        additionalDetails: "Idle timeout waiting for SSE",
+      },
+    },
+  ]);
+
+  unsubscribe();
+  handleNotification("error", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+    willRetry: true,
+    error: {
+      message: "Reconnecting... 2/5",
+      additionalDetails: null,
+    },
+  });
+  assert.equal(events.length, 1);
+});

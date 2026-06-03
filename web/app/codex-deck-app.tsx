@@ -13,6 +13,7 @@ import {
   type RefObject,
 } from "react";
 import type {
+  CodexAppServerEvent,
   CodexCollaborationModeOption,
   CodexConfigDefaultsResponse,
   CodexModelOption,
@@ -570,6 +571,13 @@ interface TokenUsageSummary {
 interface PendingTurn {
   sessionId: string;
   turnId: string | null;
+}
+
+interface ConnectionFailureNotice {
+  sessionId: string;
+  turnId: string | null;
+  message: string;
+  detail: string | null;
 }
 
 interface WorkflowCreateChatSnapshot {
@@ -3569,6 +3577,8 @@ export default function CodexDeckApp() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [stoppingTurn, setStoppingTurn] = useState(false);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
+  const [connectionFailureNotice, setConnectionFailureNotice] =
+    useState<ConnectionFailureNotice | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
   const [interactionError, setInteractionError] = useState<string | null>(null);
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
@@ -3682,6 +3692,9 @@ export default function CodexDeckApp() {
   const sessionSelectionRequestIdRef = useRef(0);
   const activeWaitSessionRef = useRef<string | null>(null);
   const pendingTurnRef = useRef<PendingTurn | null>(null);
+  const connectionFailureNoticeRef = useRef<ConnectionFailureNotice | null>(
+    null,
+  );
   const toolbarWidthRef = useRef<HTMLDivElement | null>(null);
   const toolbarMeasureRef = useRef<HTMLDivElement | null>(null);
   const modelSelectRef = useRef<HTMLSelectElement | null>(null);
@@ -4081,6 +4094,9 @@ export default function CodexDeckApp() {
     setPendingTurn((current) =>
       current?.sessionId === normalizedSessionId ? null : current,
     );
+    setConnectionFailureNotice((current) =>
+      current?.sessionId === normalizedSessionId ? null : current,
+    );
     setDeleteSessionTargetId((current) =>
       current === normalizedSessionId ? null : current,
     );
@@ -4175,6 +4191,10 @@ export default function CodexDeckApp() {
   useEffect(() => {
     pendingTurnRef.current = pendingTurn;
   }, [pendingTurn]);
+
+  useEffect(() => {
+    connectionFailureNoticeRef.current = connectionFailureNotice;
+  }, [connectionFailureNotice]);
 
   useEffect(() => {
     leftPaneWidthRef.current = leftPaneWidth;
@@ -6036,6 +6056,60 @@ export default function CodexDeckApp() {
     [rightPaneTarget, diffPaneCollapsed, selectedPaneMode],
   );
 
+  const handleCodexAppServerEvent = useCallback(
+    (event: CodexAppServerEvent) => {
+      if (event.willRetry) {
+        setConnectionFailureNotice({
+          sessionId: event.threadId,
+          turnId: event.turnId,
+          message: event.error?.message || "Reconnecting...",
+          detail:
+            event.error?.additionalDetails ?? event.error?.message ?? null,
+        });
+        setPendingTurn({
+          sessionId: event.threadId,
+          turnId: event.turnId,
+        });
+        return;
+      }
+
+      if (event.error?.message || event.error?.additionalDetails) {
+        setConnectionFailureNotice({
+          sessionId: event.threadId,
+          turnId: event.turnId,
+          message: event.error?.message || "Codex turn failed.",
+          detail:
+            event.error?.additionalDetails ?? event.error?.message ?? null,
+        });
+      } else {
+        setConnectionFailureNotice((current) =>
+          current?.sessionId === event.threadId ? null : current,
+        );
+      }
+
+      setPendingTurn((current) =>
+        current?.sessionId === event.threadId &&
+        (current.turnId === null || current.turnId === event.turnId)
+          ? null
+          : current,
+      );
+    },
+    [],
+  );
+
+  const clearConnectionFailureNoticeForSession = useCallback(
+    (sessionId: string | null | undefined) => {
+      const normalizedSessionId = sessionId?.trim() ?? "";
+      if (!normalizedSessionId) {
+        return;
+      }
+      setConnectionFailureNotice((current) =>
+        current?.sessionId === normalizedSessionId ? null : current,
+      );
+    },
+    [],
+  );
+
   const handleSessionsError = useCallback(() => {
     setLoading(false);
   }, []);
@@ -6073,6 +6147,7 @@ export default function CodexDeckApp() {
         });
         handleSkillsChanged(event);
       },
+      onCodexAppServerEvent: handleCodexAppServerEvent,
       onError: handleSessionsError,
     });
   }, [
@@ -6081,6 +6156,8 @@ export default function CodexDeckApp() {
     handleSessionsFull,
     handleSessionsRemoved,
     handleSessionsUpdate,
+    handleSkillsChanged,
+    handleCodexAppServerEvent,
     handleSessionsError,
   ]);
 
@@ -7891,6 +7968,7 @@ export default function CodexDeckApp() {
           ...(selectedEffort ? { effort: selectedEffort } : {}),
         });
         waitSuppressSessionsRef.current.delete(created.threadId);
+        clearConnectionFailureNoticeForSession(created.threadId);
         if (response.turnId) {
           setPendingTurn({
             sessionId: created.threadId,
@@ -7923,6 +8001,7 @@ export default function CodexDeckApp() {
       }
     },
     [
+      clearConnectionFailureNoticeForSession,
       ensureSessionVisibleInLocalState,
       normalizeModeKey,
       refreshSelectedWorkflow,
@@ -8037,6 +8116,7 @@ export default function CodexDeckApp() {
         }
 
         if (response.turnId) {
+          clearConnectionFailureNoticeForSession(response.sessionId);
           setPendingTurn({
             sessionId: response.sessionId,
             turnId: response.turnId,
@@ -8074,6 +8154,7 @@ export default function CodexDeckApp() {
       }
     },
     [
+      clearConnectionFailureNoticeForSession,
       ensureSessionVisibleInLocalState,
       normalizeModeKey,
       runTerminalChatAction,
@@ -8409,6 +8490,7 @@ export default function CodexDeckApp() {
 
       setSendingMessage(true);
       setInteractionError(null);
+      clearConnectionFailureNoticeForSession(sessionId);
       waitSuppressSessionsRef.current.delete(sessionId);
 
       try {
@@ -8451,6 +8533,7 @@ export default function CodexDeckApp() {
     [
       activeComposerSessionData?.project,
       activeComposerSessionId,
+      clearConnectionFailureNoticeForSession,
       collaborationModes,
       configDefaults,
       getSessionMode,
@@ -9222,6 +9305,9 @@ export default function CodexDeckApp() {
       });
       // Always unlock UI immediately on manual stop, even if interrupt request is slow.
       setPendingTurn(null);
+      setConnectionFailureNotice((current) =>
+        current?.sessionId === targetSessionId ? null : current,
+      );
       setStoppingTurn(true);
       setInteractionError(null);
 
@@ -9262,6 +9348,10 @@ export default function CodexDeckApp() {
 
   const isGeneratingForSelectedSession =
     !!selectedSession && pendingTurn?.sessionId === selectedSession;
+  const selectedSessionConnectionFailureNotice =
+    selectedSession && connectionFailureNotice?.sessionId === selectedSession
+      ? connectionFailureNotice
+      : null;
   const isSendingLocked = sendingMessage;
   const isGeneratingForWorkflowComposer =
     !!workflowComposerSessionId &&
@@ -9357,6 +9447,7 @@ export default function CodexDeckApp() {
       );
       setSendingMessage(true);
       setInteractionError(null);
+      clearConnectionFailureNoticeForSession(terminalComposerSessionId);
       waitSuppressSessionsRef.current.delete(terminalComposerSessionId);
 
       try {
@@ -9408,6 +9499,7 @@ export default function CodexDeckApp() {
     [
       collaborationModes,
       configDefaults,
+      clearConnectionFailureNoticeForSession,
       enqueuePendingUserMessage,
       getSessionMode,
       markPendingUserMessageAwaitingConfirmation,
@@ -12415,7 +12507,8 @@ export default function CodexDeckApp() {
                       : null
                   }
                   latestButtonBottomOffsetPx={
-                    isGeneratingForSelectedSession && showFixDangling
+                    (isGeneratingForSelectedSession && showFixDangling) ||
+                    selectedSessionConnectionFailureNotice
                       ? 56
                       : undefined
                   }
@@ -12431,11 +12524,47 @@ export default function CodexDeckApp() {
                   onApproveAiTerminalStep={handleApproveAiTerminalStep}
                   onRejectAiTerminalStep={handleRejectAiTerminalStep}
                 />
-                {isGeneratingForSelectedSession && (
+                {(isGeneratingForSelectedSession ||
+                  selectedSessionConnectionFailureNotice) && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
-                    <div className="inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg">
-                      <span className="thinking-dot" />
-                      <span className="thinking-label">Working...</span>
+                    <div
+                      className={
+                        selectedSessionConnectionFailureNotice
+                          ? "inline-flex max-w-[min(34rem,calc(100vw-1.5rem))] items-center gap-2 rounded border border-amber-300/80 bg-amber-50/95 px-2.5 py-1.5 text-sm text-amber-900 shadow-lg dark:border-amber-500/45 dark:bg-amber-950/82 dark:text-amber-100"
+                          : "inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg"
+                      }
+                      title={
+                        [
+                          selectedSessionConnectionFailureNotice?.message,
+                          selectedSessionConnectionFailureNotice?.detail,
+                        ]
+                          .filter(Boolean)
+                          .join("\n") || undefined
+                      }
+                    >
+                      {selectedSessionConnectionFailureNotice ? (
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500 dark:bg-amber-300" />
+                      ) : (
+                        <span className="thinking-dot" />
+                      )}
+                      {selectedSessionConnectionFailureNotice ? (
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">
+                            {selectedSessionConnectionFailureNotice.message}
+                          </span>
+                          {selectedSessionConnectionFailureNotice.detail &&
+                            selectedSessionConnectionFailureNotice.detail !==
+                              selectedSessionConnectionFailureNotice.message && (
+                              <span className="mt-0.5 block truncate text-xs text-amber-700 dark:text-amber-200/85">
+                                {selectedSessionConnectionFailureNotice.detail}
+                              </span>
+                            )}
+                        </span>
+                      ) : (
+                        <span className="thinking-label truncate">
+                          Working...
+                        </span>
+                      )}
                     </div>
                     {showFixDangling && (
                       <div className="pointer-events-auto flex items-center gap-2">

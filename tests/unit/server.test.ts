@@ -440,6 +440,86 @@ test("sessions stream carries sessions, terminals, and workflows snapshots", asy
   }
 });
 
+test("sessions stream forwards codex app-server retry events", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-codex-app-server-stream",
+  );
+  const server = createServer({ port: 13025, codexDir: rootDir, open: false });
+  let eventListener: ((event: unknown) => void) | null = null;
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-id",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+    subscribeAppServerEvents: (listener) => {
+      eventListener = listener;
+      return () => {
+        if (eventListener === listener) {
+          eventListener = null;
+        }
+      };
+    },
+  };
+
+  try {
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const responsePromise = server.app.request("/api/sessions/stream");
+    await Promise.resolve();
+    assert.ok(eventListener);
+    eventListener({
+      type: "error",
+      threadId: SESSION_ID,
+      turnId: "turn-retry",
+      willRetry: true,
+      error: {
+        message: "Reconnecting... 3/5",
+        additionalDetails:
+          "Stream disconnected before completion: error sending request for url",
+      },
+    });
+
+    const response = await responsePromise;
+    assert.equal(response.status, 200);
+    const events = await readSseEvents(response, ["codexAppServerEvent"]);
+    const event = events.find(
+      (record) => record.event === "codexAppServerEvent",
+    );
+    assert.ok(event, "expected remaining stream to receive retry notification");
+    assert.deepEqual(JSON.parse(event.data), {
+      type: "error",
+      threadId: SESSION_ID,
+      turnId: "turn-retry",
+      willRetry: true,
+      error: {
+        message: "Reconnecting... 3/5",
+        additionalDetails:
+          "Stream disconnected before completion: error sending request for url",
+      },
+    });
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("terminal stream accepts terminal-only subscriptions", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "server-terminal-bound-session-stream",

@@ -1,5 +1,6 @@
 import type {
   Session,
+  CodexAppServerEvent,
   TerminalSummary,
   TerminalStreamEvent,
   WorkflowDaemonStatusResponse,
@@ -12,6 +13,7 @@ export interface SessionsStreamHandlers {
   onSessionsUpdate: (sessions: Session[]) => void;
   onSessionsRemoved: (sessionIds: string[]) => void;
   onSkillsChanged?: (payload: { sessionId: string }) => void;
+  onCodexAppServerEvent?: (event: CodexAppServerEvent) => void;
   onError?: () => void;
 }
 

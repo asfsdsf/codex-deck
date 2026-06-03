@@ -116,6 +116,11 @@ export type CodexTurnStatus =
   | "failed"
   | "interrupted";
 
+export interface CodexTurnError {
+  message: string;
+  additionalDetails: string | null;
+}
+
 export interface CodexThreadStateResponse {
   threadId: string;
   activeTurnId: string | null;
@@ -123,6 +128,14 @@ export interface CodexThreadStateResponse {
   requestedTurnId: string | null;
   requestedTurnStatus: CodexTurnStatus | null;
 }
+
+export type CodexAppServerEvent = {
+  type: "error";
+  threadId: string;
+  turnId: string;
+  willRetry: boolean;
+  error: CodexTurnError | null;
+};
 
 export type CodexThreadRuntimeStatus =
   | "notLoaded"

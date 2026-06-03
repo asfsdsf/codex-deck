@@ -29,6 +29,7 @@ import {
   addToFileIndex,
   type SessionsRemovedEvent,
   type CodexThreadStateResponse,
+  type CodexAppServerEvent,
   type CodexThreadNameSetRequest,
   type CodexThreadNameSetResponse,
   type CodexThreadForkResponse,
@@ -1722,6 +1723,23 @@ export function createServer(options: ServerOptions) {
   const skillsChangedListeners = new Set<
     (event: SessionSkillsChangedEvent) => void
   >();
+  const appServerEventListeners = new Set<
+    (event: CodexAppServerEvent) => void
+  >();
+  let unsubscribeAppServerEventSource: (() => void) | null = null;
+  const ensureAppServerEventSourceSubscribed = () => {
+    if (unsubscribeAppServerEventSource) {
+      return;
+    }
+
+    const appServerEventSource = getCodexAppServerClient();
+    if (typeof appServerEventSource.subscribeAppServerEvents !== "function") {
+      return;
+    }
+
+    unsubscribeAppServerEventSource =
+      appServerEventSource.subscribeAppServerEvents(emitAppServerEvent);
+  };
   const sessionsDeltaWaiters = new Set<() => void>();
   let sessionsDeltaVersion = 1;
   const sessionDeltaEvents: SessionDeltaEvent[] = [];
@@ -1940,6 +1958,12 @@ export function createServer(options: ServerOptions) {
     }
   };
 
+  const emitAppServerEvent = (event: CodexAppServerEvent) => {
+    for (const listener of appServerEventListeners) {
+      listener(event);
+    }
+  };
+
   const resolveSessionProjectPath = async (
     sessionId: string,
   ): Promise<string | null | undefined> => {
@@ -2102,6 +2126,7 @@ export function createServer(options: ServerOptions) {
         offWorkflowChange(handleWorkflowsChange);
         sessionsRemovedListeners.delete(handleSessionsRemoved);
         skillsChangedListeners.delete(handleSkillsChanged);
+        appServerEventListeners.delete(handleAppServerEvent);
         if (unsubscribeTerminals) {
           unsubscribeTerminals();
           unsubscribeTerminals = null;
@@ -2250,11 +2275,28 @@ export function createServer(options: ServerOptions) {
         }
       };
 
+      const handleAppServerEvent = async (event: CodexAppServerEvent) => {
+        if (!isConnected) {
+          return;
+        }
+
+        try {
+          await stream.writeSSE({
+            event: "codexAppServerEvent",
+            data: JSON.stringify(event),
+          });
+        } catch {
+          cleanup();
+        }
+      };
+
       onHistoryChange(handleSessionsChange);
       onSessionChange(handleSessionsChange);
       onWorkflowChange(handleWorkflowsChange);
       sessionsRemovedListeners.add(handleSessionsRemoved);
       skillsChangedListeners.add(handleSkillsChanged);
+      appServerEventListeners.add(handleAppServerEvent);
+      ensureAppServerEventSourceSubscribed();
       unsubscribeTerminals = terminalManager.subscribeTerminals(() => {
         void handleTerminalsChange();
       });
@@ -4343,6 +4385,10 @@ export function createServer(options: ServerOptions) {
     stop: () => {
       offHistoryChange(handleHistoryChange);
       offSessionChange(handleSessionChange);
+      if (unsubscribeAppServerEventSource) {
+        unsubscribeAppServerEventSource();
+        unsubscribeAppServerEventSource = null;
+      }
       stopWatcher();
       void closeCodexAppServerClient();
       void closeLocalTerminalManager();

@@ -1,4 +1,5 @@
 import type {
+  CodexAppServerEvent,
   TerminalSummary,
   TerminalStreamEvent,
   WorkflowDaemonStatusResponse,
@@ -182,6 +183,12 @@ export function createLocalTransport(): WebTransport {
           }
           for (const subscriber of sessionsStreamSubscribers) {
             subscriber.onSkillsChanged?.({ sessionId: payload.sessionId });
+          }
+        });
+        eventSource.addEventListener("codexAppServerEvent", (event) => {
+          const payload = JSON.parse(event.data) as CodexAppServerEvent;
+          for (const subscriber of sessionsStreamSubscribers) {
+            subscriber.onCodexAppServerEvent?.(payload);
           }
         });
         eventSource.addEventListener("terminals", (event) => {
