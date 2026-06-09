@@ -352,6 +352,44 @@ test("conversation chunk route returns bounded chunks with offsets", async () =>
   }
 });
 
+test("conversation stream emits bounded bootstrap batches", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-conversation-stream-bounded",
+  );
+  const server = createServer({ port: 13001, codexDir: rootDir, open: false });
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+      responseItemMessageLine("user", "first message ".repeat(5000)),
+      responseItemMessageLine("assistant", "second message ".repeat(5000)),
+      responseItemMessageLine("assistant", "third message ".repeat(5000)),
+    ]);
+
+    await loadStorage();
+
+    const response = await server.app.request(
+      `/api/conversation/${SESSION_ID}/stream?offset=0`,
+    );
+    assert.equal(response.status, 200);
+
+    const events = await readSseEvents(response, ["messages"]);
+    assert.equal(events.length > 0, true);
+    const payload = JSON.parse(events[0]?.data ?? "{}") as {
+      messages?: unknown[];
+      nextOffset?: number;
+      done?: boolean;
+    };
+
+    assert.equal(Array.isArray(payload.messages), true);
+    assert.equal(typeof payload.nextOffset, "number");
+    assert.equal(payload.done, false);
+  } finally {
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("sessions stream carries sessions, terminals, and workflows snapshots", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "server-global-stream",

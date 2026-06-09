@@ -141,6 +141,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_CONVERSATION_CHUNK_MAX_BYTES = 512 * 1024;
 const DEFAULT_CONVERSATION_RAW_CHUNK_MAX_BYTES = 512 * 1024;
+const DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES = 128 * 1024;
 const SESSION_DELTA_LOG_LIMIT = 500;
 const ENABLE_WAIT_MODE_DETECTION_LOG = false;
 
@@ -3491,7 +3492,9 @@ export function createServer(options: ServerOptions) {
             messages: batchMessages,
             nextOffset: batchNextOffset,
             done,
-          } = await getConversationStream(sessionId, offset);
+          } = await getConversationStream(sessionId, offset, {
+            maxPayloadBytes: DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES,
+          });
           offset = batchNextOffset;
 
           if (

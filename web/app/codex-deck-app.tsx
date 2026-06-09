@@ -59,6 +59,10 @@ import {
   Sun,
 } from "lucide-react";
 import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
+import {
+  isKnownSessionSelection,
+  normalizeSessionSelectionId,
+} from "../session-selection";
 import SessionList from "../components/session-list";
 import SessionView, {
   getConversationActivityDetails,
@@ -6664,16 +6668,33 @@ export default function CodexDeckApp() {
 
   const selectSessionIfAvailable = useCallback(
     (sessionId: string) => {
+      const normalizedSessionId = normalizeSessionSelectionId(sessionId);
+      if (!normalizedSessionId) {
+        return;
+      }
+
       const requestId = sessionSelectionRequestIdRef.current + 1;
       sessionSelectionRequestIdRef.current = requestId;
 
+      if (
+        isKnownSessionSelection(normalizedSessionId, sessionsWithThreadNames)
+      ) {
+        setSelectedSession(normalizedSessionId);
+        setCenterView("session");
+        setInteractionError(null);
+        if (isMobilePhone) {
+          setSidebarCollapsed(true);
+        }
+        return;
+      }
+
       void (async () => {
-        const exists = await ensureSessionExistsForUse(sessionId);
+        const exists = await ensureSessionExistsForUse(normalizedSessionId);
         if (!exists || sessionSelectionRequestIdRef.current !== requestId) {
           return;
         }
 
-        setSelectedSession(sessionId);
+        setSelectedSession(normalizedSessionId);
         setCenterView("session");
         setInteractionError(null);
         if (isMobilePhone) {
@@ -6681,7 +6702,7 @@ export default function CodexDeckApp() {
         }
       })();
     },
-    [ensureSessionExistsForUse, isMobilePhone],
+    [ensureSessionExistsForUse, isMobilePhone, sessionsWithThreadNames],
   );
 
   const handleSelectSession = useCallback(
