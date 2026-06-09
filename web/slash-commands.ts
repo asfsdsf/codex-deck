@@ -184,6 +184,7 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     name: "/resume",
     description: "Resume a saved chat",
+    supportsInlineArgs: true,
   },
   {
     name: "/fork",
@@ -227,8 +228,18 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "List background terminals",
   },
   {
-    name: "/clean",
+    name: "/stop",
     description: "Stop all background terminals",
+  },
+  {
+    name: "/clean",
+    description: "Alias for /stop",
+    hidden: true,
+    aliasFor: "/stop",
+  },
+  {
+    name: "/permissions",
+    description: "Show current permission settings",
   },
   {
     name: "/approvals",

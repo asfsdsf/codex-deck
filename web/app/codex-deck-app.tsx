@@ -62,6 +62,7 @@ import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
 import {
   isKnownSessionSelection,
   normalizeSessionSelectionId,
+  resolveSessionSelection,
 } from "../session-selection";
 import SessionList from "../components/session-list";
 import SessionView, {
@@ -223,6 +224,7 @@ import {
   setCodexThreadName,
   forkCodexThread,
   compactCodexThread,
+  getCodexThreadGoal,
   clearCodexThreadGoal,
   setCodexThreadGoal,
   listCodexAgentThreads,
@@ -8832,20 +8834,40 @@ export default function CodexDeckApp() {
           return true;
         }
 
-        if (normalizedLower !== "on" && normalizedLower !== "off") {
-          setInteractionError("Usage: /plan [on|off]");
+        if (normalizedLower === "on" || normalizedLower === "off") {
+          if (normalizedLower === "on" && !hasPlanMode) {
+            setInteractionError("Plan mode is unavailable for this session.");
+            return false;
+          }
+
+          applyModeSelection(
+            normalizedLower === "on" ? "plan" : DEFAULT_MODE_KEY,
+          );
+          return true;
+        }
+
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /plan with a prompt.");
           return false;
         }
 
-        if (normalizedLower === "on" && !hasPlanMode) {
+        if (!hasPlanMode) {
           setInteractionError("Plan mode is unavailable for this session.");
           return false;
         }
 
-        applyModeSelection(
-          normalizedLower === "on" ? "plan" : DEFAULT_MODE_KEY,
+        const sent = await sendMessageText(
+          {
+            text: normalizedArgs,
+            images: [],
+          },
+          {
+            sessionIdOverride: commandSessionId,
+            cwdOverride: commandSessionData?.project ?? null,
+            modeOverride: "plan",
+          },
         );
-        return true;
+        return sent;
       }
 
       if (commandName === "/goal") {
@@ -8856,11 +8878,50 @@ export default function CodexDeckApp() {
 
         const normalizedLower = normalizedArgs.toLowerCase();
         try {
-          if (!normalizedArgs || normalizedLower === "edit") {
-            setInteractionError(
-              "Usage: /goal <objective> | /goal clear | /goal pause | /goal resume",
+          if (!normalizedArgs) {
+            const response = await getCodexThreadGoal(commandSessionId);
+            const goal = response.goal;
+            if (!goal) {
+              setInteractionError(
+                "No current goal. Usage: /goal <objective> | /goal clear | /goal pause | /goal resume",
+              );
+              return false;
+            }
+
+            showCommandNoticeForDuration(
+              `Goal ${goal.status}: ${goal.objective}`,
             );
-            return false;
+            return true;
+          }
+
+          if (normalizedLower === "edit") {
+            const response = await getCodexThreadGoal(commandSessionId);
+            const currentObjective = response.goal?.objective ?? "";
+            const nextObjective = window.prompt(
+              "Edit current goal",
+              currentObjective,
+            );
+            if (nextObjective === null) {
+              return true;
+            }
+            const trimmedObjective = nextObjective.trim();
+            if (!trimmedObjective) {
+              setInteractionError("Goal objective must not be empty.");
+              return false;
+            }
+            if (trimmedObjective.length > 4000) {
+              setInteractionError(
+                "Goal objective is too long. Limit: 4,000 characters.",
+              );
+              return false;
+            }
+
+            await setCodexThreadGoal(commandSessionId, {
+              objective: trimmedObjective,
+              status: "active",
+            });
+            showCommandNoticeForDuration("Updated current goal.");
+            return true;
           }
 
           if (normalizedLower === "clear") {
@@ -8922,6 +8983,18 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/permissions") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /permissions.");
+          return false;
+        }
+        setShowStatusModal(true);
+        showCommandNoticeForDuration(
+          "Permission profile details are shown in session status.",
+        );
+        return true;
+      }
+
       if (commandName === "/rename") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /rename.");
@@ -8950,6 +9023,39 @@ export default function CodexDeckApp() {
       }
 
       if (commandName === "/resume") {
+        if (normalizedArgs) {
+          const resolvedSession = resolveSessionSelection(
+            normalizedArgs,
+            sessionsWithThreadNames,
+          );
+          if (resolvedSession) {
+            setSelectedSession(resolvedSession.id);
+            setCenterView("session");
+            setInteractionError(null);
+            if (isMobilePhone) {
+              setSidebarCollapsed(true);
+            }
+            return true;
+          }
+
+          const normalizedSessionId = normalizeSessionSelectionId(normalizedArgs);
+          const exists = await ensureSessionExistsForUse(normalizedSessionId);
+          if (!exists) {
+            setInteractionError(
+              `No saved chat matches "${normalizedArgs}".`,
+            );
+            return false;
+          }
+
+          setSelectedSession(normalizedSessionId);
+          setCenterView("session");
+          setInteractionError(null);
+          if (isMobilePhone) {
+            setSidebarCollapsed(true);
+          }
+          return true;
+        }
+
         setCenterView("session");
         openLeftPane();
         focusSessionSearchInput();
@@ -9119,9 +9225,9 @@ export default function CodexDeckApp() {
         return true;
       }
 
-      if (commandName === "/clean") {
+      if (commandName === "/stop") {
         if (!commandSessionId) {
-          setInteractionError("Select a session before using /clean.");
+          setInteractionError("Select a session before using /stop.");
           return false;
         }
 
@@ -9187,6 +9293,8 @@ export default function CodexDeckApp() {
       centerView,
       activeComposerSessionData,
       activeComposerSessionId,
+      sessionsWithThreadNames,
+      ensureSessionExistsForUse,
       openModelSelectorFromCommand,
       hasPlanMode,
       handleTogglePlanMode,
@@ -9205,6 +9313,7 @@ export default function CodexDeckApp() {
       upsertSessionFromThreadSummary,
       syncSessionWaitState,
       sendMessageText,
+      isMobilePhone,
     ],
   );
 
