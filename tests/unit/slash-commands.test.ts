@@ -89,6 +89,17 @@ test("parseSlashCommandInvocation resolves /multi-agents to /agent", () => {
   assert.equal(parsed?.command.name, "/agent");
 });
 
+test("parseSlashCommandInvocation resolves /btw to /side", () => {
+  const parsed = parseSlashCommandInvocation(
+    "/btw quick question",
+    SESSION_COMPOSER_SLASH_COMMANDS,
+  );
+  assert.ok(parsed);
+  assert.equal(parsed?.resolvedName, "/side");
+  assert.equal(parsed?.command.name, "/side");
+  assert.equal(parsed?.args, "quick question");
+});
+
 test("parseSlashCommandInvocation resolves /clean to /stop", () => {
   const parsed = parseSlashCommandInvocation(
     "/clean",
@@ -134,6 +145,8 @@ test("session composer command list includes toolbar and mode controls", () => {
   assert.equal(names.includes("/compact"), true);
   assert.equal(names.includes("/init"), true);
   assert.equal(names.includes("/agent"), true);
+  assert.equal(names.includes("/side"), true);
+  assert.equal(names.includes("/btw"), true);
   assert.equal(names.includes("/quit"), false);
   assert.equal(names.includes("/ps"), true);
   assert.equal(names.includes("/stop"), true);
@@ -154,10 +167,14 @@ test("session composer command list includes toolbar and mode controls", () => {
   const resumeCommand = SESSION_COMPOSER_SLASH_COMMANDS.find(
     (command) => command.name === "/resume",
   );
+  const sideCommand = SESSION_COMPOSER_SLASH_COMMANDS.find(
+    (command) => command.name === "/side",
+  );
   assert.equal(planCommand?.supportsInlineArgs, true);
   assert.equal(goalCommand?.supportsInlineArgs, true);
   assert.equal(renameCommand?.supportsInlineArgs, true);
   assert.equal(resumeCommand?.supportsInlineArgs, true);
+  assert.equal(sideCommand?.supportsInlineArgs, true);
 });
 
 test("workflow composer command list matches session commands only when bound", () => {

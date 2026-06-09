@@ -207,6 +207,18 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Switch the active agent thread",
   },
   {
+    name: "/side",
+    description: "Start a side conversation in an ephemeral fork",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/btw",
+    description: "Alias for /side",
+    supportsInlineArgs: true,
+    hidden: true,
+    aliasFor: "/side",
+  },
+  {
     name: "/review",
     description: "Review my current changes and find issues",
     supportsInlineArgs: true,

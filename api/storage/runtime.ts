@@ -204,6 +204,11 @@ export interface CodexThreadForkResponse {
   thread: CodexThreadSummary;
 }
 
+export interface CodexThreadSideStartResponse {
+  thread: CodexThreadSummary;
+  parentThreadId: string;
+}
+
 export interface CodexThreadCompactResponse {
   ok: boolean;
 }

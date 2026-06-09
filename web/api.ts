@@ -10,6 +10,7 @@ import type {
   CodexThreadNameSetRequest,
   CodexThreadNameSetResponse,
   CodexThreadForkResponse,
+  CodexThreadSideStartResponse,
   CodexThreadCompactResponse,
   CodexThreadAgentListResponse,
   CodexThreadSummariesRequest,
@@ -995,6 +996,17 @@ export async function forkCodexThread(
 ): Promise<CodexThreadForkResponse> {
   return requestJson<CodexThreadForkResponse>(
     `/api/codex/threads/${encodeURIComponent(threadId)}/fork`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function startCodexSideThread(
+  threadId: string,
+): Promise<CodexThreadSideStartResponse> {
+  return requestJson<CodexThreadSideStartResponse>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/side`,
     {
       method: "POST",
     },

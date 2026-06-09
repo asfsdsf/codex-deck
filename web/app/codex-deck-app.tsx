@@ -223,6 +223,7 @@ import {
   sendTerminalInput as sendTerminalInputRequest,
   setCodexThreadName,
   forkCodexThread,
+  startCodexSideThread,
   compactCodexThread,
   getCodexThreadGoal,
   clearCodexThreadGoal,
@@ -285,11 +286,13 @@ interface SessionHeaderProps {
   railCollapsedByDefault: boolean;
   conversationSearchOpen: boolean;
   resolvedTheme: ResolvedTheme;
+  sideContext: SideThreadContext | null;
   onCopySessionId: (sessionId: string) => void;
   onCopyProjectPath: (projectPath: string) => void;
   onToggleConversationSearch: () => void;
   onToggleRailCollapsedByDefault: () => void;
   onToggleTheme: () => void;
+  onReturnFromSideConversation: () => void;
 }
 
 interface ThemeToggleButtonProps {
@@ -586,6 +589,15 @@ interface TokenUsageSummary {
 interface PendingTurn {
   sessionId: string;
   turnId: string | null;
+}
+
+interface SideThreadState {
+  parentThreadId: string;
+}
+
+interface SideThreadContext {
+  parentThreadId: string;
+  parentDisplay: string;
 }
 
 interface ConnectionFailureNotice {
@@ -3635,6 +3647,9 @@ export default function CodexDeckApp() {
   const [threadNameOverrides, setThreadNameOverrides] = useState<
     Record<string, string>
   >({});
+  const [sideThreadsById, setSideThreadsById] = useState<
+    Record<string, SideThreadState>
+  >({});
   const [fixingDangling, setFixingDangling] = useState(false);
   const [showFixDanglingConfirm, setShowFixDanglingConfirm] = useState(false);
   const [fixDanglingTargetSessionId, setFixDanglingTargetSessionId] = useState<
@@ -4740,6 +4755,24 @@ export default function CodexDeckApp() {
       sessionsWithThreadNames.find((s) => s.id === selectedSession) || null
     );
   }, [sessionsWithThreadNames, selectedSession]);
+  const selectedSideThreadContext = useMemo((): SideThreadContext | null => {
+    if (!selectedSession) {
+      return null;
+    }
+
+    const sideThread = sideThreadsById[selectedSession];
+    if (!sideThread) {
+      return null;
+    }
+
+    const parentSession = sessionsWithThreadNames.find(
+      (session) => session.id === sideThread.parentThreadId,
+    );
+    return {
+      parentThreadId: sideThread.parentThreadId,
+      parentDisplay: parentSession?.display || sideThread.parentThreadId,
+    };
+  }, [selectedSession, sessionsWithThreadNames, sideThreadsById]);
   const selectedSessionTerminalRole = selectedSession
     ? (sessionTerminalRolesById[selectedSession] ?? null)
     : null;
@@ -8705,6 +8738,11 @@ export default function CodexDeckApp() {
 
   const handleRenameThread = useCallback(
     async (threadId: string, rawName: string): Promise<boolean> => {
+      if (sideThreadsById[threadId]) {
+        setInteractionError("Side conversations are ephemeral and cannot be renamed.");
+        return false;
+      }
+
       const name = rawName.trim();
       if (!name) {
         setInteractionError("Thread name cannot be empty.");
@@ -8730,8 +8768,27 @@ export default function CodexDeckApp() {
         setRenamingSession(false);
       }
     },
-    [showCommandNoticeForDuration],
+    [showCommandNoticeForDuration, sideThreadsById],
   );
+
+  const handleReturnFromSideConversation = useCallback(() => {
+    const sideContext =
+      selectedSession && sideThreadsById[selectedSession]
+        ? sideThreadsById[selectedSession]
+        : null;
+    if (!sideContext) {
+      return;
+    }
+
+    setSelectedSession(sideContext.parentThreadId);
+    setCenterView("session");
+    setInteractionError(null);
+    showCommandNoticeForDuration("Returned to the main thread.");
+  }, [
+    selectedSession,
+    showCommandNoticeForDuration,
+    sideThreadsById,
+  ]);
 
   const openAgentPickerFromCommand = useCallback(
     async (threadId: string): Promise<boolean> => {
@@ -9181,6 +9238,54 @@ export default function CodexDeckApp() {
         }
       }
 
+      if (commandName === "/side") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /side.");
+          return false;
+        }
+        if (sideThreadsById[commandSessionId]) {
+          setInteractionError(
+            "'/side' is unavailable in side conversations. Return to the main thread first.",
+          );
+          return false;
+        }
+
+        try {
+          const result = await startCodexSideThread(commandSessionId);
+          upsertSessionFromThreadSummary(result.thread);
+          setSideThreadsById((current) => ({
+            ...current,
+            [result.thread.threadId]: {
+              parentThreadId: result.parentThreadId,
+            },
+          }));
+          setSelectedSession(result.thread.threadId);
+          setCenterView("session");
+          showCommandNoticeForDuration("Started side conversation.");
+
+          if (normalizedArgs) {
+            const sent = await sendMessageText(
+              {
+                text: normalizedArgs,
+                images: [],
+              },
+              {
+                sessionIdOverride: result.thread.threadId,
+                cwdOverride: result.thread.cwd || commandSessionData?.project,
+              },
+            );
+            return sent;
+          }
+
+          return true;
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+          return false;
+        }
+      }
+
       if (commandName === "/init") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /init.");
@@ -9411,6 +9516,7 @@ export default function CodexDeckApp() {
       upsertSessionFromThreadSummary,
       syncSessionWaitState,
       sendMessageText,
+      sideThreadsById,
       isMobilePhone,
     ],
   );
@@ -11015,11 +11121,13 @@ export default function CodexDeckApp() {
       railCollapsedByDefault,
       conversationSearchOpen,
       resolvedTheme,
+      sideContext,
       onCopySessionId,
       onCopyProjectPath,
       onToggleConversationSearch,
       onToggleRailCollapsedByDefault,
       onToggleTheme,
+      onReturnFromSideConversation,
     } = props;
 
     return (
@@ -11062,8 +11170,26 @@ export default function CodexDeckApp() {
           <span className="text-xs text-zinc-600 shrink-0">
             {formatTime(session.timestamp)}
           </span>
+          {sideContext && (
+            <span
+              className="min-w-0 shrink rounded border border-amber-500/35 bg-amber-500/12 px-2 py-1 text-[11px] text-amber-100"
+              title={`Side conversation from ${sideContext.parentDisplay}`}
+            >
+              Side
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {sideContext && (
+            <button
+              type="button"
+              onClick={onReturnFromSideConversation}
+              className="h-8 rounded border border-amber-500/35 bg-amber-500/12 px-2.5 text-xs text-amber-100 transition-colors hover:bg-amber-500/20"
+              title={`Return to ${sideContext.parentDisplay}`}
+            >
+              Return
+            </button>
+          )}
           <button
             type="button"
             onClick={onToggleConversationSearch}
@@ -11513,6 +11639,7 @@ export default function CodexDeckApp() {
                 railCollapsedByDefault={railCollapsedByDefault}
                 conversationSearchOpen={conversationSearchOpen}
                 resolvedTheme={resolvedTheme}
+                sideContext={selectedSideThreadContext}
                 onCopySessionId={handleCopySessionId}
                 onCopyProjectPath={handleCopyProjectPath}
                 onToggleConversationSearch={handleToggleConversationSearch}
@@ -11520,6 +11647,7 @@ export default function CodexDeckApp() {
                   setRailCollapsedByDefault((current) => !current)
                 }
                 onToggleTheme={handleToggleTheme}
+                onReturnFromSideConversation={handleReturnFromSideConversation}
               />
             ) : (
               <>

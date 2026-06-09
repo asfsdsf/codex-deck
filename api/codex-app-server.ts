@@ -130,6 +130,8 @@ export interface SendCodexMessageInput {
   collaborationMode?: CodexCollaborationModeInput | null;
 }
 
+export type CodexRawResponseItem = Record<string, unknown>;
+
 export type SendCodexInputItem =
   | {
       type: "text";
@@ -1061,6 +1063,36 @@ class CodexAppServerClient {
         persistExtendedHistory: true,
       });
       return extractThreadSummaryFromResult(result);
+    }
+  }
+
+  public async injectThreadItems(
+    threadId: string,
+    items: CodexRawResponseItem[],
+  ): Promise<void> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("threadId is required");
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("items are required");
+    }
+
+    const payload = {
+      threadId: normalizedThreadId,
+      items,
+    };
+
+    try {
+      await this.request("thread/inject_items", payload);
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) {
+        throw error;
+      }
+
+      await this.resumeThread(normalizedThreadId);
+      await this.request("thread/inject_items", payload);
     }
   }
 
@@ -3587,6 +3619,10 @@ export interface CodexAppServerClientFacade {
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
   forkThread?: (threadId: string) => Promise<CodexThreadSummary>;
+  injectThreadItems?: (
+    threadId: string,
+    items: CodexRawResponseItem[],
+  ) => Promise<void>;
   compactThread?: (threadId: string) => Promise<void>;
   getThreadGoal?: (threadId: string) => Promise<CodexThreadGoal | null>;
   setThreadGoal?: (input: SetCodexThreadGoalInput) => Promise<CodexThreadGoal>;
@@ -3645,6 +3681,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     setThreadName: (threadId: string, name: string) =>
       client!.setThreadName(threadId, name),
     forkThread: (threadId: string) => client!.forkThread(threadId),
+    injectThreadItems: (threadId: string, items: CodexRawResponseItem[]) =>
+      client!.injectThreadItems(threadId, items),
     compactThread: (threadId: string) => client!.compactThread(threadId),
     getThreadGoal: (threadId: string) => client!.getThreadGoal(threadId),
     setThreadGoal: (input: SetCodexThreadGoalInput) =>

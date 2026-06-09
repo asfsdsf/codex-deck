@@ -5942,6 +5942,11 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
   );
   const server = createServer({ port: 13016, codexDir: rootDir, open: false });
   const renamedThreads: Array<{ threadId: string; name: string }> = [];
+  const threadManagementCalls: string[] = [];
+  const injectedThreadItems: Array<{
+    threadId: string;
+    items: Record<string, unknown>[];
+  }> = [];
   const compactedThreads: string[] = [];
   const goalUpdates: Array<{
     threadId: string;
@@ -5977,14 +5982,26 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
     listCollaborationModes: async () => [],
     createThread: async () => "thread-id",
     setThreadName: async (threadId: string, name: string) => {
+      threadManagementCalls.push(`rename:${threadId}`);
       renamedThreads.push({ threadId, name });
     },
-    forkThread: async () => ({
-      ...threadAgent,
-      threadId: "thread-forked",
-      name: "Forked Thread",
-    }),
+    forkThread: async (threadId: string) => {
+      threadManagementCalls.push(`fork:${threadId}`);
+      return {
+        ...threadAgent,
+        threadId: `thread-forked-${threadManagementCalls.length}`,
+        name: "Forked Thread",
+      };
+    },
+    injectThreadItems: async (
+      threadId: string,
+      items: Record<string, unknown>[],
+    ) => {
+      threadManagementCalls.push(`inject:${threadId}`);
+      injectedThreadItems.push({ threadId, items });
+    },
     compactThread: async (threadId: string) => {
+      threadManagementCalls.push(`compact:${threadId}`);
       compactedThreads.push(threadId);
     },
     getThreadGoal: async (threadId: string) => ({
@@ -6074,7 +6091,46 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
     assert.equal(
       (forkResponse.body as { thread?: { threadId?: string } }).thread
         ?.threadId,
-      "thread-forked",
+      "thread-forked-2",
+    );
+
+    const sideResponse = await requestJson(
+      server,
+      "/api/codex/threads/thread-main/side",
+      {
+        method: "POST",
+      },
+    );
+    assert.equal(sideResponse.status, 200);
+    assert.equal(
+      (sideResponse.body as { thread?: { threadId?: string } }).thread
+        ?.threadId,
+      "thread-forked-3",
+    );
+    assert.equal(
+      (sideResponse.body as { parentThreadId?: string }).parentThreadId,
+      "thread-main",
+    );
+    assert.deepEqual(threadManagementCalls.slice(1, 3), [
+      "fork:thread-main",
+      "fork:thread-main",
+    ]);
+    assert.equal(threadManagementCalls[3], "inject:thread-forked-3");
+    assert.equal(injectedThreadItems.length, 1);
+    assert.equal(injectedThreadItems[0]?.threadId, "thread-forked-3");
+    const boundaryItem = injectedThreadItems[0]?.items[0] as
+      | {
+          type?: unknown;
+          role?: unknown;
+          content?: Array<{ type?: unknown; text?: unknown }>;
+        }
+      | undefined;
+    assert.equal(boundaryItem?.type, "message");
+    assert.equal(boundaryItem?.role, "user");
+    assert.equal(boundaryItem?.content?.[0]?.type, "input_text");
+    assert.match(
+      String(boundaryItem?.content?.[0]?.text ?? ""),
+      /Side conversation boundary/,
     );
 
     const compactResponse = await requestJson(
