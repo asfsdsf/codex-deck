@@ -1,6 +1,7 @@
 import type { ContentBlock, ConversationMessage } from "@codex-deck/api";
 import { shouldShowTokenLimitNotice } from "./token-limit-notices";
 import { sanitizeText } from "./utils";
+import { parseGoalInternalContext } from "./goal-internal-context";
 
 export type ViewportMessageGroup = "default" | "important";
 export type ViewportTextTone =
@@ -8,6 +9,7 @@ export type ViewportTextTone =
   | "assistant"
   | "tool"
   | "plan"
+  | "goal"
   | "system";
 
 export type CollapsedViewportSegmentKind =
@@ -21,6 +23,7 @@ export type CollapsedViewportSegmentKind =
   | "count-remove"
   | "punctuation"
   | "command"
+  | "goal"
   | "error";
 
 export interface CollapsedViewportSegment {
@@ -109,8 +112,53 @@ function punctuationSegment(text: string): CollapsedViewportSegment {
 function extractNonEmptyTextBlocks(content: ContentBlock[]): string[] {
   return content
     .filter((block) => block.type === "text" && typeof block.text === "string")
-    .map((block) => normalizeInlineText(sanitizeText(block.text ?? "")))
+    .map((block) => getDisplayTextForTextBlock(block.text ?? ""))
     .filter((text) => text.length > 0);
+}
+
+function getDisplayTextForTextBlock(text: string): string {
+  const sanitized = sanitizeText(text);
+  const goalInternalContext = parseGoalInternalContext(sanitized);
+  if (goalInternalContext) {
+    return normalizeInlineText(goalInternalContext.body);
+  }
+  return normalizeInlineText(sanitized);
+}
+
+function getGoalContextPreview(text: string): CollapsedViewportLine | null {
+  const goalInternalContext = parseGoalInternalContext(text);
+  if (!goalInternalContext) {
+    return null;
+  }
+
+  const normalized = truncateInlineText(
+    normalizeInlineText(goalInternalContext.body),
+  );
+  return plainLine("goal", `Goal: ${normalized}`, [
+    plainSegment("label", "Goal:"),
+    detailSegment(normalized),
+  ]);
+}
+
+function getThreadGoalTextModePrefix(
+  goal: ConversationMessage["threadGoal"],
+): string {
+  if (goal?.status === "complete") {
+    return "Goal Complete:";
+  }
+  if (goal?.status === "paused") {
+    return "Goal Paused:";
+  }
+  if (goal?.status === "blocked") {
+    return "Goal Blocked:";
+  }
+  if (goal?.status === "usageLimited") {
+    return "Goal Usage Limited:";
+  }
+  if (goal?.status === "budgetLimited") {
+    return "Goal Budget Limited:";
+  }
+  return "Goal Active:";
 }
 
 function hasImportantToolUse(content: ContentBlock[]): boolean {
@@ -755,6 +803,11 @@ function getAssistantInlinePreview(
       return null;
     }
 
+    const goalContextPreview = getGoalContextPreview(sanitizedBlockText);
+    if (goalContextPreview) {
+      return goalContextPreview;
+    }
+
     const planSummary = parsePlanSummary(sanitizedBlockText);
     if (planSummary) {
       return plainLine("plan", `Plan: ${planSummary}`, [
@@ -778,6 +831,11 @@ function getAssistantInlinePreview(
       const sanitizedBlockText = sanitizeText(block.text).trim();
       if (!sanitizedBlockText) {
         continue;
+      }
+
+      const goalContextPreview = getGoalContextPreview(sanitizedBlockText);
+      if (goalContextPreview) {
+        return goalContextPreview;
       }
 
       const planSummary = parsePlanSummary(sanitizedBlockText);
@@ -920,6 +978,22 @@ export function getCollapsedViewportLine(
           : "";
     const text = truncateInlineText(details || fallback || "System message");
     return plainLine("system", text, [plainSegment("error", text)]);
+  }
+
+  if (message.type === "thread_goal") {
+    const objective = normalizeInlineText(
+      sanitizeText(
+        message.threadGoal?.objective ??
+          (typeof content === "string" ? content : ""),
+      ),
+    );
+    const detail = truncateInlineText(objective || "Thread goal updated");
+    const prefix = getThreadGoalTextModePrefix(message.threadGoal);
+    const text = `${prefix} ${detail}`;
+    return plainLine("goal", text, [
+      plainSegment("goal", prefix),
+      detailSegment(detail),
+    ]);
   }
 
   if (message.type === "token_limit_notice") {

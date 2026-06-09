@@ -112,3 +112,34 @@ test("parseConversationTextChunk keeps paired tool call and output as one messag
     true,
   );
 });
+
+test("parseConversationTextChunk renders thread goal updates as messages", () => {
+  const text = [
+    line({
+      timestamp: "2026-04-07T12:05:25.280Z",
+      type: "event_msg",
+      payload: {
+        type: "thread_goal_updated",
+        thread_id: "thread-1",
+        turn_id: null,
+        goal: {
+          threadId: "thread-1",
+          objective: "Improve benchmark coverage",
+          status: "active",
+          tokenBudget: 10000,
+          tokensUsed: 1250,
+          timeUsedSeconds: 90,
+          createdAt: 100,
+          updatedAt: 120,
+        },
+      },
+    }),
+  ].join("\n");
+
+  const { messages } = parseConversationTextChunk(`${text}\n`, 0);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.type, "thread_goal");
+  assert.equal(messages[0]?.message?.content, "Improve benchmark coverage");
+  assert.equal(messages[0]?.threadGoal?.status, "active");
+  assert.equal(messages[0]?.threadGoal?.tokenBudget, 10000);
+});

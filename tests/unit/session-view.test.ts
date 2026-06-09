@@ -85,6 +85,37 @@ test("CollapsedViewportSummary keeps command highlighting inside the shared trun
   assert.doesNotMatch(html, /truncate whitespace-pre/);
 });
 
+test("CollapsedViewportSummary styles goal status prefix separately from objective", () => {
+  for (const prefix of [
+    "Goal Active:",
+    "Goal Paused:",
+    "Goal Blocked:",
+    "Goal Usage Limited:",
+    "Goal Budget Limited:",
+    "Goal Complete:",
+  ]) {
+    const html = renderCollapsedSummary({
+      tone: "goal",
+      text: `${prefix} Improve benchmark coverage`,
+      segments: [
+        { kind: "goal", text: prefix },
+        { kind: "detail", text: "Improve benchmark coverage" },
+      ],
+    });
+
+    assert.match(
+      html,
+      new RegExp(
+        `<span class="font-semibold text-emerald-200 ">${prefix}</span>`,
+      ),
+    );
+    assert.match(
+      html,
+      /<span class="text-zinc-300 ml-1">Improve benchmark coverage<\/span>/,
+    );
+  }
+});
+
 test("text mode auto-forces block mode for exec_command with pending permissions approval", () => {
   const messages = [
     createAssistantMessage([

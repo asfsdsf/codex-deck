@@ -156,6 +156,11 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     supportsInlineArgs: true,
   },
   {
+    name: "/goal",
+    description: "Set or manage the current thread goal",
+    supportsInlineArgs: true,
+  },
+  {
     name: "/collab",
     description: "Change collaboration mode (experimental)",
   },

@@ -336,6 +336,48 @@ test("getConversationStream emits system_error messages from error events", asyn
   }
 });
 
+test("getConversation emits thread_goal messages from goal update events", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-thread-goal-message",
+  );
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+      eventMsgLine({
+        type: "thread_goal_updated",
+        thread_id: SESSION_A,
+        turn_id: null,
+        goal: {
+          threadId: SESSION_A,
+          objective: "Ship goal rendering",
+          status: "paused",
+          tokenBudget: 20000,
+          tokensUsed: 1250,
+          timeUsedSeconds: 90,
+          createdAt: 100,
+          updatedAt: 120,
+        },
+      }),
+    ]);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const messages = await getConversation(SESSION_A);
+    const goalMessage = messages.find(
+      (message) => message.type === "thread_goal",
+    );
+
+    assert.ok(goalMessage);
+    assert.equal(goalMessage.message?.content, "Ship goal rendering");
+    assert.equal(goalMessage.threadGoal?.status, "paused");
+    assert.equal(goalMessage.threadGoal?.tokensUsed, 1250);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("getConversation collapses consecutive token_count rate limit notices", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "storage-token-limit-notice",

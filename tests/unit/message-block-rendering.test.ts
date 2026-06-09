@@ -15,6 +15,7 @@ function renderMessageBlock(
   options: {
     isAgentsBootstrap?: boolean;
     searchForcePrimaryExpanded?: boolean;
+    searchForceBlockIndex?: number | null;
     aiTerminalContext?: React.ComponentProps<
       typeof MessageBlock
     >["aiTerminalContext"];
@@ -25,6 +26,7 @@ function renderMessageBlock(
       message,
       isAgentsBootstrap: options.isAgentsBootstrap,
       searchForcePrimaryExpanded: options.searchForcePrimaryExpanded,
+      searchForceBlockIndex: options.searchForceBlockIndex,
       aiTerminalContext: options.aiTerminalContext,
     }),
   );
@@ -141,6 +143,75 @@ test("MessageBlock hides a single token limit notice", () => {
 
   const html = renderMessageBlock(message);
   assert.equal(html, "");
+});
+
+test("MessageBlock renders thread goal messages as an expanded goal callout", () => {
+  const message: ConversationMessage = {
+    type: "thread_goal",
+    summary: "Active",
+    threadGoal: {
+      threadId: "thread-1",
+      objective: "Improve benchmark coverage",
+      status: "active",
+      tokenBudget: 10000,
+      tokensUsed: 1250,
+      timeUsedSeconds: 90,
+      createdAt: 100,
+      updatedAt: 120,
+    },
+    message: {
+      role: "assistant",
+      content: "Improve benchmark coverage",
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Goal Active/);
+  assert.match(html, /Improve benchmark coverage/);
+  assert.match(html, /1m/);
+  assert.match(html, /1,250 \/ 10K tokens/);
+  assert.match(html, /<p class="[^"]*">Improve benchmark coverage<\/p>/);
+  assert.doesNotMatch(html, /▶|▼/);
+  assert.doesNotMatch(html, /<button/);
+  assert.doesNotMatch(html, /threadId/);
+});
+
+test("MessageBlock renders goal internal context without raw XML tags", () => {
+  const message: ConversationMessage = {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: `<codex_internal_context source="Goal">
+Continue working toward the active thread goal.
+
+<goal>
+Improve benchmark coverage
+</goal>
+</codex_internal_context>`,
+        },
+      ],
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /Goal Context/);
+  assert.match(html, /Continue working toward the active thread goal/);
+  assert.match(html, /Improve benchmark coverage/);
+  assert.match(html, /▶/);
+  assert.doesNotMatch(html, /codex_internal_context/);
+  assert.doesNotMatch(html, /&lt;goal&gt;/);
+
+  const expandedHtml = renderMessageBlock(message, {
+    searchForceBlockIndex: 0,
+  });
+  assert.match(expandedHtml, /▼/);
+  assert.match(
+    expandedHtml,
+    /<p class="[^"]*">Continue working toward the active thread goal\.<\/p>/,
+  );
 });
 
 test("MessageBlock renders ai terminal plan cards and hides raw tags", () => {

@@ -14,6 +14,7 @@ import {
   bindWorkflowSession,
   bindTerminalSession,
   cleanSessionBackgroundTerminalRuns,
+  clearCodexThreadGoal,
   compactCodexThread,
   createCodexThread,
   createTerminal,
@@ -26,6 +27,7 @@ import {
   getCodexConfigDefaults,
   getSystemContext,
   getCodexThreadState,
+  getCodexThreadGoal,
   getCodexThreadSummaries,
   getConversation,
   getSessionContext,
@@ -70,6 +72,7 @@ import {
   sendCodexMessage,
   sendWorkflowControlMessage,
   setCodexThreadName,
+  setCodexThreadGoal,
   startWorkflowDaemon,
   stopWorkflowProcesses,
   stopWorkflowDaemon,
@@ -950,6 +953,23 @@ test("thread management routes request expected endpoints", async () => {
     if (url.includes("/compact")) {
       return jsonResponse({ ok: true });
     }
+    if (url.includes("/goal")) {
+      if (init?.method === "DELETE") {
+        return jsonResponse({ cleared: true });
+      }
+      return jsonResponse({
+        goal: {
+          threadId: "thread#1",
+          objective: "Improve benchmark coverage",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      });
+    }
     if (url.includes("/agent-threads")) {
       return jsonResponse({
         threads: [
@@ -985,6 +1005,12 @@ test("thread management routes request expected endpoints", async () => {
   const renamed = await setCodexThreadName("thread#1", { name: "New Name" });
   const forked = await forkCodexThread("thread#1");
   const compacted = await compactCodexThread("thread#1");
+  const goal = await getCodexThreadGoal("thread#1");
+  const setGoal = await setCodexThreadGoal("thread#1", {
+    objective: "Improve benchmark coverage",
+    status: "active",
+  });
+  const clearedGoal = await clearCodexThreadGoal("thread#1");
   const agentThreads = await listCodexAgentThreads("thread#1");
   const summaries = await getCodexThreadSummaries({
     threadIds: ["thread#1", "thread#2"],
@@ -993,6 +1019,9 @@ test("thread management routes request expected endpoints", async () => {
   assert.equal(renamed.ok, true);
   assert.equal(forked.thread.threadId, "thread-forked");
   assert.equal(compacted.ok, true);
+  assert.equal(goal.goal?.objective, "Improve benchmark coverage");
+  assert.equal(setGoal.goal.status, "active");
+  assert.equal(clearedGoal.cleared, true);
   assert.equal(agentThreads[0]?.threadId, "thread-agent");
   assert.equal(summaries.threads[0]?.threadId, "thread-main");
 
@@ -1006,10 +1035,20 @@ test("thread management routes request expected endpoints", async () => {
   assert.equal(calls[1].init?.method, "POST");
   assert.equal(calls[2].url, "/api/codex/threads/thread%231/compact");
   assert.equal(calls[2].init?.method, "POST");
-  assert.equal(calls[3].url, "/api/codex/threads/thread%231/agent-threads");
-  assert.equal(calls[4].url, "/api/codex/threads/summaries");
+  assert.equal(calls[3].url, "/api/codex/threads/thread%231/goal");
+  assert.equal(calls[3].init?.method, undefined);
+  assert.equal(calls[4].url, "/api/codex/threads/thread%231/goal");
   assert.equal(calls[4].init?.method, "POST");
   assert.deepEqual(JSON.parse(String(calls[4].init?.body ?? "{}")), {
+    objective: "Improve benchmark coverage",
+    status: "active",
+  });
+  assert.equal(calls[5].url, "/api/codex/threads/thread%231/goal");
+  assert.equal(calls[5].init?.method, "DELETE");
+  assert.equal(calls[6].url, "/api/codex/threads/thread%231/agent-threads");
+  assert.equal(calls[7].url, "/api/codex/threads/summaries");
+  assert.equal(calls[7].init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[7].init?.body ?? "{}")), {
     threadIds: ["thread#1", "thread#2"],
   });
 });

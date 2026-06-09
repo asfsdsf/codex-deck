@@ -106,6 +106,7 @@ test("session composer command list includes toolbar and mode controls", () => {
   const names = SESSION_COMPOSER_SLASH_COMMANDS.map((command) => command.name);
   assert.equal(names.includes("/model"), true);
   assert.equal(names.includes("/plan"), true);
+  assert.equal(names.includes("/goal"), true);
   assert.equal(names.includes("/collab"), true);
   assert.equal(names.includes("/status"), true);
   assert.equal(names.includes("/rename"), true);
@@ -123,10 +124,14 @@ test("session composer command list includes toolbar and mode controls", () => {
   const planCommand = SESSION_COMPOSER_SLASH_COMMANDS.find(
     (command) => command.name === "/plan",
   );
+  const goalCommand = SESSION_COMPOSER_SLASH_COMMANDS.find(
+    (command) => command.name === "/goal",
+  );
   const renameCommand = SESSION_COMPOSER_SLASH_COMMANDS.find(
     (command) => command.name === "/rename",
   );
   assert.equal(planCommand?.supportsInlineArgs, true);
+  assert.equal(goalCommand?.supportsInlineArgs, true);
   assert.equal(renameCommand?.supportsInlineArgs, true);
 });
 

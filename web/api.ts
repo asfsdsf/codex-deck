@@ -3,6 +3,10 @@ import type {
   CodexCollaborationModeOption,
   CodexThreadStateResponse,
   CodexThreadSummary,
+  CodexThreadGoalClearResponse,
+  CodexThreadGoalGetResponse,
+  CodexThreadGoalSetRequest,
+  CodexThreadGoalSetResponse,
   CodexThreadNameSetRequest,
   CodexThreadNameSetResponse,
   CodexThreadForkResponse,
@@ -1004,6 +1008,43 @@ export async function compactCodexThread(
     `/api/codex/threads/${encodeURIComponent(threadId)}/compact`,
     {
       method: "POST",
+    },
+  );
+}
+
+export async function getCodexThreadGoal(
+  threadId: string,
+): Promise<CodexThreadGoalGetResponse> {
+  return requestJson<CodexThreadGoalGetResponse>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/goal`,
+  );
+}
+
+export async function setCodexThreadGoal(
+  threadId: string,
+  input: CodexThreadGoalSetRequest,
+): Promise<CodexThreadGoalSetResponse> {
+  return requestJsonAndNotifyConversation<CodexThreadGoalSetResponse>(
+    threadId,
+    `/api/codex/threads/${encodeURIComponent(threadId)}/goal`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function clearCodexThreadGoal(
+  threadId: string,
+): Promise<CodexThreadGoalClearResponse> {
+  return requestJsonAndNotifyConversation<CodexThreadGoalClearResponse>(
+    threadId,
+    `/api/codex/threads/${encodeURIComponent(threadId)}/goal`,
+    {
+      method: "DELETE",
     },
   );
 }

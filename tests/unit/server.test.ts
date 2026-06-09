@@ -5943,6 +5943,13 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
   const server = createServer({ port: 13016, codexDir: rootDir, open: false });
   const renamedThreads: Array<{ threadId: string; name: string }> = [];
   const compactedThreads: string[] = [];
+  const goalUpdates: Array<{
+    threadId: string;
+    objective?: string | null;
+    status?: string | null;
+    tokenBudget?: number | null;
+  }> = [];
+  const clearedGoals: string[] = [];
 
   const threadMain = {
     threadId: "thread-main",
@@ -5979,6 +5986,33 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
     }),
     compactThread: async (threadId: string) => {
       compactedThreads.push(threadId);
+    },
+    getThreadGoal: async (threadId: string) => ({
+      threadId,
+      objective: "Improve benchmark coverage",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 100,
+      updatedAt: 100,
+    }),
+    setThreadGoal: async (input) => {
+      goalUpdates.push(input);
+      return {
+        threadId: input.threadId,
+        objective: input.objective ?? "Improve benchmark coverage",
+        status: input.status ?? "active",
+        tokenBudget: input.tokenBudget ?? null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 100,
+        updatedAt: 101,
+      };
+    },
+    clearThreadGoal: async (threadId: string) => {
+      clearedGoals.push(threadId);
+      return true;
     },
     getThreadSummary: async (threadId: string) => {
       if (threadId === threadMain.threadId) {
@@ -6052,6 +6086,48 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
     );
     assert.equal(compactResponse.status, 200);
     assert.deepEqual(compactedThreads, ["thread-main"]);
+
+    const goalGetResponse = await requestJson(
+      server,
+      "/api/codex/threads/thread-main/goal",
+    );
+    assert.equal(goalGetResponse.status, 200);
+    assert.equal(
+      (goalGetResponse.body as { goal?: { objective?: string } }).goal
+        ?.objective,
+      "Improve benchmark coverage",
+    );
+
+    const goalSetResponse = await requestJson(
+      server,
+      "/api/codex/threads/thread-main/goal",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objective: "Ship /goal support",
+          status: "active",
+        }),
+      },
+    );
+    assert.equal(goalSetResponse.status, 200);
+    assert.deepEqual(goalUpdates, [
+      {
+        threadId: "thread-main",
+        objective: "Ship /goal support",
+        status: "active",
+      },
+    ]);
+
+    const goalClearResponse = await requestJson(
+      server,
+      "/api/codex/threads/thread-main/goal",
+      {
+        method: "DELETE",
+      },
+    );
+    assert.equal(goalClearResponse.status, 200);
+    assert.deepEqual(clearedGoals, ["thread-main"]);
 
     const agentThreadsResponse = await requestJson(
       server,

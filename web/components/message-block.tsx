@@ -27,11 +27,13 @@ import {
   Bot,
   ImageIcon,
   Clock3,
+  Target,
 } from "lucide-react";
 import { shouldDefaultExpandToolUse } from "../message-block-utils";
 import { getTokenLimitNoticeRepeatCount } from "../token-limit-notices";
 import { formatDurationFromTimestamps, sanitizeText } from "../utils";
 import { getPathTail } from "../path-utils";
+import { parseGoalInternalContext } from "../goal-internal-context";
 import {
   parseAiTerminalBootstrapMessage,
   parseAiTerminalCommandOutputMessage,
@@ -220,6 +222,74 @@ function JsonRenderer(props: {
       onFilePathLinkClick={props.onFilePathLinkClick}
     />
   );
+}
+
+function formatThreadGoalStatus(status: string | null | undefined): string {
+  if (status === "usageLimited") {
+    return "Usage limited";
+  }
+  if (status === "budgetLimited") {
+    return "Budget limited";
+  }
+  if (!status) {
+    return "Updated";
+  }
+  return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;
+}
+
+function formatCompactCount(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  return new Intl.NumberFormat(undefined, {
+    notation: Math.abs(value) >= 10000 ? "compact" : "standard",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatThreadGoalElapsed(seconds: number): string | null {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  if (seconds < 60) {
+    return `${Math.floor(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function formatThreadGoalUsage(
+  goal: ConversationMessage["threadGoal"],
+): string | null {
+  if (!goal) {
+    return null;
+  }
+  const parts: string[] = [];
+  const elapsed = formatThreadGoalElapsed(goal.timeUsedSeconds);
+  if (elapsed) {
+    parts.push(elapsed);
+  }
+  if (goal.tokenBudget !== undefined && goal.tokenBudget !== null) {
+    parts.push(
+      `${formatCompactCount(goal.tokensUsed)} / ${formatCompactCount(goal.tokenBudget)} tokens`,
+    );
+  } else if (goal.tokensUsed > 0) {
+    parts.push(`${formatCompactCount(goal.tokensUsed)} tokens`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function getGoalPreview(text: string, maxLength: number = 180): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length > maxLength) {
+    return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
+  return withMultilineCollapsedIndicator(normalized, text);
 }
 
 type JsonViewMode = "formatted" | "raw";
@@ -483,6 +553,58 @@ function ProposedPlanRenderer(props: {
           />
         </div>
       )}
+    </div>
+  );
+}
+
+function GoalInternalContextRenderer(props: {
+  content: string;
+  forceExpanded?: boolean;
+  onFilePathLinkClick?: (href: string) => boolean;
+}) {
+  const { content, forceExpanded = false, onFilePathLinkClick } = props;
+  const [expanded, setExpanded] = useState(forceExpanded);
+
+  useEffect(() => {
+    if (forceExpanded) {
+      setExpanded(true);
+    }
+  }, [forceExpanded]);
+
+  const previewText = getGoalPreview(content);
+
+  return (
+    <div className={expanded ? "w-full" : "self-start max-w-full"}>
+      <div className="max-w-full overflow-hidden rounded-lg border border-emerald-500/25 bg-emerald-500/10">
+        <div
+          className={`${expanded ? "flex" : "inline-flex max-w-full"} items-center gap-1.5 px-2.5 py-1.5`}
+        >
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className={`${expanded ? "flex flex-1" : "inline-flex max-w-full"} min-w-0 items-center gap-1.5 text-left text-[11px] text-emerald-100/90 transition-colors hover:text-emerald-50`}
+          >
+            <Target size={12} className="opacity-75" />
+            <span className="font-medium">Goal Context</span>
+            {!expanded && previewText ? (
+              <span className="min-w-0 truncate text-emerald-100/65">
+                {previewText}
+              </span>
+            ) : null}
+            <span className="ml-0.5 text-[10px] opacity-40">
+              {expanded ? "▼" : "▶"}
+            </span>
+          </button>
+        </div>
+        {expanded && (
+          <div className="border-t border-emerald-500/20 bg-emerald-500/8 px-3 py-2.5">
+            <MarkdownRenderer
+              content={content}
+              onFilePathLinkClick={onFilePathLinkClick}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1744,6 +1866,41 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     );
   }
 
+  if (message.type === "thread_goal") {
+    const goal = message.threadGoal;
+    const objective = sanitizeText(
+      goal?.objective ?? (typeof content === "string" ? content : ""),
+    ).trim();
+    if (!goal && !objective) {
+      return null;
+    }
+
+    const usageText = formatThreadGoalUsage(goal);
+    return (
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5">
+        <div className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-100/95">
+          <Target size={12} className="opacity-80" />
+          <span className="font-medium uppercase tracking-wide">
+            Goal {formatThreadGoalStatus(goal?.status)}
+          </span>
+        </div>
+        {objective ? (
+          <div className="mt-2 text-sm leading-relaxed text-zinc-100">
+            <MarkdownRenderer
+              content={objective}
+              onFilePathLinkClick={onFilePathLinkClick}
+            />
+          </div>
+        ) : null}
+        {usageText ? (
+          <div className="mt-2 text-[11px] text-emerald-100/70">
+            {usageText}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   const getPrimaryBlocks = (): ContentBlock[] => {
     if (!content || typeof content === "string") {
       return [];
@@ -2392,6 +2549,16 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                       planMarkdown={proposedPlan.planMarkdown}
                       trailingMarkdown={proposedPlan.trailingMarkdown}
                       onPlanAction={planActionHandler}
+                      onFilePathLinkClick={onFilePathLinkClick}
+                    />
+                  );
+                }
+                const goalInternalContext = parseGoalInternalContext(sanitized);
+                if (goalInternalContext) {
+                  return (
+                    <GoalInternalContextRenderer
+                      content={goalInternalContext.body}
+                      forceExpanded={searchForcePrimaryExpanded}
                       onFilePathLinkClick={onFilePathLinkClick}
                     />
                   );
@@ -3693,6 +3860,16 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
           planMarkdown={proposedPlan.planMarkdown}
           trailingMarkdown={proposedPlan.trailingMarkdown}
           onPlanAction={onPlanAction}
+          onFilePathLinkClick={onFilePathLinkClick}
+        />,
+      );
+    }
+    const goalInternalContext = parseGoalInternalContext(sanitized);
+    if (goalInternalContext) {
+      return wrapSearchableBlock(
+        <GoalInternalContextRenderer
+          content={goalInternalContext.body}
+          forceExpanded={forceExpanded}
           onFilePathLinkClick={onFilePathLinkClick}
         />,
       );

@@ -27,6 +27,23 @@ test("viewport grouping marks required important messages", () => {
     },
   };
   const assistantTextMessage = createAssistantMessage("Main reply");
+  const threadGoalMessage: ConversationMessage = {
+    type: "thread_goal",
+    threadGoal: {
+      threadId: "thread-1",
+      objective: "Improve benchmark coverage",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 1250,
+      timeUsedSeconds: 90,
+      createdAt: 100,
+      updatedAt: 120,
+    },
+    message: {
+      role: "assistant",
+      content: "Improve benchmark coverage",
+    },
+  };
   const requestUserInputMessage = createAssistantMessage([
     {
       type: "tool_use",
@@ -61,6 +78,7 @@ test("viewport grouping marks required important messages", () => {
 
   assert.equal(getViewportMessageGroup(userMessage), "important");
   assert.equal(getViewportMessageGroup(assistantTextMessage), "important");
+  assert.equal(getViewportMessageGroup(threadGoalMessage), "default");
   assert.equal(getViewportMessageGroup(requestUserInputMessage), "important");
   assert.equal(getViewportMessageGroup(updatePlanMessage), "important");
   assert.equal(getViewportMessageGroup(defaultToolMessage), "default");
@@ -155,6 +173,75 @@ test("collapsed text mode generates one-line previews", () => {
   assert.deepEqual(toolLine?.segments, [
     { kind: "command", text: "pnpm test" },
   ]);
+});
+
+test("collapsed text mode summarizes goal internal context without raw XML", () => {
+  const line = getCollapsedViewportLine(
+    createAssistantMessage([
+      {
+        type: "text",
+        text: `<codex_internal_context source="goal">
+Continue working toward the active thread goal.
+
+<objective>
+Improve benchmark coverage
+</objective>
+</codex_internal_context>`,
+      },
+    ]),
+  );
+
+  assert.deepEqual(line, {
+    tone: "goal",
+    text: "Goal: Continue working toward the active thread goal. Improve benchmark coverage",
+    segments: [
+      { kind: "label", text: "Goal:" },
+      {
+        kind: "detail",
+        text: "Continue working toward the active thread goal. Improve benchmark coverage",
+      },
+    ],
+  });
+});
+
+test("collapsed text mode summarizes thread goal messages by status", () => {
+  const cases = [
+    ["active", "Goal Active:"],
+    ["paused", "Goal Paused:"],
+    ["blocked", "Goal Blocked:"],
+    ["usageLimited", "Goal Usage Limited:"],
+    ["budgetLimited", "Goal Budget Limited:"],
+    ["complete", "Goal Complete:"],
+  ] as const;
+
+  for (const [status, prefix] of cases) {
+    const line = getCollapsedViewportLine({
+      type: "thread_goal",
+      threadGoal: {
+        threadId: "thread-1",
+        objective: "Improve benchmark coverage",
+        status,
+        tokenBudget: null,
+        tokensUsed: 1250,
+        timeUsedSeconds: 90,
+        createdAt: 100,
+        updatedAt: 120,
+      },
+      message: {
+        role: "assistant",
+        content: "Improve benchmark coverage",
+      },
+    });
+
+    assert.deepEqual(line, {
+      tone: "goal",
+      text: `${prefix} Improve benchmark coverage`,
+      segments: [
+        { kind: "goal", text: prefix },
+        { kind: "detail", text: "Improve benchmark coverage" },
+      ],
+    });
+  }
 });
 
 test("collapsed text mode customizes sed -n summaries", () => {

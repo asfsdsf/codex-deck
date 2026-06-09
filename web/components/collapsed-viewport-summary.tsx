@@ -28,6 +28,8 @@ function getCollapsedSegmentClassName(
       return "command-syntax text-zinc-100";
     case "error":
       return "text-rose-200";
+    case "goal":
+      return "font-semibold text-emerald-200";
     default:
       return "text-inherit";
   }

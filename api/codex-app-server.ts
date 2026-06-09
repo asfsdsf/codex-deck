@@ -176,6 +176,32 @@ export interface CodexThreadSummary {
   updatedAt: number | null;
 }
 
+export type CodexThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+export interface CodexThreadGoal {
+  threadId: string;
+  objective: string;
+  status: CodexThreadGoalStatus;
+  tokenBudget?: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SetCodexThreadGoalInput {
+  threadId: string;
+  objective?: string | null;
+  status?: CodexThreadGoalStatus | null;
+  tokenBudget?: number | null;
+}
+
 type JsonRpcRequestId = string | number;
 
 export interface CodexUserInputQuestionOption {
@@ -1057,6 +1083,93 @@ class CodexAppServerClient {
       await this.request("thread/compact/start", {
         threadId: normalizedThreadId,
       });
+    }
+  }
+
+  public async getThreadGoal(
+    threadId: string,
+  ): Promise<CodexThreadGoal | null> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("threadId is required");
+    }
+
+    const payload = {
+      threadId: normalizedThreadId,
+    };
+
+    try {
+      const result = await this.request("thread/goal/get", payload);
+      return extractThreadGoalFromNullableResult(result);
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) {
+        throw error;
+      }
+
+      await this.resumeThread(normalizedThreadId);
+      const result = await this.request("thread/goal/get", payload);
+      return extractThreadGoalFromNullableResult(result);
+    }
+  }
+
+  public async setThreadGoal(
+    input: SetCodexThreadGoalInput,
+  ): Promise<CodexThreadGoal> {
+    const normalizedThreadId = input.threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("threadId is required");
+    }
+
+    const payload: Record<string, unknown> = {
+      threadId: normalizedThreadId,
+    };
+
+    if (input.objective !== undefined) {
+      payload.objective =
+        typeof input.objective === "string" ? input.objective.trim() : null;
+    }
+    if (input.status !== undefined) {
+      payload.status = input.status;
+    }
+    if (input.tokenBudget !== undefined) {
+      payload.tokenBudget = input.tokenBudget;
+    }
+
+    try {
+      const result = await this.request("thread/goal/set", payload);
+      return extractThreadGoalFromSetResult(result);
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) {
+        throw error;
+      }
+
+      await this.resumeThread(normalizedThreadId);
+      const result = await this.request("thread/goal/set", payload);
+      return extractThreadGoalFromSetResult(result);
+    }
+  }
+
+  public async clearThreadGoal(threadId: string): Promise<boolean> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("threadId is required");
+    }
+
+    const payload = {
+      threadId: normalizedThreadId,
+    };
+
+    try {
+      const result = await this.request("thread/goal/clear", payload);
+      return extractThreadGoalClearResult(result);
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) {
+        throw error;
+      }
+
+      await this.resumeThread(normalizedThreadId);
+      const result = await this.request("thread/goal/clear", payload);
+      return extractThreadGoalClearResult(result);
     }
   }
 
@@ -2362,6 +2475,16 @@ function asFiniteNumber(value: unknown): number | null {
   return null;
 }
 
+function asNullableFiniteNumber(value: unknown): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return asFiniteNumber(value);
+}
+
 function toReasoningEffort(value: unknown): CodexReasoningEffort | null {
   if (
     value === "none" ||
@@ -2986,6 +3109,101 @@ function extractThreadSummaryFromResult(result: unknown): CodexThreadSummary {
   };
 }
 
+function extractThreadGoalFromSetResult(result: unknown): CodexThreadGoal {
+  const record = asRecord(result);
+  const goal = record ? extractThreadGoal(record.goal) : null;
+  if (!goal) {
+    throw new CodexAppServerTransportError(
+      "Missing goal payload in codex app-server response",
+    );
+  }
+  return goal;
+}
+
+function extractThreadGoalFromNullableResult(
+  result: unknown,
+): CodexThreadGoal | null {
+  const record = asRecord(result);
+  if (!record || record.goal === null || record.goal === undefined) {
+    return null;
+  }
+
+  const goal = extractThreadGoal(record.goal);
+  if (!goal) {
+    throw new CodexAppServerTransportError(
+      "Invalid goal payload in codex app-server response",
+    );
+  }
+  return goal;
+}
+
+function extractThreadGoalClearResult(result: unknown): boolean {
+  const record = asRecord(result);
+  if (!record || typeof record.cleared !== "boolean") {
+    throw new CodexAppServerTransportError(
+      "Invalid thread/goal/clear response from codex app-server",
+    );
+  }
+  return record.cleared;
+}
+
+function extractThreadGoal(value: unknown): CodexThreadGoal | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const threadId = asTrimmedString(record.threadId ?? record.thread_id);
+  const objective = asTrimmedString(record.objective);
+  const status = toThreadGoalStatus(record.status);
+  const tokensUsed = asFiniteNumber(record.tokensUsed ?? record.tokens_used);
+  const timeUsedSeconds = asFiniteNumber(
+    record.timeUsedSeconds ?? record.time_used_seconds,
+  );
+  const createdAt = asFiniteNumber(record.createdAt ?? record.created_at);
+  const updatedAt = asFiniteNumber(record.updatedAt ?? record.updated_at);
+  if (
+    !threadId ||
+    !objective ||
+    !status ||
+    tokensUsed === null ||
+    timeUsedSeconds === null ||
+    createdAt === null ||
+    updatedAt === null
+  ) {
+    return null;
+  }
+
+  const tokenBudget = asNullableFiniteNumber(
+    record.tokenBudget ?? record.token_budget,
+  );
+  return {
+    threadId,
+    objective,
+    status,
+    ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+    tokensUsed,
+    timeUsedSeconds,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function toThreadGoalStatus(value: unknown): CodexThreadGoalStatus | null {
+  const normalized = asTrimmedString(value);
+  if (
+    normalized === "active" ||
+    normalized === "paused" ||
+    normalized === "blocked" ||
+    normalized === "usageLimited" ||
+    normalized === "budgetLimited" ||
+    normalized === "complete"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
 function extractTurnIdFromTurnStartResult(result: unknown): string | null {
   if (!result || typeof result !== "object") {
     return null;
@@ -3370,6 +3588,9 @@ export interface CodexAppServerClientFacade {
   setThreadName?: (threadId: string, name: string) => Promise<void>;
   forkThread?: (threadId: string) => Promise<CodexThreadSummary>;
   compactThread?: (threadId: string) => Promise<void>;
+  getThreadGoal?: (threadId: string) => Promise<CodexThreadGoal | null>;
+  setThreadGoal?: (input: SetCodexThreadGoalInput) => Promise<CodexThreadGoal>;
+  clearThreadGoal?: (threadId: string) => Promise<boolean>;
   getThreadSummary?: (threadId: string) => Promise<CodexThreadSummary>;
   listLoadedThreadIds?: () => Promise<string[]>;
   sendMessage: (
@@ -3425,6 +3646,10 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.setThreadName(threadId, name),
     forkThread: (threadId: string) => client!.forkThread(threadId),
     compactThread: (threadId: string) => client!.compactThread(threadId),
+    getThreadGoal: (threadId: string) => client!.getThreadGoal(threadId),
+    setThreadGoal: (input: SetCodexThreadGoalInput) =>
+      client!.setThreadGoal(input),
+    clearThreadGoal: (threadId: string) => client!.clearThreadGoal(threadId),
     getThreadSummary: (threadId: string) => client!.getThreadSummary(threadId),
     listLoadedThreadIds: () => client!.listLoadedThreadIds(),
     sendMessage: (input: SendCodexMessageInput) => client!.sendMessage(input),

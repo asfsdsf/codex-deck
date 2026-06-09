@@ -163,6 +163,43 @@ export interface CodexThreadNameSetResponse {
   ok: boolean;
 }
 
+export type CodexThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+export interface CodexThreadGoal {
+  threadId: string;
+  objective: string;
+  status: CodexThreadGoalStatus;
+  tokenBudget?: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CodexThreadGoalSetRequest {
+  objective?: string | null;
+  status?: CodexThreadGoalStatus | null;
+  tokenBudget?: number | null;
+}
+
+export interface CodexThreadGoalSetResponse {
+  goal: CodexThreadGoal;
+}
+
+export interface CodexThreadGoalGetResponse {
+  goal: CodexThreadGoal | null;
+}
+
+export interface CodexThreadGoalClearResponse {
+  cleared: boolean;
+}
+
 export interface CodexThreadForkResponse {
   thread: CodexThreadSummary;
 }
@@ -1028,6 +1065,7 @@ export interface ConversationMessage {
     | "system_error"
     | "token_limit_notice"
     | "turn_aborted"
+    | "thread_goal"
     | "task_started"
     | "task_complete";
   uuid?: string;
@@ -1045,6 +1083,7 @@ export interface ConversationMessage {
   repeatCount?: number;
   repeatCountMax?: number;
   rateLimitId?: string | null;
+  threadGoal?: CodexThreadGoal;
 }
 
 export interface ContentBlock {
@@ -1444,6 +1483,10 @@ function parseFiniteNumber(value: unknown): number | null {
     }
   }
   return null;
+}
+
+function parseOptionalNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function parseTokenUsageSummary(value: unknown): CodexSessionTokenUsage | null {
@@ -2831,6 +2874,26 @@ function createTokenLimitNoticeMessage(
   };
 }
 
+function createThreadGoalMessage(
+  goal: CodexThreadGoal,
+  uuid: string,
+  timestamp?: string,
+  turnId?: string,
+): ConversationMessage {
+  return {
+    type: "thread_goal",
+    uuid,
+    timestamp,
+    turnId,
+    summary: goalStatusLabel(goal.status),
+    threadGoal: goal,
+    message: {
+      role: "assistant",
+      content: goal.objective,
+    },
+  };
+}
+
 function createToolMessage(
   toolUse: PendingToolUse,
   uuid: string,
@@ -3130,6 +3193,76 @@ function getTokenLimitNoticeComparableKey(
   return rateLimitId || "token-limit-notice";
 }
 
+function asNullableFiniteNumber(value: unknown): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return parseFiniteNumber(value);
+}
+
+function goalStatusLabel(status: CodexThreadGoal["status"]): string {
+  if (status === "usageLimited") {
+    return "Usage Limited";
+  }
+  if (status === "budgetLimited") {
+    return "Budget Limited";
+  }
+  return status.slice(0, 1).toUpperCase() + status.slice(1);
+}
+
+function parseThreadGoalFromPayload(
+  payload: Record<string, unknown>,
+): CodexThreadGoal | null {
+  const goalValue = payload.goal;
+  if (!goalValue || typeof goalValue !== "object" || Array.isArray(goalValue)) {
+    return null;
+  }
+
+  const goal = goalValue as Record<string, unknown>;
+  const threadId = parseOptionalNonEmptyString(goal.threadId ?? goal.thread_id);
+  const objective = parseOptionalNonEmptyString(goal.objective);
+  const status = parseOptionalNonEmptyString(goal.status);
+  const tokensUsed = parseFiniteNumber(goal.tokensUsed ?? goal.tokens_used);
+  const timeUsedSeconds = parseFiniteNumber(
+    goal.timeUsedSeconds ?? goal.time_used_seconds,
+  );
+  const createdAt = parseFiniteNumber(goal.createdAt ?? goal.created_at);
+  const updatedAt = parseFiniteNumber(goal.updatedAt ?? goal.updated_at);
+  if (
+    !threadId ||
+    !objective ||
+    (status !== "active" &&
+      status !== "paused" &&
+      status !== "blocked" &&
+      status !== "usageLimited" &&
+      status !== "budgetLimited" &&
+      status !== "complete") ||
+    tokensUsed === null ||
+    timeUsedSeconds === null ||
+    createdAt === null ||
+    updatedAt === null
+  ) {
+    return null;
+  }
+
+  const tokenBudget = asNullableFiniteNumber(
+    goal.tokenBudget ?? goal.token_budget,
+  );
+  return {
+    threadId,
+    objective,
+    status,
+    ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+    tokensUsed,
+    timeUsedSeconds,
+    createdAt,
+    updatedAt,
+  };
+}
+
 function getMostRecentVisibleMessageIndex(
   messages: ConversationMessage[],
 ): number {
@@ -3145,6 +3278,23 @@ function getMostRecentVisibleMessageIndex(
   }
 
   return -1;
+}
+
+function normalizeThreadGoalComparableKey(
+  message: ConversationMessage,
+): string | null {
+  if (message.type !== "thread_goal" || !message.threadGoal) {
+    return null;
+  }
+  const goal = message.threadGoal;
+  return [
+    goal.threadId,
+    goal.objective.trim(),
+    goal.status,
+    goal.tokenBudget ?? "",
+    goal.tokensUsed,
+    goal.timeUsedSeconds,
+  ].join("\u0000");
 }
 
 function pushConversationMessage(
@@ -3237,6 +3387,23 @@ function pushConversationMessage(
           (lastMessage.repeatCount ?? 1) + (message.repeatCount ?? 1),
         repeatCountMax: message.repeatCountMax ?? lastMessage.repeatCountMax,
         rateLimitId: message.rateLimitId ?? lastMessage.rateLimitId ?? null,
+      };
+      return;
+    }
+  }
+
+  if (message.type === "thread_goal") {
+    const lastMessage = messages[messages.length - 1];
+    const lastKey = lastMessage
+      ? normalizeThreadGoalComparableKey(lastMessage)
+      : null;
+    const nextKey = normalizeThreadGoalComparableKey(message);
+    if (lastMessage?.type === "thread_goal" && nextKey && nextKey === lastKey) {
+      messages[messages.length - 1] = {
+        ...lastMessage,
+        ...message,
+        uuid: message.uuid ?? lastMessage.uuid,
+        timestamp: message.timestamp ?? lastMessage.timestamp,
       };
       return;
     }
@@ -3337,6 +3504,25 @@ function parseCodexConversation(
     const payloadType = typeof payload.type === "string" ? payload.type : "";
 
     if (record.type === "event_msg") {
+      if (payloadType === "thread_goal_updated") {
+        const goal = parseThreadGoalFromPayload(payload);
+        if (!goal) {
+          continue;
+        }
+        const turnId =
+          typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
+        pushConversationMessage(
+          messages,
+          createThreadGoalMessage(
+            goal,
+            `${offset}:thread-goal:${messages.length}`,
+            timestamp,
+            turnId || undefined,
+          ),
+        );
+        continue;
+      }
+
       if (payloadType === "turn_aborted") {
         const reason =
           typeof payload.reason === "string" ? payload.reason.trim() : "";

@@ -32,6 +32,11 @@ import {
   type CodexAppServerEvent,
   type CodexThreadNameSetRequest,
   type CodexThreadNameSetResponse,
+  type CodexThreadGoalClearResponse,
+  type CodexThreadGoalGetResponse,
+  type CodexThreadGoalSetRequest,
+  type CodexThreadGoalSetResponse,
+  type CodexThreadGoalStatus,
   type CodexThreadForkResponse,
   type CodexThreadCompactResponse,
   type CodexThreadAgentListResponse,
@@ -260,6 +265,19 @@ function parseOptionalServiceTier(
     return null;
   }
   return isCodexServiceTier(value) ? value : undefined;
+}
+
+function isCodexThreadGoalStatus(
+  value: unknown,
+): value is CodexThreadGoalStatus {
+  return (
+    value === "active" ||
+    value === "paused" ||
+    value === "blocked" ||
+    value === "usageLimited" ||
+    value === "budgetLimited" ||
+    value === "complete"
+  );
 }
 
 function parseOptionalCollaborationMode(
@@ -3818,6 +3836,146 @@ export function createServer(options: ServerOptions) {
       await client.compactThread(threadId);
       const response: CodexThreadCompactResponse = {
         ok: true,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.get("/api/codex/threads/:id/goal", async (c) => {
+    const threadId = c.req.param("id")?.trim();
+    if (!threadId) {
+      return c.json({ error: "thread id is required" }, 400);
+    }
+
+    try {
+      const client = getCodexAppServerClient();
+      if (!client.getThreadGoal) {
+        return c.json(
+          {
+            error: "Thread goal is not available for this codex client",
+          },
+          503,
+        );
+      }
+
+      const goal = await client.getThreadGoal(threadId);
+      const response: CodexThreadGoalGetResponse = {
+        goal,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/codex/threads/:id/goal", async (c) => {
+    const threadId = c.req.param("id")?.trim();
+    if (!threadId) {
+      return c.json({ error: "thread id is required" }, 400);
+    }
+
+    try {
+      const client = getCodexAppServerClient();
+      if (!client.setThreadGoal) {
+        return c.json(
+          {
+            error: "Thread goal is not available for this codex client",
+          },
+          503,
+        );
+      }
+
+      const body = (await c.req.json()) as Partial<CodexThreadGoalSetRequest>;
+      const objective =
+        body.objective === null
+          ? null
+          : typeof body.objective === "string"
+            ? body.objective.trim()
+            : undefined;
+      const status =
+        body.status === null
+          ? null
+          : isCodexThreadGoalStatus(body.status)
+            ? body.status
+            : undefined;
+
+      if (body.objective !== undefined && objective !== null && !objective) {
+        return c.json({ error: "goal objective is required" }, 400);
+      }
+      if (body.status !== undefined && status === undefined) {
+        return c.json({ error: "invalid goal status" }, 400);
+      }
+      if (
+        body.tokenBudget !== undefined &&
+        body.tokenBudget !== null &&
+        (typeof body.tokenBudget !== "number" ||
+          !Number.isFinite(body.tokenBudget) ||
+          body.tokenBudget < 0)
+      ) {
+        return c.json({ error: "invalid goal token budget" }, 400);
+      }
+      if (
+        objective === undefined &&
+        status === undefined &&
+        body.tokenBudget === undefined
+      ) {
+        return c.json({ error: "goal update is required" }, 400);
+      }
+
+      const goal = await client.setThreadGoal({
+        threadId,
+        ...(objective !== undefined ? { objective } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(body.tokenBudget !== undefined
+          ? { tokenBudget: body.tokenBudget }
+          : {}),
+      });
+      const response: CodexThreadGoalSetResponse = {
+        goal,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.delete("/api/codex/threads/:id/goal", async (c) => {
+    const threadId = c.req.param("id")?.trim();
+    if (!threadId) {
+      return c.json({ error: "thread id is required" }, 400);
+    }
+
+    try {
+      const client = getCodexAppServerClient();
+      if (!client.clearThreadGoal) {
+        return c.json(
+          {
+            error: "Thread goal is not available for this codex client",
+          },
+          503,
+        );
+      }
+
+      const cleared = await client.clearThreadGoal(threadId);
+      const response: CodexThreadGoalClearResponse = {
+        cleared,
       };
       return c.json(response);
     } catch (error) {

@@ -223,6 +223,8 @@ import {
   setCodexThreadName,
   forkCodexThread,
   compactCodexThread,
+  clearCodexThreadGoal,
+  setCodexThreadGoal,
   listCodexAgentThreads,
   getCodexThreadSummaries,
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
@@ -8844,6 +8846,60 @@ export default function CodexDeckApp() {
           normalizedLower === "on" ? "plan" : DEFAULT_MODE_KEY,
         );
         return true;
+      }
+
+      if (commandName === "/goal") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /goal.");
+          return false;
+        }
+
+        const normalizedLower = normalizedArgs.toLowerCase();
+        try {
+          if (!normalizedArgs || normalizedLower === "edit") {
+            setInteractionError(
+              "Usage: /goal <objective> | /goal clear | /goal pause | /goal resume",
+            );
+            return false;
+          }
+
+          if (normalizedLower === "clear") {
+            await clearCodexThreadGoal(commandSessionId);
+            showCommandNoticeForDuration("Cleared current goal.");
+            return true;
+          }
+
+          if (normalizedLower === "pause" || normalizedLower === "resume") {
+            await setCodexThreadGoal(commandSessionId, {
+              status: normalizedLower === "pause" ? "paused" : "active",
+            });
+            showCommandNoticeForDuration(
+              normalizedLower === "pause"
+                ? "Paused current goal."
+                : "Resumed current goal.",
+            );
+            return true;
+          }
+
+          if (normalizedArgs.length > 4000) {
+            setInteractionError(
+              "Goal objective is too long. Limit: 4,000 characters.",
+            );
+            return false;
+          }
+
+          await setCodexThreadGoal(commandSessionId, {
+            objective: normalizedArgs,
+            status: "active",
+          });
+          showCommandNoticeForDuration("Set current goal.");
+          return true;
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+          return false;
+        }
       }
 
       if (commandName === "/collab") {

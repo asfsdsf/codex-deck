@@ -206,6 +206,9 @@ function getCollapsedLineToneClasses(tone: ViewportTextTone): string {
   if (tone === "plan") {
     return "text-sky-200";
   }
+  if (tone === "goal") {
+    return "text-emerald-200";
+  }
   return "text-rose-200";
 }
 
@@ -646,7 +649,8 @@ function isVisibleConversationMessage(message: ConversationMessage): boolean {
     message.type === "system_error" ||
     (message.type === "token_limit_notice" &&
       shouldShowTokenLimitNotice(message)) ||
-    message.type === "turn_aborted"
+    message.type === "turn_aborted" ||
+    message.type === "thread_goal"
   );
 }
 
@@ -1631,6 +1635,7 @@ const SessionView = memo(
             message.type === "system_error" ||
             message.type === "token_limit_notice" ||
             message.type === "turn_aborted" ||
+            message.type === "thread_goal" ||
             isLastVisibleMessage;
           const timestampText = shouldShowTimestamp
             ? formatLocalTimestamp(message.timestamp)
