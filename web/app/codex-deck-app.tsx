@@ -270,6 +270,13 @@ import {
   type ResolvedTheme,
   type ThemePreference,
 } from "../theme";
+import {
+  BROWSER_TITLE_MODE_STORAGE_KEY,
+  buildBrowserTitle,
+  persistBrowserTitleMode,
+  readBrowserTitleMode,
+  type BrowserTitleMode,
+} from "../browser-title";
 
 interface SessionHeaderProps {
   session: Session;
@@ -3253,6 +3260,12 @@ export default function CodexDeckApp() {
       ? "system"
       : readStoredThemePreference(window.localStorage),
   );
+  const [browserTitleMode, setBrowserTitleMode] = useState<BrowserTitleMode>(
+    () =>
+      typeof window === "undefined"
+        ? "app"
+        : readBrowserTitleMode(window.localStorage),
+  );
   const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() =>
     getSystemPrefersDark(),
   );
@@ -3271,6 +3284,13 @@ export default function CodexDeckApp() {
     }
     persistThemePreference(window.localStorage, themePreference);
   }, [themePreference]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    persistBrowserTitleMode(window.localStorage, browserTitleMode);
+  }, [browserTitleMode]);
 
   useEffect(() => {
     if (
@@ -3311,6 +3331,27 @@ export default function CodexDeckApp() {
         return;
       }
       setThemePreference(readStoredThemePreference(window.localStorage));
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (
+        event.key !== null &&
+        event.key !== BROWSER_TITLE_MODE_STORAGE_KEY
+      ) {
+        return;
+      }
+      setBrowserTitleMode(readBrowserTitleMode(window.localStorage));
     };
 
     window.addEventListener("storage", handleStorage);
@@ -4887,6 +4928,43 @@ export default function CodexDeckApp() {
       ) ?? null
     );
   }, [activeComposerSessionId, sessionsWithThreadNames]);
+  const activeBrowserTitleProjectPath =
+    centerView === "workflow"
+      ? workflowRightPaneProjectPath
+      : centerView === "terminal"
+        ? selectedTerminalData?.cwd
+        : selectedSessionData?.project;
+  const activeBrowserTitleProjectName =
+    centerView === "workflow"
+      ? selectedWorkflowSummary?.projectName
+      : centerView === "terminal"
+        ? selectedTerminalData?.projectName
+        : selectedSessionData?.project
+          ? getPathBaseName(selectedSessionData.project)
+          : null;
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    document.title = buildBrowserTitle({
+      mode: browserTitleMode,
+      sessionDisplay:
+        activeComposerSessionData?.display ||
+        selectedWorkflowSummary?.title ||
+        selectedTerminalData?.display ||
+        null,
+      projectPath: activeBrowserTitleProjectPath,
+      projectName: activeBrowserTitleProjectName,
+    });
+  }, [
+    activeBrowserTitleProjectName,
+    activeBrowserTitleProjectPath,
+    activeComposerSessionData?.display,
+    browserTitleMode,
+    selectedTerminalData?.display,
+    selectedWorkflowSummary?.title,
+  ]);
   const workflowComposerProjectRoot =
     workflowDetail?.summary.projectRoot ??
     selectedWorkflowSummary?.projectRoot ??
@@ -8992,6 +9070,26 @@ export default function CodexDeckApp() {
         showCommandNoticeForDuration(
           "Permission profile details are shown in session status.",
         );
+        return true;
+      }
+
+      if (commandName === "/title") {
+        setBrowserTitleMode((current) => {
+          const next =
+            current === "app"
+              ? "session"
+              : current === "session"
+                ? "project"
+                : "app";
+          const label =
+            next === "app"
+              ? "App"
+              : next === "session"
+                ? "Current session"
+                : "Current project";
+          showCommandNoticeForDuration(`Browser tab title: ${label}.`);
+          return next;
+        });
         return true;
       }
 

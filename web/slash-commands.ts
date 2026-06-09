@@ -169,6 +169,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Show current session configuration and token usage",
   },
   {
+    name: "/title",
+    description: "Configure the browser tab title",
+  },
+  {
     name: "/rename",
     description: "Rename the current thread",
     supportsInlineArgs: true,

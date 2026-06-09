@@ -46,6 +46,15 @@ test("getSlashPaletteCommands only returns visible matching commands", () => {
     SESSION_COMPOSER_SLASH_COMMANDS,
   );
   assert.deepEqual(withArgs, []);
+
+  const titleCommands = getSlashPaletteCommands(
+    "/ti",
+    SESSION_COMPOSER_SLASH_COMMANDS,
+  );
+  assert.deepEqual(
+    titleCommands.map((command) => command.name),
+    ["/title"],
+  );
 });
 
 test("parseSlashCommandInvocation resolves aliases and preserves args", () => {
@@ -118,6 +127,7 @@ test("session composer command list includes toolbar and mode controls", () => {
   assert.equal(names.includes("/goal"), true);
   assert.equal(names.includes("/collab"), true);
   assert.equal(names.includes("/status"), true);
+  assert.equal(names.includes("/title"), true);
   assert.equal(names.includes("/rename"), true);
   assert.equal(names.includes("/diff"), true);
   assert.equal(names.includes("/fork"), true);
