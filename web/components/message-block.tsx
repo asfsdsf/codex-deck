@@ -247,6 +247,27 @@ function formatCompactCount(value: number): string {
   }).format(value);
 }
 
+function formatReasoningTokenUsage(usage: ContentBlock["token_usage"]): string {
+  if (!usage) {
+    return "";
+  }
+
+  const tokenCount =
+    typeof usage.reasoning_output_tokens === "number" &&
+    Number.isFinite(usage.reasoning_output_tokens)
+      ? usage.reasoning_output_tokens
+      : typeof usage.total_tokens === "number" &&
+          Number.isFinite(usage.total_tokens)
+        ? usage.total_tokens
+        : usage.input_tokens + usage.output_tokens;
+  const label =
+    typeof usage.reasoning_output_tokens === "number" &&
+    Number.isFinite(usage.reasoning_output_tokens)
+      ? "reasoning tokens"
+      : "tokens";
+  return `${formatCompactCount(Math.max(0, Math.round(tokenCount)))} ${label}`;
+}
+
 function formatThreadGoalElapsed(seconds: number): string | null {
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return null;
@@ -3926,6 +3947,7 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     if (!reasoningText) {
       return null;
     }
+    const tokenUsageText = formatReasoningTokenUsage(block.token_usage);
 
     return wrapSearchableBlock(
       <div className={expanded ? "w-full" : "self-start"}>
@@ -3939,6 +3961,11 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
             >
               <Bot size={12} className="opacity-75" />
               <span className="font-medium">agent step</span>
+              {tokenUsageText && (
+                <span className="shrink-0 rounded border border-fuchsia-400/15 bg-fuchsia-950/20 px-1.5 py-0.5 text-[10px] leading-none text-fuchsia-100/55">
+                  {tokenUsageText}
+                </span>
+              )}
               {!expanded && (
                 <span className="truncate text-fuchsia-100/65">
                   {getReasoningPreview(reasoningText, 140)}
@@ -3967,6 +3994,7 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     if (!reasoningText) {
       return null;
     }
+    const tokenUsageText = formatReasoningTokenUsage(block.token_usage);
 
     return wrapSearchableBlock(
       <div className={expanded ? "w-full" : "self-start"}>
@@ -3980,6 +4008,11 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
             >
               <Lightbulb size={12} className="opacity-70" />
               <span className="font-medium">reasoning</span>
+              {tokenUsageText && (
+                <span className="shrink-0 rounded border border-amber-400/15 bg-amber-950/20 px-1.5 py-0.5 text-[10px] leading-none text-amber-100/55">
+                  {tokenUsageText}
+                </span>
+              )}
               {!expanded && (
                 <span className="truncate text-amber-100/65">
                   {getReasoningPreview(reasoningText, 140)}

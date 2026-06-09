@@ -1105,11 +1105,14 @@ export interface ContentBlock {
   content?: unknown;
   is_error?: boolean;
   timestamp?: string;
+  token_usage?: TokenUsage;
 }
 
 export interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
+  total_tokens?: number;
+  reasoning_output_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
 }
@@ -1219,6 +1222,10 @@ let historyCache: Map<string, SessionHistory> | null = null;
 
 const pendingRequests = new Map<string, Promise<unknown>>();
 const sessionToolNameIndex = new Map<string, Map<string, string>>();
+const sessionStreamLastReasoningMessage = new Map<
+  string,
+  ConversationMessage
+>();
 
 export function initStorage(dir?: string): void {
   codexDir = dir ?? join(homedir(), ".codex");
@@ -1253,6 +1260,7 @@ function clearSessionCaches(sessionId: string): void {
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
   sessionToolNameIndex.delete(sessionId);
+  sessionStreamLastReasoningMessage.delete(sessionId);
   if (historyCache) {
     historyCache.delete(sessionId);
   }
@@ -1535,6 +1543,205 @@ function parseTokenUsageSummary(value: unknown): CodexSessionTokenUsage | null {
     inputTokens,
     outputTokens,
   };
+}
+
+function parseLastTokenUsage(value: unknown): TokenUsage | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const inputTokens = parseFiniteNumber(record.input_tokens);
+  const outputTokens = parseFiniteNumber(record.output_tokens);
+  if (inputTokens === null || outputTokens === null) {
+    return undefined;
+  }
+
+  const totalTokens = parseFiniteNumber(record.total_tokens);
+  const reasoningOutputTokens = parseFiniteNumber(
+    record.reasoning_output_tokens,
+  );
+  const cacheCreationInputTokens = parseFiniteNumber(
+    record.cache_creation_input_tokens,
+  );
+  const cacheReadInputTokens =
+    parseFiniteNumber(record.cache_read_input_tokens) ??
+    parseFiniteNumber(record.cached_input_tokens);
+
+  return {
+    input_tokens: Math.max(0, Math.round(inputTokens)),
+    output_tokens: Math.max(0, Math.round(outputTokens)),
+    ...(totalTokens !== null
+      ? { total_tokens: Math.max(0, Math.round(totalTokens)) }
+      : {}),
+    ...(reasoningOutputTokens !== null
+      ? {
+          reasoning_output_tokens: Math.max(
+            0,
+            Math.round(reasoningOutputTokens),
+          ),
+        }
+      : {}),
+    ...(cacheCreationInputTokens !== null
+      ? {
+          cache_creation_input_tokens: Math.max(
+            0,
+            Math.round(cacheCreationInputTokens),
+          ),
+        }
+      : {}),
+    ...(cacheReadInputTokens !== null
+      ? {
+          cache_read_input_tokens: Math.max(
+            0,
+            Math.round(cacheReadInputTokens),
+          ),
+        }
+      : {}),
+  };
+}
+
+function attachTokenUsageToLatestReasoning(
+  messages: ConversationMessage[],
+  usage: TokenUsage,
+): void {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type === "user") {
+      return;
+    }
+    if (message.type !== "reasoning" && message.type !== "agent_reasoning") {
+      continue;
+    }
+    if (!Array.isArray(message.message?.content)) {
+      continue;
+    }
+    const block = message.message.content.find(
+      (item) => item.type === message.type,
+    );
+    if (!block || block.token_usage) {
+      return;
+    }
+    block.token_usage = usage;
+    return;
+  }
+}
+
+function cloneConversationMessage(
+  message: ConversationMessage,
+): ConversationMessage {
+  return JSON.parse(JSON.stringify(message)) as ConversationMessage;
+}
+
+function getReasoningBlock(message: ConversationMessage): ContentBlock | null {
+  if (message.type !== "reasoning" && message.type !== "agent_reasoning") {
+    return null;
+  }
+  if (!Array.isArray(message.message?.content)) {
+    return null;
+  }
+  return (
+    message.message.content.find((item) => item.type === message.type) ?? null
+  );
+}
+
+function rememberStreamReasoningMessages(
+  sessionId: string,
+  messages: ConversationMessage[],
+): void {
+  for (const message of messages) {
+    if (message.type === "user") {
+      sessionStreamLastReasoningMessage.delete(sessionId);
+      continue;
+    }
+    if (getReasoningBlock(message)) {
+      sessionStreamLastReasoningMessage.set(
+        sessionId,
+        cloneConversationMessage(message),
+      );
+    }
+  }
+}
+
+function applyStreamTokenUsageToLastReasoning(
+  sessionId: string,
+  usage: TokenUsage,
+): ConversationMessage | null {
+  const cached = sessionStreamLastReasoningMessage.get(sessionId);
+  const block = cached ? getReasoningBlock(cached) : null;
+  if (!cached || !block) {
+    return null;
+  }
+  if (block.token_usage) {
+    return null;
+  }
+
+  const updated = cloneConversationMessage(cached);
+  const updatedBlock = getReasoningBlock(updated);
+  if (!updatedBlock) {
+    return null;
+  }
+  updatedBlock.token_usage = usage;
+  sessionStreamLastReasoningMessage.set(
+    sessionId,
+    cloneConversationMessage(updated),
+  );
+  return updated;
+}
+
+function getStreamTokenUsageReasoningUpdate(
+  sessionId: string,
+  lines: LineWithOffset[],
+): ConversationMessage | null {
+  let canAttachToCachedReasoning = true;
+  let updatedReasoning: ConversationMessage | null = null;
+
+  for (const { line } of lines) {
+    const parsed = safeJsonParse(line);
+    if (!parsed || typeof parsed !== "object") {
+      continue;
+    }
+    const record = parsed as { type?: unknown; payload?: unknown };
+    if (!record.payload || typeof record.payload !== "object") {
+      continue;
+    }
+    const payload = record.payload as Record<string, unknown>;
+    const payloadType = typeof payload.type === "string" ? payload.type : "";
+
+    if (record.type === "response_item" && payloadType === "reasoning") {
+      canAttachToCachedReasoning = false;
+      continue;
+    }
+
+    if (
+      record.type === "response_item" &&
+      payloadType === "message" &&
+      payload.role === "user"
+    ) {
+      sessionStreamLastReasoningMessage.delete(sessionId);
+      canAttachToCachedReasoning = false;
+      continue;
+    }
+
+    if (
+      record.type === "event_msg" &&
+      payloadType === "token_count" &&
+      canAttachToCachedReasoning &&
+      payload.info &&
+      typeof payload.info === "object"
+    ) {
+      const usage = parseLastTokenUsage(
+        (payload.info as Record<string, unknown>).last_token_usage,
+      );
+      if (usage) {
+        updatedReasoning =
+          applyStreamTokenUsageToLastReasoning(sessionId, usage) ??
+          updatedReasoning;
+      }
+    }
+  }
+
+  return updatedReasoning;
 }
 
 function parseRecordLine(line: string): {
@@ -2800,6 +3007,7 @@ function createReasoningMessage(
   text: string,
   uuid: string,
   timestamp?: string,
+  usage?: TokenUsage,
 ): ConversationMessage {
   return {
     type,
@@ -2811,6 +3019,7 @@ function createReasoningMessage(
         {
           type,
           text,
+          ...(usage ? { token_usage: usage } : {}),
         },
       ],
     },
@@ -3566,6 +3775,20 @@ function parseCodexConversation(
 
       if (
         payloadType === "token_count" &&
+        payload.info &&
+        typeof payload.info === "object"
+      ) {
+        const usage = parseLastTokenUsage(
+          (payload.info as Record<string, unknown>).last_token_usage,
+        );
+        if (usage) {
+          attachTokenUsageToLatestReasoning(messages, usage);
+        }
+        continue;
+      }
+
+      if (
+        payloadType === "token_count" &&
         payload.info == null &&
         payload.rate_limits &&
         typeof payload.rate_limits === "object"
@@ -3723,6 +3946,7 @@ function parseCodexConversation(
           text,
           `${offset}:reasoning:${messages.length}`,
           timestamp,
+          parseLastTokenUsage(payload.last_token_usage),
         ),
       );
       continue;
@@ -4124,6 +4348,7 @@ export async function getConversation(
       const content = await readFile(filePath, "utf-8");
       const result = parseConversationTextChunk(content, 0);
       sessionToolNameIndex.set(sessionId, result.toolNames);
+      rememberStreamReasoningMessages(sessionId, result.messages);
       return result.messages;
     } catch (err) {
       console.error("Error reading conversation:", err);
@@ -4745,6 +4970,17 @@ export async function getConversationStream(
     const done = nextOffset >= fileSize;
     const toolNames = existingToolNames;
     const messages = parseCodexConversation(parsedLines, toolNames);
+    const reasoningUpdate = getStreamTokenUsageReasoningUpdate(
+      sessionId,
+      parsedLines,
+    );
+    if (
+      reasoningUpdate &&
+      !messages.some((message) => message.uuid === reasoningUpdate.uuid)
+    ) {
+      messages.push(reasoningUpdate);
+    }
+    rememberStreamReasoningMessages(sessionId, messages);
     sessionToolNameIndex.set(sessionId, toolNames);
 
     return {

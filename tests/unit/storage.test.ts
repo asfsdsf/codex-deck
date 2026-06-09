@@ -118,6 +118,12 @@ test("getConversation parses user, reasoning, tool, turn-aborted, and system-err
       responseItemRawLine({
         type: "reasoning",
         summary: [{ text: "Plan steps" }],
+        last_token_usage: {
+          input_tokens: 1200,
+          output_tokens: 345,
+          total_tokens: 1545,
+          reasoning_output_tokens: 123,
+        },
       }),
       responseItemRawLine({
         type: "function_call",
@@ -163,6 +169,17 @@ test("getConversation parses user, reasoning, tool, turn-aborted, and system-err
       messages.some((message) => message.type === "reasoning"),
       true,
     );
+    const reasoningMessage = messages.find(
+      (message) => message.type === "reasoning",
+    );
+    assert.ok(reasoningMessage);
+    assert.ok(Array.isArray(reasoningMessage.message?.content));
+    assert.deepEqual(reasoningMessage.message.content[0]?.token_usage, {
+      input_tokens: 1200,
+      output_tokens: 345,
+      total_tokens: 1545,
+      reasoning_output_tokens: 123,
+    });
     assert.equal(
       messages.some((message) => message.type === "agent_reasoning"),
       true,
@@ -776,6 +793,139 @@ test("getConversationStream returns incremental updates from offsets", async () 
     );
     assert.equal(next.nextOffset > initial.nextOffset, true);
     assert.equal(next.done, true);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("getConversationStream emits reasoning token usage updates from later token_count events", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-stream-reasoning-usage",
+  );
+
+  try {
+    const filePath = await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+      responseItemRawLine({
+        type: "reasoning",
+        summary: [],
+        encrypted_content: "encrypted",
+      }),
+    ]);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const initial = await getConversationStream(SESSION_A, 0);
+    const initialReasoning = initial.messages.find(
+      (message) => message.type === "reasoning",
+    );
+    assert.ok(initialReasoning);
+    assert.ok(Array.isArray(initialReasoning.message?.content));
+    assert.equal(initialReasoning.message.content[0]?.token_usage, undefined);
+
+    await appendFile(
+      filePath,
+      `${eventMsgLine({
+        type: "token_count",
+        info: {
+          last_token_usage: {
+            input_tokens: 16929,
+            cached_input_tokens: 11136,
+            output_tokens: 346,
+            reasoning_output_tokens: 68,
+            total_tokens: 17275,
+          },
+        },
+      })}\n`,
+      "utf-8",
+    );
+
+    const next = await getConversationStream(SESSION_A, initial.nextOffset);
+    assert.equal(next.messages.length, 1);
+    assert.equal(next.messages[0]?.uuid, initialReasoning.uuid);
+    assert.ok(Array.isArray(next.messages[0]?.message?.content));
+    assert.deepEqual(next.messages[0]?.message?.content[0]?.token_usage, {
+      input_tokens: 16929,
+      output_tokens: 346,
+      total_tokens: 17275,
+      reasoning_output_tokens: 68,
+      cache_read_input_tokens: 11136,
+    });
+  } finally {
+    await cleanup();
+  }
+});
+
+test("getConversationStream does not overwrite reasoning usage with later token_count events", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-stream-reasoning-usage-stable",
+  );
+
+  try {
+    const filePath = await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+      responseItemRawLine({
+        type: "reasoning",
+        summary: [],
+        encrypted_content: "encrypted",
+      }),
+    ]);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const initial = await getConversationStream(SESSION_A, 0);
+    const initialReasoning = initial.messages.find(
+      (message) => message.type === "reasoning",
+    );
+    assert.ok(initialReasoning);
+
+    await appendFile(
+      filePath,
+      `${eventMsgLine({
+        type: "token_count",
+        info: {
+          last_token_usage: {
+            input_tokens: 16929,
+            cached_input_tokens: 11136,
+            output_tokens: 346,
+            reasoning_output_tokens: 68,
+            total_tokens: 17275,
+          },
+        },
+      })}\n`,
+      "utf-8",
+    );
+    const firstUsageUpdate = await getConversationStream(
+      SESSION_A,
+      initial.nextOffset,
+    );
+
+    await appendFile(
+      filePath,
+      `${eventMsgLine({
+        type: "token_count",
+        info: {
+          last_token_usage: {
+            input_tokens: 17000,
+            cached_input_tokens: 12000,
+            output_tokens: 20,
+            reasoning_output_tokens: 0,
+            total_tokens: 17020,
+          },
+        },
+      })}\n`,
+      "utf-8",
+    );
+    const duplicateUsageUpdate = await getConversationStream(
+      SESSION_A,
+      firstUsageUpdate.nextOffset,
+    );
+
+    assert.equal(firstUsageUpdate.messages.length, 1);
+    assert.equal(firstUsageUpdate.messages[0]?.uuid, initialReasoning.uuid);
+    assert.equal(duplicateUsageUpdate.messages.length, 0);
   } finally {
     await cleanup();
   }

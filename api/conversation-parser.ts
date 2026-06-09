@@ -2,6 +2,7 @@ import type {
   CodexThreadGoal,
   ContentBlock,
   ConversationMessage,
+  TokenUsage,
 } from "./storage";
 
 interface LineWithOffset {
@@ -112,6 +113,7 @@ function createReasoningMessage(
   text: string,
   uuid: string,
   timestamp?: string,
+  usage?: TokenUsage,
 ): ConversationMessage {
   return {
     type,
@@ -123,6 +125,7 @@ function createReasoningMessage(
         {
           type,
           text,
+          ...(usage ? { token_usage: usage } : {}),
         },
       ],
     },
@@ -671,6 +674,86 @@ function asNullableFiniteNumber(value: unknown): number | null | undefined {
   return asFiniteNumber(value);
 }
 
+function parseLastTokenUsage(value: unknown): TokenUsage | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const inputTokens = asFiniteNumber(record.input_tokens);
+  const outputTokens = asFiniteNumber(record.output_tokens);
+  if (inputTokens === null || outputTokens === null) {
+    return undefined;
+  }
+
+  const totalTokens = asFiniteNumber(record.total_tokens);
+  const reasoningOutputTokens = asFiniteNumber(record.reasoning_output_tokens);
+  const cacheCreationInputTokens = asFiniteNumber(
+    record.cache_creation_input_tokens,
+  );
+  const cacheReadInputTokens =
+    asFiniteNumber(record.cache_read_input_tokens) ??
+    asFiniteNumber(record.cached_input_tokens);
+
+  return {
+    input_tokens: Math.max(0, Math.round(inputTokens)),
+    output_tokens: Math.max(0, Math.round(outputTokens)),
+    ...(totalTokens !== null
+      ? { total_tokens: Math.max(0, Math.round(totalTokens)) }
+      : {}),
+    ...(reasoningOutputTokens !== null
+      ? {
+          reasoning_output_tokens: Math.max(
+            0,
+            Math.round(reasoningOutputTokens),
+          ),
+        }
+      : {}),
+    ...(cacheCreationInputTokens !== null
+      ? {
+          cache_creation_input_tokens: Math.max(
+            0,
+            Math.round(cacheCreationInputTokens),
+          ),
+        }
+      : {}),
+    ...(cacheReadInputTokens !== null
+      ? {
+          cache_read_input_tokens: Math.max(
+            0,
+            Math.round(cacheReadInputTokens),
+          ),
+        }
+      : {}),
+  };
+}
+
+function attachTokenUsageToLatestReasoning(
+  messages: ConversationMessage[],
+  usage: TokenUsage,
+): void {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type === "user") {
+      return;
+    }
+    if (message.type !== "reasoning" && message.type !== "agent_reasoning") {
+      continue;
+    }
+    if (!Array.isArray(message.message?.content)) {
+      continue;
+    }
+    const block = message.message.content.find(
+      (item) => item.type === message.type,
+    );
+    if (!block || block.token_usage) {
+      return;
+    }
+    block.token_usage = usage;
+    return;
+  }
+}
+
 function goalStatusLabel(status: CodexThreadGoal["status"]): string {
   if (status === "usageLimited") {
     return "Usage Limited";
@@ -885,6 +968,20 @@ function parseCodexConversation(
 
       if (
         payloadType === "token_count" &&
+        payload.info &&
+        typeof payload.info === "object"
+      ) {
+        const usage = parseLastTokenUsage(
+          (payload.info as Record<string, unknown>).last_token_usage,
+        );
+        if (usage) {
+          attachTokenUsageToLatestReasoning(messages, usage);
+        }
+        continue;
+      }
+
+      if (
+        payloadType === "token_count" &&
         payload.info == null &&
         payload.rate_limits &&
         typeof payload.rate_limits === "object"
@@ -1042,6 +1139,7 @@ function parseCodexConversation(
           text,
           `${offset}:reasoning:${messages.length}`,
           timestamp,
+          parseLastTokenUsage(payload.last_token_usage),
         ),
       );
       continue;

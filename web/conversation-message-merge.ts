@@ -163,6 +163,53 @@ function getTokenLimitNoticeKey(message: ConversationMessage): string | null {
   return rateLimitId || "token-limit-notice";
 }
 
+function getReasoningBlock(message: ConversationMessage): ContentBlock | null {
+  if (message.type !== "reasoning" && message.type !== "agent_reasoning") {
+    return null;
+  }
+  const content = message.message?.content;
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  return content.find((block) => block.type === message.type) ?? null;
+}
+
+function shouldReplaceDuplicateMessage(
+  previousMessage: ConversationMessage,
+  incomingMessage: ConversationMessage,
+): boolean {
+  const incomingBlock = getReasoningBlock(incomingMessage);
+  if (!incomingBlock?.token_usage) {
+    return false;
+  }
+  const previousBlock = getReasoningBlock(previousMessage);
+  return (
+    JSON.stringify(previousBlock?.token_usage) !==
+    JSON.stringify(incomingBlock.token_usage)
+  );
+}
+
+function replaceDuplicateMessage(
+  previousMessages: ConversationMessage[],
+  incomingMessage: ConversationMessage,
+): boolean {
+  const uuid = getMessageUuid(incomingMessage);
+  if (!uuid) {
+    return false;
+  }
+  const index = previousMessages.findIndex(
+    (message) => getMessageUuid(message) === uuid,
+  );
+  if (index === -1) {
+    return false;
+  }
+  if (!shouldReplaceDuplicateMessage(previousMessages[index], incomingMessage)) {
+    return false;
+  }
+  previousMessages[index] = incomingMessage;
+  return true;
+}
+
 function mergeTokenLimitNotice(
   previousMessages: ConversationMessage[],
   incomingMessage: ConversationMessage,
@@ -242,6 +289,7 @@ export function mergeDisplayConversationMessages(
   incomingMessages: ConversationMessage[],
   insertion: ConversationInsertion = "append",
 ): ConversationMessage[] {
+  let nextPreviousMessages = previousMessages;
   const existingIds = new Set(
     previousMessages
       .map((message) => getMessageUuid(message))
@@ -251,6 +299,12 @@ export function mergeDisplayConversationMessages(
   for (const message of incomingMessages) {
     const uuid = getMessageUuid(message);
     if (uuid && existingIds.has(uuid)) {
+      if (replaceDuplicateMessage(nextPreviousMessages, message)) {
+        if (nextPreviousMessages === previousMessages) {
+          nextPreviousMessages = [...previousMessages];
+          replaceDuplicateMessage(nextPreviousMessages, message);
+        }
+      }
       continue;
     }
     if (uuid) {
@@ -260,18 +314,18 @@ export function mergeDisplayConversationMessages(
   }
 
   if (uniqueIncoming.length === 0) {
-    return previousMessages;
+    return nextPreviousMessages;
   }
 
   if (insertion === "prepend") {
     const mergedBoundary = mergePrependedTokenLimitBoundary(
-      previousMessages,
+      nextPreviousMessages,
       uniqueIncoming,
     );
-    return mergedBoundary ?? [...uniqueIncoming, ...previousMessages];
+    return mergedBoundary ?? [...uniqueIncoming, ...nextPreviousMessages];
   }
 
-  const nextMessages = [...previousMessages];
+  const nextMessages = [...nextPreviousMessages];
   for (const message of uniqueIncoming) {
     if (mergeTokenLimitNotice(nextMessages, message)) {
       continue;

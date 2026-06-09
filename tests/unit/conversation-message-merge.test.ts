@@ -225,3 +225,60 @@ test("merges consecutive token limit notices into one live-updated message", () 
   assert.equal(merged[0]?.repeatCount, 3);
   assert.equal(merged[0]?.timestamp, "2026-01-01T00:00:02.000Z");
 });
+
+test("replaces duplicate reasoning messages when token usage arrives later", () => {
+  const previousMessages: ConversationMessage[] = [
+    {
+      type: "reasoning",
+      uuid: "reasoning_1",
+      timestamp: "2026-01-01T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "Encrypted reasoning captured in the session log",
+          },
+        ],
+      },
+    },
+  ];
+  const incomingMessages: ConversationMessage[] = [
+    {
+      type: "reasoning",
+      uuid: "reasoning_1",
+      timestamp: "2026-01-01T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "Encrypted reasoning captured in the session log",
+            token_usage: {
+              input_tokens: 16929,
+              output_tokens: 346,
+              total_tokens: 17275,
+              reasoning_output_tokens: 68,
+            },
+          },
+        ],
+      },
+    },
+  ];
+
+  const merged = mergeDisplayConversationMessages(
+    previousMessages,
+    incomingMessages,
+    "append",
+  );
+
+  assert.equal(merged.length, 1);
+  assert.notEqual(merged, previousMessages);
+  assert.ok(Array.isArray(merged[0]?.message?.content));
+  assert.deepEqual(merged[0]?.message?.content[0]?.token_usage, {
+    input_tokens: 16929,
+    output_tokens: 346,
+    total_tokens: 17275,
+    reasoning_output_tokens: 68,
+  });
+});

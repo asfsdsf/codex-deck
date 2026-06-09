@@ -128,6 +128,31 @@ test("MessageBlock renders token limit notices with repeat counter in header", (
   assert.match(html, /Token count updates hit the Codex rate limit/);
 });
 
+test("MessageBlock renders reasoning token usage from last token usage", () => {
+  const message: ConversationMessage = {
+    type: "reasoning",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "reasoning",
+          text: "Plan steps",
+          token_usage: {
+            input_tokens: 1200,
+            output_tokens: 345,
+            total_tokens: 1545,
+            reasoning_output_tokens: 123,
+          },
+        },
+      ],
+    },
+  };
+
+  const html = renderMessageBlock(message);
+  assert.match(html, /reasoning/);
+  assert.match(html, /123 reasoning tokens/);
+});
+
 test("MessageBlock hides a single token limit notice", () => {
   const message: ConversationMessage = {
     type: "token_limit_notice",

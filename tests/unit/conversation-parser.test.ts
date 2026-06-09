@@ -74,6 +74,87 @@ test("parseConversationTextChunk keeps unresolved tool calls in-place", () => {
   assert.equal(messages[messages.length - 1]?.type, "task_complete");
 });
 
+test("parseConversationTextChunk attaches last token usage to reasoning blocks", () => {
+  const text = [
+    line({
+      timestamp: "2026-04-07T12:05:25.280Z",
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: [{ text: "Plan steps" }],
+        last_token_usage: {
+          input_tokens: 1200,
+          output_tokens: 345,
+          total_tokens: 1545,
+          reasoning_output_tokens: 123,
+          cache_creation_input_tokens: 100,
+          cache_read_input_tokens: 200,
+        },
+      },
+    }),
+  ].join("\n");
+
+  const { messages } = parseConversationTextChunk(`${text}\n`, 0);
+  const reasoningMessage = messages.find(
+    (message) => message.type === "reasoning",
+  );
+  assert.ok(reasoningMessage);
+  assert.ok(Array.isArray(reasoningMessage.message?.content));
+  assert.deepEqual(reasoningMessage.message.content[0]?.token_usage, {
+    input_tokens: 1200,
+    output_tokens: 345,
+    total_tokens: 1545,
+    reasoning_output_tokens: 123,
+    cache_creation_input_tokens: 100,
+    cache_read_input_tokens: 200,
+  });
+});
+
+test("parseConversationTextChunk attaches token count event usage to previous encrypted reasoning", () => {
+  const text = [
+    line({
+      timestamp: "2026-04-07T12:05:25.280Z",
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: [],
+        content: null,
+        encrypted_content: "encrypted",
+      },
+    }),
+    line({
+      timestamp: "2026-04-07T12:05:25.355Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: {
+            input_tokens: 14696,
+            cached_input_tokens: 4480,
+            output_tokens: 426,
+            reasoning_output_tokens: 161,
+            total_tokens: 15122,
+          },
+        },
+      },
+    }),
+  ].join("\n");
+
+  const { messages } = parseConversationTextChunk(`${text}\n`, 0);
+  const reasoningMessage = messages.find(
+    (message) => message.type === "reasoning",
+  );
+  assert.ok(reasoningMessage);
+  assert.ok(Array.isArray(reasoningMessage.message?.content));
+  assert.deepEqual(reasoningMessage.message.content[0]?.token_usage, {
+    input_tokens: 14696,
+    output_tokens: 426,
+    total_tokens: 15122,
+    reasoning_output_tokens: 161,
+    cache_read_input_tokens: 4480,
+  });
+});
+
 test("parseConversationTextChunk keeps paired tool call and output as one message", () => {
   const text = [
     line({
