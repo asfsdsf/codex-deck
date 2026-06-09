@@ -12,6 +12,10 @@ import type {
   CodexThreadForkResponse,
   CodexThreadSideStartResponse,
   CodexThreadCompactResponse,
+  CodexMemoriesResetResponse,
+  CodexMemoriesSettingsResponse,
+  CodexMemoriesSettingsWriteRequest,
+  CodexMemoriesSettingsWriteResponse,
   CodexThreadAgentListResponse,
   CodexThreadSummariesRequest,
   CodexThreadSummariesResponse,
@@ -1022,6 +1026,40 @@ export async function compactCodexThread(
       method: "POST",
     },
   );
+}
+
+export async function getCodexMemoriesSettings(
+  cwd?: string | null,
+): Promise<CodexMemoriesSettingsResponse> {
+  const params = new URLSearchParams();
+  if (typeof cwd === "string" && cwd.trim()) {
+    params.set("cwd", cwd.trim());
+  }
+  const query = params.toString();
+  return requestJson<CodexMemoriesSettingsResponse>(
+    `/api/codex/memories${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function writeCodexMemoriesSettings(
+  input: CodexMemoriesSettingsWriteRequest,
+): Promise<CodexMemoriesSettingsWriteResponse> {
+  return requestJson<CodexMemoriesSettingsWriteResponse>(
+    "/api/codex/memories",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function resetCodexMemories(): Promise<CodexMemoriesResetResponse> {
+  return requestJson<CodexMemoriesResetResponse>("/api/codex/memories/reset", {
+    method: "POST",
+  });
 }
 
 export async function getCodexThreadGoal(

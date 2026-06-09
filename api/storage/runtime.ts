@@ -213,6 +213,25 @@ export interface CodexThreadCompactResponse {
   ok: boolean;
 }
 
+export interface CodexMemoriesSettingsResponse {
+  useMemories: boolean;
+  generateMemories: boolean;
+}
+
+export interface CodexMemoriesSettingsWriteRequest {
+  useMemories: boolean;
+  generateMemories: boolean;
+  threadId?: string | null;
+}
+
+export interface CodexMemoriesSettingsWriteResponse extends CodexMemoriesSettingsResponse {
+  ok: boolean;
+}
+
+export interface CodexMemoriesResetResponse {
+  ok: boolean;
+}
+
 export interface CodexThreadAgentListResponse {
   threads: CodexThreadSummary[];
 }

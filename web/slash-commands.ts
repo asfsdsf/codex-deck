@@ -258,6 +258,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Show current permission settings",
   },
   {
+    name: "/memories",
+    description: "Configure memory use and generation",
+  },
+  {
     name: "/approvals",
     description: "Alias for /permissions",
     hidden: true,

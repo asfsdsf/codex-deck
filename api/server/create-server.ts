@@ -40,6 +40,9 @@ import {
   type CodexThreadForkResponse,
   type CodexThreadSideStartResponse,
   type CodexThreadCompactResponse,
+  type CodexMemoriesResetResponse,
+  type CodexMemoriesSettingsWriteRequest,
+  type CodexMemoriesSettingsWriteResponse,
   type CodexThreadAgentListResponse,
   type CodexThreadSummariesRequest,
   type CodexThreadSummariesResponse,
@@ -120,6 +123,7 @@ import {
   type CodexThreadSummary,
   type CodexLiveTerminalRun,
   type CodexReasoningEffort,
+  type CodexThreadMemoryMode,
 } from "../codex-app-server";
 import {
   closeLocalTerminalManager,
@@ -3648,6 +3652,114 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  app.get("/api/codex/memories", async (c) => {
+    try {
+      const client = getCodexAppServerClient();
+      if (!client.readMemorySettings) {
+        return c.json(
+          {
+            error: "Memory settings are not available for this codex client",
+          },
+          503,
+        );
+      }
+
+      const cwdParam = parseOptionalString(c.req.query("cwd"));
+      const cwd =
+        typeof cwdParam === "string" ? normalizeCwdPath(cwdParam) : cwdParam;
+      const settings = await client.readMemorySettings(cwd);
+      return c.json(settings);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/codex/memories", async (c) => {
+    try {
+      const body =
+        (await c.req.json()) as Partial<CodexMemoriesSettingsWriteRequest>;
+      if (typeof body.useMemories !== "boolean") {
+        return c.json({ error: "useMemories must be a boolean" }, 400);
+      }
+      if (typeof body.generateMemories !== "boolean") {
+        return c.json({ error: "generateMemories must be a boolean" }, 400);
+      }
+
+      const client = getCodexAppServerClient();
+      if (
+        !client.readMemorySettings ||
+        !client.writeMemorySettings ||
+        !client.setThreadMemoryMode
+      ) {
+        return c.json(
+          {
+            error: "Memory settings are not available for this codex client",
+          },
+          503,
+        );
+      }
+
+      const before = await client.readMemorySettings();
+      const settings = await client.writeMemorySettings({
+        useMemories: body.useMemories,
+        generateMemories: body.generateMemories,
+      });
+
+      const threadId = parseOptionalString(body.threadId);
+      if (threadId && before.generateMemories !== settings.generateMemories) {
+        const mode: CodexThreadMemoryMode = settings.generateMemories
+          ? "enabled"
+          : "disabled";
+        await client.setThreadMemoryMode(threadId, mode);
+      }
+
+      const response: CodexMemoriesSettingsWriteResponse = {
+        ok: true,
+        ...settings,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/codex/memories/reset", async (c) => {
+    try {
+      const client = getCodexAppServerClient();
+      if (!client.resetMemories) {
+        return c.json(
+          {
+            error: "Memory reset is not available for this codex client",
+          },
+          503,
+        );
+      }
+
+      await client.resetMemories();
+      const response: CodexMemoriesResetResponse = {
+        ok: true,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
   app.post("/api/codex/threads", async (c) => {
     try {
       const body = (await c.req.json()) as Partial<CreateCodexThreadRequest>;
@@ -3860,8 +3972,7 @@ export function createServer(options: ServerOptions) {
       if (!client.injectThreadItems) {
         return c.json(
           {
-            error:
-              "Side conversations are not available for this codex client",
+            error: "Side conversations are not available for this codex client",
           },
           503,
         );

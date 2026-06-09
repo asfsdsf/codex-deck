@@ -113,6 +113,13 @@ export interface CodexSkillsConfigWriteResult {
   effectiveEnabled: boolean;
 }
 
+export interface CodexMemoriesSettings {
+  useMemories: boolean;
+  generateMemories: boolean;
+}
+
+export type CodexThreadMemoryMode = "enabled" | "disabled";
+
 export interface CreateCodexThreadInput {
   cwd: string;
   model?: string | null;
@@ -964,6 +971,71 @@ class CodexAppServerClient {
     return {
       effectiveEnabled,
     };
+  }
+
+  public async readMemorySettings(
+    cwd?: string | null,
+  ): Promise<CodexMemoriesSettings> {
+    const normalizedCwd = typeof cwd === "string" ? cwd.trim() : "";
+    const result = await this.request("config/read", {
+      includeLayers: false,
+      cwd: normalizedCwd || null,
+    });
+    return extractMemorySettingsFromConfigReadResult(result);
+  }
+
+  public async writeMemorySettings(
+    settings: CodexMemoriesSettings,
+  ): Promise<CodexMemoriesSettings> {
+    await this.writeConfigValue("memories.use_memories", settings.useMemories);
+    await this.writeConfigValue(
+      "memories.generate_memories",
+      settings.generateMemories,
+    );
+    return {
+      useMemories: settings.useMemories,
+      generateMemories: settings.generateMemories,
+    };
+  }
+
+  public async setThreadMemoryMode(
+    threadId: string,
+    mode: CodexThreadMemoryMode,
+  ): Promise<void> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("threadId is required");
+    }
+    if (mode !== "enabled" && mode !== "disabled") {
+      throw new Error("mode is invalid");
+    }
+
+    await this.request("thread/memoryMode/set", {
+      threadId: normalizedThreadId,
+      mode,
+    });
+  }
+
+  public async resetMemories(): Promise<void> {
+    await this.request("memory/reset", {});
+  }
+
+  private async writeConfigValue(
+    keyPath: string,
+    value: boolean,
+  ): Promise<void> {
+    const result = await this.request("config/value/write", {
+      keyPath,
+      value,
+      mergeStrategy: "replace",
+    });
+    const record = asRecord(result);
+    const status = asTrimmedString(record?.status);
+    if (!status) {
+      throw new CodexAppServerTransportError(
+        "Invalid config/value/write response from codex app-server",
+      );
+    }
   }
 
   public async createThread(input: CreateCodexThreadInput): Promise<string> {
@@ -3179,6 +3251,24 @@ function extractThreadGoalClearResult(result: unknown): boolean {
   return record.cleared;
 }
 
+function extractMemorySettingsFromConfigReadResult(
+  result: unknown,
+): CodexMemoriesSettings {
+  const record = asRecord(result);
+  const config = asRecord(record?.config);
+  if (!config) {
+    throw new CodexAppServerTransportError(
+      "Invalid config/read response from codex app-server",
+    );
+  }
+
+  const memories = asRecord(config.memories);
+  return {
+    useMemories: asBoolean(memories?.use_memories) ?? false,
+    generateMemories: asBoolean(memories?.generate_memories) ?? false,
+  };
+}
+
 function extractThreadGoal(value: unknown): CodexThreadGoal | null {
   const record = asRecord(value);
   if (!record) {
@@ -3616,6 +3706,15 @@ export interface CodexAppServerClientFacade {
     path: string,
     enabled: boolean,
   ) => Promise<CodexSkillsConfigWriteResult>;
+  readMemorySettings?: (cwd?: string | null) => Promise<CodexMemoriesSettings>;
+  writeMemorySettings?: (
+    settings: CodexMemoriesSettings,
+  ) => Promise<CodexMemoriesSettings>;
+  setThreadMemoryMode?: (
+    threadId: string,
+    mode: CodexThreadMemoryMode,
+  ) => Promise<void>;
+  resetMemories?: () => Promise<void>;
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
   forkThread?: (threadId: string) => Promise<CodexThreadSummary>;
@@ -3676,6 +3775,13 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listSkills: (input: CodexSkillsListInput) => client!.listSkills(input),
     writeSkillConfig: (path: string, enabled: boolean) =>
       client!.writeSkillConfig(path, enabled),
+    readMemorySettings: (cwd?: string | null) =>
+      client!.readMemorySettings(cwd),
+    writeMemorySettings: (settings: CodexMemoriesSettings) =>
+      client!.writeMemorySettings(settings),
+    setThreadMemoryMode: (threadId: string, mode: CodexThreadMemoryMode) =>
+      client!.setThreadMemoryMode(threadId, mode),
+    resetMemories: () => client!.resetMemories(),
     createThread: (input: CreateCodexThreadInput) =>
       client!.createThread(input),
     setThreadName: (threadId: string, name: string) =>
