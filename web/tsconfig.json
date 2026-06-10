@@ -11,6 +11,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    "jsxImportSource": "react",
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -19,7 +20,8 @@
     "paths": {
       "@codex-deck/api": ["../api/storage.ts"],
       "@zuoyehaoduoa/wire": ["../wire/src/index.ts"]
-    }
+    },
+    "types": ["react", "react-dom", "vite/client"]
   },
-  "include": [".", "../api/storage.ts", "../wire/src/index.ts"]
+  "include": [".", "../api/storage.ts", "../api/terminal-skill-install.ts", "../wire/src/index.ts"]
 }

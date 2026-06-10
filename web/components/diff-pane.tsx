@@ -29,15 +29,21 @@ import type {
   SessionDiffMode,
   SessionDiffResponse,
   SessionFileContentResponse,
+  SessionHooksResponse,
   SessionFileTreeNodesResponse,
   SessionSkillsResponse,
   SessionTerminalRunSummary,
 } from "@codex-deck/api";
+import HooksPane from "./hooks-pane";
 import { PatchTextRenderer, SourceCodeRenderer } from "./patch-text-renderer";
 import { AnsiText } from "./tool-renderers/ansi-text";
 import { isMarkdownPath } from "../path-utils";
 
-export type RightPaneMode = SessionDiffMode | "terminal-flow" | "skills";
+export type RightPaneMode =
+  | SessionDiffMode
+  | "terminal-flow"
+  | "skills"
+  | "hooks";
 
 interface DiffPaneProps {
   collapsed: boolean;
@@ -64,6 +70,11 @@ interface DiffPaneProps {
   terminalRunOutput: string;
   terminalRunOutputLoading: boolean;
   terminalRunOutputError: string | null;
+  hooksData: SessionHooksResponse | null;
+  hooksLoading: boolean;
+  hooksError: string | null;
+  selectedHookKey: string | null;
+  updatingHookKey: string | null;
   skillsData: SessionSkillsResponse | null;
   skillsLoading: boolean;
   skillsError: string | null;
@@ -78,6 +89,14 @@ interface DiffPaneProps {
   onChangeFileContentPage: (page: number) => void;
   onSelectTerminalRun: (processId: string) => void;
   onRefreshTerminalRuns: () => void;
+  onSelectHookKey: (key: string) => void;
+  onToggleHookEnabled: (
+    hook: SessionHooksResponse["hooks"][number],
+    enabled: boolean,
+  ) => void;
+  onTrustHook: (hook: SessionHooksResponse["hooks"][number]) => void;
+  onTrustAllHooks: () => void;
+  onRefreshHooks: () => void;
   onSelectSkillPath: (path: string) => void;
   onToggleSkillEnabled: (path: string, enabled: boolean) => void;
   onRefreshSkills: () => void;
@@ -847,6 +866,11 @@ export default function DiffPane(props: DiffPaneProps) {
     terminalRunOutput,
     terminalRunOutputLoading,
     terminalRunOutputError,
+    hooksData,
+    hooksLoading,
+    hooksError,
+    selectedHookKey,
+    updatingHookKey,
     skillsData,
     skillsLoading,
     skillsError,
@@ -861,6 +885,11 @@ export default function DiffPane(props: DiffPaneProps) {
     onChangeFileContentPage,
     onSelectTerminalRun,
     onRefreshTerminalRuns,
+    onSelectHookKey,
+    onToggleHookEnabled,
+    onTrustHook,
+    onTrustAllHooks,
+    onRefreshHooks,
     onSelectSkillPath,
     onToggleSkillEnabled,
     onRefreshSkills,
@@ -868,6 +897,7 @@ export default function DiffPane(props: DiffPaneProps) {
 
   const isFileTreeMode = mode === "file-tree";
   const isTerminalRunMode = mode === "terminal-flow";
+  const isHooksMode = mode === "hooks";
   const isSkillsMode = mode === "skills";
   const [isFileListVisible, setIsFileListVisible] = useState(true);
 
@@ -887,8 +917,11 @@ export default function DiffPane(props: DiffPaneProps) {
   const skills = skillsData?.skills ?? [];
   const selectedSkill =
     skills.find((skill) => skill.path === selectedSkillPath) ?? null;
+  const hooks = hooksData?.hooks ?? [];
   const topStatusText = isTerminalRunMode
     ? `${terminalRuns.length} runs`
+    : isHooksMode
+      ? `${hooks.length} hooks`
     : isSkillsMode
       ? `${skills.length} skills`
       : isFileTreeMode
@@ -917,6 +950,10 @@ export default function DiffPane(props: DiffPaneProps) {
       return selectedSkill
         ? getSkillDisplayName(selectedSkill)
         : "Skill details";
+    }
+
+    if (isHooksMode) {
+      return selectedHookKey ?? "Hook details";
     }
 
     if (!selectedFilePath) {
@@ -995,6 +1032,7 @@ export default function DiffPane(props: DiffPaneProps) {
             <option value="last-turn">Last turn</option>
             <option value="file-tree">File tree</option>
             <option value="terminal-flow">Terminal run</option>
+            <option value="hooks">Hooks</option>
             <option value="skills">Skills</option>
           </select>
         </div>
@@ -1082,6 +1120,21 @@ export default function DiffPane(props: DiffPaneProps) {
             </div>
           </div>
         )
+      ) : isHooksMode ? (
+        <HooksPane
+          hooksData={hooksData}
+          hooksLoading={hooksLoading}
+          hooksError={hooksError}
+          selectedHookKey={selectedHookKey}
+          updatingHookKey={updatingHookKey}
+          isFileListVisible={isFileListVisible}
+          selectedFileLabel={selectedFileLabel}
+          onRefreshHooks={onRefreshHooks}
+          onSelectHookKey={onSelectHookKey}
+          onToggleHookEnabled={onToggleHookEnabled}
+          onTrustHook={onTrustHook}
+          onTrustAllHooks={onTrustAllHooks}
+        />
       ) : isSkillsMode ? (
         skillsLoading ? (
           <EmptyState text="Loading skills..." />

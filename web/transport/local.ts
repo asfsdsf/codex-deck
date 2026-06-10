@@ -1,5 +1,6 @@
 import type {
   CodexAppServerEvent,
+  ConversationMessage,
   TerminalSummary,
   TerminalStreamEvent,
   WorkflowDaemonStatusResponse,

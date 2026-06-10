@@ -252,6 +252,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Use skills to improve how Codex performs specific tasks",
   },
   {
+    name: "/hooks",
+    description: "View and manage lifecycle hooks",
+  },
+  {
     name: "/ps",
     description: "List background terminals",
   },

@@ -2,6 +2,8 @@ import {
   CodexAppServerRpcError,
   CodexAppServerTransportError,
 } from "../codex-app-server";
+import { homedir } from "os";
+import { join } from "path";
 
 export const MAX_LONG_POLL_WAIT_MS = 25_000;
 
@@ -75,4 +77,34 @@ export function responseStatusForError(error: unknown): 400 | 500 | 503 {
     return 400;
   }
   return 500;
+}
+
+export function parseOptionalString(
+  value: unknown,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+export function normalizeCwdPath(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "~") {
+    return homedir();
+  }
+  if (normalized.startsWith("~/")) {
+    return join(homedir(), normalized.slice(2));
+  }
+  return normalized;
 }

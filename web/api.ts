@@ -34,6 +34,9 @@ import type {
   SessionFileSearchResponse,
   SessionFileTreeResponse,
   SessionFileTreeNodesResponse,
+  SessionHooksConfigWriteRequest,
+  SessionHooksConfigWriteResponse,
+  SessionHooksResponse,
   SessionSkillConfigWriteRequest,
   CreateWorkflowRequest,
   SystemContextResponse,
@@ -103,9 +106,7 @@ import {
 } from "./transport";
 import { readRemoteConversationSnapshot } from "./transport/remote";
 import type {
-  ConversationStreamBatch,
   ConversationStreamHandlers,
-  ConversationStreamPhase,
   ConversationStreamSubscriptionOptions,
   SessionsStreamHandlers,
   TerminalsStreamHandlers,
@@ -1298,6 +1299,30 @@ export async function getSessionSkills(
   );
 }
 
+export async function getSessionHooks(
+  sessionId: string,
+): Promise<SessionHooksResponse> {
+  return requestJson<SessionHooksResponse>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/hooks`,
+  );
+}
+
+export async function setSessionHookState(
+  sessionId: string,
+  input: SessionHooksConfigWriteRequest,
+): Promise<SessionHooksConfigWriteResponse> {
+  return requestJson<SessionHooksConfigWriteResponse>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/hooks/config`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export async function setSessionSkillEnabled(
   sessionId: string,
   input: SessionSkillConfigWriteRequest,
@@ -1603,6 +1628,30 @@ export async function getWorkflowProjectSkills(
 ): Promise<SessionSkillsResponse> {
   return requestJson<SessionSkillsResponse>(
     `/api/workflow-project/${encodeURIComponent(workflowKey)}/skills`,
+  );
+}
+
+export async function getWorkflowProjectHooks(
+  workflowKey: string,
+): Promise<SessionHooksResponse> {
+  return requestJson<SessionHooksResponse>(
+    `/api/workflow-project/${encodeURIComponent(workflowKey)}/hooks`,
+  );
+}
+
+export async function setWorkflowProjectHookState(
+  workflowKey: string,
+  input: SessionHooksConfigWriteRequest,
+): Promise<SessionHooksConfigWriteResponse> {
+  return requestJson<SessionHooksConfigWriteResponse>(
+    `/api/workflow-project/${encodeURIComponent(workflowKey)}/hooks/config`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
   );
 }
 

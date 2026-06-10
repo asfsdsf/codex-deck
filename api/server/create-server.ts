@@ -66,6 +66,9 @@ import {
   type SessionFileSearchResponse,
   type SessionFileContentResponse,
   type SessionsDeltaResponse,
+  type SessionHooksResponse,
+  type SessionHooksConfigWriteRequest,
+  type SessionHooksConfigWriteResponse,
   type SessionSkillsResponse,
   type SessionSkillConfigWriteRequest,
   type SessionSkillConfigWriteResponse,
@@ -134,8 +137,11 @@ import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../remote/internal-proxy";
 import { RemoteServerClient } from "../remote/remote-server-client";
 import { registerTerminalRoutes } from "./terminal-routes";
 import { registerSystemRoutes } from "./system-routes";
+import { registerSettingsRoutes } from "./settings-routes";
 import {
   MAX_LONG_POLL_WAIT_MS,
+  normalizeCwdPath,
+  parseOptionalString,
   parseNonNegativeInteger,
   responseStatusForError,
   toErrorMessage,
@@ -148,11 +154,16 @@ import {
   selectCodexPet,
 } from "../pets";
 import { registerWorkflowRoutes } from "./workflow-routes";
+import { registerHooksRoutes } from "./hooks-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
 import {
   getTerminalBindingsByTerminalIds,
   onTerminalBindingChange,
 } from "../terminal-bindings";
+import {
+  resolveSessionProjectPath,
+  resolveWorkflowProjectPath,
+} from "./route-helpers";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -235,20 +246,6 @@ function toIsoTimestampFromMs(ms: number): string | null {
   return new Date(ms).toISOString();
 }
 
-function parseOptionalString(value: unknown): string | null | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === null) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const normalized = value.trim();
-  return normalized ? normalized : null;
-}
-
 async function withTerminalBindings(
   terminals: TerminalSummary[],
 ): Promise<TerminalSummary[]> {
@@ -263,20 +260,6 @@ async function withTerminalBindings(
     ...terminal,
     boundSessionId: bindings[terminal.terminalId] ?? null,
   }));
-}
-
-function normalizeCwdPath(value: string): string {
-  const normalized = value.trim();
-  if (!normalized) {
-    return "";
-  }
-  if (normalized === "~") {
-    return homedir();
-  }
-  if (normalized.startsWith("~/")) {
-    return join(homedir(), normalized.slice(2));
-  }
-  return normalized;
 }
 
 function parseOptionalEffort(
@@ -2019,41 +2002,6 @@ export function createServer(options: ServerOptions) {
     }
   };
 
-  const resolveSessionProjectPath = async (
-    sessionId: string,
-  ): Promise<string | null | undefined> => {
-    const sessions = await getSessions();
-    const session = sessions.find((entry) => entry.id === sessionId);
-    if (session) {
-      const projectPath = session.project?.trim();
-      return projectPath ? projectPath : null;
-    }
-
-    const getThreadSummary = getCodexAppServerClient().getThreadSummary;
-    if (typeof getThreadSummary !== "function") {
-      return undefined;
-    }
-
-    try {
-      const summary = await getThreadSummary(sessionId);
-      const cwd = summary.cwd.trim();
-      return cwd ? cwd : null;
-    } catch {
-      return undefined;
-    }
-  };
-
-  const resolveWorkflowProjectPath = async (
-    workflowKey: string,
-  ): Promise<string | null | undefined> => {
-    const summary = await getWorkflowSummaryByKey(workflowKey, getCodexDir());
-    if (!summary) {
-      return undefined;
-    }
-    const projectPath = summary.projectRoot?.trim();
-    return projectPath ? projectPath : null;
-  };
-
   if (dev) {
     app.use(
       "*",
@@ -2157,7 +2105,13 @@ export function createServer(options: ServerOptions) {
   });
   registerWorkflowRoutes(app, { workflowRouteUnavailable });
   registerSystemRoutes(app);
+  registerSettingsRoutes(app);
   registerTerminalRoutes(app);
+  registerHooksRoutes(app, {
+    workflowRouteUnavailable,
+    resolveSessionProjectPath,
+    resolveWorkflowProjectPath,
+  });
 
   app.get("/api/sessions/stream", async (c) => {
     return streamSSE(c, async (stream) => {
@@ -2464,7 +2418,11 @@ export function createServer(options: ServerOptions) {
     const response =
       mode === "last-turn"
         ? await buildLastTurnDiffResponse(sessionId, projectPath)
-        : await buildGitDiffResponse(sessionId, mode, projectPath);
+        : await buildGitDiffResponse(
+            sessionId,
+            mode === "staged" ? "staged" : "unstaged",
+            projectPath,
+          );
 
     return c.json(response);
   });
@@ -2508,7 +2466,11 @@ export function createServer(options: ServerOptions) {
       return c.json(response);
     }
 
-    const response = await buildGitDiffResponse(workflowKey, mode, projectPath);
+    const response = await buildGitDiffResponse(
+      workflowKey,
+      mode === "staged" ? "staged" : "unstaged",
+      projectPath,
+    );
     return c.json(response);
   });
 
@@ -3240,6 +3202,7 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+
   app.get("/api/workflow-project/:key/skills", async (c) => {
     const workflowKey = c.req.param("key")?.trim();
     if (!workflowKey) {
@@ -3332,6 +3295,7 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+
   app.post("/api/workflow-project/:key/skills/config", async (c) => {
     const workflowKey = c.req.param("key")?.trim();
     if (!workflowKey) {
@@ -3391,6 +3355,7 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+
   app.post("/api/sessions/:id/skills/config", async (c) => {
     const sessionId = c.req.param("id")?.trim();
     if (!sessionId) {
@@ -3447,6 +3412,7 @@ export function createServer(options: ServerOptions) {
       );
     }
   });
+
 
   app.get("/api/conversation/:id", async (c) => {
     const sessionId = c.req.param("id");
@@ -3659,165 +3625,6 @@ export function createServer(options: ServerOptions) {
     }
   });
 
-  app.get("/api/codex/pets", async (c) => {
-    try {
-      return c.json(await listCodexPets());
-    } catch (error) {
-      return c.json(
-        {
-          error: toErrorMessage(error),
-        },
-        responseStatusForError(error),
-      );
-    }
-  });
-
-  app.post("/api/codex/pets", async (c) => {
-    try {
-      const body = await c.req.json().catch(() => null);
-      const petId =
-        body && typeof body === "object" && "petId" in body
-          ? String((body as { petId?: unknown }).petId ?? "")
-          : "";
-      return c.json(await selectCodexPet(petId));
-    } catch (error) {
-      return c.json(
-        {
-          error: toErrorMessage(error),
-        },
-        responseStatusForError(error),
-      );
-    }
-  });
-
-  app.get("/api/codex/pets/:petId/spritesheet", async (c) => {
-    try {
-      const petId = decodeURIComponent(c.req.param("petId"));
-      const asset = await resolveCodexPetAsset(petId);
-      const headers = new Headers();
-      headers.set("Content-Type", asset.contentType);
-      headers.set("Cache-Control", "public, max-age=31536000, immutable");
-      headers.set("ETag", `"${petAssetEtag(asset.path)}"`);
-      return new Response(createReadStream(asset.path) as unknown as BodyInit, {
-        headers,
-      });
-    } catch (error) {
-      return c.json(
-        {
-          error: toErrorMessage(error),
-        },
-        responseStatusForError(error),
-      );
-    }
-  });
-
-  app.get("/api/codex/memories", async (c) => {
-    try {
-      const client = getCodexAppServerClient();
-      if (!client.readMemorySettings) {
-        return c.json(
-          {
-            error: "Memory settings are not available for this codex client",
-          },
-          503,
-        );
-      }
-
-      const cwdParam = parseOptionalString(c.req.query("cwd"));
-      const cwd =
-        typeof cwdParam === "string" ? normalizeCwdPath(cwdParam) : cwdParam;
-      const settings = await client.readMemorySettings(cwd);
-      return c.json(settings);
-    } catch (error) {
-      return c.json(
-        {
-          error: toErrorMessage(error),
-        },
-        responseStatusForError(error),
-      );
-    }
-  });
-
-  app.post("/api/codex/memories", async (c) => {
-    try {
-      const body =
-        (await c.req.json()) as Partial<CodexMemoriesSettingsWriteRequest>;
-      if (typeof body.useMemories !== "boolean") {
-        return c.json({ error: "useMemories must be a boolean" }, 400);
-      }
-      if (typeof body.generateMemories !== "boolean") {
-        return c.json({ error: "generateMemories must be a boolean" }, 400);
-      }
-
-      const client = getCodexAppServerClient();
-      if (
-        !client.readMemorySettings ||
-        !client.writeMemorySettings ||
-        !client.setThreadMemoryMode
-      ) {
-        return c.json(
-          {
-            error: "Memory settings are not available for this codex client",
-          },
-          503,
-        );
-      }
-
-      const before = await client.readMemorySettings();
-      const settings = await client.writeMemorySettings({
-        useMemories: body.useMemories,
-        generateMemories: body.generateMemories,
-      });
-
-      const threadId = parseOptionalString(body.threadId);
-      if (threadId && before.generateMemories !== settings.generateMemories) {
-        const mode: CodexThreadMemoryMode = settings.generateMemories
-          ? "enabled"
-          : "disabled";
-        await client.setThreadMemoryMode(threadId, mode);
-      }
-
-      const response: CodexMemoriesSettingsWriteResponse = {
-        ok: true,
-        ...settings,
-      };
-      return c.json(response);
-    } catch (error) {
-      return c.json(
-        {
-          error: toErrorMessage(error),
-        },
-        responseStatusForError(error),
-      );
-    }
-  });
-
-  app.post("/api/codex/memories/reset", async (c) => {
-    try {
-      const client = getCodexAppServerClient();
-      if (!client.resetMemories) {
-        return c.json(
-          {
-            error: "Memory reset is not available for this codex client",
-          },
-          503,
-        );
-      }
-
-      await client.resetMemories();
-      const response: CodexMemoriesResetResponse = {
-        ok: true,
-      };
-      return c.json(response);
-    } catch (error) {
-      return c.json(
-        {
-          error: toErrorMessage(error),
-        },
-        responseStatusForError(error),
-      );
-    }
-  });
 
   app.post("/api/codex/threads", async (c) => {
     try {

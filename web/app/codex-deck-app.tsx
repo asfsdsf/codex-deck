@@ -17,7 +17,6 @@ import type {
   CodexCollaborationModeOption,
   CodexConfigDefaultsResponse,
   CodexModelOption,
-  CodexPetMetadata,
   CodexReasoningEffort,
   CodexSkillMetadata,
   CodexThreadSummary,
@@ -81,6 +80,7 @@ import ComposerPicker, {
 } from "../components/composer-picker";
 import CenteredConfirmDialog from "../components/centered-confirm-dialog";
 import { PetCompanion, PetPicker } from "../components/pet-companion";
+import MemoriesModal from "../components/memories-modal";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
@@ -91,6 +91,9 @@ import {
 import SlashCommandPalette from "../components/slash-command-palette";
 import SkillSelectorPalette from "../components/skill-selector-palette";
 import { usePageVisibility } from "../hooks/use-page-visibility";
+import { useCodexMemories } from "../hooks/use-codex-memories";
+import { useCodexPets } from "../hooks/use-codex-pets";
+import { useSessionHooksPane } from "../hooks/use-session-hooks-pane";
 import {
   getPathBaseName,
   resolveProjectFileLinkTargetFromHref,
@@ -114,7 +117,8 @@ import {
   getWorkflowSkillAvailability,
   type WorkflowSkillInstallChoice,
 } from "../workflow-skill-install";
-import { type TerminalSkillInstallChoice } from "../api/terminal-skill-install";
+import { type TerminalSkillInstallChoice } from "../../api/terminal-skill-install";
+import type { ConversationStreamBatch } from "../transport";
 import {
   resolveSelectedWorkflowSummary,
   resolveWorkflowSelection,
@@ -219,11 +223,6 @@ import {
   setSessionSkillEnabled,
   setWorkflowProjectSkillEnabled,
   cleanSessionBackgroundTerminalRuns,
-  getCodexMemoriesSettings,
-  getCodexPets,
-  resetCodexMemories,
-  selectCodexPet,
-  writeCodexMemoriesSettings,
   claimTerminalWrite as claimTerminalWriteRequest,
   persistTerminalMessageAction as persistTerminalMessageActionRequest,
   releaseTerminalWrite as releaseTerminalWriteRequest,
@@ -3623,11 +3622,6 @@ export default function CodexDeckApp() {
   const [collaborationModes, setCollaborationModes] = useState<
     CodexCollaborationModeOption[]
   >([]);
-  const [pets, setPets] = useState<CodexPetMetadata[]>([]);
-  const [currentPetId, setCurrentPetId] = useState<string | null>(null);
-  const [loadingPets, setLoadingPets] = useState(false);
-  const [petsError, setPetsError] = useState<string | null>(null);
-  const [showPetPicker, setShowPetPicker] = useState(false);
   const [sessionModeById, setSessionModeById] = useState<
     Record<string, CollaborationModeKey>
   >(() => loadSessionModeMap());
@@ -3718,14 +3712,6 @@ export default function CodexDeckApp() {
     useState(false);
   const [showCollabModePicker, setShowCollabModePicker] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
-  const [showMemoriesModal, setShowMemoriesModal] = useState(false);
-  const [memoriesUseEnabled, setMemoriesUseEnabled] = useState(false);
-  const [memoriesGenerateEnabled, setMemoriesGenerateEnabled] = useState(false);
-  const [loadingMemoriesSettings, setLoadingMemoriesSettings] = useState(false);
-  const [savingMemoriesSettings, setSavingMemoriesSettings] = useState(false);
-  const [resettingMemories, setResettingMemories] = useState(false);
-  const [showMemoriesResetConfirm, setShowMemoriesResetConfirm] =
-    useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renamingSession, setRenamingSession] = useState(false);
@@ -3963,44 +3949,21 @@ export default function CodexDeckApp() {
     [],
   );
 
-  const handleSelectPet = useCallback(
-    async (petId: string): Promise<boolean> => {
-      setInteractionError(null);
-      setPetsError(null);
-      try {
-        const response = await selectCodexPet({ petId });
-        setCurrentPetId(response.currentPetId);
-        if (response.pet) {
-          setPets((current) => {
-            const next = current.filter((pet) => pet.id !== response.pet?.id);
-            next.push(response.pet);
-            return next.sort((left, right) => {
-              if (left.source === "disabled") {
-                return -1;
-              }
-              if (right.source === "disabled") {
-                return 1;
-              }
-              return left.displayName.localeCompare(right.displayName);
-            });
-          });
-          showCommandNoticeForDuration(
-            `Selected pet: ${response.pet.displayName}.`,
-          );
-        } else {
-          showCommandNoticeForDuration("Closed pet.");
-        }
-        setShowPetPicker(false);
-        return true;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setPetsError(message);
-        setInteractionError(message);
-        return false;
-      }
-    },
-    [showCommandNoticeForDuration],
-  );
+  const {
+    pets,
+    currentPetId,
+    loadingPets,
+    petsError,
+    showPetPicker,
+    setShowPetPicker,
+    refreshPets,
+    selectPet,
+    activePet,
+  } = useCodexPets({
+    apiReady,
+    onError: (message) => setInteractionError(message || null),
+    onNotice: showCommandNoticeForDuration,
+  });
 
   const handleLoginRemote = useCallback(async () => {
     if (connectingRemote) {
@@ -5017,6 +4980,26 @@ export default function CodexDeckApp() {
       ) ?? null
     );
   }, [activeComposerSessionId, sessionsWithThreadNames]);
+  const {
+    showMemoriesModal,
+    setShowMemoriesModal,
+    memoriesUseEnabled,
+    setMemoriesUseEnabled,
+    memoriesGenerateEnabled,
+    setMemoriesGenerateEnabled,
+    loadingMemoriesSettings,
+    savingMemoriesSettings,
+    resettingMemories,
+    showMemoriesResetConfirm,
+    setShowMemoriesResetConfirm,
+    openMemoriesModalFromCommand,
+    saveMemoriesSettings,
+    confirmResetMemories,
+  } = useCodexMemories({
+    activeSessionId: activeComposerSessionId,
+    onError: (message) => setInteractionError(message || null),
+    onNotice: showCommandNoticeForDuration,
+  });
   const activeBrowserTitleProjectPath =
     centerView === "workflow"
       ? workflowRightPaneProjectPath
@@ -5112,6 +5095,23 @@ export default function CodexDeckApp() {
             ? rightPaneTarget.sessionId
             : rightPaneTarget.workflowKey
         }:${selectedPaneMode}`;
+  const {
+    sessionHooks,
+    loadingSessionHooks,
+    sessionHooksError,
+    selectedHookKey,
+    updatingHookKey,
+    refreshHooks: handleRefreshHooks,
+    selectHookKey: setSelectedHookKey,
+    toggleHookEnabled: handleToggleHookEnabled,
+    trustHook: handleTrustHook,
+    trustAllHooks: handleTrustAllHooks,
+    resetHooksPane,
+  } = useSessionHooksPane({
+    rightPaneTarget,
+    selectedPaneMode,
+    diffPaneCollapsed,
+  });
   const previousRightPaneDataKeyRef = useRef<string | null>(null);
 
   const handleChangePaneMode = useCallback((mode: RightPaneMode) => {
@@ -5157,6 +5157,7 @@ export default function CodexDeckApp() {
       setSessionSkillsError(null);
       setSelectedSkillPath(null);
       setUpdatingSkillPath(null);
+      resetHooksPane();
 
       setTerminalRuns([]);
       setLoadingTerminalRuns(false);
@@ -5167,7 +5168,7 @@ export default function CodexDeckApp() {
       setTerminalRunOutputError(null);
       setTerminalRunOutputIsRunning(false);
     }
-  }, []);
+  }, [resetHooksPane]);
 
   const handleSelectDiffFilePath = useCallback((path: string) => {
     pendingFilePathLinkTargetRef.current = null;
@@ -5303,10 +5304,15 @@ export default function CodexDeckApp() {
       setSessionSkillsError(null);
       setSelectedSkillPath(null);
       setUpdatingSkillPath(null);
+      resetHooksPane();
       return;
     }
 
-    if (selectedPaneMode === "terminal-flow" || selectedPaneMode === "skills") {
+    if (
+      selectedPaneMode === "terminal-flow" ||
+      selectedPaneMode === "skills" ||
+      selectedPaneMode === "hooks"
+    ) {
       previousRightPaneDataKeyRef.current = null;
       return;
     }
@@ -5993,28 +5999,6 @@ export default function CodexDeckApp() {
       cancelled = true;
     };
   }, [apiReady]);
-
-  const refreshPets = useCallback(async () => {
-    setLoadingPets(true);
-    setPetsError(null);
-    try {
-      const response = await getCodexPets();
-      setPets(response.pets);
-      setCurrentPetId(response.currentPetId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPetsError(message);
-    } finally {
-      setLoadingPets(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!apiReady) {
-      return;
-    }
-    void refreshPets();
-  }, [apiReady, refreshPets]);
 
   useEffect(() => {
     setNewSessionCwdState((current) =>
@@ -6817,13 +6801,6 @@ export default function CodexDeckApp() {
     () => getEffortControlLabel(effectiveReasoningEffort),
     [effectiveReasoningEffort],
   );
-  const activePet = useMemo(() => {
-    if (!currentPetId || currentPetId === "disabled" || showPetPicker) {
-      return null;
-    }
-    return pets.find((pet) => pet.id === currentPetId) ?? null;
-  }, [currentPetId, pets, showPetPicker]);
-
   useEffect(() => {
     if (!selectedEffort) {
       return;
@@ -8997,77 +8974,6 @@ export default function CodexDeckApp() {
     setSessionMode,
   ]);
 
-  const openMemoriesModalFromCommand = useCallback(
-    async (threadId: string, cwd: string | null | undefined) => {
-      setShowMemoriesModal(true);
-      setShowMemoriesResetConfirm(false);
-      setLoadingMemoriesSettings(true);
-      setInteractionError(null);
-      try {
-        const settings = await getCodexMemoriesSettings(cwd ?? null);
-        setMemoriesUseEnabled(settings.useMemories);
-        setMemoriesGenerateEnabled(settings.generateMemories);
-      } catch (error) {
-        setInteractionError(
-          error instanceof Error ? error.message : String(error),
-        );
-      } finally {
-        setLoadingMemoriesSettings(false);
-      }
-    },
-    [],
-  );
-
-  const handleSaveMemoriesSettings = useCallback(async () => {
-    const threadId = activeComposerSessionId;
-    if (!threadId) {
-      setInteractionError("Select a session before saving memory settings.");
-      return;
-    }
-
-    setSavingMemoriesSettings(true);
-    setInteractionError(null);
-    try {
-      const settings = await writeCodexMemoriesSettings({
-        useMemories: memoriesUseEnabled,
-        generateMemories: memoriesGenerateEnabled,
-        threadId,
-      });
-      setMemoriesUseEnabled(settings.useMemories);
-      setMemoriesGenerateEnabled(settings.generateMemories);
-      setShowMemoriesModal(false);
-      showCommandNoticeForDuration("Saved memory settings.");
-    } catch (error) {
-      setInteractionError(
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      setSavingMemoriesSettings(false);
-    }
-  }, [
-    activeComposerSessionId,
-    memoriesGenerateEnabled,
-    memoriesUseEnabled,
-    showCommandNoticeForDuration,
-  ]);
-
-  const handleConfirmResetMemories = useCallback(async () => {
-    setResettingMemories(true);
-    setInteractionError(null);
-    try {
-      await resetCodexMemories();
-      setShowMemoriesResetConfirm(false);
-      setShowMemoriesModal(false);
-      showCommandNoticeForDuration("Reset local memories.");
-    } catch (error) {
-      setInteractionError(
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      setResettingMemories(false);
-    }
-  }, [showCommandNoticeForDuration]);
-
   const handleRunSlashCommand = useCallback(
     async (commandName: string, args: string): Promise<boolean> => {
       const normalizedArgs = args.trim();
@@ -9323,7 +9229,7 @@ export default function CodexDeckApp() {
           void refreshPets();
           return true;
         }
-        return handleSelectPet(normalizedArgs);
+        return selectPet(normalizedArgs);
       }
 
       if (commandName === "/rename") {
@@ -9594,6 +9500,15 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/hooks") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /hooks.");
+          return false;
+        }
+        openPaneForCommand("hooks", handleRefreshHooks);
+        return true;
+      }
+
       if (commandName === "/ps") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /ps.");
@@ -9680,14 +9595,15 @@ export default function CodexDeckApp() {
       openLeftPane,
       openRightPane,
       showCommandNoticeForDuration,
-      handleSelectPet,
       refreshPets,
+      selectPet,
       collaborationModes.length,
       handleCreateTerminal,
       handleCreateSession,
       focusSessionSearchInput,
       handleRefreshTerminalRuns,
       handleRefreshSkills,
+      handleRefreshHooks,
       handleRenameThread,
       openMemoriesModalFromCommand,
       openAgentPickerFromCommand,
@@ -12007,130 +11923,26 @@ export default function CodexDeckApp() {
           </div>
         )}
 
-        {showMemoriesModal && (
-          <div
-            className="fixed inset-0 z-40 flex items-end justify-center bg-black/55 p-4 sm:items-center"
-            onClick={(event) => {
-              if (
-                event.target !== event.currentTarget ||
-                savingMemoriesSettings ||
-                resettingMemories
-              ) {
-                return;
-              }
-              setShowMemoriesModal(false);
-            }}
-          >
-            <div className="w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-2xl backdrop-blur">
-              <div className="border-b border-zinc-800 px-4 py-3">
-                <div className="text-sm font-semibold text-zinc-100">
-                  Memories
-                </div>
-                <div className="mt-1 text-xs text-zinc-400">
-                  Choose how Codex uses and creates memories.
-                </div>
-              </div>
-              <div className="space-y-3 p-4">
-                {loadingMemoriesSettings ? (
-                  <div className="rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400">
-                    Loading memory settings...
-                  </div>
-                ) : (
-                  <>
-                    <label className="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-900/70 px-3 py-3 transition-colors hover:bg-zinc-800/70">
-                      <input
-                        type="checkbox"
-                        checked={memoriesUseEnabled}
-                        onChange={(event) =>
-                          setMemoriesUseEnabled(event.target.checked)
-                        }
-                        disabled={savingMemoriesSettings || resettingMemories}
-                        className="mt-0.5 h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-zinc-100">
-                          Use memories
-                        </span>
-                        <span className="mt-1 block text-xs leading-relaxed text-zinc-400">
-                          Use memories in following threads. Applied at next
-                          thread.
-                        </span>
-                      </span>
-                    </label>
-                    <label className="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-900/70 px-3 py-3 transition-colors hover:bg-zinc-800/70">
-                      <input
-                        type="checkbox"
-                        checked={memoriesGenerateEnabled}
-                        onChange={(event) =>
-                          setMemoriesGenerateEnabled(event.target.checked)
-                        }
-                        disabled={savingMemoriesSettings || resettingMemories}
-                        className="mt-0.5 h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-zinc-100">
-                          Generate memories
-                        </span>
-                        <span className="mt-1 block text-xs leading-relaxed text-zinc-400">
-                          Generate memories from following threads. Current
-                          thread included.
-                        </span>
-                      </span>
-                    </label>
-                    <div className="rounded border border-red-900/60 bg-red-950/20 px-3 py-3">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <div className="text-sm font-medium text-red-100">
-                            Reset all memories
-                          </div>
-                          <div className="mt-1 text-xs leading-relaxed text-red-200/75">
-                            Clear local memory files and rollout summaries.
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setShowMemoriesResetConfirm(true)}
-                          disabled={
-                            savingMemoriesSettings ||
-                            resettingMemories ||
-                            loadingMemoriesSettings
-                          }
-                          className="h-8 shrink-0 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {resettingMemories ? "Resetting..." : "Reset"}
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="flex justify-end gap-2 border-t border-zinc-800 px-4 py-3">
-                <button
-                  type="button"
-                  onClick={() => setShowMemoriesModal(false)}
-                  disabled={savingMemoriesSettings || resettingMemories}
-                  className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleSaveMemoriesSettings();
-                  }}
-                  disabled={
-                    loadingMemoriesSettings ||
-                    savingMemoriesSettings ||
-                    resettingMemories
-                  }
-                  className="h-8 rounded border border-blue-600/70 bg-blue-600/30 px-3 text-xs text-blue-100 transition-colors hover:bg-blue-600/40 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {savingMemoriesSettings ? "Saving..." : "Save"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <MemoriesModal
+          open={showMemoriesModal}
+          useEnabled={memoriesUseEnabled}
+          generateEnabled={memoriesGenerateEnabled}
+          loading={loadingMemoriesSettings}
+          saving={savingMemoriesSettings}
+          resetting={resettingMemories}
+          showResetConfirm={showMemoriesResetConfirm}
+          onClose={() => setShowMemoriesModal(false)}
+          onChangeUseEnabled={setMemoriesUseEnabled}
+          onChangeGenerateEnabled={setMemoriesGenerateEnabled}
+          onSave={() => {
+            void saveMemoriesSettings();
+          }}
+          onShowResetConfirm={() => setShowMemoriesResetConfirm(true)}
+          onHideResetConfirm={() => setShowMemoriesResetConfirm(false)}
+          onConfirmReset={() => {
+            void confirmResetMemories();
+          }}
+        />
 
         {showRenameModal && (
           <div
@@ -12277,35 +12089,6 @@ export default function CodexDeckApp() {
               </div>
             </div>
           </div>
-        )}
-
-        {showMemoriesResetConfirm && (
-          <CenteredConfirmDialog
-            tone="danger"
-            title="Reset all memories?"
-            message="This deletes local memory files and rollout summaries. Existing thread memory settings are preserved."
-          >
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowMemoriesResetConfirm(false)}
-                disabled={resettingMemories}
-                className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Go back
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleConfirmResetMemories();
-                }}
-                disabled={resettingMemories}
-                className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {resettingMemories ? "Resetting..." : "Reset all memories"}
-              </button>
-            </div>
-          </CenteredConfirmDialog>
         )}
 
         {deleteSessionTargetId && (
@@ -13380,6 +13163,11 @@ export default function CodexDeckApp() {
         terminalRunOutput={terminalRunOutput}
         terminalRunOutputLoading={loadingTerminalRunOutput}
         terminalRunOutputError={terminalRunOutputError}
+        hooksData={sessionHooks}
+        hooksLoading={loadingSessionHooks}
+        hooksError={sessionHooksError}
+        selectedHookKey={selectedHookKey}
+        updatingHookKey={updatingHookKey}
         skillsData={sessionSkills}
         skillsLoading={loadingSessionSkills}
         skillsError={sessionSkillsError}
@@ -13394,6 +13182,11 @@ export default function CodexDeckApp() {
         onChangeFileContentPage={handleChangeFileContentPage}
         onSelectTerminalRun={setSelectedTerminalRunId}
         onRefreshTerminalRuns={handleRefreshTerminalRuns}
+        onSelectHookKey={setSelectedHookKey}
+        onToggleHookEnabled={handleToggleHookEnabled}
+        onTrustHook={handleTrustHook}
+        onTrustAllHooks={handleTrustAllHooks}
+        onRefreshHooks={handleRefreshHooks}
         onSelectSkillPath={setSelectedSkillPath}
         onToggleSkillEnabled={handleToggleSkillEnabled}
         onRefreshSkills={handleRefreshSkills}
@@ -13414,13 +13207,13 @@ export default function CodexDeckApp() {
         error={petsError}
         onClose={() => setShowPetPicker(false)}
         onSelect={(petId) => {
-          void handleSelectPet(petId);
+          void selectPet(petId);
         }}
       />
       <PetCompanion
         pet={activePet}
         onClose={() => {
-          void handleSelectPet("disabled");
+          void selectPet("disabled");
         }}
       />
     </div>

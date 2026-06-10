@@ -12,6 +12,10 @@ import {
 } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import type { CodexAppServerEvent, CodexTurnError } from "./storage";
+import {
+  buildHookStateBatchWriteInput,
+  parseHooksListResult,
+} from "./codex-app-server-hooks";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MODEL_LIMIT = 200;
@@ -96,6 +100,79 @@ export interface CodexSkillMetadata {
 export interface CodexSkillErrorInfo {
   path: string;
   message: string;
+}
+
+export type CodexHookTrustStatus =
+  | "managed"
+  | "untrusted"
+  | "trusted"
+  | "modified";
+
+export type CodexHookSource =
+  | "system"
+  | "user"
+  | "project"
+  | "mdm"
+  | "sessionFlags"
+  | "plugin"
+  | "cloudRequirements"
+  | "cloudManagedConfig"
+  | "legacyManagedConfigFile"
+  | "legacyManagedConfigMdm"
+  | "unknown";
+
+export type CodexHookEventName =
+  | "preToolUse"
+  | "permissionRequest"
+  | "postToolUse"
+  | "preCompact"
+  | "postCompact"
+  | "sessionStart"
+  | "userPromptSubmit"
+  | "subagentStart"
+  | "subagentStop"
+  | "stop";
+
+export type CodexHookHandlerType = "command" | "prompt" | "agent";
+
+export interface CodexHookErrorInfo {
+  path: string;
+  message: string;
+}
+
+export interface CodexHookMetadata {
+  key: string;
+  eventName: CodexHookEventName;
+  handlerType: CodexHookHandlerType;
+  matcher: string | null;
+  command: string | null;
+  timeoutSec: number;
+  statusMessage: string | null;
+  sourcePath: string;
+  source: CodexHookSource;
+  pluginId: string | null;
+  displayOrder: number;
+  enabled: boolean;
+  isManaged: boolean;
+  currentHash: string;
+  trustStatus: CodexHookTrustStatus;
+}
+
+export interface CodexHooksListEntry {
+  cwd: string;
+  hooks: CodexHookMetadata[];
+  warnings: string[];
+  errors: CodexHookErrorInfo[];
+}
+
+export interface CodexHooksListInput {
+  cwd: string;
+}
+
+export interface CodexHookStateUpdate {
+  key: string;
+  enabled?: boolean;
+  trustedHash?: string | null;
 }
 
 export interface CodexSkillsListEntry {
@@ -587,7 +664,7 @@ function createReadCoalescer() {
         return existing as Promise<T>;
       }
 
-      const promise = (async () => {
+      const promise: Promise<T> = (async () => {
         try {
           const value = await loader();
           if (ttlMs > 0) {
@@ -938,6 +1015,49 @@ class CodexAppServerClient {
     }
 
     return entries;
+  }
+
+  public async listHooks(
+    input: CodexHooksListInput,
+  ): Promise<CodexHooksListEntry[]> {
+    const cwd = input.cwd.trim();
+    if (!cwd) {
+      throw new Error("cwd is required");
+    }
+
+    const result = await this.request("hooks/list", {
+      cwds: [cwd],
+    });
+    if (!result || typeof result !== "object") {
+      throw new CodexAppServerTransportError(
+        "Invalid hooks/list response from codex app-server",
+      );
+    }
+
+    const data = (result as { data?: unknown }).data;
+    if (!Array.isArray(data)) {
+      throw new CodexAppServerTransportError(
+        "Missing hooks data in codex app-server response",
+      );
+    }
+
+    return parseHooksListResult(data, cwd);
+  }
+
+  public async writeHookState(
+    updates: CodexHookStateUpdate[],
+  ): Promise<void> {
+    const result = await this.request(
+      "config/batchWrite",
+      buildHookStateBatchWriteInput(updates),
+    );
+    const record = asRecord(result);
+    const status = asTrimmedString(record?.status);
+    if (!status) {
+      throw new CodexAppServerTransportError(
+        "Invalid config/batchWrite response from codex app-server",
+      );
+    }
   }
 
   public async writeSkillConfig(
@@ -2556,10 +2676,7 @@ function chooseLongerOutput(left: string, right: string): string {
   return right.length >= left.length ? right : left;
 }
 
-function asNullableString(value: unknown): string | null | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
+function asNullableString(value: unknown): string | null {
   if (value === null) {
     return null;
   }
@@ -2573,6 +2690,22 @@ function asFiniteNumber(value: unknown): number | null {
   if (typeof value === "string" && value.trim()) {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function asNonNegativeNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "bigint" && value >= 0n) {
+    return Number(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) {
       return parsed;
     }
   }
@@ -3203,7 +3336,7 @@ function extractThreadSummaryFromResult(result: unknown): CodexThreadSummary {
 
   return {
     threadId,
-    name: name === undefined ? null : name,
+    name,
     preview,
     cwd,
     agentNickname: asNullableString(thread.agentNickname) ?? null,
@@ -3701,6 +3834,8 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 export interface CodexAppServerClientFacade {
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
   listCollaborationModes: () => Promise<CodexCollaborationModeOption[]>;
+  listHooks?: (input: CodexHooksListInput) => Promise<CodexHooksListEntry[]>;
+  writeHookState?: (updates: CodexHookStateUpdate[]) => Promise<void>;
   listSkills?: (input: CodexSkillsListInput) => Promise<CodexSkillsListEntry[]>;
   writeSkillConfig?: (
     path: string,
@@ -3772,6 +3907,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
   return {
     listModels: (limit?: number) => client!.listModels(limit),
     listCollaborationModes: () => client!.listCollaborationModes(),
+    listHooks: (input: CodexHooksListInput) => client!.listHooks(input),
+    writeHookState: (updates: CodexHookStateUpdate[]) =>
+      client!.writeHookState(updates),
     listSkills: (input: CodexSkillsListInput) => client!.listSkills(input),
     writeSkillConfig: (path: string, enabled: boolean) =>
       client!.writeSkillConfig(path, enabled),
