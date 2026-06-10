@@ -107,6 +107,7 @@ import {
 import { dirname, join, resolve } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
+import { createReadStream } from "fs";
 import { readFileSync, existsSync } from "fs";
 import { open as openFile, readdir, stat } from "fs/promises";
 import open from "open";
@@ -140,6 +141,12 @@ import {
   toErrorMessage,
   waitForAbortableTimeout,
 } from "./utils";
+import {
+  listCodexPets,
+  petAssetEtag,
+  resolveCodexPetAsset,
+  selectCodexPet,
+} from "../pets";
 import { registerWorkflowRoutes } from "./workflow-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
 import {
@@ -3642,6 +3649,58 @@ export function createServer(options: ServerOptions) {
     try {
       const defaults = await getCodexConfigDefaults();
       return c.json(defaults);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.get("/api/codex/pets", async (c) => {
+    try {
+      return c.json(await listCodexPets());
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/codex/pets", async (c) => {
+    try {
+      const body = await c.req.json().catch(() => null);
+      const petId =
+        body && typeof body === "object" && "petId" in body
+          ? String((body as { petId?: unknown }).petId ?? "")
+          : "";
+      return c.json(await selectCodexPet(petId));
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.get("/api/codex/pets/:petId/spritesheet", async (c) => {
+    try {
+      const petId = decodeURIComponent(c.req.param("petId"));
+      const asset = await resolveCodexPetAsset(petId);
+      const headers = new Headers();
+      headers.set("Content-Type", asset.contentType);
+      headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      headers.set("ETag", `"${petAssetEtag(asset.path)}"`);
+      return new Response(createReadStream(asset.path) as unknown as BodyInit, {
+        headers,
+      });
     } catch (error) {
       return c.json(
         {

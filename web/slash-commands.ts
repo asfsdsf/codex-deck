@@ -173,6 +173,18 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Configure the browser tab title",
   },
   {
+    name: "/pets",
+    description: "Choose or hide the terminal pet",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/pet",
+    description: "Alias for /pets",
+    supportsInlineArgs: true,
+    hidden: true,
+    aliasFor: "/pets",
+  },
+  {
     name: "/rename",
     description: "Rename the current thread",
     supportsInlineArgs: true,

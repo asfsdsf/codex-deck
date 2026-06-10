@@ -344,6 +344,44 @@ export interface CodexConfigDefaultsResponse {
   planModeReasoningEffort: CodexReasoningEffort | null;
 }
 
+export interface CodexPetAnimationFrame {
+  spriteIndex: number;
+  delayMs: number;
+}
+
+export interface CodexPetAnimation {
+  name: string;
+  frames: CodexPetAnimationFrame[];
+}
+
+export interface CodexPetMetadata {
+  id: string;
+  displayName: string;
+  description: string | null;
+  source: "builtin" | "custom" | "disabled";
+  spritesheetUrl: string | null;
+  frameWidth: number;
+  frameHeight: number;
+  columns: number;
+  rows: number;
+  animations: CodexPetAnimation[];
+}
+
+export interface CodexPetsResponse {
+  currentPetId: string | null;
+  disabledPetId: string;
+  pets: CodexPetMetadata[];
+}
+
+export interface CodexPetSelectionRequest {
+  petId: string;
+}
+
+export interface CodexPetSelectionResponse {
+  currentPetId: string;
+  pet: CodexPetMetadata | null;
+}
+
 export interface FixDanglingSessionResponse {
   sessionId: string;
   filePath: string;

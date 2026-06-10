@@ -17,6 +17,7 @@ import type {
   CodexCollaborationModeOption,
   CodexConfigDefaultsResponse,
   CodexModelOption,
+  CodexPetMetadata,
   CodexReasoningEffort,
   CodexSkillMetadata,
   CodexThreadSummary,
@@ -79,6 +80,7 @@ import ComposerPicker, {
   type ComposerPickerItem,
 } from "../components/composer-picker";
 import CenteredConfirmDialog from "../components/centered-confirm-dialog";
+import { PetCompanion, PetPicker } from "../components/pet-companion";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
@@ -218,7 +220,9 @@ import {
   setWorkflowProjectSkillEnabled,
   cleanSessionBackgroundTerminalRuns,
   getCodexMemoriesSettings,
+  getCodexPets,
   resetCodexMemories,
+  selectCodexPet,
   writeCodexMemoriesSettings,
   claimTerminalWrite as claimTerminalWriteRequest,
   persistTerminalMessageAction as persistTerminalMessageActionRequest,
@@ -3619,6 +3623,11 @@ export default function CodexDeckApp() {
   const [collaborationModes, setCollaborationModes] = useState<
     CodexCollaborationModeOption[]
   >([]);
+  const [pets, setPets] = useState<CodexPetMetadata[]>([]);
+  const [currentPetId, setCurrentPetId] = useState<string | null>(null);
+  const [loadingPets, setLoadingPets] = useState(false);
+  const [petsError, setPetsError] = useState<string | null>(null);
+  const [showPetPicker, setShowPetPicker] = useState(false);
   const [sessionModeById, setSessionModeById] = useState<
     Record<string, CollaborationModeKey>
   >(() => loadSessionModeMap());
@@ -3952,6 +3961,45 @@ export default function CodexDeckApp() {
       }, durationMs);
     },
     [],
+  );
+
+  const handleSelectPet = useCallback(
+    async (petId: string): Promise<boolean> => {
+      setInteractionError(null);
+      setPetsError(null);
+      try {
+        const response = await selectCodexPet({ petId });
+        setCurrentPetId(response.currentPetId);
+        if (response.pet) {
+          setPets((current) => {
+            const next = current.filter((pet) => pet.id !== response.pet?.id);
+            next.push(response.pet);
+            return next.sort((left, right) => {
+              if (left.source === "disabled") {
+                return -1;
+              }
+              if (right.source === "disabled") {
+                return 1;
+              }
+              return left.displayName.localeCompare(right.displayName);
+            });
+          });
+          showCommandNoticeForDuration(
+            `Selected pet: ${response.pet.displayName}.`,
+          );
+        } else {
+          showCommandNoticeForDuration("Closed pet.");
+        }
+        setShowPetPicker(false);
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setPetsError(message);
+        setInteractionError(message);
+        return false;
+      }
+    },
+    [showCommandNoticeForDuration],
   );
 
   const handleLoginRemote = useCallback(async () => {
@@ -5946,6 +5994,28 @@ export default function CodexDeckApp() {
     };
   }, [apiReady]);
 
+  const refreshPets = useCallback(async () => {
+    setLoadingPets(true);
+    setPetsError(null);
+    try {
+      const response = await getCodexPets();
+      setPets(response.pets);
+      setCurrentPetId(response.currentPetId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPetsError(message);
+    } finally {
+      setLoadingPets(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!apiReady) {
+      return;
+    }
+    void refreshPets();
+  }, [apiReady, refreshPets]);
+
   useEffect(() => {
     setNewSessionCwdState((current) =>
       maybeAutoFillNewSessionCwd(current, {
@@ -6747,6 +6817,12 @@ export default function CodexDeckApp() {
     () => getEffortControlLabel(effectiveReasoningEffort),
     [effectiveReasoningEffort],
   );
+  const activePet = useMemo(() => {
+    if (!currentPetId || currentPetId === "disabled" || showPetPicker) {
+      return null;
+    }
+    return pets.find((pet) => pet.id === currentPetId) ?? null;
+  }, [currentPetId, pets, showPetPicker]);
 
   useEffect(() => {
     if (!selectedEffort) {
@@ -9241,6 +9317,15 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/pets") {
+        if (!normalizedArgs) {
+          setShowPetPicker(true);
+          void refreshPets();
+          return true;
+        }
+        return handleSelectPet(normalizedArgs);
+      }
+
       if (commandName === "/rename") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /rename.");
@@ -9595,6 +9680,8 @@ export default function CodexDeckApp() {
       openLeftPane,
       openRightPane,
       showCommandNoticeForDuration,
+      handleSelectPet,
+      refreshPets,
       collaborationModes.length,
       handleCreateTerminal,
       handleCreateSession,
@@ -13319,6 +13406,23 @@ export default function CodexDeckApp() {
           onPointerCancel={handleTouchResizeOverlayPointerCancel}
         />
       )}
+      <PetPicker
+        open={showPetPicker}
+        pets={pets}
+        currentPetId={currentPetId}
+        loading={loadingPets}
+        error={petsError}
+        onClose={() => setShowPetPicker(false)}
+        onSelect={(petId) => {
+          void handleSelectPet(petId);
+        }}
+      />
+      <PetCompanion
+        pet={activePet}
+        onClose={() => {
+          void handleSelectPet("disabled");
+        }}
+      />
     </div>
   );
 }

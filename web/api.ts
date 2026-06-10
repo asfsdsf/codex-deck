@@ -16,6 +16,9 @@ import type {
   CodexMemoriesSettingsResponse,
   CodexMemoriesSettingsWriteRequest,
   CodexMemoriesSettingsWriteResponse,
+  CodexPetSelectionRequest,
+  CodexPetSelectionResponse,
+  CodexPetsResponse,
   CodexThreadAgentListResponse,
   CodexThreadSummariesRequest,
   CodexThreadSummariesResponse,
@@ -1059,6 +1062,22 @@ export async function writeCodexMemoriesSettings(
 export async function resetCodexMemories(): Promise<CodexMemoriesResetResponse> {
   return requestJson<CodexMemoriesResetResponse>("/api/codex/memories/reset", {
     method: "POST",
+  });
+}
+
+export async function getCodexPets(): Promise<CodexPetsResponse> {
+  return requestJson<CodexPetsResponse>("/api/codex/pets");
+}
+
+export async function selectCodexPet(
+  input: CodexPetSelectionRequest,
+): Promise<CodexPetSelectionResponse> {
+  return requestJson<CodexPetSelectionResponse>("/api/codex/pets", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
   });
 }
 

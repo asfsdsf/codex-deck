@@ -129,6 +129,17 @@ test("parseSlashCommandInvocation resolves /approvals to /permissions", () => {
   assert.equal(parsed?.command.name, "/permissions");
 });
 
+test("parseSlashCommandInvocation resolves /pet to /pets", () => {
+  const parsed = parseSlashCommandInvocation(
+    "/pet hide",
+    SESSION_COMPOSER_SLASH_COMMANDS,
+  );
+  assert.ok(parsed);
+  assert.equal(parsed?.resolvedName, "/pets");
+  assert.equal(parsed?.command.name, "/pets");
+  assert.equal(parsed?.args, "hide");
+});
+
 test("parseSlashCommandInvocation returns null for unknown commands", () => {
   assert.equal(
     parseSlashCommandInvocation("/quit", SESSION_COMPOSER_SLASH_COMMANDS),
@@ -148,6 +159,8 @@ test("session composer command list includes toolbar and mode controls", () => {
   assert.equal(names.includes("/collab"), true);
   assert.equal(names.includes("/status"), true);
   assert.equal(names.includes("/title"), true);
+  assert.equal(names.includes("/pets"), true);
+  assert.equal(names.includes("/pet"), true);
   assert.equal(names.includes("/rename"), true);
   assert.equal(names.includes("/diff"), true);
   assert.equal(names.includes("/fork"), true);
@@ -180,11 +193,15 @@ test("session composer command list includes toolbar and mode controls", () => {
   const sideCommand = SESSION_COMPOSER_SLASH_COMMANDS.find(
     (command) => command.name === "/side",
   );
+  const petsCommand = SESSION_COMPOSER_SLASH_COMMANDS.find(
+    (command) => command.name === "/pets",
+  );
   assert.equal(planCommand?.supportsInlineArgs, true);
   assert.equal(goalCommand?.supportsInlineArgs, true);
   assert.equal(renameCommand?.supportsInlineArgs, true);
   assert.equal(resumeCommand?.supportsInlineArgs, true);
   assert.equal(sideCommand?.supportsInlineArgs, true);
+  assert.equal(petsCommand?.supportsInlineArgs, true);
 });
 
 test("workflow composer command list matches session commands only when bound", () => {
