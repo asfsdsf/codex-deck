@@ -213,6 +213,10 @@ export interface CodexThreadCompactResponse {
   ok: boolean;
 }
 
+export interface CodexThreadArchiveResponse {
+  ok: boolean;
+}
+
 export interface CodexMemoriesSettingsResponse {
   useMemories: boolean;
   generateMemories: boolean;
@@ -1207,6 +1211,7 @@ interface SessionMeta {
   id: string;
   cwd: string;
   timestamp: number;
+  archivedAt: number | null;
 }
 
 interface SessionHistory {
@@ -2464,6 +2469,12 @@ function parseSessionMetaLine(line: string): SessionMeta | null {
     cwd:
       typeof record.payload.cwd === "string" ? record.payload.cwd.trim() : "",
     timestamp: parseTimestamp(record.payload.timestamp),
+    archivedAt: parseTimestamp(
+      (record.payload as { archived_at?: unknown; archivedAt?: unknown })
+        .archived_at ??
+        (record.payload as { archived_at?: unknown; archivedAt?: unknown })
+          .archivedAt,
+    ),
   };
 }
 
@@ -4225,6 +4236,64 @@ export async function loadStorage(): Promise<void> {
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
 }
 
+export async function syncSessionFileIndex(
+  sessionId: string,
+  filePath: string,
+): Promise<"updated" | "removed"> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error("session id is required");
+  }
+
+  const normalizedFilePath = filePath.trim();
+  if (normalizedFilePath && (await sessionFileExists(normalizedFilePath))) {
+    addToFileIndex(normalizedSessionId, normalizedFilePath);
+    return "updated";
+  }
+
+  clearSessionCaches(normalizedSessionId);
+  await buildFileIndex();
+  const currentPath = fileIndex.get(normalizedSessionId) ?? null;
+  if (currentPath && (await sessionFileExists(currentPath))) {
+    return "updated";
+  }
+  return "removed";
+}
+
+export async function archiveSession(
+  sessionId: string,
+): Promise<{
+  sessionId: string;
+  removedHistoryEntries: number;
+  removedSessionIndexEntries: number;
+}> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error("session id is required");
+  }
+
+  const removedHistoryEntries = await pruneJsonlFileBySessionId(
+    codexHistoryPath,
+    HISTORY_SESSION_ID_KEYS,
+    normalizedSessionId,
+  );
+  const removedSessionIndexEntries = await pruneJsonlFileBySessionId(
+    join(codexDir, SESSION_INDEX_FILENAME),
+    SESSION_INDEX_ID_KEYS,
+    normalizedSessionId,
+  );
+
+  clearSessionCaches(normalizedSessionId);
+  invalidateHistoryCache();
+  await loadStorage();
+
+  return {
+    sessionId: normalizedSessionId,
+    removedHistoryEntries,
+    removedSessionIndexEntries,
+  };
+}
+
 export async function getSessions(): Promise<Session[]> {
   return dedupe("getSessions", async () => {
     const history = historyCache ?? (await loadHistoryCache());
@@ -4238,17 +4307,21 @@ export async function getSessions(): Promise<Session[]> {
     const sessions: Session[] = [];
 
     for (const sessionId of sessionIds) {
-      let filePath = fileIndex.get(sessionId);
+      let filePath: string | null = fileIndex.get(sessionId) ?? null;
       if (!filePath) {
         filePath = await findSessionFile(sessionId);
       }
 
-      let meta = sessionMetaIndex.get(sessionId);
+      let meta: SessionMeta | null = sessionMetaIndex.get(sessionId) ?? null;
       if (!meta && filePath) {
         meta = await readSessionMetaFromFile(filePath);
         if (meta) {
           sessionMetaIndex.set(sessionId, meta);
         }
+      }
+
+      if (meta?.archivedAt) {
+        continue;
       }
 
       const historyEntry = history.get(sessionId);

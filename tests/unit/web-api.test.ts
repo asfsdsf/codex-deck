@@ -16,6 +16,7 @@ import {
   cleanSessionBackgroundTerminalRuns,
   clearCodexThreadGoal,
   compactCodexThread,
+  archiveCodexThread,
   createCodexThread,
   createTerminal,
   createWorkflow,
@@ -969,6 +970,9 @@ test("thread management routes request expected endpoints", async () => {
     if (url.includes("/compact")) {
       return jsonResponse({ ok: true });
     }
+    if (url.includes("/archive")) {
+      return jsonResponse({ ok: true });
+    }
     if (url.includes("/goal")) {
       if (init?.method === "DELETE") {
         return jsonResponse({ cleared: true });
@@ -1022,6 +1026,7 @@ test("thread management routes request expected endpoints", async () => {
   const forked = await forkCodexThread("thread#1");
   const side = await startCodexSideThread("thread#1");
   const compacted = await compactCodexThread("thread#1");
+  const archived = await archiveCodexThread("thread#1");
   const goal = await getCodexThreadGoal("thread#1");
   const setGoal = await setCodexThreadGoal("thread#1", {
     objective: "Improve benchmark coverage",
@@ -1038,6 +1043,7 @@ test("thread management routes request expected endpoints", async () => {
   assert.equal(side.thread.threadId, "thread-side");
   assert.equal(side.parentThreadId, "thread#1");
   assert.equal(compacted.ok, true);
+  assert.equal(archived.ok, true);
   assert.equal(goal.goal?.objective, "Improve benchmark coverage");
   assert.equal(setGoal.goal.status, "active");
   assert.equal(clearedGoal.cleared, true);
@@ -1056,20 +1062,23 @@ test("thread management routes request expected endpoints", async () => {
   assert.equal(calls[2].init?.method, "POST");
   assert.equal(calls[3].url, "/api/codex/threads/thread%231/compact");
   assert.equal(calls[3].init?.method, "POST");
-  assert.equal(calls[4].url, "/api/codex/threads/thread%231/goal");
-  assert.equal(calls[4].init?.method, undefined);
+  assert.equal(calls[4].url, "/api/codex/threads/thread%231/archive");
+  assert.equal(calls[4].init?.method, "POST");
   assert.equal(calls[5].url, "/api/codex/threads/thread%231/goal");
-  assert.equal(calls[5].init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(calls[5].init?.body ?? "{}")), {
+  assert.equal(calls[5].url, "/api/codex/threads/thread%231/goal");
+  assert.equal(calls[5].init?.method, undefined);
+  assert.equal(calls[6].url, "/api/codex/threads/thread%231/goal");
+  assert.equal(calls[6].init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[6].init?.body ?? "{}")), {
     objective: "Improve benchmark coverage",
     status: "active",
   });
-  assert.equal(calls[6].url, "/api/codex/threads/thread%231/goal");
-  assert.equal(calls[6].init?.method, "DELETE");
-  assert.equal(calls[7].url, "/api/codex/threads/thread%231/agent-threads");
-  assert.equal(calls[8].url, "/api/codex/threads/summaries");
-  assert.equal(calls[8].init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(calls[8].init?.body ?? "{}")), {
+  assert.equal(calls[7].url, "/api/codex/threads/thread%231/goal");
+  assert.equal(calls[7].init?.method, "DELETE");
+  assert.equal(calls[8].url, "/api/codex/threads/thread%231/agent-threads");
+  assert.equal(calls[9].url, "/api/codex/threads/summaries");
+  assert.equal(calls[9].init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[9].init?.body ?? "{}")), {
     threadIds: ["thread#1", "thread#2"],
   });
 });

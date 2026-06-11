@@ -190,6 +190,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     supportsInlineArgs: true,
   },
   {
+    name: "/archive",
+    description: "Archive this session and exit",
+  },
+  {
     name: "/new",
     description: "Start a new chat during a conversation",
   },

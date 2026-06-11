@@ -12,6 +12,7 @@ import type {
   CodexThreadForkResponse,
   CodexThreadSideStartResponse,
   CodexThreadCompactResponse,
+  CodexThreadArchiveResponse,
   CodexMemoriesResetResponse,
   CodexMemoriesSettingsResponse,
   CodexMemoriesSettingsWriteRequest,
@@ -1026,6 +1027,17 @@ export async function compactCodexThread(
 ): Promise<CodexThreadCompactResponse> {
   return requestJson<CodexThreadCompactResponse>(
     `/api/codex/threads/${encodeURIComponent(threadId)}/compact`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function archiveCodexThread(
+  threadId: string,
+): Promise<CodexThreadArchiveResponse> {
+  return requestJson<CodexThreadArchiveResponse>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/archive`,
     {
       method: "POST",
     },

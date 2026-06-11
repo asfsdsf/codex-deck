@@ -231,11 +231,13 @@ import {
   forkCodexThread,
   startCodexSideThread,
   compactCodexThread,
+  archiveCodexThread,
   getCodexThreadGoal,
   clearCodexThreadGoal,
   setCodexThreadGoal,
   listCodexAgentThreads,
   getCodexThreadSummaries,
+  bindTerminalSession,
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
 } from "../api";
 import {
@@ -8834,6 +8836,71 @@ export default function CodexDeckApp() {
     [showCommandNoticeForDuration, sideThreadsById],
   );
 
+  const handleArchiveThread = useCallback(
+    async (threadId: string): Promise<boolean> => {
+      const normalizedThreadId = threadId.trim();
+      if (!normalizedThreadId) {
+        setInteractionError("Select a session before using /archive.");
+        return false;
+      }
+
+      const confirmed =
+        typeof window === "undefined"
+          ? true
+          : window.confirm(
+              "Archive this session? This will remove it from the active session list.",
+            );
+      if (!confirmed) {
+        return true;
+      }
+
+      setInteractionError(null);
+
+      try {
+        await archiveCodexThread(normalizedThreadId);
+
+        if (workflowComposerSessionId === normalizedThreadId && selectedWorkflowKey) {
+          await bindWorkflowSessionRequest(selectedWorkflowKey, {
+            sessionId: null,
+          });
+          await refreshSelectedWorkflow(selectedWorkflowKey);
+        }
+
+        if (
+          selectedTerminalData?.boundSessionId?.trim() === normalizedThreadId
+        ) {
+          await bindTerminalSession(selectedTerminalData.terminalId, {
+            sessionId: null,
+          });
+          setTerminals((current) =>
+            current.map((terminal) =>
+              terminal.terminalId === selectedTerminalData.terminalId
+                ? { ...terminal, boundSessionId: null }
+                : terminal,
+            ),
+          );
+        }
+
+        removeSessionFromLocalState(normalizedThreadId);
+        showCommandNoticeForDuration("Archived session.");
+        return true;
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      }
+    },
+    [
+      workflowComposerSessionId,
+      selectedWorkflowKey,
+      selectedTerminalData,
+      removeSessionFromLocalState,
+      showCommandNoticeForDuration,
+      refreshSelectedWorkflow,
+    ],
+  );
+
   const handleReturnFromSideConversation = useCallback(() => {
     const sideContext =
       selectedSession && sideThreadsById[selectedSession]
@@ -9245,6 +9312,30 @@ export default function CodexDeckApp() {
         setRenameDraft(commandSessionData?.display ?? "");
         setShowRenameModal(true);
         return true;
+      }
+
+      if (commandName === "/archive") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /archive.");
+          return false;
+        }
+        if (sideThreadsById[commandSessionId]) {
+          setInteractionError(
+            "'/archive' is unavailable in side conversations. Return to the main thread first.",
+          );
+          return false;
+        }
+        if (
+          pendingTurnRef.current?.sessionId === commandSessionId &&
+          pendingTurnRef.current
+        ) {
+          setInteractionError(
+            "'/archive' is disabled while a task is in progress.",
+          );
+          return false;
+        }
+
+        return handleArchiveThread(commandSessionId);
       }
 
       if (commandName === "/new" || commandName === "/clear") {

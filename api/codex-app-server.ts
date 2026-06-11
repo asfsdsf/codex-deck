@@ -1310,6 +1310,28 @@ class CodexAppServerClient {
     }
   }
 
+  public async archiveThread(threadId: string): Promise<void> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("threadId is required");
+    }
+
+    try {
+      await this.request("thread/archive", {
+        threadId: normalizedThreadId,
+      });
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) {
+        throw error;
+      }
+
+      await this.resumeThread(normalizedThreadId);
+      await this.request("thread/archive", {
+        threadId: normalizedThreadId,
+      });
+    }
+  }
+
   public async getThreadGoal(
     threadId: string,
   ): Promise<CodexThreadGoal | null> {
@@ -3858,6 +3880,7 @@ export interface CodexAppServerClientFacade {
     items: CodexRawResponseItem[],
   ) => Promise<void>;
   compactThread?: (threadId: string) => Promise<void>;
+  archiveThread?: (threadId: string) => Promise<void>;
   getThreadGoal?: (threadId: string) => Promise<CodexThreadGoal | null>;
   setThreadGoal?: (input: SetCodexThreadGoalInput) => Promise<CodexThreadGoal>;
   clearThreadGoal?: (threadId: string) => Promise<boolean>;
@@ -3928,6 +3951,7 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     injectThreadItems: (threadId: string, items: CodexRawResponseItem[]) =>
       client!.injectThreadItems(threadId, items),
     compactThread: (threadId: string) => client!.compactThread(threadId),
+    archiveThread: (threadId: string) => client!.archiveThread(threadId),
     getThreadGoal: (threadId: string) => client!.getThreadGoal(threadId),
     setThreadGoal: (input: SetCodexThreadGoalInput) =>
       client!.setThreadGoal(input),

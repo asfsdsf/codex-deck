@@ -5079,6 +5079,13 @@ test("state/interrupt/user-input routes validate ids and payload shapes", async 
     );
     assert.equal(compactMissingThread.status, 400);
 
+    const archiveMissingThread = await requestJson(
+      server,
+      "/api/codex/threads/%20/archive",
+      { method: "POST" },
+    );
+    assert.equal(archiveMissingThread.status, 400);
+
     const agentMissingThread = await requestJson(
       server,
       "/api/codex/threads/%20/agent-threads",
@@ -5936,7 +5943,7 @@ test("message route strips null collaboration mode overrides before forwarding",
   }
 });
 
-test("thread management routes forward rename/fork/compact/agent requests", async () => {
+test("thread management routes forward rename/fork/archive/compact/agent requests", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "server-thread-management",
   );
@@ -5948,6 +5955,7 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
     items: Record<string, unknown>[];
   }> = [];
   const compactedThreads: string[] = [];
+  const archivedThreads: string[] = [];
   const goalUpdates: Array<{
     threadId: string;
     objective?: string | null;
@@ -6003,6 +6011,10 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
     compactThread: async (threadId: string) => {
       threadManagementCalls.push(`compact:${threadId}`);
       compactedThreads.push(threadId);
+    },
+    archiveThread: async (threadId: string) => {
+      threadManagementCalls.push(`archive:${threadId}`);
+      archivedThreads.push(threadId);
     },
     getThreadGoal: async (threadId: string) => ({
       threadId,
@@ -6142,6 +6154,18 @@ test("thread management routes forward rename/fork/compact/agent requests", asyn
     );
     assert.equal(compactResponse.status, 200);
     assert.deepEqual(compactedThreads, ["thread-main"]);
+
+    const archiveResponse = await requestJson(
+      server,
+      "/api/codex/threads/thread-main/archive",
+      {
+        method: "POST",
+      },
+    );
+    assert.equal(archiveResponse.status, 200);
+    assert.deepEqual(archivedThreads, ["thread-main"]);
+    const archivePayload = archiveResponse.body as { ok?: boolean };
+    assert.equal(archivePayload.ok, true);
 
     const goalGetResponse = await requestJson(
       server,

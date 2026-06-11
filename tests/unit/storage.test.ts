@@ -4,6 +4,7 @@ import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   addToFileIndex,
+  archiveSession,
   deleteSession,
   fixDanglingTurns,
   getClaudeDir,
@@ -21,6 +22,7 @@ import {
   invalidateHistoryCache,
   loadStorage,
   sessionExists,
+  syncSessionFileIndex,
 } from "../../api/storage";
 import {
   createTempCodexDir,
@@ -93,6 +95,126 @@ test("getSessions and getProjects merge session metadata + history cache", async
     assert.equal(b.project, "");
 
     assert.deepEqual(projects, ["/repo/project-a"]);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("getSessions excludes archived sessions even when history entries remain", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("storage-archived-sessions");
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      JSON.stringify({
+        type: "session_meta",
+        payload: {
+          id: SESSION_A,
+          cwd: "/repo/project-a",
+          timestamp: 1700000000000,
+          archived_at: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+      responseItemMessageLine("user", "archived session"),
+    ]);
+
+    await writeHistoryFile(rootDir, [
+      JSON.stringify({
+        session_id: SESSION_A,
+        ts: 1700000000,
+        text: "archived session from history",
+      }),
+      JSON.stringify({
+        session_id: SESSION_B,
+        ts: 1700000001,
+        text: "active session",
+      }),
+    ]);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const sessions = await getSessions();
+    assert.equal(
+      sessions.some((session) => session.id === SESSION_A),
+      false,
+    );
+    assert.equal(
+      sessions.some((session) => session.id === SESSION_B),
+      true,
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+test("archiveSession removes active session discovery metadata after rollout removal", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("storage-archive-session");
+
+  try {
+    const filePath = await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+      responseItemMessageLine("user", "archive me"),
+    ]);
+    await writeHistoryFile(rootDir, [
+      JSON.stringify({
+        session_id: SESSION_A,
+        ts: 1700000000,
+        text: "archive me from history",
+      }),
+    ]);
+    await writeFile(
+      join(rootDir, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: SESSION_A,
+        thread_name: "archive me",
+        updated_at: "2026-01-01T00:00:00Z",
+      })}\n`,
+      "utf-8",
+    );
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    await rm(filePath, { force: true });
+    const syncResult = await syncSessionFileIndex(SESSION_A, filePath);
+    assert.equal(syncResult, "removed");
+
+    const result = await archiveSession(SESSION_A);
+    assert.equal(result.sessionId, SESSION_A);
+    assert.equal(result.removedHistoryEntries, 1);
+    assert.equal(result.removedSessionIndexEntries, 1);
+
+    const sessions = await getSessions();
+    assert.equal(
+      sessions.some((session) => session.id === SESSION_A),
+      false,
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+test("syncSessionFileIndex removes stale file index entries for missing files", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("storage-sync-session-index");
+
+  try {
+    const filePath = await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+      responseItemMessageLine("user", "temporary session"),
+    ]);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    await rm(filePath, { force: true });
+    const result = await syncSessionFileIndex(SESSION_A, filePath);
+    assert.equal(result, "removed");
+
+    const exists = await sessionExists(SESSION_A);
+    assert.equal(exists.exists, false);
   } finally {
     await cleanup();
   }

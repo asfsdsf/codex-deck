@@ -20,13 +20,14 @@ import {
   getConversationRawWindow,
   getConversationStream,
   deleteSession,
+  archiveSession,
   fixDanglingTurns,
   getSessionWaitState,
   sessionExists,
   getSessionTerminalRunOutput,
   getSessionTerminalRuns,
   invalidateHistoryCache,
-  addToFileIndex,
+  syncSessionFileIndex,
   type SessionsRemovedEvent,
   type CodexThreadStateResponse,
   type CodexAppServerEvent,
@@ -40,6 +41,7 @@ import {
   type CodexThreadForkResponse,
   type CodexThreadSideStartResponse,
   type CodexThreadCompactResponse,
+  type CodexThreadArchiveResponse,
   type CodexMemoriesResetResponse,
   type CodexMemoriesSettingsWriteRequest,
   type CodexMemoriesSettingsWriteResponse,
@@ -3895,6 +3897,44 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  app.post("/api/codex/threads/:id/archive", async (c) => {
+    const threadId = c.req.param("id")?.trim();
+    if (!threadId) {
+      return c.json({ error: "thread id is required" }, 400);
+    }
+
+    try {
+      const client = getCodexAppServerClient();
+      if (!client.archiveThread) {
+        return c.json(
+          {
+            error: "Thread archive is not available for this codex client",
+          },
+          503,
+        );
+      }
+
+      await client.archiveThread(threadId);
+      await archiveSession(threadId);
+      emitSessionsRemoved({
+        sessionIds: [threadId],
+        actorClientId: null,
+        timestampMs: Date.now(),
+      });
+      const response: CodexThreadArchiveResponse = {
+        ok: true,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
   app.get("/api/codex/threads/:id/goal", async (c) => {
     const threadId = c.req.param("id")?.trim();
     if (!threadId) {
@@ -4524,10 +4564,23 @@ export function createServer(options: ServerOptions) {
   };
 
   const handleSessionChange = (sessionId: string, filePath: string) => {
-    addToFileIndex(sessionId, filePath);
-    recordSessionDeltaEvent({
-      changedSessionIds: [sessionId],
-    });
+    void (async () => {
+      const result = await syncSessionFileIndex(sessionId, filePath).catch(
+        () => "updated" as const,
+      );
+      if (result === "removed") {
+        emitSessionsRemoved({
+          sessionIds: [sessionId],
+          actorClientId: null,
+          timestampMs: Date.now(),
+        });
+        return;
+      }
+
+      recordSessionDeltaEvent({
+        changedSessionIds: [sessionId],
+      });
+    })();
   };
 
   onHistoryChange(handleHistoryChange);

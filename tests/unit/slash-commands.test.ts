@@ -171,6 +171,7 @@ test("session composer command list includes toolbar and mode controls", () => {
   assert.equal(names.includes("/pets"), true);
   assert.equal(names.includes("/pet"), true);
   assert.equal(names.includes("/rename"), true);
+  assert.equal(names.includes("/archive"), true);
   assert.equal(names.includes("/diff"), true);
   assert.equal(names.includes("/fork"), true);
   assert.equal(names.includes("/compact"), true);
