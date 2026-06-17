@@ -40,6 +40,48 @@ test("Codex app-server error classes preserve structured fields", () => {
   assert.equal(transport.message, "offline");
 });
 
+test("API key masking preserves prefix and trailing characters for status display", () => {
+  assert.equal(
+    __TEST_ONLY__.maskApiKey("sk-2h123456jf8a7"),
+    "sk-2h****jf8a7",
+  );
+  assert.equal(__TEST_ONLY__.maskApiKey(""), null);
+  assert.equal(__TEST_ONLY__.maskApiKey(null), null);
+});
+
+test("runtime provider API key resolution falls back to live OpenAI env vars", () => {
+  const previousCodexApiKey = process.env.CODEX_API_KEY;
+  const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
+
+  process.env.CODEX_API_KEY = "sk-2h123456jf8a7";
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    assert.equal(
+      __TEST_ONLY__.resolveRuntimeProviderApiKey("openai", null, null),
+      "sk-2h123456jf8a7",
+    );
+    assert.equal(
+      __TEST_ONLY__.maskApiKey(
+        __TEST_ONLY__.resolveRuntimeProviderApiKey("openai", null, null),
+      ),
+      "sk-2h****jf8a7",
+    );
+  } finally {
+    if (previousCodexApiKey === undefined) {
+      delete process.env.CODEX_API_KEY;
+    } else {
+      process.env.CODEX_API_KEY = previousCodexApiKey;
+    }
+
+    if (previousOpenAiApiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+    }
+  }
+});
+
 test("client lifecycle helpers are callable and close idempotently", async () => {
   const clientA = getCodexAppServerClient();
   const clientB = getCodexAppServerClient();

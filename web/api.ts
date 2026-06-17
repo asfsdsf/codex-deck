@@ -953,14 +953,24 @@ export async function sendCodexMessage(
 export async function getCodexThreadState(
   threadId: string,
   turnId?: string | null,
+  options?: {
+    includeStatusDetails?: boolean;
+  },
 ): Promise<CodexThreadStateResponse> {
   const normalizedThreadId = threadId.trim();
   const params = new URLSearchParams();
   if (typeof turnId === "string" && turnId.trim()) {
     params.set("turnId", turnId.trim());
   }
+  if (options?.includeStatusDetails) {
+    params.set("includeStatusDetails", "true");
+  }
   const query = params.toString();
-  const cacheKey = `${normalizedThreadId}:${params.get("turnId") ?? ""}`;
+  const cacheKey = [
+    normalizedThreadId,
+    params.get("turnId") ?? "",
+    options?.includeStatusDetails ? "status" : "",
+  ].join(":");
   return codexThreadStateLoader.getOrLoad(cacheKey, () =>
     requestJson<CodexThreadStateResponse>(
       `/api/codex/threads/${encodeURIComponent(normalizedThreadId)}/state${query ? `?${query}` : ""}`,

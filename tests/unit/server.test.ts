@@ -484,7 +484,7 @@ test("sessions stream forwards codex app-server retry events", async () => {
   );
   const server = createServer({ port: 13025, codexDir: rootDir, open: false });
   let eventListener: ((event: unknown) => void) | null = null;
-  const mockClient: CodexAppServerClientFacade = {
+    const mockClient: CodexAppServerClientFacade = {
     listModels: async () => [],
     listCollaborationModes: async () => [],
     createThread: async () => "thread-id",
@@ -6322,6 +6322,282 @@ test("thread state route preserves non-generating state when session log has no 
       (response.body as { requestedTurnStatus?: string | null })
         .requestedTurnStatus,
       null,
+    );
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("thread state route includes live provider details for api key auth", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("server-state-live-status-api-key");
+  const server = createServer({ port: 13030, codexDir: rootDir, open: false });
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getThreadLiveStatus: async () => ({
+      threadId: SESSION_ID,
+      authMode: "apiKey",
+      providerId: "openai",
+      providerUrl: "https://api.openai.com/v1",
+      apiKeyMasked: "sk-2h****jf8a7",
+      showProviderDetails: true,
+      serviceTier: "fast",
+      fastMode: true,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-id",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+    ]);
+
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const response = await requestJson(
+      server,
+      `/api/codex/threads/${SESSION_ID}/state?includeStatusDetails=true`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (response.body as { statusDetails?: unknown }).statusDetails,
+      {
+        authMode: "apiKey",
+        fastMode: true,
+        serviceTier: "fast",
+        provider: {
+          id: "openai",
+          url: "https://api.openai.com/v1",
+          apiKeyMasked: "sk-2h****jf8a7",
+        },
+      },
+    );
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("thread state route hides provider details for login auth", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("server-state-live-status-login");
+  const server = createServer({ port: 13031, codexDir: rootDir, open: false });
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getThreadLiveStatus: async () => ({
+      threadId: SESSION_ID,
+      authMode: "chatgpt",
+      providerId: "openai",
+      providerUrl: null,
+      apiKeyMasked: null,
+      showProviderDetails: false,
+      serviceTier: null,
+      fastMode: false,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-id",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+    ]);
+
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const response = await requestJson(
+      server,
+      `/api/codex/threads/${SESSION_ID}/state?includeStatusDetails=true`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (response.body as { statusDetails?: unknown }).statusDetails,
+      {
+        authMode: "chatgpt",
+        fastMode: false,
+        serviceTier: null,
+        provider: null,
+      },
+    );
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("thread state route includes provider details for env-key-backed auth without apiKey mode", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("server-state-live-status-env-key");
+  const server = createServer({ port: 13032, codexDir: rootDir, open: false });
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getThreadLiveStatus: async () => ({
+      threadId: SESSION_ID,
+      authMode: null,
+      providerId: "openai",
+      providerUrl: "https://api.openai.com/v1",
+      apiKeyMasked: "sk-2h****jf8a7",
+      showProviderDetails: true,
+      serviceTier: "flex",
+      fastMode: false,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-id",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+    ]);
+
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const response = await requestJson(
+      server,
+      `/api/codex/threads/${SESSION_ID}/state?includeStatusDetails=true`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (response.body as { statusDetails?: unknown }).statusDetails,
+      {
+        authMode: null,
+        fastMode: false,
+        serviceTier: "flex",
+        provider: {
+          id: "openai",
+          url: "https://api.openai.com/v1",
+          apiKeyMasked: "sk-2h****jf8a7",
+        },
+      },
+    );
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("thread state route returns unavailable-ready provider fields for non-login auth when details are missing", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("server-state-live-status-unavailable-provider");
+  const server = createServer({ port: 13033, codexDir: rootDir, open: false });
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getThreadLiveStatus: async () => ({
+      threadId: SESSION_ID,
+      authMode: null,
+      providerId: null,
+      providerUrl: null,
+      apiKeyMasked: null,
+      showProviderDetails: true,
+      serviceTier: "flex",
+      fastMode: false,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-id",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+    ]);
+
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const response = await requestJson(
+      server,
+      `/api/codex/threads/${SESSION_ID}/state?includeStatusDetails=true`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (response.body as { statusDetails?: unknown }).statusDetails,
+      {
+        authMode: null,
+        fastMode: false,
+        serviceTier: "flex",
+        provider: {
+          id: null,
+          url: null,
+          apiKeyMasked: null,
+        },
+      },
     );
   } finally {
     setCodexAppServerClientForTests(null);

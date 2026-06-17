@@ -876,6 +876,16 @@ test("thread state and request routes encode IDs and include query", async () =>
         isGenerating: false,
         requestedTurnId: "turn_abc",
         requestedTurnStatus: null,
+        statusDetails: {
+          authMode: "apiKey",
+          fastMode: true,
+          serviceTier: "fast",
+          provider: {
+            id: "openai",
+            url: "https://api.openai.com/v1",
+            apiKeyMasked: "sk-2h****jf8a7",
+          },
+        },
       });
     }
 
@@ -898,7 +908,9 @@ test("thread state and request routes encode IDs and include query", async () =>
     return jsonResponse({});
   };
 
-  const state = await getCodexThreadState("thread#1", "  turn_abc  ");
+  const state = await getCodexThreadState("thread#1", "  turn_abc  ", {
+    includeStatusDetails: true,
+  });
   const requests = await listCodexUserInputRequests("thread#1");
   const approvalRequests = await listCodexApprovalRequests("thread#1");
   const interrupt = await interruptCodexThread("thread#1");
@@ -914,13 +926,16 @@ test("thread state and request routes encode IDs and include query", async () =>
   );
 
   assert.equal(state.requestedTurnId, "turn_abc");
+  assert.equal(state.statusDetails?.authMode, "apiKey");
+  assert.equal(state.statusDetails?.fastMode, true);
+  assert.equal(state.statusDetails?.provider?.id, "openai");
   assert.deepEqual(requests, [{ requestId: "req" }]);
   assert.deepEqual(approvalRequests, [{ requestId: "approval-1" }]);
   assert.equal(interrupt.ok, true);
   assert.equal(response.ok, true);
   assert.equal(approvalResponse.ok, true);
   assert.deepEqual(calls, [
-    "/api/codex/threads/thread%231/state?turnId=turn_abc",
+    "/api/codex/threads/thread%231/state?turnId=turn_abc&includeStatusDetails=true",
     "/api/codex/threads/thread%231/requests/user-input",
     "/api/codex/threads/thread%231/requests/approvals",
     "/api/codex/threads/thread%231/interrupt",

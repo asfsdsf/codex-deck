@@ -33,6 +33,12 @@ export type CodexReasoningEffort =
 
 export type CodexServiceTier = "fast" | "flex";
 
+export type CodexAuthMode =
+  | "apiKey"
+  | "chatgpt"
+  | "chatgptAuthTokens"
+  | "agentIdentity";
+
 export interface CodexModelOption {
   id: string;
   displayName: string;
@@ -244,6 +250,30 @@ export interface CodexThreadState {
   requestedTurnStatus: CodexTurnStatus | null;
 }
 
+export interface CodexStatusProviderInfo {
+  id: string | null;
+  url: string | null;
+  apiKeyMasked: string | null;
+}
+
+export interface CodexThreadStatusDetails {
+  authMode: CodexAuthMode | null;
+  fastMode: boolean;
+  serviceTier: CodexServiceTier | null;
+  provider: CodexStatusProviderInfo | null;
+}
+
+export interface CodexThreadLiveStatus {
+  threadId: string;
+  authMode: CodexAuthMode | null;
+  providerId: string | null;
+  providerUrl: string | null;
+  apiKeyMasked: string | null;
+  showProviderDetails: boolean;
+  serviceTier: CodexServiceTier | null;
+  fastMode: boolean;
+}
+
 export type CodexThreadRuntimeStatus =
   | "notLoaded"
   | "idle"
@@ -400,6 +430,17 @@ interface AppServerThreadRecord {
   agentRole?: unknown;
   status?: unknown;
   updatedAt?: unknown;
+}
+
+interface AppServerThreadResumeRecord {
+  thread?: unknown;
+  model?: unknown;
+  modelProvider?: unknown;
+  serviceTier?: unknown;
+  cwd?: unknown;
+  reasoningEffort?: unknown;
+  instructionSources?: unknown;
+  approvalPolicy?: unknown;
 }
 
 export interface CodexTurnFileDiff {
@@ -1427,6 +1468,92 @@ class CodexAppServerClient {
 
     const result = await this.readThread(normalizedThreadId, false);
     return extractThreadSummaryFromResult(result);
+  }
+
+  public async getThreadLiveStatus(
+    threadId: string,
+  ): Promise<CodexThreadLiveStatus> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("threadId is required");
+    }
+
+    const resumeResult = await this.request("thread/resume", {
+      threadId: normalizedThreadId,
+      persistExtendedHistory: true,
+    });
+    const resumeRecord = asRecord(resumeResult) as AppServerThreadResumeRecord | null;
+    if (!resumeRecord) {
+      throw new CodexAppServerTransportError(
+        "Invalid thread/resume response from codex app-server",
+      );
+    }
+
+    const thread = asRecord(resumeRecord.thread);
+    const resumedThreadId = asTrimmedString(thread?.id) ?? normalizedThreadId;
+    let providerId =
+      asTrimmedString(resumeRecord.modelProvider) ??
+      asTrimmedString(thread?.modelProvider) ??
+      null;
+    const cwd =
+      asTrimmedString(resumeRecord.cwd) ??
+      asTrimmedString(thread?.cwd) ??
+      null;
+    const serviceTier = toServiceTier(resumeRecord.serviceTier);
+
+    const authStatusResult = await this.request("getAuthStatus", {
+      includeToken: true,
+      refreshToken: false,
+    });
+    const authStatus = extractAuthStatusResult(authStatusResult);
+
+    let configuredProviderUrl: string | null = null;
+    let configuredProviderEnvKey: string | null = null;
+    if (cwd) {
+      const configReadResult = await this.request("config/read", {
+        includeLayers: false,
+        cwd,
+      });
+      providerId =
+        providerId ?? extractActiveProviderIdFromConfigReadResult(configReadResult);
+      configuredProviderUrl = extractProviderBaseUrlFromConfigReadResult(
+        configReadResult,
+        providerId,
+      );
+      configuredProviderEnvKey = extractProviderEnvKeyFromConfigReadResult(
+        configReadResult,
+        providerId,
+      );
+    }
+
+    const providerUrl = normalizeProviderBaseUrl(
+      providerId,
+      configuredProviderUrl,
+      authStatus.authMode,
+    );
+    const isLoginAuth =
+      authStatus.authMode === "chatgpt" ||
+      authStatus.authMode === "chatgptAuthTokens" ||
+      authStatus.authMode === "agentIdentity";
+    const apiKeyMasked = maskApiKey(
+      resolveRuntimeProviderApiKey(
+        providerId,
+        configuredProviderEnvKey,
+        authStatus.authToken,
+      ),
+    );
+    const showProviderDetails = !isLoginAuth;
+
+    return {
+      threadId: resumedThreadId,
+      authMode: authStatus.authMode,
+      providerId,
+      providerUrl: showProviderDetails ? providerUrl : null,
+      apiKeyMasked: showProviderDetails ? apiKeyMasked : null,
+      showProviderDetails,
+      serviceTier,
+      fastMode: serviceTier === "fast",
+    };
   }
 
   public async listLoadedThreadIds(): Promise<string[]> {
@@ -2765,6 +2892,100 @@ function toServiceTier(value: unknown): CodexServiceTier | null {
   return null;
 }
 
+function toAuthMode(value: unknown): CodexAuthMode | null {
+  if (
+    value === "apiKey" ||
+    value === "apikey" ||
+    value === "chatgpt" ||
+    value === "chatgptAuthTokens" ||
+    value === "agentIdentity"
+  ) {
+    return value === "apikey" ? "apiKey" : value;
+  }
+  return null;
+}
+
+function maskApiKey(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const token = value.trim();
+  if (!token) {
+    return null;
+  }
+
+  if (token.length <= 8) {
+    const visiblePrefix = token.slice(0, Math.min(2, token.length));
+    const visibleSuffix =
+      token.length > 4 ? token.slice(Math.max(token.length - 2, 0)) : "";
+    const maskLength = Math.max(token.length - visiblePrefix.length - visibleSuffix.length, 1);
+    return `${visiblePrefix}${"*".repeat(maskLength)}${visibleSuffix}`;
+  }
+
+  return `${token.slice(0, 5)}${"*".repeat(4)}${token.slice(-5)}`;
+}
+
+function normalizeProviderBaseUrl(
+  providerId: string | null,
+  configuredBaseUrl: string | null,
+  authMode: CodexAuthMode | null,
+): string | null {
+  const trimmedConfigured = configuredBaseUrl?.trim() ?? "";
+
+  if (providerId === "amazon-bedrock" && trimmedConfigured) {
+    return trimmedConfigured;
+  }
+
+  if (providerId === "openai") {
+    if (
+      authMode === "chatgpt" ||
+      authMode === "chatgptAuthTokens" ||
+      authMode === "agentIdentity"
+    ) {
+      return "https://chatgpt.com/backend-api/codex";
+    }
+
+    return trimmedConfigured || "https://api.openai.com/v1";
+  }
+
+  return trimmedConfigured || null;
+}
+
+function readNonEmptyRuntimeEnvVar(name: string | null): string | null {
+  if (!name) {
+    return null;
+  }
+
+  const value = process.env[name];
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
+function resolveRuntimeProviderApiKey(
+  providerId: string | null,
+  configuredProviderEnvKey: string | null,
+  authToken: string | null,
+): string | null {
+  const directAuthToken = authToken?.trim() || null;
+  if (directAuthToken) {
+    return directAuthToken;
+  }
+
+  const configuredEnvApiKey = readNonEmptyRuntimeEnvVar(configuredProviderEnvKey);
+  if (configuredEnvApiKey) {
+    return configuredEnvApiKey;
+  }
+
+  if (providerId === "openai") {
+    return (
+      readNonEmptyRuntimeEnvVar("CODEX_API_KEY") ??
+      readNonEmptyRuntimeEnvVar("OPENAI_API_KEY")
+    );
+  }
+
+  return null;
+}
+
 function collectSupportedReasoningEfforts(
   value: unknown,
 ): CodexReasoningEffort[] {
@@ -3424,6 +3645,78 @@ function extractMemorySettingsFromConfigReadResult(
   };
 }
 
+function extractConfigFromConfigReadResult(
+  result: unknown,
+): Record<string, unknown> {
+  const record = asRecord(result);
+  const config = asRecord(record?.config);
+  if (!config) {
+    throw new CodexAppServerTransportError(
+      "Invalid config/read response from codex app-server",
+    );
+  }
+  return config;
+}
+
+function extractProviderBaseUrlFromConfigReadResult(
+  result: unknown,
+  providerId: string | null,
+): string | null {
+  if (!providerId) {
+    return null;
+  }
+
+  const config = extractConfigFromConfigReadResult(result);
+  const providerTable = asRecord(config.model_providers);
+  const providerConfig = providerTable
+    ? asRecord(providerTable[providerId])
+    : null;
+  return asTrimmedString(providerConfig?.base_url) ?? null;
+}
+
+function extractProviderEnvKeyFromConfigReadResult(
+  result: unknown,
+  providerId: string | null,
+): string | null {
+  if (!providerId) {
+    return null;
+  }
+
+  const config = extractConfigFromConfigReadResult(result);
+  const providerTable = asRecord(config.model_providers);
+  const providerConfig = providerTable
+    ? asRecord(providerTable[providerId])
+    : null;
+  return asTrimmedString(providerConfig?.env_key) ?? null;
+}
+
+function extractActiveProviderIdFromConfigReadResult(result: unknown): string | null {
+  const config = extractConfigFromConfigReadResult(result);
+  return asTrimmedString(config.model_provider) ?? null;
+}
+
+function extractAuthStatusResult(result: unknown): {
+  authMode: CodexAuthMode | null;
+  authToken: string | null;
+  requiresOpenaiAuth: boolean | null;
+} {
+  const record = asRecord(result);
+  if (!record) {
+    throw new CodexAppServerTransportError(
+      "Invalid getAuthStatus response from codex app-server",
+    );
+  }
+
+  return {
+    authMode: toAuthMode(record.authMethod ?? record.auth_method),
+    authToken: asTrimmedString(record.authToken ?? record.auth_token),
+    requiresOpenaiAuth:
+      asBoolean(
+        record.requiresOpenaiAuth ?? record.requires_openai_auth,
+      ) ?? null,
+  };
+}
+
 function extractThreadGoal(value: unknown): CodexThreadGoal | null {
   const record = asRecord(value);
   if (!record) {
@@ -3885,6 +4178,7 @@ export interface CodexAppServerClientFacade {
   setThreadGoal?: (input: SetCodexThreadGoalInput) => Promise<CodexThreadGoal>;
   clearThreadGoal?: (threadId: string) => Promise<boolean>;
   getThreadSummary?: (threadId: string) => Promise<CodexThreadSummary>;
+  getThreadLiveStatus?: (threadId: string) => Promise<CodexThreadLiveStatus>;
   listLoadedThreadIds?: () => Promise<string[]>;
   sendMessage: (
     input: SendCodexMessageInput,
@@ -3957,6 +4251,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.setThreadGoal(input),
     clearThreadGoal: (threadId: string) => client!.clearThreadGoal(threadId),
     getThreadSummary: (threadId: string) => client!.getThreadSummary(threadId),
+    getThreadLiveStatus: (threadId: string) =>
+      client!.getThreadLiveStatus(threadId),
     listLoadedThreadIds: () => client!.listLoadedThreadIds(),
     sendMessage: (input: SendCodexMessageInput) => client!.sendMessage(input),
     getThreadState: (threadId: string, requestedTurnId?: string | null) =>
@@ -4020,6 +4316,8 @@ export const __TEST_ONLY__ = {
   CodexAppServerClient,
   createCodexAppServerSpawnSpec,
   createReadCoalescer,
+  maskApiKey,
+  resolveRuntimeProviderApiKey,
   pickPreferredWindowsCommandPath,
   resolveWindowsCommandPath,
   sanitizeAppServerJsonText,

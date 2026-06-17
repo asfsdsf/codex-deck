@@ -116,6 +116,25 @@ export type CodexTurnStatus =
   | "failed"
   | "interrupted";
 
+export type CodexAuthMode =
+  | "apiKey"
+  | "chatgpt"
+  | "chatgptAuthTokens"
+  | "agentIdentity";
+
+export interface CodexStatusProviderInfo {
+  id: string | null;
+  url: string | null;
+  apiKeyMasked: string | null;
+}
+
+export interface CodexThreadStatusDetails {
+  authMode: CodexAuthMode | null;
+  fastMode: boolean;
+  serviceTier: CodexServiceTier | null;
+  provider: CodexStatusProviderInfo | null;
+}
+
 export interface CodexTurnError {
   message: string;
   additionalDetails: string | null;
@@ -127,6 +146,7 @@ export interface CodexThreadStateResponse {
   isGenerating: boolean;
   requestedTurnId: string | null;
   requestedTurnStatus: CodexTurnStatus | null;
+  statusDetails?: CodexThreadStatusDetails | null;
 }
 
 export type CodexAppServerEvent = {

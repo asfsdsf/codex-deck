@@ -4227,18 +4227,46 @@ export function createServer(options: ServerOptions) {
       typeof requestedTurnIdRaw === "string" && requestedTurnIdRaw.trim()
         ? requestedTurnIdRaw.trim()
         : null;
+    const includeStatusDetails = c.req.query("includeStatusDetails") === "true";
 
     try {
       const state = await getCodexAppServerClient().getThreadState(
         threadId,
         requestedTurnId,
       );
+      let statusDetails: CodexThreadStateResponse["statusDetails"] = null;
+      if (
+        includeStatusDetails &&
+        typeof getCodexAppServerClient().getThreadLiveStatus === "function"
+      ) {
+        try {
+          const liveStatus =
+            await getCodexAppServerClient().getThreadLiveStatus!(threadId);
+          statusDetails = {
+            authMode: liveStatus.authMode,
+            fastMode: liveStatus.fastMode,
+            serviceTier: liveStatus.serviceTier,
+            provider: liveStatus.showProviderDetails
+              ? {
+                  id: liveStatus.providerId,
+                  url: liveStatus.providerUrl,
+                  apiKeyMasked: liveStatus.apiKeyMasked,
+                }
+              : null,
+          };
+        } catch (statusError) {
+          console.warn(
+            `[codex-deck] degraded live status details for ${threadId}: ${toErrorMessage(statusError)}`,
+          );
+        }
+      }
       let response: CodexThreadStateResponse = {
         threadId: state.threadId,
         activeTurnId: state.activeTurnId,
         isGenerating: state.isGenerating,
         requestedTurnId: state.requestedTurnId,
         requestedTurnStatus: state.requestedTurnStatus,
+        statusDetails,
       };
 
       const hasAmbiguousGeneratingState =
@@ -4309,6 +4337,7 @@ export function createServer(options: ServerOptions) {
             waitState.danglingTurnIds.includes(requestedTurnId)
               ? "inProgress"
               : null,
+          statusDetails: null,
         };
         return c.json(response);
       }

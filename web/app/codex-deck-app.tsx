@@ -19,6 +19,7 @@ import type {
   CodexModelOption,
   CodexReasoningEffort,
   CodexSkillMetadata,
+  CodexThreadStatusDetails,
   CodexThreadSummary,
   ConversationMessage,
   Session,
@@ -3731,6 +3732,8 @@ export default function CodexDeckApp() {
   const [agentThreads, setAgentThreads] = useState<CodexThreadSummary[]>([]);
   const [statusTokenUsage, setStatusTokenUsage] =
     useState<TokenUsageSummary | null>(null);
+  const [threadStatusDetails, setThreadStatusDetails] =
+    useState<CodexThreadStatusDetails | null>(null);
   const waitSuppressSessionsRef = useRef<Set<string>>(new Set());
   const workflowCreateChatPollTimeoutRef = useRef<number | null>(null);
   const workflowCreateChatPollResolveRef = useRef<(() => void) | null>(null);
@@ -6086,6 +6089,34 @@ export default function CodexDeckApp() {
   }, [showStatusModal]);
 
   useEffect(() => {
+    if (!showStatusModal || !activeComposerSessionId) {
+      setThreadStatusDetails(null);
+      return;
+    }
+
+    let cancelled = false;
+    void getCodexThreadState(activeComposerSessionId, null, {
+      includeStatusDetails: true,
+    })
+      .then((state) => {
+        if (cancelled) {
+          return;
+        }
+        setThreadStatusDetails(state.statusDetails ?? null);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setThreadStatusDetails(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeComposerSessionId, showStatusModal]);
+
+  useEffect(() => {
     clearScheduledWaitStateSync();
   }, [selectedSession, clearScheduledWaitStateSync]);
 
@@ -6803,6 +6834,43 @@ export default function CodexDeckApp() {
     () => getEffortControlLabel(effectiveReasoningEffort),
     [effectiveReasoningEffort],
   );
+  const statusFastModeLabel = useMemo(() => {
+    if (!threadStatusDetails) {
+      return "Unavailable";
+    }
+    return threadStatusDetails.fastMode ? "On" : "Off";
+  }, [threadStatusDetails]);
+  const statusProviderRows = useMemo(() => {
+    if (!threadStatusDetails) {
+      return [];
+    }
+
+    if (
+      threadStatusDetails.authMode === "chatgpt" ||
+      threadStatusDetails.authMode === "chatgptAuthTokens" ||
+      threadStatusDetails.authMode === "agentIdentity"
+    ) {
+      return [];
+    }
+
+    const provider = threadStatusDetails.provider;
+    const providerId = provider?.id || null;
+    const apiKeyMasked = provider?.apiKeyMasked || null;
+    const providerValue = provider?.url
+      ? `${providerId ?? "Unavailable"} - ${provider.url}`
+      : providerId || "Unavailable";
+
+    return [
+      {
+        label: "Provider",
+        value: providerValue,
+      },
+      {
+        label: "API key",
+        value: apiKeyMasked || "Unavailable",
+      },
+    ];
+  }, [threadStatusDetails]);
   useEffect(() => {
     if (!selectedEffort) {
       return;
@@ -11962,6 +12030,18 @@ export default function CodexDeckApp() {
                   <span className="text-zinc-500">Collaboration mode</span>
                   <span className="text-right">{selectedModeLabel}</span>
                 </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-zinc-500">Fast mode</span>
+                  <span className="text-right">{statusFastModeLabel}</span>
+                </div>
+                {statusProviderRows.map((row) => (
+                  <div key={row.label} className="flex justify-between gap-3">
+                    <span className="text-zinc-500">{row.label}</span>
+                    <span className="max-w-[70%] break-all text-right">
+                      {row.value}
+                    </span>
+                  </div>
+                ))}
                 <div className="flex justify-between gap-3">
                   <span className="text-zinc-500">Context</span>
                   <span className="text-right">{contextWindowText}</span>
