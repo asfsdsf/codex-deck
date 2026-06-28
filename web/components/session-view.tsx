@@ -27,6 +27,7 @@ import {
   subscribeConversationStream,
   type ConversationStreamPhase,
 } from "../api";
+import { LiveCodexDeltaAccumulator } from "../live-codex-deltas";
 import { usePageVisibility } from "../hooks/use-page-visibility";
 import {
   clampPage,
@@ -795,6 +796,7 @@ const SessionView = memo(
       const totalPagesRef = useRef(1);
       const autoScrollRef = useRef(autoScroll);
       const remoteBootstrapInProgressRef = useRef(false);
+      const liveDeltaAccumulatorRef = useRef(new LiveCodexDeltaAccumulator());
       const lastReportedHistoryKeyRef = useRef("");
       const userInputPollInFlightRef = useRef(false);
       const userInputPollRerunRequestedRef = useRef(false);
@@ -940,6 +942,22 @@ const SessionView = memo(
           },
           {
             initialOffset: offsetRef.current,
+            onCodexAppServerEvent: (event) => {
+              if (event.threadId !== sessionId) {
+                return;
+              }
+              const liveMessage = liveDeltaAccumulatorRef.current.apply(event);
+              if (!liveMessage) {
+                return;
+              }
+              lastEventAtRef.current = Date.now();
+              setLoading(false);
+              appendDisplayMessages([liveMessage], {
+                phase: "incremental",
+                done: false,
+                insertion: "append",
+              });
+            },
           },
         );
       }, [appendDisplayMessages, sessionId]);
@@ -950,6 +968,7 @@ const SessionView = memo(
         setLoading(true);
         setAutoScroll(true);
         autoScrollRef.current = true;
+        liveDeltaAccumulatorRef.current.clear();
         messagesRef.current = [];
         setMessages([]);
         setPendingUserInputRequests([]);

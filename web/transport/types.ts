@@ -39,6 +39,7 @@ export interface ConversationStreamHandlers {
 
 export interface ConversationStreamSubscriptionOptions {
   initialOffset?: number;
+  onCodexAppServerEvent?: (event: CodexAppServerEvent) => void;
 }
 
 export interface TerminalStreamHandlers {

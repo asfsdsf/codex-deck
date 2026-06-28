@@ -124,6 +124,10 @@ export function createLocalTransport(): WebTransport {
   const workflowDetailWakeListeners = new Map<string, Set<() => void>>();
   const sessionsStreamSubscribers = new Set<SessionsStreamHandlers>();
   const terminalsStreamSubscribers = new Set<TerminalsStreamHandlers>();
+  const conversationAppServerSubscribers = new Map<
+    string,
+    Set<(event: CodexAppServerEvent) => void>
+  >();
   const workflowsStreamSubscribers = new Set<{
     onWorkflows: (workflows: WorkflowSummary[]) => void;
     onWorkflowsUpdate: (workflows: WorkflowSummary[]) => void;
@@ -137,6 +141,7 @@ export function createLocalTransport(): WebTransport {
       !unsubscribeSharedRealtimeStream ||
       sessionsStreamSubscribers.size > 0 ||
       terminalsStreamSubscribers.size > 0 ||
+      conversationAppServerSubscribers.size > 0 ||
       workflowsStreamSubscribers.size > 0
     ) {
       return;
@@ -190,6 +195,11 @@ export function createLocalTransport(): WebTransport {
           const payload = JSON.parse(event.data) as CodexAppServerEvent;
           for (const subscriber of sessionsStreamSubscribers) {
             subscriber.onCodexAppServerEvent?.(payload);
+          }
+          for (const subscriber of conversationAppServerSubscribers.get(
+            payload.threadId,
+          ) ?? []) {
+            subscriber(payload);
           }
         });
         eventSource.addEventListener("terminals", (event) => {
@@ -436,8 +446,24 @@ export function createLocalTransport(): WebTransport {
           ? Math.floor(options.initialOffset)
           : 0;
       let bootstrapComplete = offset > 0;
+      let unregisterAppServerListener: (() => void) | null = null;
 
-      return createReconnectingEventSource({
+      if (options.onCodexAppServerEvent) {
+        const listeners =
+          conversationAppServerSubscribers.get(sessionId) ??
+          new Set<(event: CodexAppServerEvent) => void>();
+        listeners.add(options.onCodexAppServerEvent);
+        conversationAppServerSubscribers.set(sessionId, listeners);
+        ensureSharedRealtimeStream();
+        unregisterAppServerListener = () => {
+          listeners.delete(options.onCodexAppServerEvent!);
+          if (listeners.size === 0) {
+            conversationAppServerSubscribers.delete(sessionId);
+          }
+        };
+      }
+
+      const unsubscribeConversationStream = createReconnectingEventSource({
         createUrl: () =>
           `/api/conversation/${encodeURIComponent(sessionId)}/stream?offset=${offset}`,
         configure: (eventSource) => {
@@ -482,6 +508,12 @@ export function createLocalTransport(): WebTransport {
         },
         onDisconnect: handlers.onError,
       });
+
+      return () => {
+        unregisterAppServerListener?.();
+        unsubscribeConversationStream();
+        stopSharedRealtimeStreamIfIdle();
+      };
     },
 
     subscribeTerminalStream(

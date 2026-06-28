@@ -6272,6 +6272,10 @@ export default function CodexDeckApp() {
 
   const handleCodexAppServerEvent = useCallback(
     (event: CodexAppServerEvent) => {
+      if (event.type !== "error") {
+        return;
+      }
+
       if (event.willRetry) {
         setConnectionFailureNotice({
           sessionId: event.threadId,

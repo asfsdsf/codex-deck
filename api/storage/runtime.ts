@@ -149,13 +149,44 @@ export interface CodexThreadStateResponse {
   statusDetails?: CodexThreadStatusDetails | null;
 }
 
-export type CodexAppServerEvent = {
-  type: "error";
-  threadId: string;
-  turnId: string;
-  willRetry: boolean;
-  error: CodexTurnError | null;
-};
+export type CodexAppServerEvent =
+  | {
+      type: "error";
+      threadId: string;
+      turnId: string;
+      willRetry: boolean;
+      error: CodexTurnError | null;
+    }
+  | {
+      type: "assistant_delta";
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      delta: string;
+    }
+  | {
+      type: "plan_delta";
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      delta: string;
+    }
+  | {
+      type: "reasoning_summary_delta";
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      delta: string;
+      summaryIndex: number;
+    }
+  | {
+      type: "reasoning_text_delta";
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      delta: string;
+      contentIndex: number;
+    };
 
 export type CodexThreadRuntimeStatus =
   | "notLoaded"

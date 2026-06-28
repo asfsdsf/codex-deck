@@ -134,6 +134,153 @@ test("preserves prepend ordering behavior", () => {
   assert.equal(merged[1].uuid, "pending_2");
 });
 
+test("replaces live streamed messages with matching live updates", () => {
+  const previousMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "live:thread-1:turn-1:item-1:assistant_delta",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hel" }],
+      },
+    },
+  ];
+  const incomingMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "live:thread-1:turn-1:item-1:assistant_delta",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello" }],
+      },
+    },
+  ];
+
+  const merged = mergeDisplayConversationMessages(
+    previousMessages,
+    incomingMessages,
+    "append",
+  );
+
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0].message?.content, [
+    { type: "text", text: "Hello" },
+  ]);
+});
+
+test("authoritative assistant messages remove live streamed turn messages", () => {
+  const previousMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "live:thread-1:turn-1:item-1:assistant_delta",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Live text" }],
+      },
+    },
+    {
+      type: "reasoning",
+      uuid: "live:thread-1:turn-1:item-2:reasoning_summary_delta",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Live reasoning" }],
+      },
+    },
+  ];
+  const incomingMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "log-message-1",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Final text" }],
+      },
+    },
+  ];
+
+  const merged = mergeDisplayConversationMessages(
+    previousMessages,
+    incomingMessages,
+    "append",
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].uuid, "log-message-1");
+});
+
+test("authoritative assistant messages without turn ids remove matching live streamed text", () => {
+  const previousMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "live:thread-1:turn-1:item-1:assistant_delta",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Final streamed" }],
+      },
+    },
+  ];
+  const incomingMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "log-message-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Final streamed response" }],
+      },
+    },
+  ];
+
+  const merged = mergeDisplayConversationMessages(
+    previousMessages,
+    incomingMessages,
+    "append",
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].uuid, "log-message-1");
+});
+
+test("user messages do not remove live streamed assistant messages", () => {
+  const previousMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "live:thread-1:turn-1:item-1:assistant_delta",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Live text" }],
+      },
+    },
+  ];
+  const incomingMessages: ConversationMessage[] = [
+    {
+      type: "user",
+      uuid: "log-user-1",
+      turnId: "turn-1",
+      message: {
+        role: "user",
+        content: "Prompt",
+      },
+    },
+  ];
+
+  const merged = mergeDisplayConversationMessages(
+    previousMessages,
+    incomingMessages,
+    "append",
+  );
+
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].uuid, "live:thread-1:turn-1:item-1:assistant_delta");
+  assert.equal(merged[1].uuid, "log-user-1");
+});
+
 test("merges token limit notices across prepend boundaries", () => {
   const previousMessages: ConversationMessage[] = [
     {

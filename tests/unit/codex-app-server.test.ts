@@ -597,6 +597,66 @@ test("app-server notifications are emitted as live codex events", async () => {
     },
   ]);
 
+  handleNotification("item/agentMessage/delta", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "message-1",
+    delta: "hello",
+  });
+  handleNotification("item/plan/delta", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "plan-1",
+    delta: "- step\n",
+  });
+  handleNotification("item/reasoning/summaryTextDelta", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "reasoning-1",
+    delta: "thinking",
+    summaryIndex: 2,
+  });
+  handleNotification("item/reasoning/textDelta", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "raw-reasoning-1",
+    delta: "raw thinking",
+    contentIndex: 3,
+  });
+
+  assert.deepEqual(events.slice(1), [
+    {
+      type: "assistant_delta",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "message-1",
+      delta: "hello",
+    },
+    {
+      type: "plan_delta",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "plan-1",
+      delta: "- step\n",
+    },
+    {
+      type: "reasoning_summary_delta",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "reasoning-1",
+      delta: "thinking",
+      summaryIndex: 2,
+    },
+    {
+      type: "reasoning_text_delta",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "raw-reasoning-1",
+      delta: "raw thinking",
+      contentIndex: 3,
+    },
+  ]);
+
   unsubscribe();
   handleNotification("error", {
     threadId: "thread-1",
@@ -607,5 +667,5 @@ test("app-server notifications are emitted as live codex events", async () => {
       additionalDetails: null,
     },
   });
-  assert.equal(events.length, 1);
+  assert.equal(events.length, 5);
 });

@@ -1,4 +1,5 @@
 import type { ContentBlock, ConversationMessage } from "@codex-deck/api";
+import { isLiveConversationMessage } from "./live-codex-deltas";
 
 type ConversationInsertion = "append" | "prepend";
 
@@ -153,6 +154,12 @@ function getMessageUuid(message: ConversationMessage): string | null {
     : null;
 }
 
+function getMessageTurnId(message: ConversationMessage): string | null {
+  return typeof message.turnId === "string" && message.turnId.length > 0
+    ? message.turnId
+    : null;
+}
+
 function getTokenLimitNoticeKey(message: ConversationMessage): string | null {
   if (message.type !== "token_limit_notice") {
     return null;
@@ -172,6 +179,32 @@ function getReasoningBlock(message: ConversationMessage): ContentBlock | null {
     return null;
   }
   return content.find((block) => block.type === message.type) ?? null;
+}
+
+function getVisibleMessageText(message: ConversationMessage): string {
+  const content = message.message?.content;
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .flatMap((block) => {
+      if (
+        (block.type === "text" ||
+          block.type === "reasoning" ||
+          block.type === "agent_reasoning") &&
+        typeof block.text === "string"
+      ) {
+        return [block.text.trim()];
+      }
+      return [];
+    })
+    .filter((text) => text.length > 0)
+    .join("\n")
+    .trim();
 }
 
 function shouldReplaceDuplicateMessage(
@@ -208,6 +241,78 @@ function replaceDuplicateMessage(
   }
   previousMessages[index] = incomingMessage;
   return true;
+}
+
+function replaceLiveMessage(
+  previousMessages: ConversationMessage[],
+  incomingMessage: ConversationMessage,
+): boolean {
+  const uuid = getMessageUuid(incomingMessage);
+  if (!uuid || !isLiveConversationMessage(incomingMessage)) {
+    return false;
+  }
+  const index = previousMessages.findIndex(
+    (message) => getMessageUuid(message) === uuid,
+  );
+  if (index === -1) {
+    return false;
+  }
+  previousMessages[index] = incomingMessage;
+  return true;
+}
+
+function removeLiveMessagesForIncoming(
+  previousMessages: ConversationMessage[],
+  incomingMessages: ConversationMessage[],
+): ConversationMessage[] {
+  const authoritativeTurnIds = new Set<string>();
+  const authoritativeTexts: string[] = [];
+  for (const message of incomingMessages) {
+    if (
+      isLiveConversationMessage(message) ||
+      (message.type !== "assistant" &&
+        message.type !== "reasoning" &&
+        message.type !== "agent_reasoning")
+    ) {
+      continue;
+    }
+    const turnId = getMessageTurnId(message);
+    if (turnId) {
+      authoritativeTurnIds.add(turnId);
+    }
+    const text = getVisibleMessageText(message);
+    if (text) {
+      authoritativeTexts.push(text);
+    }
+  }
+
+  if (authoritativeTurnIds.size === 0 && authoritativeTexts.length === 0) {
+    return previousMessages;
+  }
+
+  const filteredMessages = previousMessages.filter((message) => {
+    if (!isLiveConversationMessage(message)) {
+      return true;
+    }
+    const turnId = getMessageTurnId(message);
+    if (turnId && authoritativeTurnIds.has(turnId)) {
+      return false;
+    }
+
+    const liveText = getVisibleMessageText(message);
+    if (
+      liveText &&
+      authoritativeTexts.some((text) => text.includes(liveText))
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return filteredMessages.length === previousMessages.length
+    ? previousMessages
+    : filteredMessages;
 }
 
 function mergeTokenLimitNotice(
@@ -289,9 +394,12 @@ export function mergeDisplayConversationMessages(
   incomingMessages: ConversationMessage[],
   insertion: ConversationInsertion = "append",
 ): ConversationMessage[] {
-  let nextPreviousMessages = previousMessages;
+  let nextPreviousMessages = removeLiveMessagesForIncoming(
+    previousMessages,
+    incomingMessages,
+  );
   const existingIds = new Set(
-    previousMessages
+    nextPreviousMessages
       .map((message) => getMessageUuid(message))
       .filter((id): id is string => id !== null),
   );
@@ -299,10 +407,14 @@ export function mergeDisplayConversationMessages(
   for (const message of incomingMessages) {
     const uuid = getMessageUuid(message);
     if (uuid && existingIds.has(uuid)) {
-      if (replaceDuplicateMessage(nextPreviousMessages, message)) {
+      if (
+        replaceLiveMessage(nextPreviousMessages, message) ||
+        replaceDuplicateMessage(nextPreviousMessages, message)
+      ) {
         if (nextPreviousMessages === previousMessages) {
           nextPreviousMessages = [...previousMessages];
-          replaceDuplicateMessage(nextPreviousMessages, message);
+          replaceLiveMessage(nextPreviousMessages, message) ||
+            replaceDuplicateMessage(nextPreviousMessages, message);
         }
       }
       continue;

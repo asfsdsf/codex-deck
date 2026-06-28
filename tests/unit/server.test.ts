@@ -558,6 +558,78 @@ test("sessions stream forwards codex app-server retry events", async () => {
   }
 });
 
+test("sessions stream forwards codex app-server live delta events", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-codex-app-server-delta-stream",
+  );
+  const server = createServer({ port: 13026, codexDir: rootDir, open: false });
+  let eventListener: ((event: unknown) => void) | null = null;
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "thread-id",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+    subscribeAppServerEvents: (listener) => {
+      eventListener = listener;
+      return () => {
+        if (eventListener === listener) {
+          eventListener = null;
+        }
+      };
+    },
+  };
+
+  try {
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const responsePromise = server.app.request("/api/sessions/stream");
+    await Promise.resolve();
+    assert.ok(eventListener);
+    eventListener({
+      type: "assistant_delta",
+      threadId: SESSION_ID,
+      turnId: "turn-stream",
+      itemId: "item-stream",
+      delta: "hello",
+    });
+
+    const response = await responsePromise;
+    assert.equal(response.status, 200);
+    const events = await readSseEvents(response, ["codexAppServerEvent"]);
+    const event = events.find(
+      (record) => record.event === "codexAppServerEvent",
+    );
+    assert.ok(event, "expected stream to receive live delta notification");
+    assert.deepEqual(JSON.parse(event.data), {
+      type: "assistant_delta",
+      threadId: SESSION_ID,
+      turnId: "turn-stream",
+      itemId: "item-stream",
+      delta: "hello",
+    });
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("terminal stream accepts terminal-only subscriptions", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "server-terminal-bound-session-stream",

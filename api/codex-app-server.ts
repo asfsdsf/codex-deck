@@ -2562,6 +2562,26 @@ class CodexAppServerClient {
       return;
     }
 
+    if (method === "item/agentMessage/delta") {
+      this.handleAgentMessageDeltaNotification(params);
+      return;
+    }
+
+    if (method === "item/plan/delta") {
+      this.handlePlanDeltaNotification(params);
+      return;
+    }
+
+    if (method === "item/reasoning/summaryTextDelta") {
+      this.handleReasoningSummaryDeltaNotification(params);
+      return;
+    }
+
+    if (method === "item/reasoning/textDelta") {
+      this.handleReasoningTextDeltaNotification(params);
+      return;
+    }
+
     if (method === "error") {
       this.handleErrorNotification(params);
       return;
@@ -2604,6 +2624,88 @@ class CodexAppServerClient {
     for (const listener of this.appServerEventListeners) {
       listener(event);
     }
+  }
+
+  private parseTextDeltaNotification(params: unknown): {
+    threadId: string;
+    turnId: string;
+    itemId: string;
+    delta: string;
+  } | null {
+    const notification = asRecord(params);
+    if (!notification) {
+      return null;
+    }
+
+    const threadId = asTrimmedString(
+      notification.threadId ?? notification.thread_id,
+    );
+    const turnId = asTrimmedString(notification.turnId ?? notification.turn_id);
+    const itemId = asTrimmedString(notification.itemId ?? notification.item_id);
+    const delta = asString(notification.delta) ?? "";
+    if (!threadId || !turnId || !itemId || !delta) {
+      return null;
+    }
+
+    return { threadId, turnId, itemId, delta };
+  }
+
+  private handleAgentMessageDeltaNotification(params: unknown): void {
+    const notification = this.parseTextDeltaNotification(params);
+    if (!notification) {
+      return;
+    }
+
+    this.emitAppServerEvent({
+      type: "assistant_delta",
+      ...notification,
+    });
+  }
+
+  private handlePlanDeltaNotification(params: unknown): void {
+    const notification = this.parseTextDeltaNotification(params);
+    if (!notification) {
+      return;
+    }
+
+    this.emitAppServerEvent({
+      type: "plan_delta",
+      ...notification,
+    });
+  }
+
+  private handleReasoningSummaryDeltaNotification(params: unknown): void {
+    const notification = this.parseTextDeltaNotification(params);
+    if (!notification) {
+      return;
+    }
+
+    const record = asRecord(params);
+    const summaryIndex =
+      asFiniteNumber(record?.summaryIndex ?? record?.summary_index) ?? 0;
+
+    this.emitAppServerEvent({
+      type: "reasoning_summary_delta",
+      ...notification,
+      summaryIndex,
+    });
+  }
+
+  private handleReasoningTextDeltaNotification(params: unknown): void {
+    const notification = this.parseTextDeltaNotification(params);
+    if (!notification) {
+      return;
+    }
+
+    const record = asRecord(params);
+    const contentIndex =
+      asFiniteNumber(record?.contentIndex ?? record?.content_index) ?? 0;
+
+    this.emitAppServerEvent({
+      type: "reasoning_text_delta",
+      ...notification,
+      contentIndex,
+    });
   }
 
   private handleItemStartedNotification(params: unknown): void {
