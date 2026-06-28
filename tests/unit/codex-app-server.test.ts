@@ -41,10 +41,7 @@ test("Codex app-server error classes preserve structured fields", () => {
 });
 
 test("API key masking preserves prefix and trailing characters for status display", () => {
-  assert.equal(
-    __TEST_ONLY__.maskApiKey("sk-2h123456jf8a7"),
-    "sk-2h****jf8a7",
-  );
+  assert.equal(__TEST_ONLY__.maskApiKey("sk-2h123456jf8a7"), "sk-2h****jf8a7");
   assert.equal(__TEST_ONLY__.maskApiKey(""), null);
   assert.equal(__TEST_ONLY__.maskApiKey(null), null);
 });
@@ -273,6 +270,294 @@ test("read coalescer can clear matching cached keys", async () => {
 
   assert.equal(await coalescer.getOrLoad("thread-state:a:", 1_000, load), 2);
   assert.equal(callCount, 2);
+});
+
+test("app-server client updates loaded thread settings before starting a turn", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "aijws",
+          model_reasoning_effort: "medium",
+        },
+      };
+    }
+    if (method === "thread/resume") {
+      return {
+        modelProvider: "aijws",
+        thread: {
+          id: "thread-1",
+          modelProvider: "aijws",
+        },
+      };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const result = await client.sendMessage({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+      model: "gpt-5.1-codex-mini",
+      effort: "high",
+      serviceTier: "fast",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.1-codex-mini",
+          reasoningEffort: "high",
+        },
+      },
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.equal(requests[0]?.method, "config/read");
+    assert.equal(requests[1]?.method, "thread/resume");
+    assert.deepEqual(requests[1]?.params, {
+      threadId: "thread-1",
+      persistExtendedHistory: true,
+      model: "gpt-5.5",
+      modelProvider: "aijws",
+      config: {
+        model_reasoning_effort: "medium",
+      },
+    });
+    assert.equal(requests[2]?.method, "thread/settings/update");
+    assert.deepEqual(requests[2]?.params, {
+      threadId: "thread-1",
+      model: "gpt-5.1-codex-mini",
+      serviceTier: "fast",
+      effort: "high",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.1-codex-mini",
+          reasoning_effort: "high",
+        },
+      },
+    });
+    assert.equal(requests[3]?.method, "turn/start");
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client starts first turn for new thread without pre-resume", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "aijws",
+          model_reasoning_effort: "high",
+        },
+      };
+    }
+    if (method === "thread/start") {
+      return {
+        thread: {
+          id: "new-thread-1",
+        },
+      };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const threadId = await client.createThread({
+      cwd: "/repo",
+    });
+    const result = await client.sendMessage({
+      threadId,
+      input: [{ type: "text", text: "hello" }],
+      cwd: "/repo",
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      [
+        "config/read",
+        "thread/start",
+        "config/read",
+        "thread/settings/update",
+        "turn/start",
+      ],
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client reloads stale loaded thread provider before starting a turn", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  let resumeCount = 0;
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "aijws",
+          model_reasoning_effort: "high",
+        },
+      };
+    }
+    if (method === "thread/resume") {
+      resumeCount += 1;
+      return {
+        modelProvider: resumeCount === 1 ? "freemodel" : "aijws",
+        thread: {
+          id: "thread-1",
+          modelProvider: resumeCount === 1 ? "freemodel" : "aijws",
+        },
+      };
+    }
+    if (method === "thread/unsubscribe") {
+      return { status: "unsubscribed" };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const result = await client.sendMessage({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      [
+        "config/read",
+        "thread/resume",
+        "thread/unsubscribe",
+        "thread/resume",
+        "thread/settings/update",
+        "turn/start",
+      ],
+    );
+    assert.deepEqual(requests[1]?.params, {
+      threadId: "thread-1",
+      persistExtendedHistory: true,
+      model: "gpt-5.5",
+      modelProvider: "aijws",
+      config: {
+        model_reasoning_effort: "high",
+      },
+    });
+    assert.deepEqual(requests[5]?.params, {
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+      attachments: [],
+      model: "gpt-5.5",
+      effort: "high",
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client does not fail send when provider preflight sees an unmaterialized rollout", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "aijws",
+        },
+      };
+    }
+    if (method === "thread/resume") {
+      throw new CodexAppServerRpcError(
+        -32602,
+        "No rollout found for thread id thread-1",
+      );
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const result = await client.sendMessage({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      ["config/read", "thread/resume", "thread/settings/update", "turn/start"],
+    );
+  } finally {
+    await client.close();
+  }
 });
 
 test("app-server notifications are emitted as live codex events", async () => {

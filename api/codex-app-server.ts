@@ -443,6 +443,13 @@ interface AppServerThreadResumeRecord {
   approvalPolicy?: unknown;
 }
 
+interface ActiveCodexConfig {
+  model: string | null;
+  modelProvider: string | null;
+  reasoningEffort: CodexReasoningEffort | null;
+  serviceTier: CodexServiceTier | null;
+}
+
 export interface CodexTurnFileDiff {
   path: string;
   diff: string;
@@ -716,9 +723,7 @@ function createReadCoalescer() {
           }
           return value;
         } finally {
-          if (inFlight.get(key) === promise) {
-            inFlight.delete(key);
-          }
+          inFlight.delete(key);
         }
       })();
 
@@ -792,6 +797,11 @@ class CodexAppServerClient {
     (event: CodexAppServerEvent) => void
   >();
   private readonly readCoalescer = createReadCoalescer();
+  private readonly resumeProviderRefreshInFlight = new Map<
+    string,
+    Promise<void>
+  >();
+  private readonly newlyStartedThreadIds = new Set<string>();
 
   public constructor(options: CodexAppServerClientOptions = {}) {
     this.executablePath =
@@ -1085,9 +1095,7 @@ class CodexAppServerClient {
     return parseHooksListResult(data, cwd);
   }
 
-  public async writeHookState(
-    updates: CodexHookStateUpdate[],
-  ): Promise<void> {
+  public async writeHookState(updates: CodexHookStateUpdate[]): Promise<void> {
     const result = await this.request(
       "config/batchWrite",
       buildHookStateBatchWriteInput(updates),
@@ -1209,15 +1217,22 @@ class CodexAppServerClient {
       cwd,
       ephemeral: false,
     };
+    const activeConfig = await this.readActiveConfig(cwd);
+    if (activeConfig.modelProvider) {
+      params.modelProvider = activeConfig.modelProvider;
+    }
 
     if (typeof input.model === "string" && input.model.trim()) {
       params.model = input.model.trim();
+    } else if (activeConfig.model) {
+      params.model = activeConfig.model;
     }
 
     // thread/start does not support direct effort override; use config as best effort.
-    if (input.effort) {
+    const effort = input.effort ?? activeConfig.reasoningEffort;
+    if (effort) {
       params.config = {
-        model_reasoning_effort: input.effort,
+        model_reasoning_effort: effort,
       };
     }
 
@@ -1242,6 +1257,7 @@ class CodexAppServerClient {
       );
     }
 
+    this.newlyStartedThreadIds.add(threadId);
     return threadId;
   }
 
@@ -1478,11 +1494,16 @@ class CodexAppServerClient {
       throw new Error("threadId is required");
     }
 
-    const resumeResult = await this.request("thread/resume", {
+    const resumeParams: Record<string, unknown> = {
       threadId: normalizedThreadId,
       persistExtendedHistory: true,
-    });
-    const resumeRecord = asRecord(resumeResult) as AppServerThreadResumeRecord | null;
+    };
+    const activeConfig = await this.readActiveConfig();
+    this.applyActiveConfigToResumeParams(resumeParams, activeConfig);
+    const resumeResult = await this.request("thread/resume", resumeParams);
+    const resumeRecord = asRecord(
+      resumeResult,
+    ) as AppServerThreadResumeRecord | null;
     if (!resumeRecord) {
       throw new CodexAppServerTransportError(
         "Invalid thread/resume response from codex app-server",
@@ -1496,9 +1517,7 @@ class CodexAppServerClient {
       asTrimmedString(thread?.modelProvider) ??
       null;
     const cwd =
-      asTrimmedString(resumeRecord.cwd) ??
-      asTrimmedString(thread?.cwd) ??
-      null;
+      asTrimmedString(resumeRecord.cwd) ?? asTrimmedString(thread?.cwd) ?? null;
     const serviceTier = toServiceTier(resumeRecord.serviceTier);
 
     const authStatusResult = await this.request("getAuthStatus", {
@@ -1515,7 +1534,8 @@ class CodexAppServerClient {
         cwd,
       });
       providerId =
-        providerId ?? extractActiveProviderIdFromConfigReadResult(configReadResult);
+        providerId ??
+        extractActiveProviderIdFromConfigReadResult(configReadResult);
       configuredProviderUrl = extractProviderBaseUrlFromConfigReadResult(
         configReadResult,
         providerId,
@@ -1672,9 +1692,28 @@ class CodexAppServerClient {
       );
     }
 
+    const activeConfig = await this.readActiveConfig(
+      typeof params.cwd === "string" ? params.cwd : undefined,
+    );
+    if (typeof params.model !== "string" && activeConfig.model) {
+      params.model = activeConfig.model;
+    }
+    if (params.serviceTier === undefined && activeConfig.serviceTier !== null) {
+      params.serviceTier = activeConfig.serviceTier;
+    }
+    if (typeof params.effort !== "string" && activeConfig.reasoningEffort) {
+      params.effort = activeConfig.reasoningEffort;
+    }
+    const isNewlyStartedThread = this.newlyStartedThreadIds.has(threadId);
+    if (!isNewlyStartedThread) {
+      await this.refreshLoadedThreadProviderIfNeeded(threadId, activeConfig);
+    }
+
     try {
       this.clearThreadStateCache(threadId);
+      await this.updateThreadSettingsForTurn(threadId, params);
       const result = await this.request("turn/start", params);
+      this.newlyStartedThreadIds.delete(threadId);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
       };
@@ -1683,8 +1722,10 @@ class CodexAppServerClient {
         throw error;
       }
 
-      await this.resumeThread(threadId);
+      await this.resumeThread(threadId, activeConfig);
+      this.newlyStartedThreadIds.delete(threadId);
       this.clearThreadStateCache(threadId);
+      await this.updateThreadSettingsForTurn(threadId, params);
       const result = await this.request("turn/start", params);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
@@ -2037,13 +2078,212 @@ class CodexAppServerClient {
     );
   }
 
-  private async resumeThread(threadId: string): Promise<void> {
+  private async resumeThread(
+    threadId: string,
+    activeConfig?: ActiveCodexConfig,
+  ): Promise<void> {
     this.clearThreadStateCache(threadId);
-    await this.request("thread/resume", {
+    const params: Record<string, unknown> = {
       threadId,
       persistExtendedHistory: true,
-    });
+    };
+    const config = activeConfig ?? (await this.readActiveConfig());
+    this.applyActiveConfigToResumeParams(params, config);
+    await this.request("thread/resume", params);
     this.clearThreadStateCache(threadId);
+  }
+
+  private async refreshLoadedThreadProviderIfNeeded(
+    threadId: string,
+    activeConfig: ActiveCodexConfig,
+  ): Promise<void> {
+    const requestedProvider = activeConfig.modelProvider;
+    if (!requestedProvider) {
+      return;
+    }
+
+    const existing = this.resumeProviderRefreshInFlight.get(threadId);
+    if (existing) {
+      try {
+        await existing;
+      } catch (error) {
+        if (!shouldSkipProviderRefreshError(error)) {
+          throw error;
+        }
+      }
+      return;
+    }
+
+    const refresh = this.refreshLoadedThreadProvider(threadId, activeConfig);
+    this.resumeProviderRefreshInFlight.set(threadId, refresh);
+    try {
+      await refresh;
+    } catch (error) {
+      if (!shouldSkipProviderRefreshError(error)) {
+        throw error;
+      }
+    } finally {
+      this.resumeProviderRefreshInFlight.delete(threadId);
+    }
+  }
+
+  private async refreshLoadedThreadProvider(
+    threadId: string,
+    activeConfig: ActiveCodexConfig,
+  ): Promise<void> {
+    const requestedProvider = activeConfig.modelProvider;
+    if (!requestedProvider) {
+      return;
+    }
+
+    const resumeResult = await this.resumeThreadWithActiveConfig(
+      threadId,
+      activeConfig,
+    );
+    const activeProvider = extractProviderIdFromResumeResult(resumeResult);
+    if (!activeProvider || activeProvider === requestedProvider) {
+      return;
+    }
+
+    const unsubscribeResult = await this.request("thread/unsubscribe", {
+      threadId,
+    });
+    const status = asTrimmedString(asRecord(unsubscribeResult)?.status);
+    if (status !== "unsubscribed" && status !== "notSubscribed") {
+      return;
+    }
+
+    const switched = await this.resumeThreadAfterProviderUnsubscribe(
+      threadId,
+      activeConfig,
+    );
+    if (!switched) {
+      throw new CodexAppServerTransportError(
+        `Unable to switch loaded thread ${threadId} from provider ${activeProvider} to ${requestedProvider}. Try again after the current thread finishes closing, or close other active codex-deck views for this session.`,
+      );
+    }
+  }
+
+  private async resumeThreadAfterProviderUnsubscribe(
+    threadId: string,
+    activeConfig: ActiveCodexConfig,
+  ): Promise<boolean> {
+    let lastError: unknown = null;
+    const retryDelaysMs = [250, 250, 500, 1_000, 1_500, 2_000, 2_500, 3_000];
+    for (const delayMs of retryDelaysMs) {
+      if (delayMs > 0) {
+        await delay(delayMs);
+      }
+
+      try {
+        const resumeResult = await this.resumeThreadWithActiveConfig(
+          threadId,
+          activeConfig,
+        );
+        const activeProvider = extractProviderIdFromResumeResult(resumeResult);
+        if (
+          !activeConfig.modelProvider ||
+          !activeProvider ||
+          activeProvider === activeConfig.modelProvider
+        ) {
+          return true;
+        }
+      } catch (error) {
+        if (!shouldRetryProviderRefreshResume(error)) {
+          throw error;
+        }
+        lastError = error;
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+    return false;
+  }
+
+  private async resumeThreadWithActiveConfig(
+    threadId: string,
+    activeConfig: ActiveCodexConfig,
+  ): Promise<unknown> {
+    this.clearThreadStateCache(threadId);
+    const params: Record<string, unknown> = {
+      threadId,
+      persistExtendedHistory: true,
+    };
+    this.applyActiveConfigToResumeParams(params, activeConfig);
+    const result = await this.request("thread/resume", params);
+    this.clearThreadStateCache(threadId);
+    return result;
+  }
+
+  private async updateThreadSettingsForTurn(
+    threadId: string,
+    turnParams: Record<string, unknown>,
+  ): Promise<void> {
+    const params: Record<string, unknown> = {
+      threadId,
+    };
+
+    if (typeof turnParams.model === "string" && turnParams.model.trim()) {
+      params.model = turnParams.model.trim();
+    }
+
+    if (turnParams.serviceTier !== undefined) {
+      params.serviceTier = turnParams.serviceTier;
+    }
+
+    if (typeof turnParams.effort === "string" && turnParams.effort.trim()) {
+      params.effort = turnParams.effort.trim();
+    }
+
+    if (turnParams.collaborationMode !== undefined) {
+      params.collaborationMode = turnParams.collaborationMode;
+    }
+
+    if (Object.keys(params).length === 1) {
+      return;
+    }
+
+    try {
+      await this.request("thread/settings/update", params);
+      this.clearThreadStateCache(threadId);
+    } catch (error) {
+      if (!shouldIgnoreThreadSettingsUpdateError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  private async readActiveConfig(
+    cwd?: string | null,
+  ): Promise<ActiveCodexConfig> {
+    const result = await this.request("config/read", {
+      includeLayers: false,
+      ...(typeof cwd === "string" && cwd.trim() ? { cwd: cwd.trim() } : {}),
+    });
+    return extractActiveConfigFromConfigReadResult(result);
+  }
+
+  private applyActiveConfigToResumeParams(
+    params: Record<string, unknown>,
+    activeConfig: ActiveCodexConfig,
+  ): void {
+    if (activeConfig.model) {
+      params.model = activeConfig.model;
+    }
+    if (activeConfig.modelProvider) {
+      params.modelProvider = activeConfig.modelProvider;
+    }
+    if (activeConfig.serviceTier !== null) {
+      params.serviceTier = activeConfig.serviceTier;
+    }
+    if (activeConfig.reasoningEffort) {
+      params.config = {
+        ...(asRecord(params.config) ?? {}),
+        model_reasoning_effort: activeConfig.reasoningEffort,
+      };
+    }
   }
 
   private getThreadStateCacheKey(
@@ -2919,7 +3159,10 @@ function maskApiKey(value: string | null): string | null {
     const visiblePrefix = token.slice(0, Math.min(2, token.length));
     const visibleSuffix =
       token.length > 4 ? token.slice(Math.max(token.length - 2, 0)) : "";
-    const maskLength = Math.max(token.length - visiblePrefix.length - visibleSuffix.length, 1);
+    const maskLength = Math.max(
+      token.length - visiblePrefix.length - visibleSuffix.length,
+      1,
+    );
     return `${visiblePrefix}${"*".repeat(maskLength)}${visibleSuffix}`;
   }
 
@@ -2971,7 +3214,9 @@ function resolveRuntimeProviderApiKey(
     return directAuthToken;
   }
 
-  const configuredEnvApiKey = readNonEmptyRuntimeEnvVar(configuredProviderEnvKey);
+  const configuredEnvApiKey = readNonEmptyRuntimeEnvVar(
+    configuredProviderEnvKey,
+  );
   if (configuredEnvApiKey) {
     return configuredEnvApiKey;
   }
@@ -3645,6 +3890,18 @@ function extractMemorySettingsFromConfigReadResult(
   };
 }
 
+function extractActiveConfigFromConfigReadResult(
+  result: unknown,
+): ActiveCodexConfig {
+  const config = extractConfigFromConfigReadResult(result);
+  return {
+    model: asTrimmedString(config.model),
+    modelProvider: asTrimmedString(config.model_provider),
+    reasoningEffort: toReasoningEffort(config.model_reasoning_effort),
+    serviceTier: toServiceTier(config.model_service_tier),
+  };
+}
+
 function extractConfigFromConfigReadResult(
   result: unknown,
 ): Record<string, unknown> {
@@ -3690,9 +3947,27 @@ function extractProviderEnvKeyFromConfigReadResult(
   return asTrimmedString(providerConfig?.env_key) ?? null;
 }
 
-function extractActiveProviderIdFromConfigReadResult(result: unknown): string | null {
+function extractActiveProviderIdFromConfigReadResult(
+  result: unknown,
+): string | null {
   const config = extractConfigFromConfigReadResult(result);
   return asTrimmedString(config.model_provider) ?? null;
+}
+
+function extractProviderIdFromResumeResult(result: unknown): string | null {
+  const record = asRecord(result);
+  if (!record) {
+    return null;
+  }
+
+  const thread = asRecord(record.thread);
+  return (
+    asTrimmedString(record.modelProvider) ??
+    asTrimmedString(record.model_provider) ??
+    asTrimmedString(thread?.modelProvider) ??
+    asTrimmedString(thread?.model_provider) ??
+    null
+  );
 }
 
 function extractAuthStatusResult(result: unknown): {
@@ -3711,9 +3986,8 @@ function extractAuthStatusResult(result: unknown): {
     authMode: toAuthMode(record.authMethod ?? record.auth_method),
     authToken: asTrimmedString(record.authToken ?? record.auth_token),
     requiresOpenaiAuth:
-      asBoolean(
-        record.requiresOpenaiAuth ?? record.requires_openai_auth,
-      ) ?? null,
+      asBoolean(record.requiresOpenaiAuth ?? record.requires_openai_auth) ??
+      null,
   };
 }
 
@@ -3904,6 +4178,50 @@ function shouldRetryAfterResume(error: unknown): boolean {
     message.includes("no rollout found for thread id") ||
     message.includes("not materialized yet")
   );
+}
+
+function shouldRetryProviderRefreshResume(error: unknown): boolean {
+  if (!shouldRetryAfterResume(error)) {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("is closing") ||
+    message.includes("retry thread/resume") ||
+    message.includes("retry after the thread is closed")
+  );
+}
+
+function shouldIgnoreThreadSettingsUpdateError(error: unknown): boolean {
+  if (!(error instanceof CodexAppServerRpcError)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    shouldRetryAfterResume(error) ||
+    error.code === -32601 ||
+    message.includes("method not found") ||
+    message.includes("unknown method") ||
+    message.includes("not found")
+  );
+}
+
+function shouldSkipProviderRefreshError(error: unknown): boolean {
+  if (!shouldRetryAfterResume(error)) {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("no rollout found for thread id") ||
+    message.includes("not materialized yet")
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function toCollaborationModePayload(
@@ -4145,6 +4463,7 @@ function isCommandAvailable(command: string): boolean {
 
 let client: CodexAppServerClient | null = null;
 let clientOverride: CodexAppServerClientFacade | null = null;
+let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
@@ -4218,7 +4537,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
   }
 
   if (!client) {
-    client = new CodexAppServerClient();
+    client = new CodexAppServerClient(
+      configuredCodexHome ? { env: { CODEX_HOME: configuredCodexHome } } : {},
+    );
   }
 
   return {
@@ -4289,6 +4610,22 @@ export function setCodexAppServerClientForTests(
   override: CodexAppServerClientFacade | null,
 ): void {
   clientOverride = override;
+}
+
+export function configureCodexAppServerClient(input: {
+  codexHome?: string | null;
+}): void {
+  const nextCodexHome = input.codexHome?.trim() || null;
+  if (configuredCodexHome === nextCodexHome) {
+    return;
+  }
+
+  configuredCodexHome = nextCodexHome;
+  if (client) {
+    const current = client;
+    client = null;
+    void current.close().catch(() => {});
+  }
 }
 
 export async function closeCodexAppServerClient(): Promise<void> {

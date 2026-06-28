@@ -8771,8 +8771,12 @@ export default function CodexDeckApp() {
         const response = await sendCodexMessage(sessionId, {
           input,
           ...(cwd ? { cwd } : {}),
-          ...(selectedModelId ? { model: selectedModelId } : {}),
-          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(effectiveModelIdForRequest
+            ? { model: effectiveModelIdForRequest }
+            : {}),
+          ...(effectiveReasoningEffortForRequest
+            ? { effort: effectiveReasoningEffortForRequest }
+            : {}),
           collaborationMode,
         });
 
@@ -10097,6 +10101,12 @@ export default function CodexDeckApp() {
         const response = await runTerminalChatAction({
           action: "send",
           payload,
+          ...(effectiveModelIdForRequest
+            ? { model: effectiveModelIdForRequest }
+            : {}),
+          ...(effectiveReasoningEffortForRequest
+            ? { effort: effectiveReasoningEffortForRequest }
+            : {}),
           collaborationMode,
         });
         if (!response) {

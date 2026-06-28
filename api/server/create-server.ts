@@ -121,6 +121,7 @@ import {
   CodexAppServerRpcError,
   CodexAppServerTransportError,
   closeCodexAppServerClient,
+  configureCodexAppServerClient,
   getCodexAppServerClient,
   isCodexReasoningEffort,
   isCodexServiceTier,
@@ -1742,6 +1743,7 @@ export function createServer(options: ServerOptions) {
   } = options;
 
   initStorage(codexDir);
+  configureCodexAppServerClient({ codexHome: getCodexDir() });
   initWatcher(getCodexDir());
 
   const app = new Hono();
