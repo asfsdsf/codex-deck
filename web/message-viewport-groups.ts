@@ -2,6 +2,7 @@ import type { ContentBlock, ConversationMessage } from "@codex-deck/api";
 import { shouldShowTokenLimitNotice } from "./token-limit-notices";
 import { sanitizeText } from "./utils";
 import { parseGoalInternalContext } from "./goal-internal-context";
+import { normalizeToolUse } from "./tool-use-normalization";
 
 export type ViewportMessageGroup = "default" | "important";
 export type ViewportTextTone =
@@ -853,11 +854,15 @@ function getAssistantInlinePreview(
     }
 
     if (block.type === "tool_use" && typeof block.name === "string") {
-      const toolName = normalizeInlineText(block.name).toLowerCase();
-      if (!toolName || !isRecord(block.input)) {
+      if (!isRecord(block.input)) {
         continue;
       }
-      const summary = summarizeToolCall(toolName, block.input, context);
+      const normalized = normalizeToolUse(block.name, block.input);
+      const toolName = normalizeInlineText(normalized.name).toLowerCase();
+      if (!toolName) {
+        continue;
+      }
+      const summary = summarizeToolCall(toolName, normalized.input, context);
       if (summary) {
         return summary;
       }

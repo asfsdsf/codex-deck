@@ -392,6 +392,68 @@ test("collapsed text mode customizes other frequent command summaries", () => {
   });
 });
 
+test("collapsed text mode unwraps exec file reads", () => {
+  const line = getCollapsedViewportLine(
+    createAssistantMessage([
+      {
+        type: "tool_use",
+        id: "wrapped-cat",
+        name: "exec",
+        input: {
+          raw: 'const r = await tools.exec_command({cmd:"cat /repo/README.md",workdir:"/repo"});text(r.output)\n',
+        },
+      },
+    ]),
+    { projectPath: "/repo" },
+  );
+
+  assert.deepEqual(line, {
+    tone: "tool",
+    text: "Read README.md",
+    segments: [
+      { kind: "label", text: "Read" },
+      { kind: "path", text: "README.md" },
+    ],
+  });
+});
+
+test("collapsed text mode unwraps exec apply_patch calls", () => {
+  const rawPatch = [
+    "*** Begin Patch",
+    "*** Update File: /repo/src/example.ts",
+    "@@ -1 +1 @@",
+    "-export const value = 0;",
+    "+export const value = 1;",
+    "*** End Patch",
+  ].join("\\n");
+  const line = getCollapsedViewportLine(
+    createAssistantMessage([
+      {
+        type: "tool_use",
+        id: "wrapped-patch",
+        name: "exec",
+        input: {
+          raw: `const patch = "${rawPatch}";\nconst result = await tools.apply_patch(patch);\ntext(result);`,
+        },
+      },
+    ]),
+    { projectPath: "/repo" },
+  );
+
+  assert.deepEqual(line, {
+    tone: "tool",
+    text: "Edited src/example.ts (+1 -1)",
+    segments: [
+      { kind: "label", text: "Edited" },
+      { kind: "path", text: "src/example.ts" },
+      { kind: "punctuation", text: "(" },
+      { kind: "count-add", text: "+1" },
+      { kind: "count-remove", text: "-1" },
+      { kind: "punctuation", text: ")" },
+    ],
+  });
+});
+
 test("collapsed text mode falls back for unsupported sed commands", () => {
   const sedMessage = createAssistantMessage([
     {

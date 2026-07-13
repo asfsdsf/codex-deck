@@ -110,6 +110,63 @@ line 4 use-search-target
   assert.match(expandedHtml, /line 4 use-search-target/);
 });
 
+test("MessageBlock renders wrapped exec commands as command tools", () => {
+  const html = renderMessageBlock({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "wrapped-command",
+          name: "exec",
+          input: {
+            raw: 'const r = await tools.exec_command({cmd:"cat /repo/README.md",workdir:"/repo"});text(r.output)',
+          },
+        },
+      ],
+    },
+  });
+
+  assert.match(html, /exec_command/);
+  assert.match(html, /cat \/repo\/README\.md/);
+  assert.doesNotMatch(html, /tools\.exec_command/);
+});
+
+test("MessageBlock renders wrapped apply_patch calls as patch tools", () => {
+  const rawPatch = [
+    "*** Begin Patch",
+    "*** Update File: /repo/src/example.ts",
+    "@@ -1 +1 @@",
+    "-export const value = 0;",
+    "+export const value = 1;",
+    "*** End Patch",
+  ].join("\\n");
+  const html = renderMessageBlock(
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "wrapped-patch",
+            name: "exec",
+            input: {
+              raw: `const patch = "${rawPatch}";\nconst result = await tools.apply_patch(patch);\ntext(result);`,
+            },
+          },
+        ],
+      },
+    },
+    { searchForcePrimaryExpanded: true, searchForceBlockIndex: 0 },
+  );
+
+  assert.match(html, /apply_patch/);
+  assert.match(html, /src\/example\.ts/);
+  assert.doesNotMatch(html, /tools\.apply_patch/);
+});
+
 test("MessageBlock renders token limit notices with repeat counter in header", () => {
   const message: ConversationMessage = {
     type: "token_limit_notice",

@@ -66,6 +66,7 @@ import {
   WriteRenderer,
 } from "./tool-renderers";
 import { parseTerminalRestartNoticeMessage } from "../terminal-session-notices";
+import { normalizeToolUse } from "../tool-use-normalization";
 
 interface MessageBlockProps {
   message: ConversationMessage;
@@ -146,7 +147,13 @@ function buildToolMap(content: ContentBlock[]): Map<string, string> {
   const toolMap = new Map<string, string>();
   for (const block of content) {
     if (block.type === "tool_use" && block.id && block.name) {
-      toolMap.set(block.id, block.name);
+      const input =
+        block.input &&
+        typeof block.input === "object" &&
+        !Array.isArray(block.input)
+          ? (block.input as Record<string, unknown>)
+          : {};
+      toolMap.set(block.id, normalizeToolUse(block.name, input).name);
     }
   }
   return toolMap;
@@ -164,7 +171,11 @@ function buildToolInputMap(
       typeof block.input === "object" &&
       !Array.isArray(block.input)
     ) {
-      toolInputMap.set(block.id, block.input as Record<string, unknown>);
+      const normalized = normalizeToolUse(
+        block.name,
+        block.input as Record<string, unknown>,
+      );
+      toolInputMap.set(block.id, normalized.input);
     }
   }
   return toolInputMap;
@@ -3835,7 +3846,13 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
       return false;
     }
 
-    return shouldDefaultExpandToolUse(block.name);
+    const input =
+      block.input &&
+      typeof block.input === "object" &&
+      !Array.isArray(block.input)
+        ? (block.input as Record<string, unknown>)
+        : undefined;
+    return shouldDefaultExpandToolUse(block.name, input);
   });
   const [jsonViewMode, setJsonViewMode] = useState<JsonViewMode>("formatted");
 
@@ -4037,14 +4054,19 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
   }
 
   if (block.type === "tool_use") {
-    const input =
+    const originalInput =
       block.input && typeof block.input === "object"
         ? (block.input as Record<string, unknown>)
         : undefined;
+    const normalized = originalInput
+      ? normalizeToolUse(block.name, originalInput)
+      : { name: block.name || "", input: {} };
+    const normalizedBlock = { ...block, name: normalized.name };
+    const input = originalInput ? normalized.input : undefined;
     const hasInput = !!input && Object.keys(input).length > 0;
-    const Icon = getToolIcon(block.name || "");
-    const preview = getToolPreview(block.name || "", input);
-    const toolName = block.name?.toLowerCase() || "";
+    const Icon = getToolIcon(normalized.name);
+    const preview = getToolPreview(normalized.name, input);
+    const toolName = normalized.name.toLowerCase();
     const requestUserInputRequest =
       toolName === "request_user_input" && block.id
         ? pendingUserInputRequestByItemId?.get(block.id)
@@ -4096,7 +4118,7 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
               }`}
             >
               <Icon size={12} className="opacity-60" />
-              <span className="font-medium">{block.name}</span>
+              <span className="font-medium">{normalized.name}</span>
               {expandedLabel && isExpanded && (
                 <span className="font-normal text-slate-400">
                   {expandedLabel}
@@ -4148,7 +4170,7 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
               {hasInput && input && (
                 <div>
                   {renderToolInput(
-                    block,
+                    normalizedBlock,
                     input,
                     jsonViewMode,
                     true,

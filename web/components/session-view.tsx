@@ -41,6 +41,7 @@ import {
   type UserInputAnswerDraft,
 } from "../utils";
 import { getSearchableToolUseText } from "../message-block-utils";
+import { normalizeToolUse } from "../tool-use-normalization";
 import {
   getCollapsedViewportLine,
   getViewportMessageGroup,
@@ -1590,16 +1591,19 @@ const SessionView = memo(
 
           for (const block of content) {
             if (block.type === "tool_use" && block.id && block.name) {
-              toolNameByCallId.set(block.id, block.name);
               if (
                 block.input &&
                 typeof block.input === "object" &&
                 !Array.isArray(block.input)
               ) {
-                toolInputByCallId.set(
-                  block.id,
+                const normalized = normalizeToolUse(
+                  block.name,
                   block.input as Record<string, unknown>,
                 );
+                toolNameByCallId.set(block.id, normalized.name);
+                toolInputByCallId.set(block.id, normalized.input);
+              } else {
+                toolNameByCallId.set(block.id, block.name);
               }
               if (
                 typeof block.timestamp === "string" &&

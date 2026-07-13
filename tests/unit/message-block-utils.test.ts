@@ -37,3 +37,16 @@ test("getSearchableToolUseText mirrors summarized generic tool input values", ()
   assert.match(text, /nested 1 field\(s\)/);
   assert.doesNotMatch(text, /not directly rendered/);
 });
+
+test("getSearchableToolUseText indexes commands wrapped by exec", () => {
+  const text = getSearchableToolUseText({
+    type: "tool_use",
+    id: "call_exec",
+    name: "exec",
+    input: {
+      raw: 'const r = await tools.exec_command({cmd:"cat /repo/README.md",workdir:"/repo"});text(r.output)',
+    },
+  });
+
+  assert.equal(text, "exec_command\ncat /repo/README.md");
+});

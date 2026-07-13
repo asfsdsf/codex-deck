@@ -1,5 +1,6 @@
 import type { ContentBlock } from "@codex-deck/api";
 import { sanitizeText } from "./utils";
+import { normalizeToolUse } from "./tool-use-normalization";
 
 const DEFAULT_EXPANDED_TOOL_USE_NAMES = new Set([
   "exec_command",
@@ -11,8 +12,12 @@ const DEFAULT_EXPANDED_TOOL_USE_NAMES = new Set([
 
 export function shouldDefaultExpandToolUse(
   toolName: string | null | undefined,
+  input?: Record<string, unknown>,
 ): boolean {
-  return DEFAULT_EXPANDED_TOOL_USE_NAMES.has((toolName || "").toLowerCase());
+  const normalizedName = input
+    ? normalizeToolUse(toolName, input).name
+    : toolName || "";
+  return DEFAULT_EXPANDED_TOOL_USE_NAMES.has(normalizedName.toLowerCase());
 }
 
 function stringifyJson(value: unknown): string {
@@ -168,8 +173,12 @@ export function getSearchableToolUseText(block: ContentBlock): string {
     return "";
   }
 
-  const input = block.input as Record<string, unknown>;
-  const toolName = sanitizeText(block.name ?? "");
+  const normalized = normalizeToolUse(
+    block.name,
+    block.input as Record<string, unknown>,
+  );
+  const input = normalized.input;
+  const toolName = sanitizeText(normalized.name);
   const normalizedToolName = toolName.toLowerCase();
   const parts = toolName.length > 0 ? [toolName] : [];
 
