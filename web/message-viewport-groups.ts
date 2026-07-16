@@ -1,6 +1,6 @@
 import type { ContentBlock, ConversationMessage } from "@codex-deck/api";
 import { shouldShowTokenLimitNotice } from "./token-limit-notices";
-import { sanitizeText } from "./utils";
+import { formatDurationMs, sanitizeText } from "./utils";
 import { parseGoalInternalContext } from "./goal-internal-context";
 import { normalizeToolUse } from "./tool-use-normalization";
 
@@ -629,12 +629,41 @@ function summarizeToolCall(
     return summarizeCommandToolUse(toolName, input, context);
   }
 
-  if (toolName === "wait" && Array.isArray(input.ids)) {
-    const detail = `${input.ids.length} agent(s)`;
-    return plainLine("tool", `Waiting for ${detail}`, [
-      plainSegment("label", "Waiting for"),
-      detailSegment(detail),
-    ]);
+  if (toolName === "wait") {
+    const cellId = getFirstString(input, ["cell_id"]);
+    if (cellId) {
+      const waitMs =
+        typeof input.yield_time_ms === "number" &&
+        Number.isFinite(input.yield_time_ms)
+          ? input.yield_time_ms
+          : null;
+      const processDetail = `process ${cellId}`;
+      if (waitMs !== null) {
+        const waitDetail = `up to ${formatDurationMs(waitMs)}`;
+        return plainLine(
+          "tool",
+          `Waiting for ${processDetail} · ${waitDetail}`,
+          [
+            plainSegment("label", "Waiting for"),
+            detailSegment(processDetail),
+            punctuationSegment("·"),
+            detailSegment(waitDetail),
+          ],
+        );
+      }
+      return plainLine("tool", `Waiting for ${processDetail}`, [
+        plainSegment("label", "Waiting for"),
+        detailSegment(processDetail),
+      ]);
+    }
+
+    if (Array.isArray(input.ids)) {
+      const detail = `${input.ids.length} agent(s)`;
+      return plainLine("tool", `Waiting for ${detail}`, [
+        plainSegment("label", "Waiting for"),
+        detailSegment(detail),
+      ]);
+    }
   }
 
   if (toolName.includes("web_search")) {
@@ -733,6 +762,13 @@ function summarizeToolResult(
   }
 
   if (toolName === "wait") {
+    const input =
+      block.tool_use_id && context.toolInputMapByCallId
+        ? context.toolInputMapByCallId.get(block.tool_use_id)
+        : undefined;
+    if (input && getFirstString(input, ["cell_id"])) {
+      return null;
+    }
     const parsed = parseJsonValue(content);
     if (parsed.parsed && isRecord(parsed.value)) {
       if (parsed.value.timed_out === true) {

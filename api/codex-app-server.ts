@@ -802,6 +802,12 @@ class CodexAppServerClient {
     Promise<void>
   >();
   private readonly newlyStartedThreadIds = new Set<string>();
+  private providerRefreshRetryDelaysMs: readonly number[] = [
+    250, 250, 500, 1_000, 1_500, 2_000, 2_500, 3_000,
+  ];
+  private readonly archivedThreadIdCollectors = new Set<
+    (threadId: string) => void
+  >();
 
   public constructor(options: CodexAppServerClientOptions = {}) {
     this.executablePath =
@@ -1494,6 +1500,19 @@ class CodexAppServerClient {
       throw new Error("threadId is required");
     }
 
+    // The resume below re-subscribes this connection to the thread. Wait for
+    // any in-flight provider switch first so this call cannot re-subscribe
+    // the thread mid-switch and block the app-server from releasing it.
+    const providerRefresh =
+      this.resumeProviderRefreshInFlight.get(normalizedThreadId);
+    if (providerRefresh) {
+      try {
+        await providerRefresh;
+      } catch {
+        // The provider refresh surfaces its own errors to its caller.
+      }
+    }
+
     const resumeParams: Record<string, unknown> = {
       threadId: normalizedThreadId,
       persistExtendedHistory: true,
@@ -2145,18 +2164,22 @@ class CodexAppServerClient {
       return;
     }
 
-    const unsubscribeResult = await this.request("thread/unsubscribe", {
-      threadId,
-    });
-    const status = asTrimmedString(asRecord(unsubscribeResult)?.status);
-    if (status !== "unsubscribed" && status !== "notSubscribed") {
+    const unsubscribed =
+      await this.unsubscribeThreadForProviderRefresh(threadId);
+    if (!unsubscribed) {
       return;
     }
 
-    const switched = await this.resumeThreadAfterProviderUnsubscribe(
+    let switched = await this.resumeThreadAfterProviderUnsubscribe(
       threadId,
       activeConfig,
     );
+    if (!switched) {
+      switched = await this.forceProviderSwitchForSystemErrorThread(
+        threadId,
+        activeConfig,
+      );
+    }
     if (!switched) {
       throw new CodexAppServerTransportError(
         `Unable to switch loaded thread ${threadId} from provider ${activeProvider} to ${requestedProvider}. Try again after the current thread finishes closing, or close other active codex-deck views for this session.`,
@@ -2169,8 +2192,7 @@ class CodexAppServerClient {
     activeConfig: ActiveCodexConfig,
   ): Promise<boolean> {
     let lastError: unknown = null;
-    const retryDelaysMs = [250, 250, 500, 1_000, 1_500, 2_000, 2_500, 3_000];
-    for (const delayMs of retryDelaysMs) {
+    for (const delayMs of this.providerRefreshRetryDelaysMs) {
       if (delayMs > 0) {
         await delay(delayMs);
       }
@@ -2188,6 +2210,24 @@ class CodexAppServerClient {
         ) {
           return true;
         }
+
+        // A successful resume subscribes this app-server connection again,
+        // even when the thread is still using the provider that is closing.
+        // Release that subscription before the next retry so it cannot keep
+        // the stale thread loaded indefinitely.
+        const unsubscribed =
+          await this.unsubscribeThreadForProviderRefresh(threadId);
+        if (!unsubscribed) {
+          return false;
+        }
+
+        // The app-server only replaces a loaded thread whose status is
+        // strictly idle. A thread whose last turn errored stays in
+        // systemError until its next turn starts, so further resume retries
+        // can never convince the app-server to release it.
+        if (extractThreadStatusFromReadResult(resumeResult) === "systemError") {
+          return false;
+        }
       } catch (error) {
         if (!shouldRetryProviderRefreshResume(error)) {
           throw error;
@@ -2200,6 +2240,106 @@ class CodexAppServerClient {
       throw lastError;
     }
     return false;
+  }
+
+  /**
+   * Last-resort provider switch for a loaded thread that the app-server
+   * refuses to replace. The resume-override path only evicts threads whose
+   * runtime status is strictly idle; a thread whose last turn ended with an
+   * error is stuck in systemError until a new turn starts, which deadlocks
+   * provider switching. Archive followed by unarchive is the only
+   * client-visible operation that fully shuts such a thread down, after which
+   * a cold resume applies the requested provider.
+   */
+  private async forceProviderSwitchForSystemErrorThread(
+    threadId: string,
+    activeConfig: ActiveCodexConfig,
+  ): Promise<boolean> {
+    const requestedProvider = activeConfig.modelProvider;
+    if (!requestedProvider) {
+      return false;
+    }
+
+    let runtimeStatus: CodexThreadRuntimeStatus;
+    try {
+      runtimeStatus = extractThreadStatusFromReadResult(
+        await this.readThreadWithTurns(threadId),
+      );
+    } catch {
+      return false;
+    }
+    if (runtimeStatus !== "systemError") {
+      // Never tear down a thread that is actively generating or waiting on
+      // approvals; the caller surfaces the retry guidance instead.
+      return false;
+    }
+
+    // Archiving a thread also archives its spawned descendant threads, and
+    // unarchive only restores the id it is given. Track the thread/archived
+    // notifications emitted during this operation so every archived thread is
+    // restored.
+    const archivedThreadIds = new Set<string>([threadId]);
+    const collector = (archivedThreadId: string) => {
+      archivedThreadIds.add(archivedThreadId);
+    };
+    this.archivedThreadIdCollectors.add(collector);
+    try {
+      await this.request("thread/archive", { threadId });
+      await this.unarchiveThreadWithRetry(threadId);
+      for (const archivedThreadId of archivedThreadIds) {
+        if (archivedThreadId === threadId) {
+          continue;
+        }
+        try {
+          await this.unarchiveThreadWithRetry(archivedThreadId);
+        } catch (error) {
+          console.warn(
+            `[codex-deck] failed to restore descendant thread ${archivedThreadId} after provider switch: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    } finally {
+      this.archivedThreadIdCollectors.delete(collector);
+    }
+
+    this.clearThreadStateCache(threadId);
+    const resumeResult = await this.resumeThreadWithActiveConfig(
+      threadId,
+      activeConfig,
+    );
+    return (
+      extractProviderIdFromResumeResult(resumeResult) === requestedProvider
+    );
+  }
+
+  private async unarchiveThreadWithRetry(threadId: string): Promise<void> {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        await delay(250);
+      }
+      try {
+        await this.request("thread/unarchive", { threadId });
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
+  private async unsubscribeThreadForProviderRefresh(
+    threadId: string,
+  ): Promise<boolean> {
+    const result = await this.request("thread/unsubscribe", {
+      threadId,
+    });
+    const status = asTrimmedString(asRecord(result)?.status);
+    return (
+      status === "unsubscribed" ||
+      status === "notSubscribed" ||
+      status === "notLoaded"
+    );
   }
 
   private async resumeThreadWithActiveConfig(
@@ -2584,6 +2724,16 @@ class CodexAppServerClient {
 
     if (method === "error") {
       this.handleErrorNotification(params);
+      return;
+    }
+
+    if (method === "thread/archived") {
+      const archivedThreadId = asTrimmedString(asRecord(params)?.threadId);
+      if (archivedThreadId) {
+        for (const collector of this.archivedThreadIdCollectors) {
+          collector(archivedThreadId);
+        }
+      }
       return;
     }
 

@@ -508,6 +508,248 @@ test("app-server client reloads stale loaded thread provider before starting a t
   }
 });
 
+test("app-server client unsubscribes after each stale provider resume", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  let resumeCount = 0;
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "aijws",
+        },
+      };
+    }
+    if (method === "thread/resume") {
+      resumeCount += 1;
+      const modelProvider = resumeCount < 3 ? "freemodel" : "aijws";
+      return {
+        modelProvider,
+        thread: {
+          id: "thread-1",
+          modelProvider,
+        },
+      };
+    }
+    if (method === "thread/unsubscribe") {
+      return { status: "unsubscribed" };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const result = await client.sendMessage({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      [
+        "config/read",
+        "thread/resume",
+        "thread/unsubscribe",
+        "thread/resume",
+        "thread/unsubscribe",
+        "thread/resume",
+        "thread/settings/update",
+        "turn/start",
+      ],
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client force-reloads a system-error thread to switch provider", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  (
+    client as unknown as { providerRefreshRetryDelaysMs: number[] }
+  ).providerRefreshRetryDelaysMs = [0];
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  let archived = false;
+  const emitServerNotification = (method: string, params: unknown) => {
+    (
+      client as unknown as {
+        handleServerNotification: (method: string, params: unknown) => void;
+      }
+    ).handleServerNotification(method, params);
+  };
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "aijws",
+        },
+      };
+    }
+    if (method === "thread/resume") {
+      const modelProvider = archived ? "aijws" : "freemodel";
+      return {
+        modelProvider,
+        thread: {
+          id: "thread-1",
+          modelProvider,
+          status: archived ? { type: "idle" } : { type: "systemError" },
+        },
+      };
+    }
+    if (method === "thread/unsubscribe") {
+      return { status: "unsubscribed" };
+    }
+    if (method === "thread/read") {
+      return {
+        thread: {
+          id: "thread-1",
+          status: { type: "systemError" },
+          turns: [],
+        },
+      };
+    }
+    if (method === "thread/archive") {
+      archived = true;
+      emitServerNotification("thread/archived", { threadId: "thread-1" });
+      emitServerNotification("thread/archived", { threadId: "child-1" });
+      return {};
+    }
+    if (method === "thread/unarchive") {
+      return { thread: { id: params.threadId } };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const result = await client.sendMessage({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      [
+        "config/read",
+        "thread/resume",
+        "thread/unsubscribe",
+        "thread/resume",
+        "thread/unsubscribe",
+        "thread/read",
+        "thread/archive",
+        "thread/unarchive",
+        "thread/unarchive",
+        "thread/resume",
+        "thread/settings/update",
+        "turn/start",
+      ],
+    );
+    const unarchivedThreadIds = requests
+      .filter((request) => request.method === "thread/unarchive")
+      .map((request) => request.params.threadId);
+    assert.deepEqual(unarchivedThreadIds, ["thread-1", "child-1"]);
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client does not force-reload an active thread on provider switch", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  (
+    client as unknown as { providerRefreshRetryDelaysMs: number[] }
+  ).providerRefreshRetryDelaysMs = [0];
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "aijws",
+        },
+      };
+    }
+    if (method === "thread/resume") {
+      return {
+        modelProvider: "freemodel",
+        thread: {
+          id: "thread-1",
+          modelProvider: "freemodel",
+          status: { type: "active", activeFlags: [] },
+        },
+      };
+    }
+    if (method === "thread/unsubscribe") {
+      return { status: "unsubscribed" };
+    }
+    if (method === "thread/read") {
+      return {
+        thread: {
+          id: "thread-1",
+          status: { type: "active", activeFlags: [] },
+          turns: [],
+        },
+      };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    await assert.rejects(
+      client.sendMessage({
+        threadId: "thread-1",
+        input: [{ type: "text", text: "hello" }],
+      }),
+      /Unable to switch loaded thread thread-1/,
+    );
+    assert.equal(
+      requests.some((request) => request.method === "thread/archive"),
+      false,
+    );
+  } finally {
+    await client.close();
+  }
+});
+
 test("app-server client does not fail send when provider preflight sees an unmaterialized rollout", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
   const requests: Array<{ method: string; params: Record<string, unknown> }> =

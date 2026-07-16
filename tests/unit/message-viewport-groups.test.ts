@@ -454,6 +454,56 @@ test("collapsed text mode unwraps exec apply_patch calls", () => {
   });
 });
 
+test("collapsed text mode summarizes yielded process waits", () => {
+  const callId = "wait-cell-16";
+  const waitMessage = createAssistantMessage([
+    {
+      type: "tool_use",
+      id: callId,
+      name: "wait",
+      input: {
+        cell_id: "16",
+        yield_time_ms: 30_000,
+        max_tokens: 25_000,
+      },
+    },
+  ]);
+  const resultMessage = createAssistantMessage([
+    {
+      type: "tool_result",
+      tool_use_id: callId,
+      content:
+        "Script completed\nWall time 10.9 seconds\nOutput:\n\nSESSION_ID=40904",
+      is_error: false,
+    },
+  ]);
+  const context = {
+    toolMapByCallId: new Map([[callId, "wait"]]),
+    toolInputMapByCallId: new Map([
+      [
+        callId,
+        {
+          cell_id: "16",
+          yield_time_ms: 30_000,
+          max_tokens: 25_000,
+        },
+      ],
+    ]),
+  };
+
+  assert.deepEqual(getCollapsedViewportLine(waitMessage), {
+    tone: "tool",
+    text: "Waiting for process 16 · up to 30s",
+    segments: [
+      { kind: "label", text: "Waiting for" },
+      { kind: "detail", text: "process 16" },
+      { kind: "punctuation", text: "·" },
+      { kind: "detail", text: "up to 30s" },
+    ],
+  });
+  assert.equal(getCollapsedViewportLine(resultMessage, context), null);
+});
+
 test("collapsed text mode falls back for unsupported sed commands", () => {
   const sedMessage = createAssistantMessage([
     {

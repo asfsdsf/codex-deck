@@ -31,7 +31,11 @@ import {
 } from "lucide-react";
 import { shouldDefaultExpandToolUse } from "../message-block-utils";
 import { getTokenLimitNoticeRepeatCount } from "../token-limit-notices";
-import { formatDurationFromTimestamps, sanitizeText } from "../utils";
+import {
+  formatDurationFromTimestamps,
+  formatDurationMs,
+  sanitizeText,
+} from "../utils";
 import { getPathTail } from "../path-utils";
 import { parseGoalInternalContext } from "../goal-internal-context";
 import {
@@ -2771,7 +2775,7 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
   js_repl: FileCode,
   js_repl_reset: FileCode,
   spawn_agent: Bot,
-  wait: Bot,
+  wait: Clock3,
   close_agent: Bot,
   request_user_input: MessageSquare,
   view_image: ImageIcon,
@@ -3097,6 +3101,97 @@ function GenericToolInputRenderer(props: {
   );
 }
 
+function getWaitCellId(input: Record<string, unknown>): string | null {
+  if (typeof input.cell_id === "string" && input.cell_id.trim().length > 0) {
+    return input.cell_id.trim();
+  }
+  if (typeof input.cell_id === "number" && Number.isFinite(input.cell_id)) {
+    return String(input.cell_id);
+  }
+  return null;
+}
+
+function WaitInputRenderer(props: {
+  input: Record<string, unknown>;
+  embedded?: boolean;
+  hideHeader?: boolean;
+}) {
+  const { input, embedded = false, hideHeader = false } = props;
+  const cellId = getWaitCellId(input);
+  const agentIds = Array.isArray(input.ids)
+    ? input.ids.filter(
+        (id): id is string => typeof id === "string" && id.trim().length > 0,
+      )
+    : [];
+  const waitMs =
+    typeof input.yield_time_ms === "number" &&
+    Number.isFinite(input.yield_time_ms)
+      ? input.yield_time_ms
+      : typeof input.timeout_ms === "number" &&
+          Number.isFinite(input.timeout_ms)
+        ? input.timeout_ms
+        : null;
+  const maxTokens =
+    typeof input.max_tokens === "number" && Number.isFinite(input.max_tokens)
+      ? input.max_tokens
+      : null;
+  const rows = [
+    cellId ? { label: "Process", value: `cell ${cellId}` } : null,
+    agentIds.length > 0
+      ? {
+          label: "Agents",
+          value: agentIds.join(", "),
+        }
+      : null,
+    waitMs !== null
+      ? { label: "Wait up to", value: formatDurationMs(waitMs) }
+      : null,
+    maxTokens !== null
+      ? {
+          label: "Output limit",
+          value: `${Math.max(0, Math.round(maxTokens)).toLocaleString()} tokens`,
+        }
+      : null,
+  ].filter((row): row is { label: string; value: string } => row !== null);
+
+  if (rows.length === 0) {
+    return (
+      <GenericToolInputRenderer
+        input={input}
+        embedded={embedded}
+        hideHeader={hideHeader}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`overflow-hidden ${embedded ? "rounded-md bg-zinc-900/40" : "rounded-lg border border-zinc-700/50 bg-zinc-900/70"}`}
+    >
+      {!hideHeader && (
+        <div
+          className={`border-b border-zinc-700/50 px-3 py-2 text-xs font-medium text-zinc-300 ${embedded ? "bg-zinc-800/25" : "bg-zinc-800/30"}`}
+        >
+          Wait details
+        </div>
+      )}
+      <div className="divide-y divide-zinc-800/50">
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            className="flex items-start gap-3 px-3 py-2 text-xs"
+          >
+            <span className="w-36 shrink-0 text-zinc-500">{row.label}</span>
+            <span className="break-all font-mono text-zinc-300">
+              {row.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function getRawToolInputValue(
   block: ContentBlock,
   input: Record<string, unknown>,
@@ -3343,6 +3438,16 @@ function renderFormattedToolInput(
     );
   }
 
+  if (toolName === "wait") {
+    return (
+      <WaitInputRenderer
+        input={input}
+        embedded={embedded}
+        hideHeader={hideHeader}
+      />
+    );
+  }
+
   return (
     <GenericToolInputRenderer
       input={input}
@@ -3454,8 +3559,20 @@ const TOOL_PREVIEW_HANDLERS: Record<string, PreviewHandler> = {
     Array.isArray(input.questions)
       ? `${input.questions.length} question(s)`
       : null,
-  wait: (input) =>
-    Array.isArray(input.ids) ? `${input.ids.length} agent(s)` : null,
+  wait: (input) => {
+    const cellId = getWaitCellId(input);
+    if (cellId) {
+      const waitMs =
+        typeof input.yield_time_ms === "number" &&
+        Number.isFinite(input.yield_time_ms)
+          ? input.yield_time_ms
+          : null;
+      return waitMs === null
+        ? `process ${cellId}`
+        : `process ${cellId} · up to ${formatDurationMs(waitMs)}`;
+    }
+    return Array.isArray(input.ids) ? `${input.ids.length} agent(s)` : null;
+  },
   close_agent: (input) =>
     input.id ? getTruncatedPreview(String(input.id), 24) : null,
   view_image: (input) =>
@@ -4219,11 +4336,18 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
         fallbackToolInputMap?.get(block.tool_use_id)
       : undefined;
     const command = getCommandFromToolInput(toolInput);
+    const isProcessWaitResult =
+      toolName.toLowerCase() === "wait" &&
+      !!toolInput &&
+      getWaitCellId(toolInput) !== null;
 
     const contentPreview =
       hasContent && !expanded
         ? withMultilineCollapsedIndicator(
-            getToolResultPreview(toolName, resultContent) ||
+            getToolResultPreview(
+              isProcessWaitResult ? "exec_command" : toolName,
+              resultContent,
+            ) ||
               resultContent.slice(0, previewLength) +
                 (resultContent.length > previewLength ? "..." : ""),
             resultContent,
@@ -4236,7 +4360,8 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     const isCommandResult =
       normalizedToolName === "exec_command" ||
       normalizedToolName === "write_stdin" ||
-      normalizedToolName === "bash";
+      normalizedToolName === "bash" ||
+      isProcessWaitResult;
     const commandStartedAt = block.tool_use_id
       ? toolTimestampMap?.get(block.tool_use_id) ||
         fallbackToolTimestampMap?.get(block.tool_use_id)
@@ -4358,7 +4483,7 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
                 <JsonRenderer value={rawJsonValue} />
               ) : (
                 <ToolResultRenderer
-                  toolName={toolName}
+                  toolName={isProcessWaitResult ? "exec_command" : toolName}
                   content={resultContent}
                   isError={isError}
                   command={command}

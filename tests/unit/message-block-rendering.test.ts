@@ -167,6 +167,33 @@ test("MessageBlock renders wrapped apply_patch calls as patch tools", () => {
   assert.doesNotMatch(html, /tools\.apply_patch/);
 });
 
+test("MessageBlock renders yielded process waits with a concise preview", () => {
+  const html = renderMessageBlock({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "wait-cell-16",
+          name: "wait",
+          input: {
+            cell_id: "16",
+            yield_time_ms: 30_000,
+            max_tokens: 25_000,
+          },
+        },
+      ],
+    },
+  });
+
+  assert.match(html, /lucide-clock-3/);
+  assert.match(html, />wait</);
+  assert.match(html, /process 16 · up to 30s/);
+  assert.doesNotMatch(html, /cell_id/);
+  assert.doesNotMatch(html, /yield_time_ms/);
+});
+
 test("MessageBlock renders token limit notices with repeat counter in header", () => {
   const message: ConversationMessage = {
     type: "token_limit_notice",
