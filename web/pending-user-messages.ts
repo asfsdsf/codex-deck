@@ -1,4 +1,7 @@
-export type PendingUserMessageStatus = "sending" | "awaiting_confirmation";
+export type PendingUserMessageStatus =
+  | "queued"
+  | "sending"
+  | "awaiting_confirmation";
 
 export interface PendingUserMessage {
   pendingId: string;
@@ -75,6 +78,38 @@ export function removePendingUserMessage(
   };
 }
 
+export function getPendingUserMessage(
+  previous: PendingUserMessagesBySession,
+  sessionId: string,
+  pendingId: string,
+): PendingUserMessage | null {
+  const current = previous[sessionId];
+  if (!Array.isArray(current) || current.length === 0) {
+    return null;
+  }
+
+  return current.find((entry) => entry.pendingId === pendingId) ?? null;
+}
+
+export function nextQueuedPendingUserMessage(
+  previous: PendingUserMessagesBySession,
+  sessionId: string,
+): PendingUserMessage | null {
+  const current = previous[sessionId];
+  if (!Array.isArray(current) || current.length === 0) {
+    return null;
+  }
+
+  return current.find((entry) => entry.status === "queued") ?? null;
+}
+
+export function hasQueuedPendingUserMessages(
+  previous: PendingUserMessagesBySession,
+  sessionId: string,
+): boolean {
+  return nextQueuedPendingUserMessage(previous, sessionId) !== null;
+}
+
 export function consumeConfirmedPendingUserMessages(
   previous: PendingUserMessagesBySession,
   sessionId: string,
@@ -89,13 +124,26 @@ export function consumeConfirmedPendingUserMessages(
     return previous;
   }
 
-  const removeCount = Math.min(current.length, Math.floor(confirmedCountDelta));
+  // Only messages that were actually sent to the server can show up in the
+  // confirmed history; entries still queued locally must never be consumed.
+  let removeCount = Math.min(
+    current.filter((entry) => entry.status !== "queued").length,
+    Math.floor(confirmedCountDelta),
+  );
   if (removeCount <= 0) {
     return previous;
   }
 
+  const next = current.filter((entry) => {
+    if (entry.status === "queued" || removeCount <= 0) {
+      return true;
+    }
+    removeCount -= 1;
+    return false;
+  });
+
   return {
     ...previous,
-    [sessionId]: current.slice(removeCount),
+    [sessionId]: next,
   };
 }

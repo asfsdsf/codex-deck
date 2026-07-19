@@ -218,6 +218,11 @@ interface SessionViewProps {
   sessionId: string;
   projectPath?: string | null;
   pendingUserMessages?: PendingUserMessage[];
+  onForceSendPendingUserMessage?: (
+    sessionId: string,
+    pendingId: string,
+  ) => Promise<boolean>;
+  onCancelPendingUserMessage?: (sessionId: string, pendingId: string) => void;
   railCollapsedByDefault?: boolean;
   latestButtonBottomOffsetPx?: number;
   conversationSearchOpen?: boolean;
@@ -737,6 +742,8 @@ const SessionView = memo(
         sessionId,
         projectPath,
         pendingUserMessages = [],
+        onForceSendPendingUserMessage,
+        onCancelPendingUserMessage,
         railCollapsedByDefault = false,
         latestButtonBottomOffsetPx,
         conversationSearchOpen = false,
@@ -768,6 +775,9 @@ const SessionView = memo(
         useState<string[]>([]);
       const [submittingApprovalRequestIds, setSubmittingApprovalRequestIds] =
         useState<string[]>([]);
+      const [forceSendingPendingId, setForceSendingPendingId] = useState<
+        string | null
+      >(null);
       const [loading, setLoading] = useState(true);
       const [autoScroll, setAutoScroll] = useState(true);
       const [currentPage, setCurrentPage] = useState(1);
@@ -2467,6 +2477,8 @@ const SessionView = memo(
 
           return {
             entryKey: `pending:${pendingMessage.pendingId}:${index}`,
+            pendingId: pendingMessage.pendingId,
+            status: pendingMessage.status,
             message: {
               type: "user" as const,
               uuid: `pending:${pendingMessage.pendingId}`,
@@ -2727,6 +2739,52 @@ const SessionView = memo(
                 {pendingEntriesOnLatestPage.map((entry) => (
                   <div key={entry.entryKey}>
                     <MessageBlock message={entry.message} userTone="pending" />
+                    {entry.status === "queued" &&
+                    (onForceSendPendingUserMessage ||
+                      onCancelPendingUserMessage) ? (
+                      <div className="mt-1 flex items-center justify-end gap-2">
+                        <span className="text-[11px] text-zinc-500">
+                          Queued — sends when the current turn finishes
+                        </span>
+                        {onForceSendPendingUserMessage ? (
+                          <button
+                            type="button"
+                            disabled={forceSendingPendingId !== null}
+                            onClick={() => {
+                              setForceSendingPendingId(entry.pendingId);
+                              void onForceSendPendingUserMessage(
+                                sessionId,
+                                entry.pendingId,
+                              ).finally(() => {
+                                setForceSendingPendingId((current) =>
+                                  current === entry.pendingId ? null : current,
+                                );
+                              });
+                            }}
+                            className="rounded border border-indigo-400/40 bg-indigo-600/20 px-2.5 py-1 text-[11px] text-indigo-200 transition-colors hover:bg-indigo-600/35 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {forceSendingPendingId === entry.pendingId
+                              ? "Sending..."
+                              : "Send now"}
+                          </button>
+                        ) : null}
+                        {onCancelPendingUserMessage ? (
+                          <button
+                            type="button"
+                            disabled={forceSendingPendingId === entry.pendingId}
+                            onClick={() =>
+                              onCancelPendingUserMessage(
+                                sessionId,
+                                entry.pendingId,
+                              )
+                            }
+                            className="rounded border border-zinc-500/50 bg-zinc-800/40 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-700/50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Cancel
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>

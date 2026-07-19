@@ -263,9 +263,12 @@ import {
 import {
   appendPendingUserMessage,
   consumeConfirmedPendingUserMessages,
+  getPendingUserMessage,
+  nextQueuedPendingUserMessage,
   removePendingUserMessage,
   updatePendingUserMessageStatus,
   type PendingUserMessage,
+  type PendingUserMessagesBySession,
 } from "../pending-user-messages";
 import { mergeDisplayConversationMessages } from "../conversation-message-merge";
 import { runApprovedAiTerminalStepInTerminal } from "../ai-terminal-runtime";
@@ -3780,6 +3783,20 @@ export default function CodexDeckApp() {
   const confirmedComposerUserMessageCountBySessionRef = useRef<
     Record<string, number>
   >({});
+  const pendingUserMessagesBySessionRef = useRef<PendingUserMessagesBySession>(
+    {},
+  );
+  const pendingSendOptionsByIdRef = useRef<
+    Map<
+      string,
+      {
+        modeOverride?: CollaborationModeKey;
+        cwdOverride?: string | null;
+      }
+    >
+  >(new Map());
+  const queueAutosendSuppressSessionsRef = useRef<Set<string>>(new Set());
+  const queueDrainInFlightSessionsRef = useRef<Set<string>>(new Set());
   const ignoredPendingConfirmationCountBySessionRef = useRef<
     Record<string, number>
   >({});
@@ -4279,6 +4296,10 @@ export default function CodexDeckApp() {
   useEffect(() => {
     pendingTurnRef.current = pendingTurn;
   }, [pendingTurn]);
+
+  useEffect(() => {
+    pendingUserMessagesBySessionRef.current = pendingUserMessagesBySession;
+  }, [pendingUserMessagesBySession]);
 
   useEffect(() => {
     connectionFailureNoticeRef.current = connectionFailureNotice;
@@ -5119,61 +5140,64 @@ export default function CodexDeckApp() {
   });
   const previousRightPaneDataKeyRef = useRef<string | null>(null);
 
-  const handleChangePaneMode = useCallback((mode: RightPaneMode) => {
-    pendingFilePathLinkTargetRef.current = null;
-    setSelectedPaneMode(mode);
-    setSelectedDiffFilePath(null);
-    setSelectedFileTargetLine(null);
-    setSessionFileContent(null);
-    setSessionFileContentError(null);
-    setSelectedFileContentPage(1);
+  const handleChangePaneMode = useCallback(
+    (mode: RightPaneMode) => {
+      pendingFilePathLinkTargetRef.current = null;
+      setSelectedPaneMode(mode);
+      setSelectedDiffFilePath(null);
+      setSelectedFileTargetLine(null);
+      setSessionFileContent(null);
+      setSessionFileContentError(null);
+      setSelectedFileContentPage(1);
 
-    if (mode === "terminal-flow") {
-      setSessionDiff(null);
-      setSessionFileTreeNodes(null);
-      setSessionFileTreeLoadingMore(false);
-      setSessionDiffError(null);
-      setLoadingSessionDiff(false);
-      setLoadingSessionFileContent(false);
-      setSessionSkills(null);
-      setLoadingSessionSkills(false);
-      setSessionSkillsError(null);
-      setSelectedSkillPath(null);
-      setUpdatingSkillPath(null);
-    } else if (mode === "skills") {
-      setSessionDiff(null);
-      setSessionFileTreeNodes(null);
-      setSessionFileTreeLoadingMore(false);
-      setSessionDiffError(null);
-      setLoadingSessionDiff(false);
-      setLoadingSessionFileContent(false);
+      if (mode === "terminal-flow") {
+        setSessionDiff(null);
+        setSessionFileTreeNodes(null);
+        setSessionFileTreeLoadingMore(false);
+        setSessionDiffError(null);
+        setLoadingSessionDiff(false);
+        setLoadingSessionFileContent(false);
+        setSessionSkills(null);
+        setLoadingSessionSkills(false);
+        setSessionSkillsError(null);
+        setSelectedSkillPath(null);
+        setUpdatingSkillPath(null);
+      } else if (mode === "skills") {
+        setSessionDiff(null);
+        setSessionFileTreeNodes(null);
+        setSessionFileTreeLoadingMore(false);
+        setSessionDiffError(null);
+        setLoadingSessionDiff(false);
+        setLoadingSessionFileContent(false);
 
-      setTerminalRuns([]);
-      setLoadingTerminalRuns(false);
-      setTerminalRunsError(null);
-      setSelectedTerminalRunId(null);
-      setTerminalRunOutput("");
-      setLoadingTerminalRunOutput(false);
-      setTerminalRunOutputError(null);
-      setTerminalRunOutputIsRunning(false);
-    } else {
-      setSessionSkills(null);
-      setLoadingSessionSkills(false);
-      setSessionSkillsError(null);
-      setSelectedSkillPath(null);
-      setUpdatingSkillPath(null);
-      resetHooksPane();
+        setTerminalRuns([]);
+        setLoadingTerminalRuns(false);
+        setTerminalRunsError(null);
+        setSelectedTerminalRunId(null);
+        setTerminalRunOutput("");
+        setLoadingTerminalRunOutput(false);
+        setTerminalRunOutputError(null);
+        setTerminalRunOutputIsRunning(false);
+      } else {
+        setSessionSkills(null);
+        setLoadingSessionSkills(false);
+        setSessionSkillsError(null);
+        setSelectedSkillPath(null);
+        setUpdatingSkillPath(null);
+        resetHooksPane();
 
-      setTerminalRuns([]);
-      setLoadingTerminalRuns(false);
-      setTerminalRunsError(null);
-      setSelectedTerminalRunId(null);
-      setTerminalRunOutput("");
-      setLoadingTerminalRunOutput(false);
-      setTerminalRunOutputError(null);
-      setTerminalRunOutputIsRunning(false);
-    }
-  }, [resetHooksPane]);
+        setTerminalRuns([]);
+        setLoadingTerminalRuns(false);
+        setTerminalRunsError(null);
+        setSelectedTerminalRunId(null);
+        setTerminalRunOutput("");
+        setLoadingTerminalRunOutput(false);
+        setTerminalRunOutputError(null);
+        setTerminalRunOutputIsRunning(false);
+      }
+    },
+    [resetHooksPane],
+  );
 
   const handleSelectDiffFilePath = useCallback((path: string) => {
     pendingFilePathLinkTargetRef.current = null;
@@ -8650,6 +8674,7 @@ export default function CodexDeckApp() {
     (
       sessionId: string,
       payload: MessageComposerSubmitPayload,
+      status: PendingUserMessage["status"] = "sending",
     ): PendingUserMessage["pendingId"] => {
       const pendingId = createPendingUserMessageId();
       const text = payload.text.trim();
@@ -8663,7 +8688,7 @@ export default function CodexDeckApp() {
           pendingId,
           text,
           images,
-          status: "sending",
+          status,
         }),
       );
 
@@ -8702,6 +8727,13 @@ export default function CodexDeckApp() {
         modeOverride?: CollaborationModeKey;
         sessionIdOverride?: string | null;
         cwdOverride?: string | null;
+        /**
+         * Reuse an already-enqueued pending message (queued → sending)
+         * instead of appending a new one. Used when draining the queue.
+         */
+        pendingIdOverride?: string;
+        /** Skip the queued-while-generating check (used by force-send). */
+        bypassQueue?: boolean;
       },
     ): Promise<boolean> => {
       const sessionId = options?.sessionIdOverride ?? activeComposerSessionId;
@@ -8724,6 +8756,38 @@ export default function CodexDeckApp() {
       ];
       if (input.length === 0) {
         return false;
+      }
+
+      // Mirror Codex CLI's client-side input queue: while a turn is running
+      // for this session (or older messages are still queued), hold the
+      // message locally as "queued" so it can be force-sent or cancelled.
+      // Queued messages auto-send one at a time when the turn settles.
+      if (!options?.pendingIdOverride && !options?.bypassQueue) {
+        const turnActiveForSession =
+          pendingTurnRef.current?.sessionId === sessionId;
+        const hasQueuedBacklog =
+          nextQueuedPendingUserMessage(
+            pendingUserMessagesBySessionRef.current,
+            sessionId,
+          ) !== null;
+        if (turnActiveForSession || hasQueuedBacklog) {
+          const pendingId = enqueuePendingUserMessage(
+            sessionId,
+            payload,
+            "queued",
+          );
+          pendingSendOptionsByIdRef.current.set(pendingId, {
+            ...(options?.modeOverride !== undefined
+              ? { modeOverride: options.modeOverride }
+              : {}),
+            ...(options?.cwdOverride !== undefined
+              ? { cwdOverride: options.cwdOverride }
+              : {}),
+          });
+          queueAutosendSuppressSessionsRef.current.delete(sessionId);
+          setInteractionError(null);
+          return true;
+        }
       }
 
       const requestedMode = options?.modeOverride ?? getSessionMode(sessionId);
@@ -8757,7 +8821,20 @@ export default function CodexDeckApp() {
         return false;
       }
 
-      const pendingId = enqueuePendingUserMessage(sessionId, payload);
+      let pendingId: string;
+      if (options?.pendingIdOverride) {
+        pendingId = options.pendingIdOverride;
+        setPendingUserMessagesBySession((current) =>
+          updatePendingUserMessageStatus(
+            current,
+            sessionId,
+            pendingId,
+            "sending",
+          ),
+        );
+      } else {
+        pendingId = enqueuePendingUserMessage(sessionId, payload);
+      }
 
       setSendingMessage(true);
       setInteractionError(null);
@@ -8785,6 +8862,7 @@ export default function CodexDeckApp() {
         });
 
         setSessionMode(sessionId, modeToUse);
+        pendingSendOptionsByIdRef.current.delete(pendingId);
         markPendingUserMessageAwaitingConfirmation(sessionId, pendingId);
         setPendingTurn({
           sessionId,
@@ -8792,6 +8870,7 @@ export default function CodexDeckApp() {
         });
         return true;
       } catch (error) {
+        pendingSendOptionsByIdRef.current.delete(pendingId);
         removePendingUserMessageById(sessionId, pendingId);
         const message = error instanceof Error ? error.message : String(error);
         if (isSessionUnavailableMessage(message)) {
@@ -8824,6 +8903,170 @@ export default function CodexDeckApp() {
       sessionsWithThreadNames,
       setSessionMode,
     ],
+  );
+
+  const maybeSendNextQueuedUserMessage = useCallback(
+    async (sessionId: string): Promise<boolean> => {
+      const normalizedSessionId = sessionId.trim();
+      if (!normalizedSessionId) {
+        return false;
+      }
+      if (queueAutosendSuppressSessionsRef.current.has(normalizedSessionId)) {
+        return false;
+      }
+      if (queueDrainInFlightSessionsRef.current.has(normalizedSessionId)) {
+        return false;
+      }
+      if (pendingTurnRef.current?.sessionId === normalizedSessionId) {
+        return false;
+      }
+
+      const next = nextQueuedPendingUserMessage(
+        pendingUserMessagesBySessionRef.current,
+        normalizedSessionId,
+      );
+      if (!next) {
+        return false;
+      }
+
+      queueDrainInFlightSessionsRef.current.add(normalizedSessionId);
+      try {
+        const sendOptions =
+          pendingSendOptionsByIdRef.current.get(next.pendingId) ?? {};
+        return await sendMessageText(
+          { text: next.text, images: next.images },
+          {
+            sessionIdOverride: normalizedSessionId,
+            pendingIdOverride: next.pendingId,
+            ...sendOptions,
+          },
+        );
+      } finally {
+        queueDrainInFlightSessionsRef.current.delete(normalizedSessionId);
+      }
+    },
+    [sendMessageText],
+  );
+
+  // Auto-drain: when no turn is running, submit exactly one queued message to
+  // start the next turn (mirrors Codex CLI's maybe_send_next_queued_input).
+  useEffect(() => {
+    if (sendingMessage || stoppingTurn) {
+      return;
+    }
+    for (const sessionId of Object.keys(pendingUserMessagesBySession)) {
+      if (pendingTurn?.sessionId === sessionId) {
+        continue;
+      }
+      if (
+        pendingUserMessagesBySession[sessionId]?.some(
+          (entry) => entry.status === "queued",
+        )
+      ) {
+        void maybeSendNextQueuedUserMessage(sessionId);
+        break;
+      }
+    }
+  }, [
+    pendingTurn,
+    sendingMessage,
+    stoppingTurn,
+    pendingUserMessagesBySession,
+    maybeSendNextQueuedUserMessage,
+  ]);
+
+  const forceSendPendingUserMessage = useCallback(
+    async (sessionId: string, pendingId: string): Promise<boolean> => {
+      const normalizedSessionId = sessionId.trim();
+      if (!normalizedSessionId || sendingMessage || stoppingTurn) {
+        return false;
+      }
+      const message = getPendingUserMessage(
+        pendingUserMessagesBySessionRef.current,
+        normalizedSessionId,
+        pendingId,
+      );
+      if (!message || message.status !== "queued") {
+        return false;
+      }
+      if (queueDrainInFlightSessionsRef.current.has(normalizedSessionId)) {
+        return false;
+      }
+
+      queueAutosendSuppressSessionsRef.current.delete(normalizedSessionId);
+      // Block auto-drain from racing this send with a different queued entry.
+      queueDrainInFlightSessionsRef.current.add(normalizedSessionId);
+      setInteractionError(null);
+
+      try {
+        if (pendingTurnRef.current?.sessionId === normalizedSessionId) {
+          setStoppingTurn(true);
+          try {
+            await interruptCodexThread(normalizedSessionId);
+          } catch (error) {
+            setInteractionError(
+              error instanceof Error ? error.message : String(error),
+            );
+            return false;
+          } finally {
+            setStoppingTurn(false);
+          }
+
+          // interruptCodexThread resolves once turn/interrupt is acknowledged;
+          // poll briefly in case the app-server still reports the turn active.
+          for (let attempt = 0; attempt < 10; attempt += 1) {
+            try {
+              const state = await getCodexThreadState(normalizedSessionId);
+              if (!state.isGenerating) {
+                break;
+              }
+            } catch {
+              // Ignore transient polling errors.
+            }
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+          setPendingTurn((current) =>
+            current?.sessionId === normalizedSessionId ? null : current,
+          );
+        }
+
+        const sendOptions =
+          pendingSendOptionsByIdRef.current.get(pendingId) ?? {};
+        return await sendMessageText(
+          { text: message.text, images: message.images },
+          {
+            sessionIdOverride: normalizedSessionId,
+            pendingIdOverride: pendingId,
+            ...sendOptions,
+          },
+        );
+      } finally {
+        queueDrainInFlightSessionsRef.current.delete(normalizedSessionId);
+      }
+    },
+    [sendMessageText, sendingMessage, stoppingTurn],
+  );
+
+  const cancelPendingUserMessage = useCallback(
+    (sessionId: string, pendingId: string) => {
+      const normalizedSessionId = sessionId.trim();
+      if (!normalizedSessionId) {
+        return;
+      }
+      const message = getPendingUserMessage(
+        pendingUserMessagesBySessionRef.current,
+        normalizedSessionId,
+        pendingId,
+      );
+      // Only locally queued messages can be cancelled; anything already sent
+      // to the server cannot be un-sent.
+      if (!message || message.status !== "queued") {
+        return;
+      }
+      pendingSendOptionsByIdRef.current.delete(pendingId);
+      removePendingUserMessageById(normalizedSessionId, pendingId);
+    },
+    [removePendingUserMessageById],
   );
 
   const handleSendMessage = useCallback(
@@ -8935,7 +9178,10 @@ export default function CodexDeckApp() {
       try {
         await archiveCodexThread(normalizedThreadId);
 
-        if (workflowComposerSessionId === normalizedThreadId && selectedWorkflowKey) {
+        if (
+          workflowComposerSessionId === normalizedThreadId &&
+          selectedWorkflowKey
+        ) {
           await bindWorkflowSessionRequest(selectedWorkflowKey, {
             sessionId: null,
           });
@@ -9939,19 +10185,34 @@ export default function CodexDeckApp() {
       setTimeout(() => {
         waitSuppressSessionsRef.current.delete(targetSessionId);
       }, 3000);
+      // Keep locally queued messages (the user can still force-send or cancel
+      // them), but stop auto-drain so the stop doesn't instantly start a new
+      // turn. Messages already sent to the server are dropped from the
+      // pending list as before.
+      queueAutosendSuppressSessionsRef.current.add(targetSessionId);
       setPendingUserMessagesBySession((current) => {
         const existing = current[targetSessionId] ?? [];
-        if (existing.length > 0) {
+        const sentMessages = existing.filter(
+          (entry) => entry.status !== "queued",
+        );
+        if (sentMessages.length > 0) {
           ignoredPendingConfirmationCountBySessionRef.current[targetSessionId] =
             (ignoredPendingConfirmationCountBySessionRef.current[
               targetSessionId
-            ] ?? 0) + existing.length;
+            ] ?? 0) + sentMessages.length;
         }
         if (!(targetSessionId in current)) {
           return current;
         }
+        const queuedMessages = existing.filter(
+          (entry) => entry.status === "queued",
+        );
         const next = { ...current };
-        delete next[targetSessionId];
+        if (queuedMessages.length > 0) {
+          next[targetSessionId] = queuedMessages;
+        } else {
+          delete next[targetSessionId];
+        }
         return next;
       });
       // Always unlock UI immediately on manual stop, even if interrupt request is slow.
@@ -13197,6 +13458,8 @@ export default function CodexDeckApp() {
                   pendingUserMessages={
                     pendingUserMessagesBySession[selectedSession] ?? []
                   }
+                  onForceSendPendingUserMessage={forceSendPendingUserMessage}
+                  onCancelPendingUserMessage={cancelPendingUserMessage}
                   railCollapsedByDefault={railCollapsedByDefault}
                   conversationSearchOpen={conversationSearchOpen}
                   conversationSearchQuery={conversationSearchQuery}
