@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -910,4 +912,152 @@ test("app-server notifications are emitted as live codex events", async () => {
     },
   });
   assert.equal(events.length, 5);
+});
+
+interface AuthReloadTestClient {
+  authFileFingerprint: string | null;
+  process: unknown;
+  readAuthFileFingerprint: () => string;
+  reloadAuthIfChanged: () => Promise<void>;
+  handleServerNotification: (method: string, params: unknown) => void;
+  close: () => Promise<void>;
+  request: (
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<unknown>;
+}
+
+function createAuthReloadTestClient(codexHome: string): {
+  client: InstanceType<typeof __TEST_ONLY__.CodexAppServerClient>;
+  internals: AuthReloadTestClient;
+  requests: Array<{ method: string; params: Record<string, unknown> }>;
+  closeCalls: () => number;
+} {
+  const client = new __TEST_ONLY__.CodexAppServerClient({
+    env: { CODEX_HOME: codexHome },
+  });
+  const internals = client as unknown as AuthReloadTestClient;
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  let closeCount = 0;
+
+  internals.process = { stub: true };
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+
+  return {
+    client,
+    internals,
+    requests,
+    closeCalls: () => closeCount,
+  };
+}
+
+test("app-server client restarts when auth.json changes and threads are idle", async () => {
+  const codexHome = mkdtempSync(join(tmpdir(), "codex-deck-auth-"));
+  try {
+    writeFileSync(join(codexHome, "auth.json"), '{"token":"new"}');
+    const { internals, requests, closeCalls } =
+      createAuthReloadTestClient(codexHome);
+    internals.authFileFingerprint = "stale-fingerprint";
+    internals.request = async (method, params) => {
+      requests.push({ method, params });
+      if (method === "thread/loaded/list") {
+        return { data: ["thread-1"] };
+      }
+      if (method === "thread/read") {
+        return { thread: { id: "thread-1", status: { type: "idle" } } };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    };
+
+    await internals.reloadAuthIfChanged();
+
+    assert.equal(closeCalls(), 1);
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      ["thread/loaded/list", "thread/read"],
+    );
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("app-server client defers auth restart while a thread is active", async () => {
+  const codexHome = mkdtempSync(join(tmpdir(), "codex-deck-auth-"));
+  try {
+    writeFileSync(join(codexHome, "auth.json"), '{"token":"new"}');
+    const { internals, closeCalls } = createAuthReloadTestClient(codexHome);
+    internals.authFileFingerprint = "stale-fingerprint";
+    let threadStatus = "active";
+    internals.request = async (method) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["thread-1"] };
+      }
+      if (method === "thread/read") {
+        return { thread: { id: "thread-1", status: { type: threadStatus } } };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    };
+
+    await internals.reloadAuthIfChanged();
+    assert.equal(closeCalls(), 0);
+    assert.equal(internals.authFileFingerprint, "stale-fingerprint");
+
+    threadStatus = "idle";
+    await internals.reloadAuthIfChanged();
+    assert.equal(closeCalls(), 1);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("app-server client skips auth restart when auth.json is unchanged", async () => {
+  const codexHome = mkdtempSync(join(tmpdir(), "codex-deck-auth-"));
+  try {
+    writeFileSync(join(codexHome, "auth.json"), '{"token":"same"}');
+    const { internals, requests, closeCalls } =
+      createAuthReloadTestClient(codexHome);
+    internals.authFileFingerprint = internals.readAuthFileFingerprint();
+    internals.request = async (method, params) => {
+      requests.push({ method, params });
+      throw new Error(`unexpected method: ${method}`);
+    };
+
+    await internals.reloadAuthIfChanged();
+
+    assert.equal(closeCalls(), 0);
+    assert.equal(requests.length, 0);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("app-server client re-baselines auth fingerprint on account/updated", async () => {
+  const codexHome = mkdtempSync(join(tmpdir(), "codex-deck-auth-"));
+  try {
+    writeFileSync(join(codexHome, "auth.json"), '{"token":"rotated"}');
+    const { internals, requests, closeCalls } =
+      createAuthReloadTestClient(codexHome);
+    internals.authFileFingerprint = "stale-fingerprint";
+    internals.request = async (method, params) => {
+      requests.push({ method, params });
+      throw new Error(`unexpected method: ${method}`);
+    };
+
+    internals.handleServerNotification("account/updated", {});
+    assert.equal(
+      internals.authFileFingerprint,
+      internals.readAuthFileFingerprint(),
+    );
+
+    await internals.reloadAuthIfChanged();
+
+    assert.equal(closeCalls(), 0);
+    assert.equal(requests.length, 0);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
 });

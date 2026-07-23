@@ -3,8 +3,9 @@ import {
   spawnSync,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import {
   createInterface,
@@ -808,6 +809,8 @@ class CodexAppServerClient {
   private readonly archivedThreadIdCollectors = new Set<
     (threadId: string) => void
   >();
+  private authFileFingerprint: string | null = null;
+  private authReloadInFlight: Promise<void> | null = null;
 
   public constructor(options: CodexAppServerClientOptions = {}) {
     this.executablePath =
@@ -1219,6 +1222,8 @@ class CodexAppServerClient {
       throw new Error("cwd is required");
     }
 
+    await this.reloadAuthIfChanged();
+
     const params: Record<string, unknown> = {
       cwd,
       ephemeral: false,
@@ -1500,6 +1505,8 @@ class CodexAppServerClient {
       throw new Error("threadId is required");
     }
 
+    await this.reloadAuthIfChanged();
+
     // The resume below re-subscribes this connection to the thread. Wait for
     // any in-flight provider switch first so this call cannot re-subscribe
     // the thread mid-switch and block the app-server from releasing it.
@@ -1628,6 +1635,8 @@ class CodexAppServerClient {
     if (!threadId) {
       throw new Error("threadId is required");
     }
+
+    await this.reloadAuthIfChanged();
 
     const normalizedInput: SendCodexInputItem[] = [];
     if (Array.isArray(input.input)) {
@@ -2496,6 +2505,85 @@ class CodexAppServerClient {
     this.initializeInFlight = null;
   }
 
+  private resolveAuthFilePath(): string {
+    const codexHome =
+      this.env?.CODEX_HOME?.trim() ||
+      process.env.CODEX_HOME?.trim() ||
+      join(homedir(), ".codex");
+    return join(codexHome, "auth.json");
+  }
+
+  private readAuthFileFingerprint(): string {
+    try {
+      const content = readFileSync(this.resolveAuthFilePath());
+      return createHash("sha256").update(content).digest("hex");
+    } catch {
+      return "absent";
+    }
+  }
+
+  private rebaselineAuthFileFingerprint(): void {
+    this.authFileFingerprint = this.readAuthFileFingerprint();
+  }
+
+  /**
+   * The app-server subprocess caches ~/.codex/auth.json at startup and the
+   * protocol offers no way to re-read it. When the file changes externally
+   * (for example, the user swaps credentials while switching provider),
+   * restart the subprocess so the next request picks up the new auth. The
+   * restart is skipped while any loaded thread is actively generating; the
+   * next idle call retries.
+   */
+  private async reloadAuthIfChanged(): Promise<void> {
+    const existing = this.authReloadInFlight;
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const reload = this.reloadAuthIfChangedInner();
+    this.authReloadInFlight = reload;
+    try {
+      await reload;
+    } finally {
+      this.authReloadInFlight = null;
+    }
+  }
+
+  private async reloadAuthIfChangedInner(): Promise<void> {
+    if (!this.process || this.authFileFingerprint === null) {
+      return;
+    }
+
+    const currentFingerprint = this.readAuthFileFingerprint();
+    if (currentFingerprint === this.authFileFingerprint) {
+      return;
+    }
+
+    try {
+      const loadedThreadIds = await this.listLoadedThreadIds();
+      for (const threadId of loadedThreadIds) {
+        const status = extractThreadStatusFromReadResult(
+          await this.request("thread/read", { threadId, includeTurns: false }),
+        );
+        if (status === "active") {
+          console.warn(
+            "[codex-deck] auth.json changed but a thread is actively generating; deferring app-server restart",
+          );
+          return;
+        }
+      }
+    } catch {
+      // Fail safe: if the busy check cannot complete, keep the old baseline
+      // so a later call retries the restart.
+      return;
+    }
+
+    console.warn("[codex-deck] auth.json changed; restarting codex app-server");
+    await this.close();
+    this.readCoalescer.clearMatching(() => true);
+  }
+
   private ensureStarted(): void {
     if (this.process) {
       return;
@@ -2513,6 +2601,7 @@ class CodexAppServerClient {
       shell: spawnSpec.shell,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    this.rebaselineAuthFileFingerprint();
 
     child.on("exit", (code, signal) => {
       this.handleProcessExit(
@@ -2683,6 +2772,14 @@ class CodexAppServerClient {
   }
 
   private handleServerNotification(method: string, params: unknown): void {
+    if (method === "account/updated" || method === "account/login/completed") {
+      // The app-server rewrites auth.json itself (for example on ChatGPT
+      // token refresh). Re-baseline the fingerprint so those self-writes do
+      // not trigger a needless subprocess restart.
+      this.rebaselineAuthFileFingerprint();
+      return;
+    }
+
     if (!params || typeof params !== "object") {
       return;
     }
