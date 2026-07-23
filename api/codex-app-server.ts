@@ -811,6 +811,7 @@ class CodexAppServerClient {
   >();
   private authFileFingerprint: string | null = null;
   private authReloadInFlight: Promise<void> | null = null;
+  private appServerRestartInFlight: Promise<boolean> | null = null;
 
   public constructor(options: CodexAppServerClientOptions = {}) {
     this.executablePath =
@@ -2505,6 +2506,43 @@ class CodexAppServerClient {
     this.initializeInFlight = null;
   }
 
+  public async restartAppServer(): Promise<boolean> {
+    if (this.appServerRestartInFlight) {
+      return this.appServerRestartInFlight;
+    }
+
+    const restart = this.restartAppServerInner();
+    this.appServerRestartInFlight = restart;
+    try {
+      return await restart;
+    } finally {
+      this.appServerRestartInFlight = null;
+    }
+  }
+
+  private async restartAppServerInner(): Promise<boolean> {
+    const wasRunning = this.process !== null;
+    this.readCoalescer.clearMatching(() => true);
+    this.newlyStartedThreadIds.clear();
+    this.resumeProviderRefreshInFlight.clear();
+    if (!wasRunning) {
+      return false;
+    }
+
+    console.warn(
+      "[codex-deck] conversation history changed; restarting codex app-server",
+    );
+    await this.close();
+    this.ensureStarted();
+    try {
+      await this.ensureInitialized();
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
+    return true;
+  }
+
   private resolveAuthFilePath(): string {
     const codexHome =
       this.env?.CODEX_HOME?.trim() ||
@@ -2604,16 +2642,25 @@ class CodexAppServerClient {
     this.rebaselineAuthFileFingerprint();
 
     child.on("exit", (code, signal) => {
+      if (this.process !== child) {
+        return;
+      }
       this.handleProcessExit(
         `app-server exited (code=${String(code)}, signal=${String(signal)})`,
       );
     });
 
     child.on("error", (error) => {
+      if (this.process !== child) {
+        return;
+      }
       this.handleProcessExit(`app-server process error: ${error.message}`);
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
+      if (this.process !== child) {
+        return;
+      }
       for (const message of this.stdoutMessageParser.push(chunk)) {
         this.handleStdoutMessage(message);
       }
@@ -4815,6 +4862,7 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  restartAppServer?: () => Promise<boolean>;
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
   listCollaborationModes: () => Promise<CodexCollaborationModeOption[]>;
   listHooks?: (input: CodexHooksListInput) => Promise<CodexHooksListEntry[]>;
@@ -4892,6 +4940,7 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
   }
 
   return {
+    restartAppServer: () => client!.restartAppServer(),
     listModels: (limit?: number) => client!.listModels(limit),
     listCollaborationModes: () => client!.listCollaborationModes(),
     listHooks: (input: CodexHooksListInput) => client!.listHooks(input),
@@ -4985,6 +5034,16 @@ export async function closeCodexAppServerClient(): Promise<void> {
   const current = client;
   client = null;
   await current.close();
+}
+
+export async function restartCodexAppServerClient(): Promise<boolean> {
+  if (clientOverride) {
+    return (await clientOverride.restartAppServer?.()) ?? false;
+  }
+  if (!client) {
+    return false;
+  }
+  return client.restartAppServer();
 }
 
 export function isCodexReasoningEffort(

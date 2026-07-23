@@ -19,6 +19,7 @@ import {
   getConversationRawChunk,
   getConversationRawWindow,
   getConversationStream,
+  editConversationMessage,
   deleteSession,
   archiveSession,
   fixDanglingTurns,
@@ -57,6 +58,7 @@ import {
   type SendCodexMessageRequest,
   type SendCodexMessageResponse,
   type ConversationMessage,
+  type EditConversationMessageRequest,
   type ConversationRawChunkResponse,
   type ConversationRawWindowResponse,
   type SessionDiffMode,
@@ -123,6 +125,7 @@ import {
   closeCodexAppServerClient,
   configureCodexAppServerClient,
   getCodexAppServerClient,
+  restartCodexAppServerClient,
   isCodexReasoningEffort,
   isCodexServiceTier,
   type CodexCollaborationModeInput,
@@ -3206,7 +3209,6 @@ export function createServer(options: ServerOptions) {
     }
   });
 
-
   app.get("/api/workflow-project/:key/skills", async (c) => {
     const workflowKey = c.req.param("key")?.trim();
     if (!workflowKey) {
@@ -3299,7 +3301,6 @@ export function createServer(options: ServerOptions) {
     }
   });
 
-
   app.post("/api/workflow-project/:key/skills/config", async (c) => {
     const workflowKey = c.req.param("key")?.trim();
     if (!workflowKey) {
@@ -3359,7 +3360,6 @@ export function createServer(options: ServerOptions) {
     }
   });
 
-
   app.post("/api/sessions/:id/skills/config", async (c) => {
     const sessionId = c.req.param("id")?.trim();
     if (!sessionId) {
@@ -3417,11 +3417,68 @@ export function createServer(options: ServerOptions) {
     }
   });
 
-
   app.get("/api/conversation/:id", async (c) => {
     const sessionId = c.req.param("id");
     const messages = await getConversation(sessionId);
     return c.json(messages);
+  });
+
+  app.patch("/api/conversation/:id/messages/:editId", async (c) => {
+    const sessionId = c.req.param("id")?.trim();
+    const editId = c.req.param("editId")?.trim();
+    if (!sessionId || !editId) {
+      return c.json({ error: "session id and edit id are required" }, 400);
+    }
+
+    let body: Pick<EditConversationMessageRequest, "expectedText" | "text">;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    if (
+      typeof body.expectedText !== "string" ||
+      typeof body.text !== "string"
+    ) {
+      return c.json({ error: "expectedText and text are required" }, 400);
+    }
+
+    try {
+      const response = await editConversationMessage(sessionId, {
+        editId,
+        expectedText: body.expectedText,
+        text: body.text,
+      });
+      const appServerRestarted =
+        response.sessionRecordsUpdated > 0
+          ? await restartCodexAppServerClient()
+          : false;
+      return c.json({ ...response, appServerRestarted });
+    } catch (error) {
+      const message = toErrorMessage(error);
+      const normalized = message.toLowerCase();
+      if (
+        normalized.includes("not found") ||
+        normalized.includes("session file not found")
+      ) {
+        return c.json({ error: message }, 404);
+      }
+      if (
+        normalized.includes("changed before") ||
+        normalized.includes("more than one message") ||
+        normalized.includes("while a turn is active")
+      ) {
+        return c.json({ error: message }, 409);
+      }
+      if (
+        normalized.includes("is required") ||
+        normalized.includes("too large") ||
+        normalized.includes("not an editable")
+      ) {
+        return c.json({ error: message }, 400);
+      }
+      return c.json({ error: message }, 500);
+    }
   });
 
   app.get("/api/conversation/:id/chunk", async (c) => {
@@ -3503,6 +3560,7 @@ export function createServer(options: ServerOptions) {
 
     return streamSSE(c, async (stream) => {
       let isConnected = true;
+      let fileId: string | null = null;
       const disconnectController = new AbortController();
 
       const writeConversationBatches = async (
@@ -3516,9 +3574,23 @@ export function createServer(options: ServerOptions) {
             messages: batchMessages,
             nextOffset: batchNextOffset,
             done,
+            fileId: batchFileId,
           } = await getConversationStream(sessionId, offset, {
             maxPayloadBytes: DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES,
           });
+          if (fileId && batchFileId && batchFileId !== fileId) {
+            offset = 0;
+            fileId = batchFileId;
+            await stream.writeSSE({
+              event: "reset",
+              data: JSON.stringify({ sessionId }),
+            });
+            firstBatch = true;
+            continue;
+          }
+          if (batchFileId) {
+            fileId = batchFileId;
+          }
           offset = batchNextOffset;
 
           if (
@@ -3628,7 +3700,6 @@ export function createServer(options: ServerOptions) {
       );
     }
   });
-
 
   app.post("/api/codex/threads", async (c) => {
     try {

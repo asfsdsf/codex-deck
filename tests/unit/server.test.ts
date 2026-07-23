@@ -279,6 +279,115 @@ test("server routes return sessions/projects/conversation/context and fix dangli
   }
 });
 
+test("conversation message edit route updates paired user history records", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-edit-conversation-message",
+  );
+  const server = createServer({ port: 13034, codexDir: rootDir, open: false });
+  const timestamp = "2026-07-22T01:31:24.357Z";
+  let restartCount = 0;
+  const mockClient: CodexAppServerClientFacade = {
+    restartAppServer: async () => {
+      restartCount += 1;
+      return true;
+    },
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: SESSION_ID,
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    const sessionFilePath = await writeSessionFile(
+      sessionsDir,
+      `${SESSION_ID}.jsonl`,
+      [
+        sessionMetaLine(SESSION_ID, "/repo/app", Date.now()),
+        JSON.stringify({
+          timestamp,
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Before edit" }],
+            internal_chat_message_metadata_passthrough: {
+              turn_id: "turn-edit",
+            },
+          },
+        }),
+        JSON.stringify({
+          timestamp,
+          type: "event_msg",
+          payload: { type: "user_message", message: "Before edit" },
+        }),
+      ],
+    );
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const result = await requestJson(
+      server,
+      `/api/conversation/${SESSION_ID}/messages/${encodeURIComponent("turn:turn-edit")}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expectedText: "Before edit",
+          text: "After edit",
+        }),
+      },
+    );
+    assert.equal(result.status, 200);
+    assert.equal(
+      (result.body as { sessionRecordsUpdated?: number }).sessionRecordsUpdated,
+      2,
+    );
+    assert.equal(
+      (result.body as { appServerRestarted?: boolean }).appServerRestarted,
+      true,
+    );
+    assert.equal(restartCount, 1);
+
+    const content = await readFile(sessionFilePath, "utf-8");
+    assert.equal(content.includes("Before edit"), false);
+    assert.equal(content.match(/After edit/g)?.length, 2);
+
+    const staleEdit = await requestJson(
+      server,
+      `/api/conversation/${SESSION_ID}/messages/${encodeURIComponent("turn:turn-edit")}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expectedText: "Before edit",
+          text: "Conflicting edit",
+        }),
+      },
+    );
+    assert.equal(staleEdit.status, 409);
+    assert.equal(restartCount, 1);
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("conversation chunk route returns bounded chunks with offsets", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "server-conversation-chunk",
@@ -484,7 +593,7 @@ test("sessions stream forwards codex app-server retry events", async () => {
   );
   const server = createServer({ port: 13025, codexDir: rootDir, open: false });
   let eventListener: ((event: unknown) => void) | null = null;
-    const mockClient: CodexAppServerClientFacade = {
+  const mockClient: CodexAppServerClientFacade = {
     listModels: async () => [],
     listCollaborationModes: async () => [],
     createThread: async () => "thread-id",
@@ -6403,8 +6512,9 @@ test("thread state route preserves non-generating state when session log has no 
 });
 
 test("thread state route includes live provider details for api key auth", async () => {
-  const { rootDir, sessionsDir, cleanup } =
-    await createTempCodexDir("server-state-live-status-api-key");
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-state-live-status-api-key",
+  );
   const server = createServer({ port: 13030, codexDir: rootDir, open: false });
 
   const mockClient: CodexAppServerClientFacade = {
@@ -6473,8 +6583,9 @@ test("thread state route includes live provider details for api key auth", async
 });
 
 test("thread state route hides provider details for login auth", async () => {
-  const { rootDir, sessionsDir, cleanup } =
-    await createTempCodexDir("server-state-live-status-login");
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-state-live-status-login",
+  );
   const server = createServer({ port: 13031, codexDir: rootDir, open: false });
 
   const mockClient: CodexAppServerClientFacade = {
@@ -6539,8 +6650,9 @@ test("thread state route hides provider details for login auth", async () => {
 });
 
 test("thread state route includes provider details for env-key-backed auth without apiKey mode", async () => {
-  const { rootDir, sessionsDir, cleanup } =
-    await createTempCodexDir("server-state-live-status-env-key");
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-state-live-status-env-key",
+  );
   const server = createServer({ port: 13032, codexDir: rootDir, open: false });
 
   const mockClient: CodexAppServerClientFacade = {
@@ -6609,8 +6721,9 @@ test("thread state route includes provider details for env-key-backed auth witho
 });
 
 test("thread state route returns unavailable-ready provider fields for non-login auth when details are missing", async () => {
-  const { rootDir, sessionsDir, cleanup } =
-    await createTempCodexDir("server-state-live-status-unavailable-provider");
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-state-live-status-unavailable-provider",
+  );
   const server = createServer({ port: 13033, codexDir: rootDir, open: false });
 
   const mockClient: CodexAppServerClientFacade = {

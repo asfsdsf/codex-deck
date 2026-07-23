@@ -10,6 +10,7 @@ import {
   CodexAppServerTransportError,
   closeCodexAppServerClient,
   getCodexAppServerClient,
+  restartCodexAppServerClient,
   isCodexReasoningEffort,
 } from "../../api/codex-app-server";
 
@@ -86,6 +87,7 @@ test("client lifecycle helpers are callable and close idempotently", async () =>
   const clientB = getCodexAppServerClient();
 
   assert.equal(typeof clientA.listModels, "function");
+  assert.equal(typeof clientA.restartAppServer, "function");
   assert.equal(typeof clientA.createThread, "function");
   assert.equal(typeof clientA.sendMessage, "function");
   assert.equal(typeof clientA.getThreadState, "function");
@@ -97,6 +99,43 @@ test("client lifecycle helpers are callable and close idempotently", async () =>
 
   await closeCodexAppServerClient();
   await closeCodexAppServerClient();
+  assert.equal(await restartCodexAppServerClient(), false);
+});
+
+test("app-server history restart is serialized and initializes a fresh process", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    ensureStarted: () => void;
+    ensureInitialized: () => Promise<void>;
+  };
+  let closeCount = 0;
+  let startCount = 0;
+  let initializeCount = 0;
+  internals.process = { generation: 1 };
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.ensureStarted = () => {
+    startCount += 1;
+    internals.process = { generation: 2 };
+  };
+  internals.ensureInitialized = async () => {
+    initializeCount += 1;
+  };
+
+  const [first, second] = await Promise.all([
+    client.restartAppServer(),
+    client.restartAppServer(),
+  ]);
+
+  assert.equal(first, true);
+  assert.equal(second, true);
+  assert.equal(closeCount, 1);
+  assert.equal(startCount, 1);
+  assert.equal(initializeCount, 1);
 });
 
 test("stdout parser reconstructs multi-line app-server responses with utf-8 content", () => {

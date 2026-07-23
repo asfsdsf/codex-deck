@@ -4,6 +4,10 @@ import type {
   ConversationMessage,
   TokenUsage,
 } from "./storage";
+import {
+  collectEditableMessagePairs,
+  getEditableResponseItem,
+} from "./conversation-edit-records";
 
 interface LineWithOffset {
   line: string;
@@ -96,6 +100,7 @@ function createChatMessage(
   content: ContentBlock[],
   uuid: string,
   timestamp?: string,
+  edit?: { editId: string; text: string },
 ): ConversationMessage {
   return {
     type: role,
@@ -105,6 +110,13 @@ function createChatMessage(
       role,
       content,
     },
+    ...(edit
+      ? {
+          editable: true,
+          editId: edit.editId,
+          editText: edit.text,
+        }
+      : {}),
   };
 }
 
@@ -883,6 +895,7 @@ function parseCodexConversation(
   const pendingToolCalls = new Map<string, PendingToolUse>();
   const pendingToolMessageIndexes = new Map<string, number>();
   const toolNames = knownToolNames ?? new Map<string, string>();
+  const editableMessagePairs = collectEditableMessagePairs(lines);
 
   for (const { line, offset } of lines) {
     const parsed = safeJsonParse(line);
@@ -1108,6 +1121,11 @@ function parseCodexConversation(
         continue;
       }
 
+      const editableRecord = getEditableResponseItem(
+        record as Record<string, unknown>,
+        offset,
+      );
+
       pushConversationMessage(
         messages,
         createChatMessage(
@@ -1115,6 +1133,12 @@ function parseCodexConversation(
           content,
           `${offset}:message:${messages.length}`,
           timestamp,
+          editableRecord && editableMessagePairs.has(offset)
+            ? {
+                editId: editableRecord.editId,
+                text: editableRecord.text,
+              }
+            : undefined,
         ),
       );
       continue;

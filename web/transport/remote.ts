@@ -142,8 +142,10 @@ async function readRemoteConversationBatch(
 ): Promise<{
   messages: ConversationMessage[];
   nextOffset: number;
+  fileId?: string;
 }> {
   let fetchOffset = offset;
+  let fileId: string | undefined;
   const aggregatedChunks: Uint8Array[] = [];
 
   while (true) {
@@ -154,6 +156,7 @@ async function readRemoteConversationBatch(
       fetchOffset,
     );
     fetchOffset = chunk.nextOffset;
+    fileId = chunk.fileId ?? fileId;
 
     if (chunk.chunkBase64) {
       aggregatedChunks.push(decodeBase64(chunk.chunkBase64));
@@ -175,6 +178,7 @@ async function readRemoteConversationBatch(
   return {
     messages: result.messages,
     nextOffset: offset + result.consumedBytes,
+    fileId,
   };
 }
 
@@ -366,6 +370,7 @@ export function createRemoteTransport(
           : 0;
       let initialized = offset > 0;
       let backfillBeforeOffset: number | null = null;
+      let fileId: string | null = null;
 
       const subscription = createWakeablePollingSubscription(async () => {
         try {
@@ -388,6 +393,7 @@ export function createRemoteTransport(
               messages: tailParsed.messages,
               nextOffset: tailWindow.endOffset,
             };
+            fileId = tailWindow.fileId ?? fileId;
             offset = batch.nextOffset;
             backfillBeforeOffset =
               tailWindow.startOffset > 0 ? tailWindow.startOffset : null;
@@ -456,6 +462,18 @@ export function createRemoteTransport(
             offset,
             toolNames,
           );
+          if (fileId && batch.fileId && batch.fileId !== fileId) {
+            seen = new Set<string>();
+            toolNames.clear();
+            offset = 0;
+            initialized = false;
+            backfillBeforeOffset = null;
+            fileId = batch.fileId;
+            handlers.onReset?.();
+            handlers.onHeartbeat?.();
+            return;
+          }
+          fileId = batch.fileId ?? fileId;
           const newMessages = batch.messages.filter(
             (message) => !seen.has(getConversationSeenKey(message)),
           );

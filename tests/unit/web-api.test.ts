@@ -23,6 +23,7 @@ import {
   deleteWorkflow,
   deleteSession,
   deleteTerminal,
+  editConversationMessage,
   fixDanglingSession,
   forkCodexThread,
   getCodexConfigDefaults,
@@ -1693,6 +1694,7 @@ test("conversation and session routes request expected endpoints", async () => {
   const deleted = await deleteSession("abc", "client-1");
   const fixed = await fixDanglingSession("abc");
   const conversation = await getConversation("abc");
+  await editConversationMessage("abc", "item:message-1", "Before", "After");
   const diff = await getSessionDiff("abc", "unstaged");
   const tree = await getSessionFileTree("abc");
   const search = await searchSessionFiles("abc", "app", 10);
@@ -1719,6 +1721,7 @@ test("conversation and session routes request expected endpoints", async () => {
     "/api/sessions/abc?clientId=client-1:DELETE",
     "/api/sessions/abc/fix-dangling:POST",
     "/api/conversation/abc:GET",
+    "/api/conversation/abc/messages/item%3Amessage-1:PATCH",
     "/api/sessions/abc/diff?mode=unstaged:GET",
     "/api/sessions/abc/file-tree:GET",
     "/api/sessions/abc/file-search?query=app&limit=10:GET",
@@ -2175,6 +2178,7 @@ test("subscribeConversationStream synthesizes bootstrap metadata for local SSE",
     done: boolean | undefined;
   }> = [];
   let heartbeatCount = 0;
+  let resetCount = 0;
 
   try {
     const unsubscribe = subscribeConversationStream("local-session", {
@@ -2188,6 +2192,9 @@ test("subscribeConversationStream synthesizes bootstrap metadata for local SSE",
       },
       onHeartbeat: () => {
         heartbeatCount += 1;
+      },
+      onReset: () => {
+        resetCount += 1;
       },
     });
 
@@ -2209,6 +2216,18 @@ test("subscribeConversationStream synthesizes bootstrap metadata for local SSE",
       nextOffset: 10,
     });
     eventSource.emit("heartbeat", { timestamp: 1 });
+    eventSource.emit("reset", { sessionId: "local-session" });
+    eventSource.emit("messages", {
+      messages: [
+        {
+          type: "user",
+          uuid: "local-msg-edited",
+          timestamp: "2026-03-16T00:00:00.000Z",
+        },
+      ],
+      nextOffset: 5,
+      done: true,
+    });
 
     assert.deepEqual(batches, [
       {
@@ -2217,8 +2236,15 @@ test("subscribeConversationStream synthesizes bootstrap metadata for local SSE",
         nextOffset: 10,
         done: true,
       },
+      {
+        uuids: ["local-msg-edited"],
+        phase: "bootstrap",
+        nextOffset: 5,
+        done: true,
+      },
     ]);
     assert.equal(heartbeatCount, 1);
+    assert.equal(resetCount, 1);
 
     unsubscribe();
   } finally {

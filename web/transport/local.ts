@@ -502,6 +502,11 @@ export function createLocalTransport(): WebTransport {
               insertion: "append",
             });
           });
+          eventSource.addEventListener("reset", () => {
+            offset = 0;
+            bootstrapComplete = false;
+            handlers.onReset?.();
+          });
           eventSource.addEventListener("heartbeat", () => {
             handlers.onHeartbeat?.();
           });

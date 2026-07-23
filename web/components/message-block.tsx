@@ -83,6 +83,7 @@ interface MessageBlockProps {
   fallbackToolTimestampMap?: Map<string, string>;
   onPlanAction?: (action: "implement" | "stay") => void;
   onFilePathLinkClick?: (href: string) => boolean;
+  onEditMessage?: (message: ConversationMessage, text: string) => Promise<void>;
   pendingUserInputRequests?: CodexUserInputRequest[];
   pendingApprovalRequests?: CodexApprovalRequest[];
   selectedUserInputAnswers?: Record<
@@ -1779,6 +1780,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     onPlanAction,
     aiTerminalContext,
     onFilePathLinkClick,
+    onEditMessage,
     pendingUserInputRequests = [],
     pendingApprovalRequests = [],
     selectedUserInputAnswers,
@@ -1805,6 +1807,10 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     searchForcePrimaryExpanded,
   );
   const [skillViewMode, setSkillViewMode] = useState<JsonViewMode>("formatted");
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(message.editText ?? "");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!searchForcePrimaryExpanded) {
@@ -1814,6 +1820,13 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     setAgentsExpanded(true);
     setSkillExpanded(true);
   }, [searchForcePrimaryExpanded]);
+
+  useEffect(() => {
+    if (!editing) {
+      setEditDraft(message.editText ?? "");
+      setEditError(null);
+    }
+  }, [editing, message.editText]);
 
   const shouldForceExpandBlock = (block: ContentBlock): boolean => {
     if (!Array.isArray(content) || searchForceBlockIndex === null) {
@@ -2004,6 +2017,51 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const rawMessageText = getMessageRawText(content);
   const showMessageCopyButton =
     (isUser || message.type === "assistant") && !!messageCopyText;
+  const canEditMessage =
+    !isPendingUserTone &&
+    !isAgentsBootstrap &&
+    message.editable === true &&
+    typeof message.editId === "string" &&
+    message.editId.length > 0 &&
+    typeof message.editText === "string" &&
+    message.editText.length > 0 &&
+    (message.type === "user" || message.type === "assistant") &&
+    typeof onEditMessage === "function";
+
+  const cancelEditing = () => {
+    if (editSaving) {
+      return;
+    }
+    setEditing(false);
+    setEditDraft(message.editText ?? "");
+    setEditError(null);
+  };
+
+  const saveEditing = async () => {
+    const nextText = editDraft.trim();
+    if (!canEditMessage || editSaving || !nextText) {
+      if (!nextText) {
+        setEditError("Message text cannot be empty.");
+      }
+      return;
+    }
+    if (nextText === message.editText) {
+      setEditing(false);
+      setEditError(null);
+      return;
+    }
+
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      await onEditMessage(message, nextText);
+      setEditing(false);
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEditSaving(false);
+    }
+  };
   const terminalUserFeedback = isUser
     ? parseAiTerminalUserFeedback(rawMessageText ?? "")
     : null;
@@ -2562,7 +2620,29 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 : "bg-cyan-700/50 text-zinc-100 rounded-bl-md"
             }`}
           >
-            {typeof content === "string" ? (
+            {editing ? (
+              <textarea
+                value={editDraft}
+                onChange={(event) => setEditDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelEditing();
+                  } else if (
+                    event.key === "Enter" &&
+                    (event.metaKey || event.ctrlKey)
+                  ) {
+                    event.preventDefault();
+                    void saveEditing();
+                  }
+                }}
+                rows={Math.min(16, Math.max(3, editDraft.split("\n").length))}
+                autoFocus
+                disabled={editSaving}
+                aria-label="Edit history message"
+                className="block min-h-24 w-full resize-y rounded-lg border border-white/20 bg-zinc-950/30 py-2 pl-3 pr-24 font-mono text-sm leading-relaxed text-white outline-none placeholder:text-white/45 focus:border-white/45 disabled:cursor-wait disabled:opacity-70"
+              />
+            ) : typeof content === "string" ? (
               (() => {
                 const sanitized = sanitizeText(content);
                 const aiTerminalMessage = parseAiTerminalMessage(sanitized);
@@ -2648,20 +2728,82 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
               </div>
             )}
           </div>
-          {showMessageCopyButton && messageCopyText && (
-            <CopyButton
-              text={messageCopyText}
-              title="Copy message"
-              className={`absolute right-2 top-2 rounded-lg border opacity-0 transition-opacity group-hover:opacity-100 ${
-                isUser
-                  ? isPendingUserTone
-                    ? "border-zinc-400/30 bg-zinc-900/55"
-                    : "border-indigo-300/35 bg-indigo-900/45"
-                  : "border-cyan-300/35 bg-cyan-900/35"
+          {(showMessageCopyButton || canEditMessage) && (
+            <div
+              className={`absolute right-2 top-2 flex items-center gap-1 transition-opacity ${
+                editing
+                  ? "opacity-100"
+                  : "opacity-70 hover:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
               }`}
-            />
+            >
+              {editing ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void saveEditing()}
+                    disabled={editSaving || !editDraft.trim()}
+                    className="inline-flex h-7 items-center gap-1 rounded-lg border border-emerald-300/35 bg-emerald-950/75 px-2 text-[11px] text-emerald-100 hover:bg-emerald-900/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Save edit (Ctrl/⌘+Enter)"
+                  >
+                    <Check size={12} />
+                    {editSaving ? "Saving" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelEditing}
+                    disabled={editSaving}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/20 bg-zinc-950/65 text-zinc-200 hover:bg-zinc-900/80 disabled:opacity-50"
+                    title="Cancel edit (Escape)"
+                    aria-label="Cancel message edit"
+                  >
+                    <X size={12} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  {canEditMessage && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditDraft(message.editText ?? "");
+                        setEditError(null);
+                        setEditing(true);
+                      }}
+                      className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border ${
+                        isUser
+                          ? "border-indigo-300/35 bg-indigo-900/45"
+                          : "border-cyan-300/35 bg-cyan-900/35"
+                      }`}
+                      title="Edit history message"
+                      aria-label="Edit history message"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  )}
+                  {showMessageCopyButton && messageCopyText && (
+                    <CopyButton
+                      text={messageCopyText}
+                      title="Copy message"
+                      className={`rounded-lg border ${
+                        isUser
+                          ? isPendingUserTone
+                            ? "border-zinc-400/30 bg-zinc-900/55"
+                            : "border-indigo-300/35 bg-indigo-900/45"
+                          : "border-cyan-300/35 bg-cyan-900/35"
+                      }`}
+                    />
+                  )}
+                </>
+              )}
+            </div>
           )}
         </div>
+
+        {editError && (
+          <div className="mt-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs text-rose-200">
+            {editError}
+          </div>
+        )}
 
         {hasAuxiliary && (
           <div className="flex flex-col gap-1 mt-1.5">

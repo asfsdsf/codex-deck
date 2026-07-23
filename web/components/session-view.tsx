@@ -20,6 +20,7 @@ import type {
 import MessageBlock from "./message-block";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
 import {
+  editConversationMessage as editConversationHistoryMessage,
   listCodexApprovalRequests,
   listCodexUserInputRequests,
   respondCodexApprovalRequest,
@@ -945,6 +946,13 @@ const SessionView = memo(
               lastEventAtRef.current = Date.now();
               setLoading(false);
             },
+            onReset: () => {
+              offsetRef.current = 0;
+              liveDeltaAccumulatorRef.current.clear();
+              messagesRef.current = [];
+              setMessages([]);
+              setLoading(true);
+            },
             onError: () => {
               if (messagesRef.current.length > 0) {
                 setLoading(false);
@@ -972,6 +980,36 @@ const SessionView = memo(
           },
         );
       }, [appendDisplayMessages, sessionId]);
+
+      const handleEditMessage = useCallback(
+        async (message: ConversationMessage, text: string) => {
+          const editId = message.editId?.trim() ?? "";
+          const expectedText = message.editText ?? "";
+          if (!editId || !expectedText) {
+            throw new Error("This message is no longer editable.");
+          }
+
+          await editConversationHistoryMessage(
+            sessionId,
+            editId,
+            expectedText,
+            text,
+          );
+          if (!mountedRef.current) {
+            return;
+          }
+
+          streamCleanupRef.current?.();
+          streamCleanupRef.current = null;
+          offsetRef.current = 0;
+          liveDeltaAccumulatorRef.current.clear();
+          messagesRef.current = [];
+          setMessages([]);
+          setLoading(true);
+          connect();
+        },
+        [connect, sessionId],
+      );
 
       useEffect(() => {
         mountedRef.current = true;
@@ -2068,6 +2106,7 @@ const SessionView = memo(
                 fallbackToolTimestampMap={toolTimestampMapByCallId}
                 onPlanAction={onPlanAction ? handlePlanAction : undefined}
                 onFilePathLinkClick={onFilePathLinkClick}
+                onEditMessage={handleEditMessage}
                 pendingUserInputRequests={
                   usesUserInputState ? pendingUserInputRequests : undefined
                 }
@@ -2125,6 +2164,7 @@ const SessionView = memo(
           aiTerminalTerminalId,
           agentsBootstrapMessage,
           handleChangeUserInputOtherText,
+          handleEditMessage,
           handlePlanAction,
           handleSelectUserInputOption,
           handleSubmitUserInputAnswers,

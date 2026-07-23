@@ -6,11 +6,17 @@ import {
   appendFile,
   writeFile,
   rm,
+  rename,
 } from "fs/promises";
 import { basename, isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { parseConversationTextChunk } from "../conversation-parser";
+import {
+  collectEditableMessagePairs,
+  getEditableResponseItem,
+} from "../conversation-edit-records";
 import { splitPathSegments } from "../path-utils";
 
 export interface HistoryEntry {
@@ -467,6 +473,30 @@ export interface DeleteSessionResponse {
   removedHistoryEntries: number;
   removedSessionIndexEntries: number;
   sqlite: DeleteSessionSqliteResult;
+}
+
+export interface EditConversationMessageRequest {
+  editId: string;
+  expectedText: string;
+  text: string;
+}
+
+export interface EditConversationMessageSqliteResult {
+  dbPath: string | null;
+  threadsUpdated: number;
+  skippedReason: string | null;
+  warnings: string[];
+}
+
+export interface EditConversationMessageResponse {
+  sessionId: string;
+  editId: string;
+  role: "user" | "assistant";
+  text: string;
+  sessionRecordsUpdated: number;
+  historyRecordsUpdated: number;
+  sqlite: EditConversationMessageSqliteResult;
+  appServerRestarted?: boolean;
 }
 
 export interface DeleteTerminalResponse {
@@ -1201,6 +1231,9 @@ export interface ConversationMessage {
   repeatCountMax?: number;
   rateLimitId?: string | null;
   threadGoal?: CodexThreadGoal;
+  editable?: boolean;
+  editId?: string;
+  editText?: string;
 }
 
 export interface ContentBlock {
@@ -1238,6 +1271,7 @@ export interface StreamResult {
   messages: ConversationMessage[];
   nextOffset: number;
   done: boolean;
+  fileId?: string;
 }
 
 export interface ConversationStreamOptions {
@@ -1248,6 +1282,7 @@ export interface ConversationRawChunkResponse {
   chunkBase64: string;
   nextOffset: number;
   done: boolean;
+  fileId?: string;
 }
 
 export interface ConversationRawWindowResponse {
@@ -1256,6 +1291,7 @@ export interface ConversationRawWindowResponse {
   endOffset: number;
   fileSize: number;
   done: boolean;
+  fileId?: string;
 }
 
 interface SessionMeta {
@@ -1339,6 +1375,7 @@ const sessionWaitStateCache = new Map<string, SessionWaitStateCacheEntry>();
 let historyCache: Map<string, SessionHistory> | null = null;
 
 const pendingRequests = new Map<string, Promise<unknown>>();
+const sessionEditQueues = new Map<string, Promise<void>>();
 const sessionToolNameIndex = new Map<string, Map<string, string>>();
 const sessionStreamLastReasoningMessage = new Map<
   string,
@@ -2724,6 +2761,29 @@ async function dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return promise;
 }
 
+async function serializeSessionEdit<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = sessionEditQueues.get(sessionId) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolveGate) => {
+    release = resolveGate;
+  });
+  const queued = previous.catch(() => undefined).then(() => gate);
+  sessionEditQueues.set(sessionId, queued);
+
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (sessionEditQueues.get(sessionId) === queued) {
+      sessionEditQueues.delete(sessionId);
+    }
+  }
+}
+
 async function findSessionFile(sessionId: string): Promise<string | null> {
   if (fileIndex.has(sessionId)) {
     return fileIndex.get(sessionId)!;
@@ -3072,6 +3132,195 @@ async function deleteSessionFromSqliteDbs(
   };
 }
 
+function escapeSqliteText(value: string): string {
+  return value.replaceAll("'", "''");
+}
+
+async function updateEditedMessageInSqlite(
+  sessionId: string,
+  role: "user" | "assistant",
+  oldText: string,
+  newText: string,
+  updateUserMetadata: boolean,
+): Promise<EditConversationMessageSqliteResult> {
+  const sqliteHome = await resolveSqliteHome(codexDir);
+  const stateDbPath = await findVersionedDbPath(
+    sqliteHome,
+    STATE_DB_FILE_REGEX,
+    LEGACY_STATE_DB_FILE,
+  );
+  if (!stateDbPath) {
+    return {
+      dbPath: null,
+      threadsUpdated: 0,
+      skippedReason: "state db not found",
+      warnings: [],
+    };
+  }
+  if (role !== "user") {
+    return {
+      dbPath: stateDbPath,
+      threadsUpdated: 0,
+      skippedReason: "assistant messages are not stored in the thread database",
+      warnings: [],
+    };
+  }
+  if (!updateUserMetadata) {
+    return {
+      dbPath: stateDbPath,
+      threadsUpdated: 0,
+      skippedReason:
+        "only the first user message is mirrored in the thread database",
+      warnings: [],
+    };
+  }
+
+  const sqliteVersion = spawnSync("sqlite3", ["-version"], {
+    encoding: "utf-8",
+  });
+  if (sqliteVersion.error || sqliteVersion.status !== 0) {
+    const message = sqliteVersion.error
+      ? sqliteVersion.error.message
+      : (sqliteVersion.stderr?.trim() ?? "sqlite3 command failed");
+    return {
+      dbPath: stateDbPath,
+      threadsUpdated: 0,
+      skippedReason: "sqlite3 is unavailable",
+      warnings: [message],
+    };
+  }
+
+  const escapedSessionId = escapeSqliteText(sessionId);
+  const escapedOldText = escapeSqliteText(oldText);
+  const escapedNewText = escapeSqliteText(newText);
+  try {
+    const output = runSqliteCommand(
+      stateDbPath,
+      `UPDATE threads
+       SET first_user_message=CASE WHEN first_user_message='${escapedOldText}' THEN '${escapedNewText}' ELSE first_user_message END,
+           title=CASE WHEN title='${escapedOldText}' THEN '${escapedNewText}' ELSE title END,
+           preview=CASE WHEN preview='${escapedOldText}' THEN '${escapedNewText}' ELSE preview END
+       WHERE id='${escapedSessionId}'
+         AND (first_user_message='${escapedOldText}' OR title='${escapedOldText}' OR preview='${escapedOldText}');
+       SELECT changes();`,
+    );
+    return {
+      dbPath: stateDbPath,
+      threadsUpdated: parseChangesResult(output),
+      skippedReason: null,
+      warnings: [],
+    };
+  } catch (error) {
+    return {
+      dbPath: stateDbPath,
+      threadsUpdated: 0,
+      skippedReason: "failed to update thread database",
+      warnings: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+function replaceResponseItemText(
+  payload: Record<string, unknown>,
+  text: string,
+): void {
+  if (typeof payload.content === "string") {
+    payload.content = text;
+    return;
+  }
+  if (!Array.isArray(payload.content)) {
+    throw new Error("editable message has no text content");
+  }
+
+  let replaced = false;
+  payload.content = payload.content.filter((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return true;
+    }
+    const block = item as Record<string, unknown>;
+    if (block.type !== "input_text" && block.type !== "output_text") {
+      return true;
+    }
+    if (replaced) {
+      return false;
+    }
+    block.text = text;
+    replaced = true;
+    return true;
+  });
+
+  if (!replaced) {
+    throw new Error("editable message has no text content");
+  }
+}
+
+async function writeFileAtomically(
+  filePath: string,
+  content: string,
+  mode?: number,
+): Promise<void> {
+  const tempPath = `${filePath}.codex-deck-edit-${process.pid}-${randomUUID()}`;
+  try {
+    await writeFile(tempPath, content, {
+      encoding: "utf-8",
+      ...(typeof mode === "number" ? { mode } : {}),
+    });
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function updateHistoryMessageRecords(
+  sessionId: string,
+  oldText: string,
+  newText: string,
+): Promise<number> {
+  let content: string;
+  let fileMode: number | undefined;
+  try {
+    const [loadedContent, fileStat] = await Promise.all([
+      readFile(codexHistoryPath, "utf-8"),
+      stat(codexHistoryPath),
+    ]);
+    content = loadedContent;
+    fileMode = fileStat.mode;
+  } catch {
+    return 0;
+  }
+
+  let updated = 0;
+  const lines = content.split("\n");
+  const nextLines = lines.map((line) => {
+    if (!line.trim()) {
+      return line;
+    }
+    const parsed = safeJsonParse(line);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return line;
+    }
+    const record = parsed as Record<string, unknown>;
+    const lineSessionId = getJsonRecordValue(record, HISTORY_SESSION_ID_KEYS);
+    if (
+      lineSessionId !== sessionId ||
+      typeof record.text !== "string" ||
+      record.text.trim() !== oldText
+    ) {
+      return line;
+    }
+    record.text = newText;
+    updated += 1;
+    return JSON.stringify(record);
+  });
+
+  if (updated > 0) {
+    await writeFileAtomically(codexHistoryPath, nextLines.join("\n"), fileMode);
+    invalidateHistoryCache();
+  }
+  return updated;
+}
+
 function truncateToolResult(content: string): string {
   if (content.length <= TOOL_RESULT_MAX_LENGTH) {
     return content;
@@ -3114,6 +3363,7 @@ function createChatMessage(
   content: ContentBlock[],
   uuid: string,
   timestamp?: string,
+  edit?: { editId: string; text: string },
 ): ConversationMessage {
   return {
     type: role,
@@ -3123,6 +3373,13 @@ function createChatMessage(
       role,
       content,
     },
+    ...(edit
+      ? {
+          editable: true,
+          editId: edit.editId,
+          editText: edit.text,
+        }
+      : {}),
   };
 }
 
@@ -3814,6 +4071,7 @@ function parseCodexConversation(
   const pendingToolCalls = new Map<string, PendingToolUse>();
   const pendingToolMessageIndexes = new Map<string, number>();
   const toolNames = knownToolNames ?? new Map<string, string>();
+  const editableMessagePairs = collectEditableMessagePairs(lines);
 
   for (const { line, offset } of lines) {
     const parsed = safeJsonParse(line);
@@ -4039,6 +4297,11 @@ function parseCodexConversation(
         continue;
       }
 
+      const editableRecord = getEditableResponseItem(
+        record as Record<string, unknown>,
+        offset,
+      );
+
       pushConversationMessage(
         messages,
         createChatMessage(
@@ -4046,6 +4309,12 @@ function parseCodexConversation(
           content,
           `${offset}:message:${messages.length}`,
           timestamp,
+          editableRecord && editableMessagePairs.has(offset)
+            ? {
+                editId: editableRecord.editId,
+                text: editableRecord.text,
+              }
+            : undefined,
         ),
       );
       continue;
@@ -4311,9 +4580,7 @@ export async function syncSessionFileIndex(
   return "removed";
 }
 
-export async function archiveSession(
-  sessionId: string,
-): Promise<{
+export async function archiveSession(sessionId: string): Promise<{
   sessionId: string;
   removedHistoryEntries: number;
   removedSessionIndexEntries: number;
@@ -4520,6 +4787,200 @@ export async function deleteSession(
   });
 }
 
+export async function editConversationMessage(
+  sessionId: string,
+  request: EditConversationMessageRequest,
+): Promise<EditConversationMessageResponse> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error("session id is required");
+  }
+  const editId = request.editId.trim();
+  const expectedText = request.expectedText.trim();
+  const text = request.text.trim();
+  if (!editId) {
+    throw new Error("edit id is required");
+  }
+  if (!expectedText) {
+    throw new Error("expected message text is required");
+  }
+  if (!text) {
+    throw new Error("message text is required");
+  }
+  if (text.length > 2_000_000) {
+    throw new Error("message text is too large");
+  }
+
+  return serializeSessionEdit(normalizedSessionId, async () => {
+    const waitState = await getSessionWaitState(normalizedSessionId);
+    if (waitState.isWaiting) {
+      throw new Error("messages cannot be edited while a turn is active");
+    }
+
+    const filePath = await findSessionFile(normalizedSessionId);
+    if (!filePath) {
+      throw new Error(`session file not found: ${normalizedSessionId}`);
+    }
+
+    const [content, fileStat] = await Promise.all([
+      readFile(filePath, "utf-8"),
+      stat(filePath),
+    ]);
+    const rawLines = content.split("\n");
+    const lines: Array<{ line: string; offset: number }> = [];
+    let offset = 0;
+    for (let index = 0; index < rawLines.length; index += 1) {
+      const line = rawLines[index];
+      lines.push({ line, offset });
+      offset += Buffer.byteLength(line, "utf-8");
+      if (index < rawLines.length - 1) {
+        offset += 1;
+      }
+    }
+
+    const editableMessagePairs = collectEditableMessagePairs(lines);
+    let firstEditableUserIndex: number | null = null;
+    let target:
+      | {
+          index: number;
+          record: Record<string, unknown>;
+          role: "user" | "assistant";
+          text: string;
+          eventOffset: number;
+        }
+      | undefined;
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const parsed = safeJsonParse(lines[index].line);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        continue;
+      }
+      const record = parsed as Record<string, unknown>;
+      const editable = getEditableResponseItem(record, lines[index].offset);
+      if (!editable) {
+        continue;
+      }
+      const eventOffset = editableMessagePairs.get(lines[index].offset);
+      if (eventOffset === undefined) {
+        continue;
+      }
+      if (editable.role === "user" && firstEditableUserIndex === null) {
+        firstEditableUserIndex = index;
+      }
+      if (editable.editId !== editId) {
+        continue;
+      }
+      if (target) {
+        throw new Error("edit id matched more than one message");
+      }
+      target = {
+        index,
+        record,
+        role: editable.role,
+        text: editable.text,
+        eventOffset,
+      };
+    }
+
+    if (!target) {
+      throw new Error("editable message was not found");
+    }
+    if (target.text !== expectedText) {
+      throw new Error("message changed before the edit was saved");
+    }
+    if (target.text === text) {
+      return {
+        sessionId: normalizedSessionId,
+        editId,
+        role: target.role,
+        text,
+        sessionRecordsUpdated: 0,
+        historyRecordsUpdated: 0,
+        sqlite: {
+          dbPath: null,
+          threadsUpdated: 0,
+          skippedReason: "message text is unchanged",
+          warnings: [],
+        },
+      };
+    }
+
+    const targetPayload = target.record.payload;
+    if (
+      !targetPayload ||
+      typeof targetPayload !== "object" ||
+      Array.isArray(targetPayload)
+    ) {
+      throw new Error("editable message payload is invalid");
+    }
+    replaceResponseItemText(targetPayload as Record<string, unknown>, text);
+    rawLines[target.index] = JSON.stringify(target.record);
+    let sessionRecordsUpdated = 1;
+
+    const eventIndex = lines.findIndex(
+      (line) => line.offset === target.eventOffset,
+    );
+    if (eventIndex >= 0) {
+      const parsed = safeJsonParse(lines[eventIndex].line);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        const payload = record.payload;
+        if (
+          record.type === "event_msg" &&
+          payload &&
+          typeof payload === "object" &&
+          !Array.isArray(payload) &&
+          typeof (payload as Record<string, unknown>).message === "string"
+        ) {
+          (payload as Record<string, unknown>).message = text;
+          rawLines[eventIndex] = JSON.stringify(record);
+          sessionRecordsUpdated += 1;
+        }
+      }
+    }
+
+    if (sessionRecordsUpdated < 2) {
+      throw new Error("paired message history records were not found");
+    }
+
+    const currentContent = await readFile(filePath, "utf-8");
+    if (currentContent !== content) {
+      throw new Error("session file changed before the edit was saved");
+    }
+    await writeFileAtomically(filePath, rawLines.join("\n"), fileStat.mode);
+
+    const updatesUserMetadata =
+      target.role === "user" && target.index === firstEditableUserIndex;
+    const historyRecordsUpdated = updatesUserMetadata
+      ? await updateHistoryMessageRecords(
+          normalizedSessionId,
+          target.text,
+          text,
+        )
+      : 0;
+    const sqlite = await updateEditedMessageInSqlite(
+      normalizedSessionId,
+      target.role,
+      target.text,
+      text,
+      updatesUserMetadata,
+    );
+
+    clearSessionCaches(normalizedSessionId);
+    await buildFileIndex();
+
+    return {
+      sessionId: normalizedSessionId,
+      editId,
+      role: target.role,
+      text,
+      sessionRecordsUpdated,
+      historyRecordsUpdated,
+      sqlite,
+    };
+  });
+}
+
 export async function getConversation(
   sessionId: string,
 ): Promise<ConversationMessage[]> {
@@ -4562,6 +5023,7 @@ export async function getConversationRawChunk(
   try {
     const fileStat = await stat(filePath);
     const fileSize = fileStat.size;
+    const fileId = `${fileStat.dev}:${fileStat.ino}`;
     const normalizedMaxBytes =
       Number.isFinite(maxBytes) && maxBytes > 0
         ? Math.floor(maxBytes)
@@ -4572,6 +5034,7 @@ export async function getConversationRawChunk(
         chunkBase64: "",
         nextOffset: fromOffset,
         done: true,
+        fileId,
       };
     }
 
@@ -4591,6 +5054,7 @@ export async function getConversationRawChunk(
       chunkBase64: buffer.subarray(0, bytesRead).toString("base64"),
       nextOffset,
       done: nextOffset >= fileSize,
+      fileId,
     };
   } catch (err) {
     console.error("Error reading conversation raw chunk:", err);
@@ -4627,6 +5091,7 @@ export async function getConversationRawWindow(
   try {
     const fileStat = await stat(filePath);
     const fileSize = fileStat.size;
+    const fileId = `${fileStat.dev}:${fileStat.ino}`;
     const normalizedMaxBytes =
       Number.isFinite(maxBytes) && maxBytes > 0
         ? Math.floor(maxBytes)
@@ -4643,6 +5108,7 @@ export async function getConversationRawWindow(
         endOffset: 0,
         fileSize,
         done: true,
+        fileId,
       };
     }
 
@@ -4655,6 +5121,7 @@ export async function getConversationRawWindow(
         endOffset: normalizedBefore,
         fileSize,
         done: normalizedBefore <= 0,
+        fileId,
       };
     }
 
@@ -4693,6 +5160,7 @@ export async function getConversationRawWindow(
       endOffset,
       fileSize,
       done: normalizedStartOffset <= 0,
+      fileId,
     };
   } catch (error) {
     console.error("Error reading conversation raw window:", error);
@@ -5037,6 +5505,7 @@ export async function getConversationStream(
 
     const fileStat = await stat(filePath);
     const fileSize = fileStat.size;
+    const fileId = `${fileStat.dev}:${fileStat.ino}`;
     const hasPayloadLimit =
       Number.isFinite(options.maxPayloadBytes) &&
       typeof options.maxPayloadBytes === "number" &&
@@ -5046,7 +5515,7 @@ export async function getConversationStream(
       : null;
 
     if (fromOffset >= fileSize) {
-      return { messages: [], nextOffset: fromOffset, done: true };
+      return { messages: [], nextOffset: fromOffset, done: true, fileId };
     }
 
     fileHandle = await open(filePath, "r");
@@ -5108,8 +5577,16 @@ export async function getConversationStream(
             candidatePayloadSize > maxPayloadBytes &&
             parsedLines.length > 1
           ) {
-            parsedLines.pop();
-            shouldIncludeLine = false;
+            const lastLineOffset = parsedLines[parsedLines.length - 1].offset;
+            const candidateEditablePairs =
+              collectEditableMessagePairs(parsedLines);
+            const completesEditablePair =
+              candidateEditablePairs.has(lastLineOffset) ||
+              [...candidateEditablePairs.values()].includes(lastLineOffset);
+            if (!completesEditablePair) {
+              parsedLines.pop();
+              shouldIncludeLine = false;
+            }
           }
         }
       }
@@ -5173,6 +5650,7 @@ export async function getConversationStream(
       messages,
       nextOffset,
       done,
+      fileId,
     };
   } catch (err) {
     console.error("Error reading conversation stream:", err);

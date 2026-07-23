@@ -19,6 +19,7 @@ function renderMessageBlock(
     aiTerminalContext?: React.ComponentProps<
       typeof MessageBlock
     >["aiTerminalContext"];
+    onEditMessage?: React.ComponentProps<typeof MessageBlock>["onEditMessage"];
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -28,6 +29,7 @@ function renderMessageBlock(
       searchForcePrimaryExpanded: options.searchForcePrimaryExpanded,
       searchForceBlockIndex: options.searchForceBlockIndex,
       aiTerminalContext: options.aiTerminalContext,
+      onEditMessage: options.onEditMessage,
     }),
   );
 }
@@ -784,4 +786,39 @@ test("MessageBlock keeps normal user markdown rendering for unrelated messages",
     /<strong class="font-semibold text-zinc-50">tests<\/strong>/,
   );
   assert.doesNotMatch(html, /Terminal Step/);
+});
+
+test("MessageBlock offers editing only for messages marked editable", () => {
+  const editableMessage: ConversationMessage = {
+    type: "assistant",
+    editable: true,
+    editId: "item:message-1",
+    editText: "Editable reply",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Editable reply" }],
+    },
+  };
+  const editableHtml = renderMessageBlock(editableMessage, {
+    onEditMessage: async () => undefined,
+  });
+  assert.match(editableHtml, /aria-label="Edit history message"/);
+
+  const toolMessage: ConversationMessage = {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: "command output",
+        },
+      ],
+    },
+  };
+  const toolHtml = renderMessageBlock(toolMessage, {
+    onEditMessage: async () => undefined,
+  });
+  assert.doesNotMatch(toolHtml, /aria-label="Edit history message"/);
 });

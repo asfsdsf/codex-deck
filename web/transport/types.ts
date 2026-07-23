@@ -34,6 +34,7 @@ export interface ConversationStreamHandlers {
     batch?: ConversationStreamBatch,
   ) => void;
   onHeartbeat?: () => void;
+  onReset?: () => void;
   onError?: () => void;
 }
 

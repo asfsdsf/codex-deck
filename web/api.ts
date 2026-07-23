@@ -30,6 +30,7 @@ import type {
   DeleteWorkflowResponse,
   DeleteSessionResponse,
   FixDanglingSessionResponse,
+  EditConversationMessageResponse,
   SessionExistsResponse,
   SessionFileContentResponse,
   SessionFileSearchResponse,
@@ -1269,6 +1270,25 @@ export async function getConversation(
 
   return requestJson<ConversationMessage[]>(
     `/api/conversation/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+export async function editConversationMessage(
+  sessionId: string,
+  editId: string,
+  expectedText: string,
+  text: string,
+): Promise<EditConversationMessageResponse> {
+  return requestJsonAndNotifyConversation<EditConversationMessageResponse>(
+    sessionId,
+    `/api/conversation/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(editId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ expectedText, text }),
+    },
   );
 }
 
