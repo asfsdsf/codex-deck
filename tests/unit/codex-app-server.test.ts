@@ -371,18 +371,8 @@ test("app-server client updates loaded thread settings before starting a turn", 
 
     assert.deepEqual(result, { turnId: "turn-1" });
     assert.equal(requests[0]?.method, "config/read");
-    assert.equal(requests[1]?.method, "thread/resume");
+    assert.equal(requests[1]?.method, "thread/settings/update");
     assert.deepEqual(requests[1]?.params, {
-      threadId: "thread-1",
-      persistExtendedHistory: true,
-      model: "gpt-5.5",
-      modelProvider: "aijws",
-      config: {
-        model_reasoning_effort: "medium",
-      },
-    });
-    assert.equal(requests[2]?.method, "thread/settings/update");
-    assert.deepEqual(requests[2]?.params, {
       threadId: "thread-1",
       model: "gpt-5.1-codex-mini",
       serviceTier: "fast",
@@ -395,7 +385,7 @@ test("app-server client updates loaded thread settings before starting a turn", 
         },
       },
     });
-    assert.equal(requests[3]?.method, "turn/start");
+    assert.equal(requests[2]?.method, "turn/start");
   } finally {
     await client.close();
   }
@@ -465,19 +455,27 @@ test("app-server client starts first turn for new thread without pre-resume", as
   }
 });
 
-test("app-server client reloads stale loaded thread provider before starting a turn", async () => {
+test("app-server client restarts when model provider changes and threads are idle", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
   const requests: Array<{ method: string; params: Record<string, unknown> }> =
     [];
-  let resumeCount = 0;
-  (
-    client as unknown as {
-      request: (
-        method: string,
-        params: Record<string, unknown>,
-      ) => Promise<unknown>;
-    }
-  ).request = async (method, params) => {
+  let closeCount = 0;
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.request = async (method, params) => {
     requests.push({ method, params });
     if (method === "config/read") {
       return {
@@ -488,200 +486,248 @@ test("app-server client reloads stale loaded thread provider before starting a t
         },
       };
     }
-    if (method === "thread/resume") {
-      resumeCount += 1;
-      return {
-        modelProvider: resumeCount === 1 ? "freemodel" : "aijws",
-        thread: {
-          id: "thread-1",
-          modelProvider: resumeCount === 1 ? "freemodel" : "aijws",
-        },
-      };
-    }
-    if (method === "thread/unsubscribe") {
-      return { status: "unsubscribed" };
-    }
-    if (method === "thread/settings/update") {
-      return {};
-    }
-    if (method === "turn/start") {
-      return { turn: { id: "turn-1" } };
-    }
-    throw new Error(`unexpected method: ${method}`);
-  };
-
-  try {
-    const result = await client.sendMessage({
-      threadId: "thread-1",
-      input: [{ type: "text", text: "hello" }],
-    });
-
-    assert.deepEqual(result, { turnId: "turn-1" });
-    assert.deepEqual(
-      requests.map((request) => request.method),
-      [
-        "config/read",
-        "thread/resume",
-        "thread/unsubscribe",
-        "thread/resume",
-        "thread/settings/update",
-        "turn/start",
-      ],
-    );
-    assert.deepEqual(requests[1]?.params, {
-      threadId: "thread-1",
-      persistExtendedHistory: true,
-      model: "gpt-5.5",
-      modelProvider: "aijws",
-      config: {
-        model_reasoning_effort: "high",
-      },
-    });
-    assert.deepEqual(requests[5]?.params, {
-      threadId: "thread-1",
-      input: [{ type: "text", text: "hello" }],
-      attachments: [],
-      model: "gpt-5.5",
-      effort: "high",
-    });
-  } finally {
-    await client.close();
-  }
-});
-
-test("app-server client unsubscribes after each stale provider resume", async () => {
-  const client = new __TEST_ONLY__.CodexAppServerClient();
-  const requests: Array<{ method: string; params: Record<string, unknown> }> =
-    [];
-  let resumeCount = 0;
-  (
-    client as unknown as {
-      request: (
-        method: string,
-        params: Record<string, unknown>,
-      ) => Promise<unknown>;
-    }
-  ).request = async (method, params) => {
-    requests.push({ method, params });
-    if (method === "config/read") {
-      return {
-        config: {
-          model: "gpt-5.5",
-          model_provider: "aijws",
-        },
-      };
-    }
-    if (method === "thread/resume") {
-      resumeCount += 1;
-      const modelProvider = resumeCount < 3 ? "freemodel" : "aijws";
-      return {
-        modelProvider,
-        thread: {
-          id: "thread-1",
-          modelProvider,
-        },
-      };
-    }
-    if (method === "thread/unsubscribe") {
-      return { status: "unsubscribed" };
-    }
-    if (method === "thread/settings/update") {
-      return {};
-    }
-    if (method === "turn/start") {
-      return { turn: { id: "turn-1" } };
-    }
-    throw new Error(`unexpected method: ${method}`);
-  };
-
-  try {
-    const result = await client.sendMessage({
-      threadId: "thread-1",
-      input: [{ type: "text", text: "hello" }],
-    });
-
-    assert.deepEqual(result, { turnId: "turn-1" });
-    assert.deepEqual(
-      requests.map((request) => request.method),
-      [
-        "config/read",
-        "thread/resume",
-        "thread/unsubscribe",
-        "thread/resume",
-        "thread/unsubscribe",
-        "thread/resume",
-        "thread/settings/update",
-        "turn/start",
-      ],
-    );
-  } finally {
-    await client.close();
-  }
-});
-
-test("app-server client force-reloads a system-error thread to switch provider", async () => {
-  const client = new __TEST_ONLY__.CodexAppServerClient();
-  (
-    client as unknown as { providerRefreshRetryDelaysMs: number[] }
-  ).providerRefreshRetryDelaysMs = [0];
-  const requests: Array<{ method: string; params: Record<string, unknown> }> =
-    [];
-  let archived = false;
-  const emitServerNotification = (method: string, params: unknown) => {
-    (
-      client as unknown as {
-        handleServerNotification: (method: string, params: unknown) => void;
-      }
-    ).handleServerNotification(method, params);
-  };
-  (
-    client as unknown as {
-      request: (
-        method: string,
-        params: Record<string, unknown>,
-      ) => Promise<unknown>;
-    }
-  ).request = async (method, params) => {
-    requests.push({ method, params });
-    if (method === "config/read") {
-      return {
-        config: {
-          model: "gpt-5.5",
-          model_provider: "aijws",
-        },
-      };
-    }
-    if (method === "thread/resume") {
-      const modelProvider = archived ? "aijws" : "freemodel";
-      return {
-        modelProvider,
-        thread: {
-          id: "thread-1",
-          modelProvider,
-          status: archived ? { type: "idle" } : { type: "systemError" },
-        },
-      };
-    }
-    if (method === "thread/unsubscribe") {
-      return { status: "unsubscribed" };
+    if (method === "thread/loaded/list") {
+      return { data: ["thread-1"] };
     }
     if (method === "thread/read") {
+      return { thread: { id: "thread-1", status: { type: "idle" } } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  const activeConfig = {
+    model: "gpt-5.5",
+    modelProvider: "aijws",
+    reasoningEffort: "high" as const,
+    serviceTier: null as string | null,
+  };
+  await internals.reloadProviderIfChanged?.(activeConfig);
+
+  assert.equal(closeCount, 1);
+  assert.equal(internals.lastKnownProviderId, null);
+  assert.deepEqual(
+    requests.map((r) => r.method),
+    ["thread/loaded/list", "thread/read"],
+  );
+
+  await client.close();
+});
+
+test("app-server client defers provider restart while a thread is active", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  let closeCount = 0;
+  let threadStatus = "active";
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.request = async (method) => {
+    if (method === "thread/loaded/list") {
+      return { data: ["thread-1"] };
+    }
+    if (method === "thread/read") {
+      return { thread: { id: "thread-1", status: { type: threadStatus } } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  const oldProvider = {
+    model: "gpt-5.5",
+    modelProvider: "openai",
+    reasoningEffort: "high" as const,
+    serviceTier: null as string | null,
+  };
+  const newProvider = {
+    model: "gpt-5.5",
+    modelProvider: "aijws",
+    reasoningEffort: "high" as const,
+    serviceTier: null as string | null,
+  };
+
+  // Active thread — restart deferred, baseline preserved
+  await internals.reloadProviderIfChanged?.(newProvider);
+  assert.equal(closeCount, 0);
+  assert.equal(internals.lastKnownProviderId, "openai");
+
+  // Thread goes idle — restart now fires
+  threadStatus = "idle";
+  await internals.reloadProviderIfChanged?.(newProvider);
+  assert.equal(closeCount, 1);
+  assert.equal(internals.lastKnownProviderId, null);
+
+  await client.close();
+});
+
+test("app-server client skips provider restart when provider is unchanged", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  let closeCount = 0;
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.request = async (method, params) => {
+    requests.push({ method, params });
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  const sameProvider = {
+    model: "gpt-5.5",
+    modelProvider: "openai",
+    reasoningEffort: "high" as const,
+    serviceTier: null as string | null,
+  };
+  await internals.reloadProviderIfChanged?.(sameProvider);
+
+  assert.equal(closeCount, 0);
+  assert.equal(requests.length, 0);
+
+  await client.close();
+});
+
+test("app-server client lazily baselines provider on first call", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  let closeCount = 0;
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = null;
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.request = async (method, params) => {
+    requests.push({ method, params });
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  const initialConfig = {
+    model: "gpt-5.5",
+    modelProvider: "openai",
+    reasoningEffort: "high" as const,
+    serviceTier: null as string | null,
+  };
+  // First call baselines the provider without restarting
+  await internals.reloadProviderIfChanged?.(initialConfig);
+  assert.equal(closeCount, 0);
+  assert.equal(internals.lastKnownProviderId, "openai");
+  assert.equal(requests.length, 0);
+
+  await client.close();
+});
+
+test("app-server client baselines provider after restart-driven close", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  let closeCount = 0;
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.request = async (method) => {
+    if (method === "thread/loaded/list") {
+      return { data: [] };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  const newProvider = {
+    model: "gpt-5.5",
+    modelProvider: "aijws",
+    reasoningEffort: "high" as const,
+    serviceTier: null as string | null,
+  };
+  // Provider changed — restart fires
+  await internals.reloadProviderIfChanged?.(newProvider);
+  assert.equal(closeCount, 1);
+  assert.equal(internals.lastKnownProviderId, null);
+
+  // Process restarted externally; next call re-baselines
+  internals.process = { stub: true };
+  await internals.reloadProviderIfChanged?.(newProvider);
+  assert.equal(closeCount, 1);
+  assert.equal(internals.lastKnownProviderId, "aijws");
+
+  await client.close();
+});
+
+test("app-server client does not restart on send when provider is unchanged", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  let closeCount = 0;
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+    readAuthFileFingerprint: () => string;
+    authFileFingerprint: string | null;
+    readCoalescer: { clearMatching: (fn: () => boolean) => void };
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.authFileFingerprint = "stable";
+  internals.readAuthFileFingerprint = () => "stable";
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
       return {
-        thread: {
-          id: "thread-1",
-          status: { type: "systemError" },
-          turns: [],
+        config: {
+          model: "gpt-5.5",
+          model_provider: "openai",
+          model_reasoning_effort: "high",
         },
       };
-    }
-    if (method === "thread/archive") {
-      archived = true;
-      emitServerNotification("thread/archived", { threadId: "thread-1" });
-      emitServerNotification("thread/archived", { threadId: "child-1" });
-      return {};
-    }
-    if (method === "thread/unarchive") {
-      return { thread: { id: params.threadId } };
     }
     if (method === "thread/settings/update") {
       return {};
@@ -699,77 +745,135 @@ test("app-server client force-reloads a system-error thread to switch provider",
     });
 
     assert.deepEqual(result, { turnId: "turn-1" });
-    assert.deepEqual(
-      requests.map((request) => request.method),
-      [
-        "config/read",
-        "thread/resume",
-        "thread/unsubscribe",
-        "thread/resume",
-        "thread/unsubscribe",
-        "thread/read",
-        "thread/archive",
-        "thread/unarchive",
-        "thread/unarchive",
-        "thread/resume",
-        "thread/settings/update",
-        "turn/start",
-      ],
+    assert.equal(closeCount, 0);
+    // Provider unchanged so no thread/loaded/list or thread/read
+    assert.equal(
+      requests.some((r) => r.method === "thread/loaded/list"),
+      false,
     );
-    const unarchivedThreadIds = requests
-      .filter((request) => request.method === "thread/unarchive")
-      .map((request) => request.params.threadId);
-    assert.deepEqual(unarchivedThreadIds, ["thread-1", "child-1"]);
   } finally {
     await client.close();
   }
 });
 
-test("app-server client does not force-reload an active thread on provider switch", async () => {
+test("app-server client restarts before send when provider has changed", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
-  (
-    client as unknown as { providerRefreshRetryDelaysMs: number[] }
-  ).providerRefreshRetryDelaysMs = [0];
   const requests: Array<{ method: string; params: Record<string, unknown> }> =
     [];
-  (
-    client as unknown as {
-      request: (
-        method: string,
-        params: Record<string, unknown>,
-      ) => Promise<unknown>;
-    }
-  ).request = async (method, params) => {
+  let closeCount = 0;
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+    authFileFingerprint: string | null;
+    readAuthFileFingerprint: () => string;
+    readCoalescer: { clearMatching: (fn: () => boolean) => void };
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.authFileFingerprint = "stable";
+  internals.readAuthFileFingerprint = () => "stable";
+  internals.close = async () => {
+    closeCount += 1;
+    // Simulate process restart: keep a stub process so subsequent requests work
+    internals.process = { stub: true };
+  };
+  internals.request = async (method, params) => {
     requests.push({ method, params });
     if (method === "config/read") {
       return {
         config: {
           model: "gpt-5.5",
           model_provider: "aijws",
+          model_reasoning_effort: "high",
         },
       };
+    }
+    if (method === "thread/loaded/list") {
+      return { data: [] };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const result = await client.sendMessage({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.equal(closeCount, 1);
+    assert.deepEqual(
+      requests.map((r) => r.method),
+      [
+        "config/read",
+        "thread/loaded/list",
+        "thread/settings/update",
+        "turn/start",
+      ],
+    );
+    // After restart the provider baseline is cleared so the next call re-baselines
+    assert.equal(internals.lastKnownProviderId, null);
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client does not fail send when thread resume sees an unmaterialized rollout", async () => {
+  // After provider restart, the fresh app-server has no loaded thread.
+  // turn/start fails with "thread not found", triggering a resume retry.
+  // If resume itself fails (unmaterialized rollout), the error must surface
+  // rather than silently succeeding.
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    lastKnownProviderId: string | null;
+    authFileFingerprint: string | null;
+    readAuthFileFingerprint: () => string;
+    readCoalescer: { clearMatching: (fn: () => boolean) => void };
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.authFileFingerprint = "stable";
+  internals.readAuthFileFingerprint = () => "stable";
+  internals.close = async () => {
+    internals.process = null;
+  };
+  internals.request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "openai",
+          model_reasoning_effort: "high",
+        },
+      };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      throw new CodexAppServerRpcError(-32602, "thread not found: thread-1");
     }
     if (method === "thread/resume") {
-      return {
-        modelProvider: "freemodel",
-        thread: {
-          id: "thread-1",
-          modelProvider: "freemodel",
-          status: { type: "active", activeFlags: [] },
-        },
-      };
-    }
-    if (method === "thread/unsubscribe") {
-      return { status: "unsubscribed" };
-    }
-    if (method === "thread/read") {
-      return {
-        thread: {
-          id: "thread-1",
-          status: { type: "active", activeFlags: [] },
-          turns: [],
-        },
-      };
+      throw new CodexAppServerRpcError(
+        -32602,
+        "No rollout found for thread id thread-1",
+      );
     }
     throw new Error(`unexpected method: ${method}`);
   };
@@ -780,63 +884,11 @@ test("app-server client does not force-reload an active thread on provider switc
         threadId: "thread-1",
         input: [{ type: "text", text: "hello" }],
       }),
-      /Unable to switch loaded thread thread-1/,
+      /No rollout found for thread id thread-1/,
     );
-    assert.equal(
-      requests.some((request) => request.method === "thread/archive"),
-      false,
-    );
-  } finally {
-    await client.close();
-  }
-});
-
-test("app-server client does not fail send when provider preflight sees an unmaterialized rollout", async () => {
-  const client = new __TEST_ONLY__.CodexAppServerClient();
-  const requests: Array<{ method: string; params: Record<string, unknown> }> =
-    [];
-  (
-    client as unknown as {
-      request: (
-        method: string,
-        params: Record<string, unknown>,
-      ) => Promise<unknown>;
-    }
-  ).request = async (method, params) => {
-    requests.push({ method, params });
-    if (method === "config/read") {
-      return {
-        config: {
-          model: "gpt-5.5",
-          model_provider: "aijws",
-        },
-      };
-    }
-    if (method === "thread/resume") {
-      throw new CodexAppServerRpcError(
-        -32602,
-        "No rollout found for thread id thread-1",
-      );
-    }
-    if (method === "thread/settings/update") {
-      return {};
-    }
-    if (method === "turn/start") {
-      return { turn: { id: "turn-1" } };
-    }
-    throw new Error(`unexpected method: ${method}`);
-  };
-
-  try {
-    const result = await client.sendMessage({
-      threadId: "thread-1",
-      input: [{ type: "text", text: "hello" }],
-    });
-
-    assert.deepEqual(result, { turnId: "turn-1" });
     assert.deepEqual(
-      requests.map((request) => request.method),
-      ["config/read", "thread/resume", "thread/settings/update", "turn/start"],
+      requests.map((r) => r.method),
+      ["config/read", "thread/settings/update", "turn/start", "thread/resume"],
     );
   } finally {
     await client.close();

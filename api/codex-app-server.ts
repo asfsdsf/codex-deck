@@ -798,19 +798,11 @@ class CodexAppServerClient {
     (event: CodexAppServerEvent) => void
   >();
   private readonly readCoalescer = createReadCoalescer();
-  private readonly resumeProviderRefreshInFlight = new Map<
-    string,
-    Promise<void>
-  >();
   private readonly newlyStartedThreadIds = new Set<string>();
-  private providerRefreshRetryDelaysMs: readonly number[] = [
-    250, 250, 500, 1_000, 1_500, 2_000, 2_500, 3_000,
-  ];
-  private readonly archivedThreadIdCollectors = new Set<
-    (threadId: string) => void
-  >();
   private authFileFingerprint: string | null = null;
   private authReloadInFlight: Promise<void> | null = null;
+  private lastKnownProviderId: string | null = null;
+  private providerReloadInFlight: Promise<void> | null = null;
   private appServerRestartInFlight: Promise<boolean> | null = null;
 
   public constructor(options: CodexAppServerClientOptions = {}) {
@@ -1230,6 +1222,7 @@ class CodexAppServerClient {
       ephemeral: false,
     };
     const activeConfig = await this.readActiveConfig(cwd);
+    await this.reloadProviderIfChanged(activeConfig);
     if (activeConfig.modelProvider) {
       params.modelProvider = activeConfig.modelProvider;
     }
@@ -1508,24 +1501,12 @@ class CodexAppServerClient {
 
     await this.reloadAuthIfChanged();
 
-    // The resume below re-subscribes this connection to the thread. Wait for
-    // any in-flight provider switch first so this call cannot re-subscribe
-    // the thread mid-switch and block the app-server from releasing it.
-    const providerRefresh =
-      this.resumeProviderRefreshInFlight.get(normalizedThreadId);
-    if (providerRefresh) {
-      try {
-        await providerRefresh;
-      } catch {
-        // The provider refresh surfaces its own errors to its caller.
-      }
-    }
-
     const resumeParams: Record<string, unknown> = {
       threadId: normalizedThreadId,
       persistExtendedHistory: true,
     };
     const activeConfig = await this.readActiveConfig();
+    await this.reloadProviderIfChanged(activeConfig);
     this.applyActiveConfigToResumeParams(resumeParams, activeConfig);
     const resumeResult = await this.request("thread/resume", resumeParams);
     const resumeRecord = asRecord(
@@ -1733,10 +1714,7 @@ class CodexAppServerClient {
     if (typeof params.effort !== "string" && activeConfig.reasoningEffort) {
       params.effort = activeConfig.reasoningEffort;
     }
-    const isNewlyStartedThread = this.newlyStartedThreadIds.has(threadId);
-    if (!isNewlyStartedThread) {
-      await this.refreshLoadedThreadProviderIfNeeded(threadId, activeConfig);
-    }
+    await this.reloadProviderIfChanged(activeConfig);
 
     try {
       this.clearThreadStateCache(threadId);
@@ -2122,251 +2100,6 @@ class CodexAppServerClient {
     this.clearThreadStateCache(threadId);
   }
 
-  private async refreshLoadedThreadProviderIfNeeded(
-    threadId: string,
-    activeConfig: ActiveCodexConfig,
-  ): Promise<void> {
-    const requestedProvider = activeConfig.modelProvider;
-    if (!requestedProvider) {
-      return;
-    }
-
-    const existing = this.resumeProviderRefreshInFlight.get(threadId);
-    if (existing) {
-      try {
-        await existing;
-      } catch (error) {
-        if (!shouldSkipProviderRefreshError(error)) {
-          throw error;
-        }
-      }
-      return;
-    }
-
-    const refresh = this.refreshLoadedThreadProvider(threadId, activeConfig);
-    this.resumeProviderRefreshInFlight.set(threadId, refresh);
-    try {
-      await refresh;
-    } catch (error) {
-      if (!shouldSkipProviderRefreshError(error)) {
-        throw error;
-      }
-    } finally {
-      this.resumeProviderRefreshInFlight.delete(threadId);
-    }
-  }
-
-  private async refreshLoadedThreadProvider(
-    threadId: string,
-    activeConfig: ActiveCodexConfig,
-  ): Promise<void> {
-    const requestedProvider = activeConfig.modelProvider;
-    if (!requestedProvider) {
-      return;
-    }
-
-    const resumeResult = await this.resumeThreadWithActiveConfig(
-      threadId,
-      activeConfig,
-    );
-    const activeProvider = extractProviderIdFromResumeResult(resumeResult);
-    if (!activeProvider || activeProvider === requestedProvider) {
-      return;
-    }
-
-    const unsubscribed =
-      await this.unsubscribeThreadForProviderRefresh(threadId);
-    if (!unsubscribed) {
-      return;
-    }
-
-    let switched = await this.resumeThreadAfterProviderUnsubscribe(
-      threadId,
-      activeConfig,
-    );
-    if (!switched) {
-      switched = await this.forceProviderSwitchForSystemErrorThread(
-        threadId,
-        activeConfig,
-      );
-    }
-    if (!switched) {
-      throw new CodexAppServerTransportError(
-        `Unable to switch loaded thread ${threadId} from provider ${activeProvider} to ${requestedProvider}. Try again after the current thread finishes closing, or close other active codex-deck views for this session.`,
-      );
-    }
-  }
-
-  private async resumeThreadAfterProviderUnsubscribe(
-    threadId: string,
-    activeConfig: ActiveCodexConfig,
-  ): Promise<boolean> {
-    let lastError: unknown = null;
-    for (const delayMs of this.providerRefreshRetryDelaysMs) {
-      if (delayMs > 0) {
-        await delay(delayMs);
-      }
-
-      try {
-        const resumeResult = await this.resumeThreadWithActiveConfig(
-          threadId,
-          activeConfig,
-        );
-        const activeProvider = extractProviderIdFromResumeResult(resumeResult);
-        if (
-          !activeConfig.modelProvider ||
-          !activeProvider ||
-          activeProvider === activeConfig.modelProvider
-        ) {
-          return true;
-        }
-
-        // A successful resume subscribes this app-server connection again,
-        // even when the thread is still using the provider that is closing.
-        // Release that subscription before the next retry so it cannot keep
-        // the stale thread loaded indefinitely.
-        const unsubscribed =
-          await this.unsubscribeThreadForProviderRefresh(threadId);
-        if (!unsubscribed) {
-          return false;
-        }
-
-        // The app-server only replaces a loaded thread whose status is
-        // strictly idle. A thread whose last turn errored stays in
-        // systemError until its next turn starts, so further resume retries
-        // can never convince the app-server to release it.
-        if (extractThreadStatusFromReadResult(resumeResult) === "systemError") {
-          return false;
-        }
-      } catch (error) {
-        if (!shouldRetryProviderRefreshResume(error)) {
-          throw error;
-        }
-        lastError = error;
-      }
-    }
-
-    if (lastError) {
-      throw lastError;
-    }
-    return false;
-  }
-
-  /**
-   * Last-resort provider switch for a loaded thread that the app-server
-   * refuses to replace. The resume-override path only evicts threads whose
-   * runtime status is strictly idle; a thread whose last turn ended with an
-   * error is stuck in systemError until a new turn starts, which deadlocks
-   * provider switching. Archive followed by unarchive is the only
-   * client-visible operation that fully shuts such a thread down, after which
-   * a cold resume applies the requested provider.
-   */
-  private async forceProviderSwitchForSystemErrorThread(
-    threadId: string,
-    activeConfig: ActiveCodexConfig,
-  ): Promise<boolean> {
-    const requestedProvider = activeConfig.modelProvider;
-    if (!requestedProvider) {
-      return false;
-    }
-
-    let runtimeStatus: CodexThreadRuntimeStatus;
-    try {
-      runtimeStatus = extractThreadStatusFromReadResult(
-        await this.readThreadWithTurns(threadId),
-      );
-    } catch {
-      return false;
-    }
-    if (runtimeStatus !== "systemError") {
-      // Never tear down a thread that is actively generating or waiting on
-      // approvals; the caller surfaces the retry guidance instead.
-      return false;
-    }
-
-    // Archiving a thread also archives its spawned descendant threads, and
-    // unarchive only restores the id it is given. Track the thread/archived
-    // notifications emitted during this operation so every archived thread is
-    // restored.
-    const archivedThreadIds = new Set<string>([threadId]);
-    const collector = (archivedThreadId: string) => {
-      archivedThreadIds.add(archivedThreadId);
-    };
-    this.archivedThreadIdCollectors.add(collector);
-    try {
-      await this.request("thread/archive", { threadId });
-      await this.unarchiveThreadWithRetry(threadId);
-      for (const archivedThreadId of archivedThreadIds) {
-        if (archivedThreadId === threadId) {
-          continue;
-        }
-        try {
-          await this.unarchiveThreadWithRetry(archivedThreadId);
-        } catch (error) {
-          console.warn(
-            `[codex-deck] failed to restore descendant thread ${archivedThreadId} after provider switch: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-    } finally {
-      this.archivedThreadIdCollectors.delete(collector);
-    }
-
-    this.clearThreadStateCache(threadId);
-    const resumeResult = await this.resumeThreadWithActiveConfig(
-      threadId,
-      activeConfig,
-    );
-    return (
-      extractProviderIdFromResumeResult(resumeResult) === requestedProvider
-    );
-  }
-
-  private async unarchiveThreadWithRetry(threadId: string): Promise<void> {
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (attempt > 0) {
-        await delay(250);
-      }
-      try {
-        await this.request("thread/unarchive", { threadId });
-        return;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError;
-  }
-
-  private async unsubscribeThreadForProviderRefresh(
-    threadId: string,
-  ): Promise<boolean> {
-    const result = await this.request("thread/unsubscribe", {
-      threadId,
-    });
-    const status = asTrimmedString(asRecord(result)?.status);
-    return (
-      status === "unsubscribed" ||
-      status === "notSubscribed" ||
-      status === "notLoaded"
-    );
-  }
-
-  private async resumeThreadWithActiveConfig(
-    threadId: string,
-    activeConfig: ActiveCodexConfig,
-  ): Promise<unknown> {
-    this.clearThreadStateCache(threadId);
-    const params: Record<string, unknown> = {
-      threadId,
-      persistExtendedHistory: true,
-    };
-    this.applyActiveConfigToResumeParams(params, activeConfig);
-    const result = await this.request("thread/resume", params);
-    this.clearThreadStateCache(threadId);
-    return result;
-  }
-
   private async updateThreadSettingsForTurn(
     threadId: string,
     turnParams: Record<string, unknown>,
@@ -2524,7 +2257,7 @@ class CodexAppServerClient {
     const wasRunning = this.process !== null;
     this.readCoalescer.clearMatching(() => true);
     this.newlyStartedThreadIds.clear();
-    this.resumeProviderRefreshInFlight.clear();
+    this.lastKnownProviderId = null;
     if (!wasRunning) {
       return false;
     }
@@ -2620,6 +2353,81 @@ class CodexAppServerClient {
     console.warn("[codex-deck] auth.json changed; restarting codex app-server");
     await this.close();
     this.readCoalescer.clearMatching(() => true);
+    this.lastKnownProviderId = null;
+  }
+
+  /**
+   * The app-server subprocess caches the model provider at startup. When the
+   * configured provider changes externally (for example, the user swaps
+   * providers in the codex-deck UI), restart the subprocess so the next
+   * request picks up the new provider. The restart is skipped while any
+   * loaded thread is actively generating; the next idle call retries.
+   */
+  private async reloadProviderIfChanged(
+    activeConfig: ActiveCodexConfig,
+  ): Promise<void> {
+    const existing = this.providerReloadInFlight;
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const reload = this.reloadProviderIfChangedInner(activeConfig);
+    this.providerReloadInFlight = reload;
+    try {
+      await reload;
+    } finally {
+      this.providerReloadInFlight = null;
+    }
+  }
+
+  private async reloadProviderIfChangedInner(
+    activeConfig: ActiveCodexConfig,
+  ): Promise<void> {
+    if (!this.process) {
+      return;
+    }
+
+    const currentProvider = activeConfig.modelProvider;
+
+    // Lazily baseline the provider on the first call after process startup.
+    if (this.lastKnownProviderId === null) {
+      this.lastKnownProviderId = currentProvider;
+      return;
+    }
+
+    if (currentProvider === this.lastKnownProviderId) {
+      return;
+    }
+
+    try {
+      const loadedThreadIds = await this.listLoadedThreadIds();
+      for (const threadId of loadedThreadIds) {
+        const status = extractThreadStatusFromReadResult(
+          await this.request("thread/read", {
+            threadId,
+            includeTurns: false,
+          }),
+        );
+        if (status === "active") {
+          console.warn(
+            "[codex-deck] model provider changed but a thread is actively generating; deferring app-server restart",
+          );
+          return;
+        }
+      }
+    } catch {
+      // Fail safe: if the busy check cannot complete, keep the old baseline
+      // so a later call retries the restart.
+      return;
+    }
+
+    console.warn(
+      "[codex-deck] model provider changed; restarting codex app-server",
+    );
+    await this.close();
+    this.readCoalescer.clearMatching(() => true);
+    this.lastKnownProviderId = null;
   }
 
   private ensureStarted(): void {
@@ -2868,16 +2676,6 @@ class CodexAppServerClient {
 
     if (method === "error") {
       this.handleErrorNotification(params);
-      return;
-    }
-
-    if (method === "thread/archived") {
-      const archivedThreadId = asTrimmedString(asRecord(params)?.threadId);
-      if (archivedThreadId) {
-        for (const collector of this.archivedThreadIdCollectors) {
-          collector(archivedThreadId);
-        }
-      }
       return;
     }
 
@@ -4350,22 +4148,6 @@ function extractActiveProviderIdFromConfigReadResult(
   return asTrimmedString(config.model_provider) ?? null;
 }
 
-function extractProviderIdFromResumeResult(result: unknown): string | null {
-  const record = asRecord(result);
-  if (!record) {
-    return null;
-  }
-
-  const thread = asRecord(record.thread);
-  return (
-    asTrimmedString(record.modelProvider) ??
-    asTrimmedString(record.model_provider) ??
-    asTrimmedString(thread?.modelProvider) ??
-    asTrimmedString(thread?.model_provider) ??
-    null
-  );
-}
-
 function extractAuthStatusResult(result: unknown): {
   authMode: CodexAuthMode | null;
   authToken: string | null;
@@ -4576,19 +4358,6 @@ function shouldRetryAfterResume(error: unknown): boolean {
   );
 }
 
-function shouldRetryProviderRefreshResume(error: unknown): boolean {
-  if (!shouldRetryAfterResume(error)) {
-    return false;
-  }
-
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  return (
-    message.includes("is closing") ||
-    message.includes("retry thread/resume") ||
-    message.includes("retry after the thread is closed")
-  );
-}
-
 function shouldIgnoreThreadSettingsUpdateError(error: unknown): boolean {
   if (!(error instanceof CodexAppServerRpcError)) {
     return false;
@@ -4602,22 +4371,6 @@ function shouldIgnoreThreadSettingsUpdateError(error: unknown): boolean {
     message.includes("unknown method") ||
     message.includes("not found")
   );
-}
-
-function shouldSkipProviderRefreshError(error: unknown): boolean {
-  if (!shouldRetryAfterResume(error)) {
-    return false;
-  }
-
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  return (
-    message.includes("no rollout found for thread id") ||
-    message.includes("not materialized yet")
-  );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function toCollaborationModePayload(
