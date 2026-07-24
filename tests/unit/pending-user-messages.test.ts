@@ -64,6 +64,20 @@ test("updatePendingUserMessageStatus updates only matching entry", () => {
   assert.equal(next[SESSION_ID][1].status, "awaiting_confirmation");
 });
 
+test("updatePendingUserMessageStatus associates the confirmed turn", () => {
+  const initial = buildState();
+  const next = updatePendingUserMessageStatus(
+    initial,
+    SESSION_ID,
+    "a",
+    "awaiting_confirmation",
+    " turn-1 ",
+  );
+
+  assert.equal(next[SESSION_ID][0].turnId, "turn-1");
+  assert.equal(next[SESSION_ID][1].turnId, undefined);
+});
+
 test("removePendingUserMessage removes matching entry", () => {
   const initial = buildState();
   const next = removePendingUserMessage(initial, SESSION_ID, "b");

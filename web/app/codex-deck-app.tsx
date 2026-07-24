@@ -8698,13 +8698,14 @@ export default function CodexDeckApp() {
   );
 
   const markPendingUserMessageAwaitingConfirmation = useCallback(
-    (sessionId: string, pendingId: string) => {
+    (sessionId: string, pendingId: string, turnId: string | null) => {
       setPendingUserMessagesBySession((current) =>
         updatePendingUserMessageStatus(
           current,
           sessionId,
           pendingId,
           "awaiting_confirmation",
+          turnId,
         ),
       );
     },
@@ -8863,7 +8864,11 @@ export default function CodexDeckApp() {
 
         setSessionMode(sessionId, modeToUse);
         pendingSendOptionsByIdRef.current.delete(pendingId);
-        markPendingUserMessageAwaitingConfirmation(sessionId, pendingId);
+        markPendingUserMessageAwaitingConfirmation(
+          sessionId,
+          pendingId,
+          response.turnId,
+        );
         setPendingTurn({
           sessionId,
           turnId: response.turnId,
@@ -10383,6 +10388,7 @@ export default function CodexDeckApp() {
         markPendingUserMessageAwaitingConfirmation(
           terminalComposerSessionId,
           pendingId,
+          response.turnId,
         );
         if (response.turnId) {
           setPendingTurn({

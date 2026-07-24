@@ -8,6 +8,7 @@ export interface PendingUserMessage {
   text: string;
   images: string[];
   status: PendingUserMessageStatus;
+  turnId?: string | null;
 }
 
 export type PendingUserMessagesBySession = Record<string, PendingUserMessage[]>;
@@ -29,6 +30,7 @@ export function updatePendingUserMessageStatus(
   sessionId: string,
   pendingId: string,
   status: PendingUserMessageStatus,
+  turnId?: string | null,
 ): PendingUserMessagesBySession {
   const current = previous[sessionId];
   if (!Array.isArray(current) || current.length === 0) {
@@ -37,13 +39,22 @@ export function updatePendingUserMessageStatus(
 
   let changed = false;
   const next = current.map((entry) => {
-    if (entry.pendingId !== pendingId || entry.status === status) {
+    if (entry.pendingId !== pendingId) {
       return entry;
     }
+
+    const normalizedTurnId = turnId?.trim() || null;
+    const shouldUpdateTurnId =
+      turnId !== undefined && entry.turnId !== normalizedTurnId;
+    if (entry.status === status && !shouldUpdateTurnId) {
+      return entry;
+    }
+
     changed = true;
     return {
       ...entry,
       status,
+      ...(turnId !== undefined ? { turnId: normalizedTurnId } : {}),
     };
   });
 

@@ -62,6 +62,7 @@ import {
 } from "../ai-terminal";
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
+import { mergePendingConversationMessages } from "../pending-conversation-messages";
 
 const SCROLL_THRESHOLD_PX = 100;
 const USER_INPUT_POLL_INTERVAL_MS = 1200;
@@ -89,6 +90,7 @@ interface PagedMessageEntry {
   timestampText: string | null;
   timestampAlignment: string;
   group: "default" | "important";
+  pendingUserMessage: PendingUserMessage | null;
 }
 
 interface ConversationSearchMatchTarget {
@@ -1695,12 +1697,22 @@ const SessionView = memo(
       }, [messages]);
 
       const summary = messages.find((m) => m.type === "summary");
-      const visibleMessages = messages.filter(isVisibleConversationMessage);
+      const displayConversationMessages = useMemo(
+        () => mergePendingConversationMessages(messages, pendingUserMessages),
+        [messages, pendingUserMessages],
+      );
+      const visibleConversationMessages = displayConversationMessages.filter(
+        (entry) => isVisibleConversationMessage(entry.message),
+      );
+      const visibleMessages = visibleConversationMessages.map(
+        (entry) => entry.message,
+      );
       const visibleMessageEntries = useMemo<PagedMessageEntry[]>(() => {
-        return visibleMessages.map((message, visibleIndex) => {
+        return visibleConversationMessages.map((displayEntry, visibleIndex) => {
+          const { message, pendingUserMessage } = displayEntry;
           const usesUserInputState = messageUsesUserInputState(message);
           const isLastVisibleMessage =
-            visibleIndex === visibleMessages.length - 1;
+            visibleIndex === visibleConversationMessages.length - 1;
           const shouldShowTimestamp =
             message.type === "user" ||
             message.type === "system_error" ||
@@ -1723,9 +1735,10 @@ const SessionView = memo(
             timestampText,
             timestampAlignment,
             group: getViewportMessageGroup(message),
+            pendingUserMessage,
           };
         });
-      }, [visibleMessages]);
+      }, [visibleConversationMessages]);
       const latestAiTerminalPlanEntryKey = useMemo(() => {
         for (
           let index = visibleMessageEntries.length - 1;
@@ -2086,6 +2099,65 @@ const SessionView = memo(
                 }
               : undefined;
 
+          if (entry.pendingUserMessage) {
+            const pendingMessage = entry.pendingUserMessage;
+            return (
+              <div key={entry.entryKey} data-search-entry={entry.entryKey}>
+                <MessageBlock message={message} userTone="pending" />
+                {pendingMessage.status === "queued" &&
+                (onForceSendPendingUserMessage ||
+                  onCancelPendingUserMessage) ? (
+                  <div className="mt-1 flex items-center justify-end gap-2">
+                    <span className="text-[11px] text-zinc-500">
+                      Queued — sends when the current turn finishes
+                    </span>
+                    {onForceSendPendingUserMessage ? (
+                      <button
+                        type="button"
+                        disabled={forceSendingPendingId !== null}
+                        onClick={() => {
+                          setForceSendingPendingId(pendingMessage.pendingId);
+                          void onForceSendPendingUserMessage(
+                            sessionId,
+                            pendingMessage.pendingId,
+                          ).finally(() => {
+                            setForceSendingPendingId((current) =>
+                              current === pendingMessage.pendingId
+                                ? null
+                                : current,
+                            );
+                          });
+                        }}
+                        className="rounded border border-indigo-400/40 bg-indigo-600/20 px-2.5 py-1 text-[11px] text-indigo-200 transition-colors hover:bg-indigo-600/35 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {forceSendingPendingId === pendingMessage.pendingId
+                          ? "Sending..."
+                          : "Send now"}
+                      </button>
+                    ) : null}
+                    {onCancelPendingUserMessage ? (
+                      <button
+                        type="button"
+                        disabled={
+                          forceSendingPendingId === pendingMessage.pendingId
+                        }
+                        onClick={() =>
+                          onCancelPendingUserMessage(
+                            sessionId,
+                            pendingMessage.pendingId,
+                          )
+                        }
+                        className="rounded border border-zinc-500/50 bg-zinc-800/40 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-700/50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          }
+
           return (
             <div key={entry.entryKey} data-search-entry={entry.entryKey}>
               <MessageBlock
@@ -2163,6 +2235,7 @@ const SessionView = memo(
           activeSearchMatch,
           aiTerminalTerminalId,
           agentsBootstrapMessage,
+          forceSendingPendingId,
           handleChangeUserInputOtherText,
           handleEditMessage,
           handlePlanAction,
@@ -2170,7 +2243,9 @@ const SessionView = memo(
           handleSubmitUserInputAnswers,
           latestAiTerminalPlanEntryKey,
           onApproveAiTerminalStep,
+          onCancelPendingUserMessage,
           onFilePathLinkClick,
+          onForceSendPendingUserMessage,
           onPlanAction,
           onRejectAiTerminalStep,
           pendingUserInputRequests,
@@ -2492,44 +2567,6 @@ const SessionView = memo(
         shouldFollowActiveSearchMatchRef.current = false;
       }, [activeSearchMatch, safeCurrentPage]);
 
-      const pendingEntriesOnLatestPage = useMemo(() => {
-        if (!isLatestPage || pendingUserMessages.length === 0) {
-          return [];
-        }
-
-        return pendingUserMessages.map((pendingMessage, index) => {
-          const contentBlocks: NonNullable<
-            ConversationMessage["message"]
-          >["content"] = [
-            ...(pendingMessage.text.trim().length > 0
-              ? [{ type: "text" as const, text: pendingMessage.text }]
-              : []),
-            ...pendingMessage.images
-              .filter(
-                (imageUrl) =>
-                  typeof imageUrl === "string" && imageUrl.trim().length > 0,
-              )
-              .map((imageUrl) => ({
-                type: "image" as const,
-                image_url: imageUrl,
-              })),
-          ];
-
-          return {
-            entryKey: `pending:${pendingMessage.pendingId}:${index}`,
-            pendingId: pendingMessage.pendingId,
-            status: pendingMessage.status,
-            message: {
-              type: "user" as const,
-              uuid: `pending:${pendingMessage.pendingId}`,
-              message: {
-                role: "user",
-                content: contentBlocks,
-              },
-            } satisfies ConversationMessage,
-          };
-        });
-      }, [isLatestPage, pendingUserMessages]);
       const hasSessionShortcut =
         workflowShortcut !== null || terminalShortcut !== null;
 
@@ -2776,57 +2813,6 @@ const SessionView = memo(
                     </div>
                   );
                 })}
-                {pendingEntriesOnLatestPage.map((entry) => (
-                  <div key={entry.entryKey}>
-                    <MessageBlock message={entry.message} userTone="pending" />
-                    {entry.status === "queued" &&
-                    (onForceSendPendingUserMessage ||
-                      onCancelPendingUserMessage) ? (
-                      <div className="mt-1 flex items-center justify-end gap-2">
-                        <span className="text-[11px] text-zinc-500">
-                          Queued — sends when the current turn finishes
-                        </span>
-                        {onForceSendPendingUserMessage ? (
-                          <button
-                            type="button"
-                            disabled={forceSendingPendingId !== null}
-                            onClick={() => {
-                              setForceSendingPendingId(entry.pendingId);
-                              void onForceSendPendingUserMessage(
-                                sessionId,
-                                entry.pendingId,
-                              ).finally(() => {
-                                setForceSendingPendingId((current) =>
-                                  current === entry.pendingId ? null : current,
-                                );
-                              });
-                            }}
-                            className="rounded border border-indigo-400/40 bg-indigo-600/20 px-2.5 py-1 text-[11px] text-indigo-200 transition-colors hover:bg-indigo-600/35 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {forceSendingPendingId === entry.pendingId
-                              ? "Sending..."
-                              : "Send now"}
-                          </button>
-                        ) : null}
-                        {onCancelPendingUserMessage ? (
-                          <button
-                            type="button"
-                            disabled={forceSendingPendingId === entry.pendingId}
-                            onClick={() =>
-                              onCancelPendingUserMessage(
-                                sessionId,
-                                entry.pendingId,
-                              )
-                            }
-                            className="rounded border border-zinc-500/50 bg-zinc-800/40 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-700/50 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            Cancel
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
               </div>
             </div>
           </div>

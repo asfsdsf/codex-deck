@@ -236,7 +236,9 @@ function replaceDuplicateMessage(
   if (index === -1) {
     return false;
   }
-  if (!shouldReplaceDuplicateMessage(previousMessages[index], incomingMessage)) {
+  if (
+    !shouldReplaceDuplicateMessage(previousMessages[index], incomingMessage)
+  ) {
     return false;
   }
   previousMessages[index] = incomingMessage;
@@ -348,6 +350,32 @@ function mergeTokenLimitNotice(
   return true;
 }
 
+function insertUserBeforeLiveTurn(
+  previousMessages: ConversationMessage[],
+  incomingMessage: ConversationMessage,
+): boolean {
+  if (incomingMessage.type !== "user") {
+    return false;
+  }
+
+  const turnId = getMessageTurnId(incomingMessage);
+  if (!turnId) {
+    return false;
+  }
+
+  const liveTurnIndex = previousMessages.findIndex(
+    (message) =>
+      isLiveConversationMessage(message) &&
+      getMessageTurnId(message) === turnId,
+  );
+  if (liveTurnIndex < 0) {
+    return false;
+  }
+
+  previousMessages.splice(liveTurnIndex, 0, incomingMessage);
+  return true;
+}
+
 function mergePrependedTokenLimitBoundary(
   previousMessages: ConversationMessage[],
   incomingMessages: ConversationMessage[],
@@ -443,6 +471,9 @@ export function mergeDisplayConversationMessages(
       continue;
     }
     if (mergeToolResultIntoPendingMessage(nextMessages, message)) {
+      continue;
+    }
+    if (insertUserBeforeLiveTurn(nextMessages, message)) {
       continue;
     }
     nextMessages.push(message);

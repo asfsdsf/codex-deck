@@ -246,7 +246,7 @@ test("authoritative assistant messages without turn ids remove matching live str
   assert.equal(merged[0].uuid, "log-message-1");
 });
 
-test("user messages do not remove live streamed assistant messages", () => {
+test("user messages are inserted before live streamed output from the same turn", () => {
   const previousMessages: ConversationMessage[] = [
     {
       type: "assistant",
@@ -277,8 +277,44 @@ test("user messages do not remove live streamed assistant messages", () => {
   );
 
   assert.equal(merged.length, 2);
-  assert.equal(merged[0].uuid, "live:thread-1:turn-1:item-1:assistant_delta");
-  assert.equal(merged[1].uuid, "log-user-1");
+  assert.equal(merged[0].uuid, "log-user-1");
+  assert.equal(merged[1].uuid, "live:thread-1:turn-1:item-1:assistant_delta");
+});
+
+test("user messages remain after live output from a different turn", () => {
+  const previousMessages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      uuid: "live:thread-1:turn-1:item-1:assistant_delta",
+      turnId: "turn-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Live text" }],
+      },
+    },
+  ];
+  const incomingMessages: ConversationMessage[] = [
+    {
+      type: "user",
+      uuid: "log-user-2",
+      turnId: "turn-2",
+      message: {
+        role: "user",
+        content: "Next prompt",
+      },
+    },
+  ];
+
+  const merged = mergeDisplayConversationMessages(
+    previousMessages,
+    incomingMessages,
+    "append",
+  );
+
+  assert.deepEqual(
+    merged.map((message) => message.uuid),
+    ["live:thread-1:turn-1:item-1:assistant_delta", "log-user-2"],
+  );
 });
 
 test("merges token limit notices across prepend boundaries", () => {

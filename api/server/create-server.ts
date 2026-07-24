@@ -176,6 +176,7 @@ const __dirname = dirname(__filename);
 const DEFAULT_CONVERSATION_CHUNK_MAX_BYTES = 512 * 1024;
 const DEFAULT_CONVERSATION_RAW_CHUNK_MAX_BYTES = 512 * 1024;
 const DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES = 128 * 1024;
+const CONVERSATION_RECONCILE_INTERVAL_MS = 2_000;
 const SESSION_DELTA_LOG_LIMIT = 500;
 const ENABLE_WAIT_MODE_DETECTION_LOG = false;
 const SIDE_CONVERSATION_BOUNDARY_PROMPT = `Side conversation boundary.
@@ -1771,6 +1772,7 @@ export function createServer(options: ServerOptions) {
   const appServerEventListeners = new Set<
     (event: CodexAppServerEvent) => void
   >();
+  const conversationWakeListeners = new Set<(sessionId: string) => void>();
   let unsubscribeAppServerEventSource: (() => void) | null = null;
   const ensureAppServerEventSourceSubscribed = () => {
     if (unsubscribeAppServerEventSource) {
@@ -2006,6 +2008,9 @@ export function createServer(options: ServerOptions) {
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
     for (const listener of appServerEventListeners) {
       listener(event);
+    }
+    for (const listener of conversationWakeListeners) {
+      listener(event.threadId);
     }
   };
 
@@ -3561,7 +3566,11 @@ export function createServer(options: ServerOptions) {
     return streamSSE(c, async (stream) => {
       let isConnected = true;
       let fileId: string | null = null;
+      let writeInFlight: Promise<void> | null = null;
+      let writeRequested = false;
+      let emitWhenEmptyRequested = false;
       const disconnectController = new AbortController();
+      let reconcileTimer: ReturnType<typeof setInterval> | null = null;
 
       const writeConversationBatches = async (
         emitWhenEmpty: boolean,
@@ -3616,6 +3625,31 @@ export function createServer(options: ServerOptions) {
         }
       };
 
+      const scheduleConversationWrite = async (
+        emitWhenEmpty: boolean,
+      ): Promise<void> => {
+        writeRequested = true;
+        emitWhenEmptyRequested ||= emitWhenEmpty;
+        if (writeInFlight) {
+          return writeInFlight;
+        }
+
+        writeInFlight = (async () => {
+          while (isConnected && writeRequested) {
+            writeRequested = false;
+            const shouldEmitWhenEmpty = emitWhenEmptyRequested;
+            emitWhenEmptyRequested = false;
+            await writeConversationBatches(shouldEmitWhenEmpty);
+          }
+        })();
+
+        try {
+          await writeInFlight;
+        } finally {
+          writeInFlight = null;
+        }
+      };
+
       const cleanup = () => {
         if (!isConnected) {
           return;
@@ -3623,6 +3657,11 @@ export function createServer(options: ServerOptions) {
         isConnected = false;
         disconnectController.abort();
         offSessionChange(handleSessionChange);
+        conversationWakeListeners.delete(handleSessionChange);
+        if (reconcileTimer) {
+          clearInterval(reconcileTimer);
+          reconcileTimer = null;
+        }
       };
 
       const handleSessionChange = async (changedSessionId: string) => {
@@ -3631,18 +3670,22 @@ export function createServer(options: ServerOptions) {
         }
 
         try {
-          await writeConversationBatches(false);
+          await scheduleConversationWrite(false);
         } catch {
           cleanup();
         }
       };
 
       onSessionChange(handleSessionChange);
+      conversationWakeListeners.add(handleSessionChange);
+      reconcileTimer = setInterval(() => {
+        void handleSessionChange(sessionId);
+      }, CONVERSATION_RECONCILE_INTERVAL_MS);
       stream.onAbort(cleanup);
       c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
 
       try {
-        await writeConversationBatches(true);
+        await scheduleConversationWrite(true);
 
         while (isConnected) {
           await stream.writeSSE({
@@ -4273,6 +4316,10 @@ export function createServer(options: ServerOptions) {
         ...(effort !== undefined ? { effort } : {}),
         ...(collaborationMode !== undefined ? { collaborationMode } : {}),
       });
+
+      for (const listener of conversationWakeListeners) {
+        listener(threadId);
+      }
 
       const response: SendCodexMessageResponse = {
         ok: true,
