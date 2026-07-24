@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { program } from "commander";
 import { createServer } from "./server";
-import { homedir } from "os";
 import { join } from "path";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 import { createHash } from "crypto";
+import { resolveDefaultCodexHome } from "./codex-home";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,7 +26,7 @@ program
   .description("A beautiful web UI for browsing Codex CLI conversation history")
   .version(getVersion())
   .option("-p, --port <number>", "Port to listen on", "12001")
-  .option("-d, --dir <path>", "Codex directory path", join(homedir(), ".codex"))
+  .option("-d, --dir <path>", "Codex directory path", resolveDefaultCodexHome())
   .option("--dev", "Enable CORS for development")
   .option("--no-open", "Do not open browser automatically")
   .option(

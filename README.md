@@ -192,7 +192,7 @@ codex-deck [options]
 Options:
   -V, --version        Show version number
   -p, --port <number>  Port to listen on (default: 12001)
-  -d, --dir <path>     Codex directory path (default: ~/.codex)
+  -d, --dir <path>     Codex directory path (default: $CODEX_HOME or ~/.codex)
   --dev                Enable CORS for development (frontend at localhost:12000)
   --no-open            Do not open browser automatically
   -h, --help           Show help
