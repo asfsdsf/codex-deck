@@ -1282,7 +1282,16 @@ function collectCompleteConversationLines(
     if (line.trim()) {
       const parsed = safeJsonParse(line);
       if (parsed === null) {
-        break;
+        if (!hasNewline) {
+          // Incomplete tail line still being written; retry on the next read.
+          break;
+        }
+        // A newline-terminated line that fails to parse is permanently
+        // malformed; skip it so the stream offset can advance past it.
+        consumedBytes += lineBytes;
+        currentOffset += lineBytes;
+        cursor = newlineIndex + 1;
+        continue;
       }
 
       lines.push({

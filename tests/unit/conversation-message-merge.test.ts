@@ -465,3 +465,33 @@ test("replaces duplicate reasoning messages when token usage arrives later", () 
     reasoning_output_tokens: 68,
   });
 });
+
+test("replacing a live message does not mutate the previous array", () => {
+  const liveMessage: ConversationMessage = {
+    type: "assistant",
+    uuid: "live:turn_1",
+    turnId: "turn_1",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "partial" }],
+    },
+  };
+  const updatedLiveMessage: ConversationMessage = {
+    type: "assistant",
+    uuid: "live:turn_1",
+    turnId: "turn_1",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "partial plus more" }],
+    },
+  };
+  const previousMessages = [liveMessage];
+
+  const merged = mergeDisplayConversationMessages(previousMessages, [
+    updatedLiveMessage,
+  ]);
+
+  assert.notEqual(merged, previousMessages);
+  assert.equal(previousMessages[0], liveMessage);
+  assert.equal(merged[0], updatedLiveMessage);
+});

@@ -224,3 +224,39 @@ test("parseConversationTextChunk renders thread goal updates as messages", () =>
   assert.equal(messages[0]?.threadGoal?.status, "active");
   assert.equal(messages[0]?.threadGoal?.tokenBudget, 10000);
 });
+
+test("parseConversationTextChunk skips newline-terminated malformed lines", () => {
+  const validLine = line({
+    timestamp: "2026-04-07T12:05:34.190Z",
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "After corruption." }],
+    },
+  });
+  const text = `{corrupted line\n${validLine}\n`;
+
+  const { messages, consumedBytes } = parseConversationTextChunk(text, 0);
+
+  assert.equal(consumedBytes, Buffer.byteLength(text, "utf-8"));
+  assert.equal(
+    messages.some(
+      (message) =>
+        message.type === "assistant" &&
+        Array.isArray(message.message?.content) &&
+        message.message.content.some(
+          (block) =>
+            block.type === "text" && block.text === "After corruption.",
+        ),
+    ),
+    true,
+  );
+});
+
+test("parseConversationTextChunk still treats an unterminated tail as partial", () => {
+  const text = `{"incomplete": tr`;
+  const { messages, consumedBytes } = parseConversationTextChunk(text, 0);
+  assert.equal(messages.length, 0);
+  assert.equal(consumedBytes, 0);
+});

@@ -470,27 +470,36 @@ export function registerTerminalRoutes(app: Hono): void {
         }
       };
 
-      const writeTerminals = async (terminals: TerminalSummary[]) => {
-        if (!isConnected) {
-          return;
-        }
-        try {
-          await stream.writeSSE({
-            event: "terminals",
-            data: JSON.stringify(await withTerminalBindings(terminals)),
-          });
-        } catch {
-          cleanup();
-        }
+      // Writes are serialized through a chain and always read the current
+      // terminal list, so a change that lands while an earlier write is
+      // awaiting can never be lost or reordered.
+      let writeChain: Promise<void> = Promise.resolve();
+      const scheduleWriteTerminals = () => {
+        writeChain = writeChain.then(async () => {
+          if (!isConnected) {
+            return;
+          }
+          try {
+            await stream.writeSSE({
+              event: "terminals",
+              data: JSON.stringify(
+                await withTerminalBindings(manager.listTerminals()),
+              ),
+            });
+          } catch {
+            cleanup();
+          }
+        });
+        return writeChain;
       };
 
-      await writeTerminals(manager.listTerminals());
-      unsubscribeTerminals = manager.subscribeTerminals((terminals) => {
-        void writeTerminals(terminals);
+      unsubscribeTerminals = manager.subscribeTerminals(() => {
+        void scheduleWriteTerminals();
       });
       unsubscribeBindings = onTerminalBindingChange(() => {
-        void writeTerminals(manager.listTerminals());
+        void scheduleWriteTerminals();
       });
+      await scheduleWriteTerminals();
       stream.onAbort(cleanup);
       c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
 
@@ -1247,6 +1256,20 @@ export function registerTerminalRoutes(app: Hono): void {
         }
       };
 
+      // Subscribe before reading the replay batch so events published while
+      // the replay writes below are awaiting are buffered instead of lost.
+      // The client filters duplicates by seq, so flushing the buffer after
+      // the replay is safe.
+      let replayComplete = false;
+      const replayQueue: TerminalStreamEvent[] = [];
+      unsubscribe = manager.subscribeTerminal(terminalId, (event) => {
+        if (!replayComplete) {
+          replayQueue.push(event);
+          return;
+        }
+        void writeTerminalEvent(event);
+      });
+
       const eventBatch = manager.getEventsSince(terminalId, fromSeq ?? 0);
       if (!eventBatch) {
         cleanup();
@@ -1297,9 +1320,14 @@ export function registerTerminalRoutes(app: Hono): void {
         }
       }
 
-      unsubscribe = manager.subscribeTerminal(terminalId, (event) => {
-        void writeTerminalEvent(event);
-      });
+      while (replayQueue.length > 0) {
+        const event = replayQueue.shift()!;
+        await writeTerminalEvent(event);
+        if (!isConnected) {
+          return;
+        }
+      }
+      replayComplete = true;
 
       stream.onAbort(cleanup);
       c.req.raw.signal.addEventListener("abort", cleanup, { once: true });

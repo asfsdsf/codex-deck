@@ -45,6 +45,7 @@ interface ConversationRawChunkResponse {
   chunkBase64: string;
   nextOffset: number;
   done: boolean;
+  fileId?: string;
 }
 
 interface ConversationRawWindowResponse {
@@ -53,6 +54,7 @@ interface ConversationRawWindowResponse {
   endOffset: number;
   fileSize: number;
   done: boolean;
+  fileId?: string;
 }
 
 function concatByteChunks(chunks: Uint8Array[]): Uint8Array {

@@ -200,3 +200,43 @@ test("bound terminals rehydrate after manager restart as stopped rows", async ()
     await cleanup();
   }
 });
+
+test("getEventsSince only requires a reset when the buffer has a gap", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "local-terminal-events-since",
+  );
+  const processFactory = createFakeTerminalProcessFactory();
+
+  initStorage(rootDir);
+  await closeLocalTerminalManager();
+  setLocalTerminalManagerForTests(null);
+  setTerminalProcessFactoryForTests(processFactory.factory);
+
+  try {
+    const manager = getLocalTerminalManager();
+    const terminal = manager.createTerminal("/repo/app");
+
+    // seq 1 is the initial "state" event; emit enough output to trim the
+    // 2000-event buffer so the oldest buffered seq is 102.
+    for (let index = 0; index < 2100; index += 1) {
+      processFactory.handles[0]?.emitData(`chunk-${index}\n`);
+    }
+
+    const covered = manager.getEventsSince(terminal.terminalId, 101);
+    assert.ok(covered);
+    assert.equal(covered.requiresReset, false);
+    assert.equal(covered.events.length, 2000);
+    assert.equal(covered.events[0]?.seq, 102);
+
+    const gap = manager.getEventsSince(terminal.terminalId, 100);
+    assert.ok(gap);
+    assert.equal(gap.requiresReset, true);
+    assert.equal(gap.events.length, 0);
+
+    await manager.closeTerminal(terminal.terminalId);
+  } finally {
+    await closeLocalTerminalManager();
+    setTerminalProcessFactoryForTests(null);
+    await cleanup();
+  }
+});

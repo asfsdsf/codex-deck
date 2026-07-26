@@ -226,7 +226,9 @@ class TerminalInstance {
     }
 
     const oldestSeq = this.bufferedEvents[0]?.seq ?? 0;
-    if (normalizedFromSeq > 0 && normalizedFromSeq < oldestSeq) {
+    // The buffer covers the client iff every event after normalizedFromSeq is
+    // still present, i.e. normalizedFromSeq >= oldestSeq - 1.
+    if (normalizedFromSeq > 0 && normalizedFromSeq < oldestSeq - 1) {
       return { events: [], requiresReset: true };
     }
 

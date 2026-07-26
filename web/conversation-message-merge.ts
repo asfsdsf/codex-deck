@@ -435,15 +435,16 @@ export function mergeDisplayConversationMessages(
   for (const message of incomingMessages) {
     const uuid = getMessageUuid(message);
     if (uuid && existingIds.has(uuid)) {
+      // Replace on a copy so the caller's previous array is never mutated.
+      const target =
+        nextPreviousMessages === previousMessages
+          ? [...previousMessages]
+          : nextPreviousMessages;
       if (
-        replaceLiveMessage(nextPreviousMessages, message) ||
-        replaceDuplicateMessage(nextPreviousMessages, message)
+        replaceLiveMessage(target, message) ||
+        replaceDuplicateMessage(target, message)
       ) {
-        if (nextPreviousMessages === previousMessages) {
-          nextPreviousMessages = [...previousMessages];
-          replaceLiveMessage(nextPreviousMessages, message) ||
-            replaceDuplicateMessage(nextPreviousMessages, message);
-        }
+        nextPreviousMessages = target;
       }
       continue;
     }
