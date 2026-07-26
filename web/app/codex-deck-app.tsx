@@ -290,6 +290,17 @@ import {
   readBrowserTitleMode,
   type BrowserTitleMode,
 } from "../browser-title";
+import {
+  SESSION_STATUS_STORAGE_KEY,
+  getSessionStatus,
+  markTrackedSessionReviewed,
+  persistTrackedSessionStatuses,
+  readTrackedSessionStatuses,
+  removeTrackedSessionStatus,
+  settleTrackedSession,
+  trackSessionRunning,
+  type TrackedSessionStatusMap,
+} from "../session-status";
 
 interface SessionHeaderProps {
   session: Session;
@@ -3654,6 +3665,8 @@ export default function CodexDeckApp() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [stoppingTurn, setStoppingTurn] = useState(false);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
+  const [trackedSessionStatuses, setTrackedSessionStatuses] =
+    useState<TrackedSessionStatusMap>(() => readTrackedSessionStatuses());
   const [connectionFailureNotice, setConnectionFailureNotice] =
     useState<ConnectionFailureNotice | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -3811,6 +3824,15 @@ export default function CodexDeckApp() {
   const workflowLogRequestIdRef = useRef(0);
   const daemonCommandHistoryLoggedRef = useRef<Map<string, Set<string>>>(
     new Map(),
+  );
+
+  const trackWebManagedSessionTurn = useCallback(
+    (sessionId: string, turnId?: string | null) => {
+      setTrackedSessionStatuses((current) =>
+        trackSessionRunning(current, sessionId, turnId),
+      );
+    },
+    [],
   );
 
   const hideConversationSearch = useCallback(() => {
@@ -4205,6 +4227,9 @@ export default function CodexDeckApp() {
     });
     setPendingTurn((current) =>
       current?.sessionId === normalizedSessionId ? null : current,
+    );
+    setTrackedSessionStatuses((current) =>
+      removeTrackedSessionStatus(current, normalizedSessionId),
     );
     setConnectionFailureNotice((current) =>
       current?.sessionId === normalizedSessionId ? null : current,
@@ -4788,6 +4813,7 @@ export default function CodexDeckApp() {
             getWorkflowSessionRoleLabel(
               sessionWorkflowRolesById[session.id] ?? null,
             ),
+          status: getSessionStatus(trackedSessionStatuses, session.id),
         };
       }),
     [
@@ -4795,6 +4821,7 @@ export default function CodexDeckApp() {
       sessionWorkflowRolesById,
       sessions,
       threadNameOverrides,
+      trackedSessionStatuses,
     ],
   );
 
@@ -5105,6 +5132,115 @@ export default function CodexDeckApp() {
   useEffect(() => {
     activeWaitSessionRef.current = activeWaitSessionId;
   }, [activeWaitSessionId]);
+
+  useEffect(() => {
+    if (!isPageVisible) {
+      return;
+    }
+    const viewedSessionId =
+      showWorkflowCreateModal && workflowCreateChatSessionId
+        ? workflowCreateChatSessionId
+        : activeWaitSessionId;
+    if (!viewedSessionId) {
+      return;
+    }
+    setTrackedSessionStatuses((current) =>
+      markTrackedSessionReviewed(current, viewedSessionId),
+    );
+  }, [
+    activeWaitSessionId,
+    isPageVisible,
+    showWorkflowCreateModal,
+    workflowCreateChatSessionId,
+  ]);
+
+  useEffect(() => {
+    if (!apiReady || !isPageVisible) {
+      return;
+    }
+
+    const runningEntries = Object.entries(trackedSessionStatuses).filter(
+      ([, entry]) => entry.status === "running",
+    );
+    if (runningEntries.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    let syncInFlight = false;
+    const syncTrackedTurns = async () => {
+      if (syncInFlight) {
+        return;
+      }
+      syncInFlight = true;
+      try {
+        const results = await Promise.all(
+          runningEntries.map(async ([sessionId, entry]) => {
+            try {
+              const state = await getCodexThreadState(sessionId, entry.turnId);
+              const settled =
+                (state.requestedTurnStatus !== null &&
+                  state.requestedTurnStatus !== "inProgress") ||
+                !state.isGenerating;
+              return { sessionId, entry, settled };
+            } catch {
+              return { sessionId, entry, settled: false };
+            }
+          }),
+        );
+        if (cancelled) {
+          return;
+        }
+
+        for (const { sessionId, entry, settled } of results) {
+          if (!settled) {
+            continue;
+          }
+          const resultIsVisible =
+            document.visibilityState === "visible" &&
+            (activeWaitSessionId === sessionId ||
+              (showWorkflowCreateModal &&
+                workflowCreateChatSessionId === sessionId));
+          setTrackedSessionStatuses((current) => {
+            const latest = current[sessionId];
+            if (
+              latest?.status !== "running" ||
+              latest.turnId !== entry.turnId
+            ) {
+              return current;
+            }
+            return settleTrackedSession(current, sessionId, resultIsVisible);
+          });
+          setPendingTurn((current) =>
+            current?.sessionId === sessionId &&
+            (entry.turnId === null || current.turnId === entry.turnId)
+              ? null
+              : current,
+          );
+        }
+      } finally {
+        syncInFlight = false;
+      }
+    };
+
+    const initialTimeoutId = window.setTimeout(
+      syncTrackedTurns,
+      WAIT_STATE_SETTLE_DELAY_MS,
+    );
+    const intervalId = window.setInterval(syncTrackedTurns, 1000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initialTimeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [
+    activeWaitSessionId,
+    apiReady,
+    isPageVisible,
+    showWorkflowCreateModal,
+    trackedSessionStatuses,
+    workflowCreateChatSessionId,
+  ]);
 
   const rightPaneSessionData = useMemo(() => {
     if (!rightPaneSessionId || rightPaneTarget?.kind !== "session") {
@@ -6944,6 +7080,24 @@ export default function CodexDeckApp() {
   }, [messageHistoryBySession]);
 
   useEffect(() => {
+    persistTrackedSessionStatuses(trackedSessionStatuses);
+  }, [trackedSessionStatuses]);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== SESSION_STATUS_STORAGE_KEY) {
+        return;
+      }
+      setTrackedSessionStatuses(readTrackedSessionStatuses());
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!activeComposerSessionId) {
       return;
     }
@@ -7610,6 +7764,7 @@ export default function CodexDeckApp() {
         ...(selectedModelId ? { model: selectedModelId } : {}),
         ...(selectedEffort ? { effort: selectedEffort } : {}),
       });
+      trackWebManagedSessionTurn(sessionId, response.turnId);
       if (!isWorkflowCreateChatRequestCurrent(requestId)) {
         return false;
       }
@@ -7669,6 +7824,7 @@ export default function CodexDeckApp() {
     resolveWorkflowCreateProjectRoot,
     selectedEffort,
     selectedModelId,
+    trackWebManagedSessionTurn,
     waitForWorkflowCreateChatTurnToSettle,
     workflowCreateChatInput,
     workflowCreateChatSessionId,
@@ -8288,6 +8444,7 @@ export default function CodexDeckApp() {
           ...(selectedModelId ? { model: selectedModelId } : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
         });
+        trackWebManagedSessionTurn(created.threadId, response.turnId);
         waitSuppressSessionsRef.current.delete(created.threadId);
         clearConnectionFailureNoticeForSession(created.threadId);
         if (response.turnId) {
@@ -8333,6 +8490,7 @@ export default function CodexDeckApp() {
       selectedModeKey,
       selectedWorkflowKey,
       setSessionMode,
+      trackWebManagedSessionTurn,
       resolveWorkflowSkillInstallMessagePrefix,
       workflowDetail,
     ],
@@ -8436,6 +8594,7 @@ export default function CodexDeckApp() {
           return null;
         }
 
+        trackWebManagedSessionTurn(response.sessionId, response.turnId);
         if (response.turnId) {
           clearConnectionFailureNoticeForSession(response.sessionId);
           setPendingTurn({
@@ -8484,6 +8643,7 @@ export default function CodexDeckApp() {
       selectedTerminalData,
       selectSessionIfAvailable,
       setSessionMode,
+      trackWebManagedSessionTurn,
     ],
   );
 
@@ -8576,7 +8736,7 @@ export default function CodexDeckApp() {
           sessionId,
         });
         try {
-          await sendCodexMessage(sessionId, {
+          const response = await sendCodexMessage(sessionId, {
             input: [
               {
                 type: "text",
@@ -8590,6 +8750,7 @@ export default function CodexDeckApp() {
             ...(selectedModelId ? { model: selectedModelId } : {}),
             ...(selectedEffort ? { effort: selectedEffort } : {}),
           });
+          trackWebManagedSessionTurn(sessionId, response.turnId);
         } catch (error) {
           try {
             await bindWorkflowSessionRequest(importedDraft.workflowKey, {
@@ -8684,6 +8845,7 @@ export default function CodexDeckApp() {
     resolveWorkflowCreateProjectRoot,
     selectedEffort,
     selectedModelId,
+    trackWebManagedSessionTurn,
     workflowCreateChatSessionId,
     workflowCreateId,
     workflowCreateImportedDraft,
@@ -8923,6 +9085,7 @@ export default function CodexDeckApp() {
           pendingId,
           response.turnId,
         );
+        trackWebManagedSessionTurn(sessionId, response.turnId);
         setPendingTurn({
           sessionId,
           turnId: response.turnId,
@@ -8962,6 +9125,7 @@ export default function CodexDeckApp() {
       removePendingUserMessageById,
       sessionsWithThreadNames,
       setSessionMode,
+      trackWebManagedSessionTurn,
     ],
   );
 
@@ -9916,6 +10080,7 @@ export default function CodexDeckApp() {
           setStatusTokenUsage(null);
 
           await compactCodexThread(commandSessionId);
+          trackWebManagedSessionTurn(commandSessionId, null);
           setPendingTurn((current) => {
             if (current?.sessionId === commandSessionId) {
               return current;
@@ -10096,6 +10261,7 @@ export default function CodexDeckApp() {
       upsertSessionFromThreadSummary,
       syncSessionWaitState,
       sendMessageText,
+      trackWebManagedSessionTurn,
       sideThreadsById,
       isMobilePhone,
     ],
@@ -10458,6 +10624,7 @@ export default function CodexDeckApp() {
           pendingId,
           response.turnId,
         );
+        trackWebManagedSessionTurn(terminalComposerSessionId, response.turnId);
         if (response.turnId) {
           setPendingTurn({
             sessionId: terminalComposerSessionId,
@@ -10505,6 +10672,7 @@ export default function CodexDeckApp() {
       selectedModelId,
       setSessionMode,
       terminalComposerSessionId,
+      trackWebManagedSessionTurn,
     ],
   );
 

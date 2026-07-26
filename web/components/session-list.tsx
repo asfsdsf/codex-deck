@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { formatSessionTimeLabel } from "../utils";
+import type { SessionStatus } from "../session-status";
 
 interface SessionListItem {
   id: string;
@@ -17,6 +18,81 @@ interface SessionListItem {
   lastUserMessageAt?: number;
   timestamp: number;
   workflowRoleLabel?: string | null;
+  status?: SessionStatus;
+}
+
+function SessionStatusIcon({ status }: { status: SessionStatus }) {
+  const label =
+    status === "running"
+      ? "Running"
+      : status === "unreviewed"
+        ? "Unreviewed"
+        : "Completed";
+
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center ${
+        status === "running"
+          ? "text-cyan-600 dark:text-cyan-400"
+          : status === "unreviewed"
+            ? "text-amber-600 dark:text-amber-400"
+            : "text-emerald-600/90 dark:text-emerald-500/80"
+      }`}
+    >
+      {status === "running" ? (
+        <svg
+          className="h-3 w-3 animate-spin"
+          fill="none"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="9"
+            stroke="currentColor"
+            strokeWidth="3"
+          />
+          <path
+            className="opacity-90"
+            d="M12 3a9 9 0 018.5 6"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeWidth="3"
+          />
+        </svg>
+      ) : status === "unreviewed" ? (
+        <svg
+          className="h-3 w-3"
+          fill="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="6" />
+        </svg>
+      ) : (
+        <svg
+          className="h-3 w-3"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="9" strokeWidth="2" />
+          <path
+            d="m8.5 12 2.25 2.25L15.75 9"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+          />
+        </svg>
+      )}
+    </span>
+  );
 }
 
 interface SessionListProps {
@@ -195,9 +271,14 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                         selectedSession === session.id ? "page" : undefined
                       }
                     >
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="text-[10px] text-zinc-500 font-medium">
-                          {session.projectName}
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-1 text-[10px] font-medium text-zinc-500">
+                          {session.status ? (
+                            <SessionStatusIcon status={session.status} />
+                          ) : null}
+                          <span className="truncate">
+                            {session.projectName}
+                          </span>
                         </span>
                         <span
                           className="text-[10px] text-zinc-600"
