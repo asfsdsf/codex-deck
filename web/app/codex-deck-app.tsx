@@ -301,6 +301,10 @@ import {
   trackSessionRunning,
   type TrackedSessionStatusMap,
 } from "../session-status";
+import {
+  createSettleChimeTracker,
+  playSessionSettleChime,
+} from "../session-settle-chime";
 
 interface SessionHeaderProps {
   session: Session;
@@ -3821,6 +3825,7 @@ export default function CodexDeckApp() {
     Record<string, number>
   >({});
   const lastPageVisibilityRef = useRef(isPageVisible);
+  const settleChimeTrackerRef = useRef(createSettleChimeTracker());
   const workflowLogRequestIdRef = useRef(0);
   const daemonCommandHistoryLoggedRef = useRef<Map<string, Set<string>>>(
     new Map(),
@@ -3828,6 +3833,9 @@ export default function CodexDeckApp() {
 
   const trackWebManagedSessionTurn = useCallback(
     (sessionId: string, turnId?: string | null) => {
+      if (document.visibilityState === "visible") {
+        settleChimeTrackerRef.current.noteRunning(sessionId);
+      }
       setTrackedSessionStatuses((current) =>
         trackSessionRunning(current, sessionId, turnId),
       );
@@ -3885,6 +3893,11 @@ export default function CodexDeckApp() {
     }
 
     lastPageVisibilityRef.current = isPageVisible;
+    if (!isPageVisible) {
+      // Sessions that settle while hidden must stay silent, even after the
+      // page becomes visible again.
+      settleChimeTrackerRef.current.clear();
+    }
     console.log(
       `[codex-deck] page became ${isPageVisible ? "visible" : "invisible"}`,
     );
@@ -5182,9 +5195,14 @@ export default function CodexDeckApp() {
                 (state.requestedTurnStatus !== null &&
                   state.requestedTurnStatus !== "inProgress") ||
                 !state.isGenerating;
-              return { sessionId, entry, settled };
+              return { sessionId, entry, settled, confirmedRunning: !settled };
             } catch {
-              return { sessionId, entry, settled: false };
+              return {
+                sessionId,
+                entry,
+                settled: false,
+                confirmedRunning: false,
+              };
             }
           }),
         );
@@ -5192,9 +5210,20 @@ export default function CodexDeckApp() {
           return;
         }
 
-        for (const { sessionId, entry, settled } of results) {
+        for (const { sessionId, entry, settled, confirmedRunning } of results) {
           if (!settled) {
+            // Only sessions confirmed running while the page is visible are
+            // eligible to chime; ones that settle while hidden stay silent.
+            if (confirmedRunning && document.visibilityState === "visible") {
+              settleChimeTrackerRef.current.noteRunning(sessionId);
+            }
             continue;
+          }
+          if (
+            document.visibilityState === "visible" &&
+            settleChimeTrackerRef.current.consumeSettled(sessionId)
+          ) {
+            playSessionSettleChime();
           }
           const resultIsVisible =
             document.visibilityState === "visible" &&
