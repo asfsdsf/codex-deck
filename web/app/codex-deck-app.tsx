@@ -3080,7 +3080,7 @@ const MessageComposer = memo(function MessageComposer(
             placeholder="Message Codex..."
             rows={2}
             style={{ height: `${messageBoxHeight}px` }}
-            className="block w-full min-h-[36px] resize-none rounded border border-zinc-800 bg-zinc-900/70 px-3 py-1.5 text-sm text-zinc-200 focus:outline-none"
+            className="block w-full min-h-[36px] resize-none rounded-xl border border-zinc-800 bg-zinc-900/70 px-3.5 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 transition-colors focus:border-cyan-500/40 focus:outline-none focus:ring-2 focus:ring-cyan-500/15"
           />
         </div>
         <div className="relative flex">
@@ -3132,7 +3132,7 @@ const MessageComposer = memo(function MessageComposer(
               handleOpenGalleryPicker();
             }}
             disabled={isSendingLocked || composerBusy}
-            className="flex h-9 w-9 items-center justify-center rounded border border-zinc-700 bg-zinc-900/80 text-zinc-200"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/80 text-zinc-300 transition-colors hover:bg-zinc-800/80 hover:text-zinc-100 disabled:opacity-50"
             title="Attach image"
             aria-label="Attach image"
           >
@@ -3170,7 +3170,7 @@ const MessageComposer = memo(function MessageComposer(
             void handleSendMessage("send-button");
           }}
           disabled={primaryActionState.disabled}
-          className={`flex h-9 items-center justify-center rounded px-3.5 text-sm text-zinc-50 disabled:opacity-50 cursor-pointer ${
+          className={`flex h-9 items-center justify-center rounded-lg px-4 text-sm font-medium text-zinc-50 transition-colors disabled:opacity-50 cursor-pointer ${
             shouldUseStopAction
               ? "bg-red-700/90 hover:bg-red-700"
               : isGeneratingForSelectedSession
@@ -12112,14 +12112,14 @@ export default function CodexDeckApp() {
                 </label>
               )}
 
-              <div className="grid grid-cols-3 items-center gap-2">
+              <div className="grid grid-cols-3 items-center gap-1 rounded-lg border border-zinc-800/60 bg-zinc-900/40 p-1">
                 <button
                   type="button"
                   onClick={() => handleSelectTerminal()}
-                  className={`rounded border px-2.5 py-2 text-left text-xs transition-colors ${
+                  className={`rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors ${
                     centerView === "terminal"
-                      ? "border-cyan-500/50 bg-cyan-700/30 text-cyan-100"
-                      : "border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:bg-zinc-800/70"
+                      ? "bg-cyan-500/15 text-cyan-100 ring-1 ring-inset ring-cyan-500/30"
+                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
                   }`}
                 >
                   Terminal
@@ -12127,10 +12127,10 @@ export default function CodexDeckApp() {
                 <button
                   type="button"
                   onClick={handleSelectCodex}
-                  className={`rounded border px-2.5 py-2 text-left text-xs transition-colors ${
+                  className={`rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors ${
                     centerView === "session"
-                      ? "border-cyan-500/50 bg-cyan-700/30 text-cyan-100"
-                      : "border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:bg-zinc-800/70"
+                      ? "bg-cyan-500/15 text-cyan-100 ring-1 ring-inset ring-cyan-500/30"
+                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
                   }`}
                 >
                   Codex
@@ -12138,10 +12138,10 @@ export default function CodexDeckApp() {
                 <button
                   type="button"
                   onClick={() => handleSelectWorkflow()}
-                  className={`rounded border px-2.5 py-2 text-left text-xs transition-colors ${
+                  className={`rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors ${
                     centerView === "workflow"
-                      ? "border-cyan-500/50 bg-cyan-700/30 text-cyan-100"
-                      : "border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:bg-zinc-800/70"
+                      ? "bg-cyan-500/15 text-cyan-100 ring-1 ring-inset ring-cyan-500/30"
+                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
                   }`}
                 >
                   Workflow
@@ -12225,7 +12225,7 @@ export default function CodexDeckApp() {
                       selectedWorkflowProject ||
                       "Project path"
                     }
-                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
+                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded-lg border border-zinc-800 px-2.5 transition-colors focus:border-cyan-500/40 focus:outline-none"
                   />
                   <button
                     type="button"
@@ -12235,7 +12235,7 @@ export default function CodexDeckApp() {
                       setShowWorkflowIdPromptModal(true);
                     }}
                     disabled={workflowActionBusy}
-                    className="h-9 rounded bg-cyan-700/80 px-3 text-xs text-zinc-50 transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-9 rounded-lg bg-cyan-700/80 px-3 text-xs font-medium text-zinc-50 transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     New Workflow
                   </button>
@@ -12251,7 +12251,7 @@ export default function CodexDeckApp() {
                       )
                     }
                     placeholder={newSessionPlaceholder}
-                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
+                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded-lg border border-zinc-800 px-2.5 transition-colors focus:border-cyan-500/40 focus:outline-none"
                   />
                   <button
                     onClick={() => {
@@ -12260,7 +12260,7 @@ export default function CodexDeckApp() {
                         : handleCreateSession());
                     }}
                     disabled={creatingSession}
-                    className="h-9 min-w-0 max-w-full shrink truncate rounded bg-cyan-700/80 px-3 text-xs text-zinc-50 hover:bg-cyan-700 disabled:opacity-50 cursor-pointer"
+                    className="h-9 min-w-0 max-w-full shrink truncate rounded-lg bg-cyan-700/80 px-3 text-xs font-medium text-zinc-50 transition-colors hover:bg-cyan-700 disabled:opacity-50 cursor-pointer"
                     title={
                       centerView === "terminal"
                         ? "Start a new terminal"

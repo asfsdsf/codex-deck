@@ -252,27 +252,31 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                     width: "100%",
                     transform: `translateY(${virtualItem.start}px)`,
                   }}
-                  className={`overflow-hidden border-b border-zinc-800/40 ${
-                    virtualItem.index === 0
-                      ? "border-t border-t-zinc-800/40"
-                      : ""
-                  }`}
+                  className="overflow-hidden px-1.5 py-px"
                 >
-                  <div className="relative">
+                  <div className="group relative">
                     <button
                       type="button"
                       onClick={() => onSelectSession(session.id)}
-                      className={`block w-full px-3 py-3.5 ${onRequestDeleteSession ? "pr-12" : "pr-3"} text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
+                      className={`block w-full rounded-lg px-2.5 py-2.5 ${onRequestDeleteSession ? "pr-10" : "pr-2.5"} text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
                         selectedSession === session.id
-                          ? "bg-cyan-700/30"
+                          ? "bg-cyan-500/12 ring-1 ring-inset ring-cyan-500/25"
                           : "hover:bg-zinc-900/60"
                       }`}
                       aria-current={
                         selectedSession === session.id ? "page" : undefined
                       }
                     >
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="flex min-w-0 items-center gap-1 text-[10px] font-medium text-zinc-500">
+                      <p className="text-[13px] font-medium text-zinc-200 leading-snug line-clamp-2 break-words">
+                        {session.workflowRoleLabel ? (
+                          <span className="mr-1.5 inline-flex rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-[0.01em] text-cyan-200">
+                            {session.workflowRoleLabel}
+                          </span>
+                        ) : null}
+                        <span>{session.display}</span>
+                      </p>
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-zinc-500">
                           {session.status ? (
                             <SessionStatusIcon status={session.status} />
                           ) : null}
@@ -281,7 +285,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                           </span>
                         </span>
                         <span
-                          className="text-[10px] text-zinc-600"
+                          className="shrink-0 text-[10px] text-zinc-600"
                           title="Created - last user message"
                         >
                           {formatSessionTimeLabel(
@@ -290,14 +294,6 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                           )}
                         </span>
                       </div>
-                      <p className="text-[12px] text-zinc-300 leading-snug line-clamp-2 break-words">
-                        {session.workflowRoleLabel ? (
-                          <span className="mr-1.5 inline-flex rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-[0.01em] text-cyan-200">
-                            {session.workflowRoleLabel}
-                          </span>
-                        ) : null}
-                        <span>{session.display}</span>
-                      </p>
                     </button>
                     {onRequestDeleteSession && (
                       <button
@@ -306,7 +302,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                           event.stopPropagation();
                           onRequestDeleteSession(session.id);
                         }}
-                        className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800/80 bg-zinc-950/40 text-zinc-500 transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800/80 bg-zinc-950/40 text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                         aria-label={`${deleteButtonLabel} ${session.id}`}
                         title={deleteButtonLabel}
                       >

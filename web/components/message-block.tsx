@@ -2609,15 +2609,15 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} min-w-0`}>
-      <div className="max-w-[85%] min-w-0">
+      <div className={isUser ? "max-w-[85%] min-w-0" : "w-full min-w-0"}>
         <div className="group relative">
           <div
-            className={`px-3.5 py-2.5 rounded-2xl overflow-hidden ${
+            className={`px-4 py-3 rounded-2xl overflow-hidden ${
               isUser
                 ? isPendingUserTone
-                  ? "bg-zinc-700/60 text-zinc-100 rounded-br-md"
-                  : "bg-indigo-600/80 text-indigo-50 rounded-br-md"
-                : "bg-cyan-700/50 text-zinc-100 rounded-bl-md"
+                  ? "border border-zinc-700/60 bg-zinc-800/50 text-zinc-200 rounded-br-md"
+                  : "border border-indigo-500/30 bg-indigo-500/15 text-zinc-100 rounded-br-md"
+                : "border border-zinc-800/60 bg-zinc-900/40 text-zinc-100 rounded-bl-md"
             }`}
           >
             {editing ? (

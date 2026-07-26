@@ -2586,8 +2586,8 @@ const SessionView = memo(
             className="h-full overflow-y-auto bg-zinc-950"
           >
             {hasSessionShortcut ? (
-              <div className="sticky top-0 z-20 px-4 pt-3">
-                <div className="mx-auto flex max-w-[96rem] items-start justify-start gap-2">
+              <div className="sticky top-0 z-20 px-4 pt-3 md:px-6">
+                <div className="mx-auto flex max-w-4xl items-start justify-start gap-2">
                   {workflowShortcut ? (
                     <button
                       type="button"
@@ -2629,8 +2629,8 @@ const SessionView = memo(
             ) : null}
             <div
               ref={contentRef}
-              className={`mx-auto max-w-[96rem] px-4 pb-12 ${
-                hasSessionShortcut ? "pt-3" : "pt-4"
+              className={`mx-auto max-w-4xl px-4 pb-12 md:px-6 ${
+                hasSessionShortcut ? "pt-3" : "pt-5"
               }`}
             >
               {summary && (
@@ -2644,7 +2644,7 @@ const SessionView = memo(
                 </div>
               )}
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-3">
                 {pagedMessageChunks.map((chunk) => {
                   if (chunk.kind === "important") {
                     return renderMessageEntry(chunk.entry);

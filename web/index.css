@@ -1,5 +1,42 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans:
+    "Geist Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans", sans-serif;
+  --font-mono:
+    "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+@font-face {
+  font-family: "Geist Sans";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Regular.woff2")
+    format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Sans";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Medium.woff2")
+    format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Sans";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-SemiBold.woff2")
+    format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: "Geist Mono";
   src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-Regular.woff2")
@@ -302,8 +339,8 @@
 
   --app-body-background: linear-gradient(
     180deg,
-    oklch(99.4% 0.003 286.1) 0%,
-    oklch(98.3% 0.004 286.1) 100%
+    oklch(99.6% 0.001 286.1) 0%,
+    oklch(98.6% 0.002 286.1) 100%
   );
   --app-scrollbar-thumb: color-mix(
     in oklab,
@@ -358,14 +395,22 @@
 }
 
 body {
-  font-family:
-    "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    monospace;
+  font-family: var(--font-sans);
   background: var(--app-body-background);
   color: var(--color-zinc-100);
+  -webkit-font-smoothing: antialiased;
   transition:
     background-color 180ms ease,
     color 180ms ease;
+}
+
+/* Monospace is reserved for code, commands, diffs, and terminal output. */
+pre,
+kbd,
+samp,
+.command-syntax,
+.patch-syntax {
+  font-family: var(--font-mono);
 }
 
 * {
@@ -400,9 +445,7 @@ pre {
 }
 
 code {
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 0.875rem;
 }
 
@@ -563,35 +606,35 @@ select option {
 }
 
 [data-theme="light"] .pane-left {
-  background-color: #f8fafc;
+  background-color: #fafafa;
 }
 
 [data-theme="light"] .pane-right {
-  background-color: #f6f8fc;
+  background-color: #fafafa;
 }
 
 [data-theme="light"] .session-list-surface {
-  background-color: #f3f6fb;
+  background-color: #f6f6f7;
 }
 
 [data-theme="light"] .pane-header-left {
-  background-color: #edf3f9;
+  background-color: #f4f4f5;
 }
 
 [data-theme="light"] .pane-header-center {
-  background-color: #f8fafc;
+  background-color: #fcfcfc;
 }
 
 [data-theme="light"] .pane-header-right {
-  background-color: #eef2f7;
+  background-color: #f4f4f5;
 }
 
 [data-theme="light"] .pane-left .hover\:bg-zinc-900\/60:hover {
-  background-color: #e8eef6;
+  background-color: #ececee;
 }
 
 [data-theme="light"] .pane-left .bg-cyan-700\/30 {
-  background-color: #dbeafe;
+  background-color: #dff3f8;
 }
 
 [data-theme="light"] .pane-left .border-zinc-800\/40,
@@ -599,41 +642,41 @@ select option {
 [data-theme="light"] .pane-left .border-zinc-800,
 [data-theme="light"] .pane-left .border-zinc-800\/60,
 [data-theme="light"] .pane-left .border-zinc-900 {
-  border-color: #d6dfeb;
+  border-color: #e4e4e7;
 }
 
 [data-theme="light"] .pane-left .text-zinc-200,
 [data-theme="light"] .pane-left .text-zinc-300 {
-  color: #334155;
+  color: #3f3f46;
 }
 
 [data-theme="light"] .pane-left .text-zinc-400,
 [data-theme="light"] .pane-left .text-zinc-500,
 [data-theme="light"] .pane-left .text-zinc-600 {
-  color: #64748b;
+  color: #71717a;
 }
 
 [data-theme="light"] .pane-right .hover\:bg-zinc-900\/50:hover {
-  background-color: #edf2f7;
+  background-color: #f0f0f1;
 }
 
 [data-theme="light"] .pane-right .bg-zinc-900\/60 {
-  background-color: #e2e8f0;
+  background-color: #ececee;
 }
 
 [data-theme="light"] .pane-right .border-zinc-800\/60,
 [data-theme="light"] .pane-right .border-zinc-900 {
-  border-color: #dbe3ee;
+  border-color: #e4e4e7;
 }
 
 [data-theme="light"] .pane-right .text-zinc-200,
 [data-theme="light"] .pane-right .text-zinc-300 {
-  color: #334155;
+  color: #3f3f46;
 }
 
 [data-theme="light"] .pane-right .text-zinc-400,
 [data-theme="light"] .pane-right .text-zinc-500 {
-  color: #64748b;
+  color: #71717a;
 }
 
 @keyframes thinking-pulse {
