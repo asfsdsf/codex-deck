@@ -1318,6 +1318,13 @@ interface SessionWaitStateCacheEntry {
   result: CodexSessionWaitStateResponse;
 }
 
+interface SessionUserMessageTimestampCacheEntry {
+  filePath: string;
+  mtimeMs: number;
+  size: number;
+  timestamp: number;
+}
+
 interface PendingToolUse {
   callId: string;
   name: string;
@@ -1372,6 +1379,10 @@ const fileIndex = new Map<string, string>();
 const sessionMetaIndex = new Map<string, SessionMeta>();
 const sessionDisplayCache = new Map<string, string>();
 const sessionWaitStateCache = new Map<string, SessionWaitStateCacheEntry>();
+const sessionUserMessageTimestampCache = new Map<
+  string,
+  SessionUserMessageTimestampCacheEntry
+>();
 let historyCache: Map<string, SessionHistory> | null = null;
 
 const pendingRequests = new Map<string, Promise<unknown>>();
@@ -1406,6 +1417,7 @@ export function addToFileIndex(sessionId: string, filePath: string): void {
   fileIndex.set(sessionId, filePath);
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
+  sessionUserMessageTimestampCache.delete(sessionId);
   void hydrateSessionMeta(sessionId, filePath);
 }
 
@@ -1414,6 +1426,7 @@ function clearSessionCaches(sessionId: string): void {
   sessionMetaIndex.delete(sessionId);
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
+  sessionUserMessageTimestampCache.delete(sessionId);
   sessionToolNameIndex.delete(sessionId);
   sessionStreamLastReasoningMessage.delete(sessionId);
   if (historyCache) {
@@ -4552,6 +4565,110 @@ async function getFirstUserMessageSnippet(filePath: string): Promise<string> {
   return "(no prompt text)";
 }
 
+function toEpochMilliseconds(timestamp: number): number {
+  return timestamp > 0 && timestamp < 1e12 ? timestamp * 1000 : timestamp;
+}
+
+function getUserMessageTimestampFromLine(line: string): number {
+  const parsed = safeJsonParse(line);
+  if (!parsed || typeof parsed !== "object") {
+    return 0;
+  }
+
+  const record = parsed as {
+    timestamp?: unknown;
+    type?: unknown;
+    payload?: Record<string, unknown>;
+  };
+  if (!record.payload) {
+    return 0;
+  }
+
+  const isUserMessage =
+    (record.type === "event_msg" && record.payload.type === "user_message") ||
+    (record.type === "response_item" &&
+      record.payload.type === "message" &&
+      record.payload.role === "user");
+  if (!isUserMessage) {
+    return 0;
+  }
+
+  return toEpochMilliseconds(parseTimestamp(record.timestamp));
+}
+
+async function getLatestUserMessageTimestamp(
+  sessionId: string,
+  filePath: string,
+): Promise<number> {
+  let fileStat;
+  try {
+    fileStat = await stat(filePath);
+  } catch {
+    return 0;
+  }
+
+  const cached = sessionUserMessageTimestampCache.get(sessionId);
+  if (
+    cached?.filePath === filePath &&
+    cached.mtimeMs === fileStat.mtimeMs &&
+    cached.size === fileStat.size
+  ) {
+    return cached.timestamp;
+  }
+
+  let timestamp = 0;
+  let fileHandle;
+  try {
+    fileHandle = await open(filePath, "r");
+    const blockSize = 64 * 1024;
+    let position = fileStat.size;
+    let partialLine = "";
+
+    while (position > 0 && timestamp === 0) {
+      const start = Math.max(0, position - blockSize);
+      const buffer = Buffer.alloc(position - start);
+      const { bytesRead } = await fileHandle.read(
+        buffer,
+        0,
+        buffer.length,
+        start,
+      );
+      if (bytesRead <= 0) {
+        break;
+      }
+
+      const lines =
+        `${buffer.subarray(0, bytesRead).toString("utf-8")}${partialLine}`.split(
+          "\n",
+        );
+      partialLine = start > 0 ? (lines.shift() ?? "") : "";
+
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        timestamp = getUserMessageTimestampFromLine(lines[index]);
+        if (timestamp > 0) {
+          break;
+        }
+      }
+
+      position = start;
+    }
+  } catch {
+    timestamp = 0;
+  } finally {
+    if (fileHandle) {
+      await fileHandle.close();
+    }
+  }
+
+  sessionUserMessageTimestampCache.set(sessionId, {
+    filePath,
+    mtimeMs: fileStat.mtimeMs,
+    size: fileStat.size,
+    timestamp,
+  });
+  return timestamp;
+}
+
 export async function loadStorage(): Promise<void> {
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
 }
@@ -4644,15 +4761,19 @@ export async function getSessions(): Promise<Session[]> {
 
       const historyEntry = history.get(sessionId);
 
-      let timestamp = 0;
-      if (historyEntry) {
-        timestamp = historyEntry.timestamp * 1000;
-      } else if (meta?.timestamp) {
+      const latestUserMessageTimestamp = historyEntry
+        ? toEpochMilliseconds(historyEntry.timestamp)
+        : filePath
+          ? await getLatestUserMessageTimestamp(sessionId, filePath)
+          : 0;
+
+      let timestamp = latestUserMessageTimestamp;
+      if (timestamp <= 0 && meta?.timestamp) {
         timestamp = meta.timestamp;
-      } else if (filePath) {
+      } else if (timestamp <= 0 && filePath) {
         try {
           const fileStat = await stat(filePath);
-          timestamp = fileStat.mtimeMs;
+          timestamp = fileStat.birthtimeMs || fileStat.mtimeMs;
         } catch {
           timestamp = 0;
         }

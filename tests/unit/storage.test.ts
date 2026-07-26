@@ -151,6 +151,60 @@ test("getSessions excludes archived sessions even when history entries remain", 
   }
 });
 
+test("getSessions sorts file-backed sessions by latest user message time", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-session-user-message-order",
+  );
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/newer-session", 2000),
+      responseItemMessageLine(
+        "user",
+        "older user message",
+        "2026-01-01T00:01:00.000Z",
+      ),
+      responseItemMessageLine(
+        "assistant",
+        "newer assistant response",
+        "2026-01-01T00:10:00.000Z",
+      ),
+    ]);
+    await writeSessionFile(sessionsDir, `${SESSION_B}.jsonl`, [
+      sessionMetaLine(SESSION_B, "/repo/older-session", 1000),
+      responseItemMessageLine(
+        "user",
+        "newer user message",
+        "2026-01-01T00:05:00.000Z",
+      ),
+      responseItemMessageLine(
+        "assistant",
+        "older assistant response",
+        "2026-01-01T00:06:00.000Z",
+      ),
+    ]);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const sessions = await getSessions();
+    assert.deepEqual(
+      sessions.map((session) => session.id),
+      [SESSION_B, SESSION_A],
+    );
+    assert.equal(
+      sessions[0]?.timestamp,
+      Date.parse("2026-01-01T00:05:00.000Z"),
+    );
+    assert.equal(
+      sessions[1]?.timestamp,
+      Date.parse("2026-01-01T00:01:00.000Z"),
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
 test("archiveSession removes active session discovery metadata after rollout removal", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "storage-archive-session",

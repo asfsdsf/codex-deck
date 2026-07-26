@@ -7181,7 +7181,11 @@ export default function CodexDeckApp() {
   const upsertSessionInLocalState = useCallback((session: Session) => {
     setSessions((current) => {
       const sessionMap = new Map(current.map((item) => [item.id, item]));
-      sessionMap.set(session.id, session);
+      const existing = sessionMap.get(session.id);
+      sessionMap.set(
+        session.id,
+        existing ? { ...session, timestamp: existing.timestamp } : session,
+      );
       return Array.from(sessionMap.values()).sort(
         (left, right) => right.timestamp - left.timestamp,
       );
@@ -8721,6 +8725,25 @@ export default function CodexDeckApp() {
     [],
   );
 
+  const markSessionUserMessagedAt = useCallback(
+    (sessionId: string, timestamp: number) => {
+      setSessions((current) => {
+        let found = false;
+        const next = current.map((session) => {
+          if (session.id !== sessionId) {
+            return session;
+          }
+          found = true;
+          return { ...session, timestamp };
+        });
+        return found
+          ? next.sort((left, right) => right.timestamp - left.timestamp)
+          : current;
+      });
+    },
+    [],
+  );
+
   const sendMessageText = useCallback(
     async (
       payload: MessageComposerSubmitPayload,
@@ -8862,6 +8885,7 @@ export default function CodexDeckApp() {
           collaborationMode,
         });
 
+        markSessionUserMessagedAt(sessionId, Date.now());
         setSessionMode(sessionId, modeToUse);
         pendingSendOptionsByIdRef.current.delete(pendingId);
         markPendingUserMessageAwaitingConfirmation(
@@ -8904,6 +8928,7 @@ export default function CodexDeckApp() {
       selectedEffort,
       enqueuePendingUserMessage,
       markPendingUserMessageAwaitingConfirmation,
+      markSessionUserMessagedAt,
       removePendingUserMessageById,
       sessionsWithThreadNames,
       setSessionMode,
@@ -9106,7 +9131,13 @@ export default function CodexDeckApp() {
         const sessionMap = new Map(
           current.map((session) => [session.id, session]),
         );
-        sessionMap.set(nextSession.id, nextSession);
+        const existing = sessionMap.get(nextSession.id);
+        sessionMap.set(
+          nextSession.id,
+          existing
+            ? { ...nextSession, timestamp: existing.timestamp }
+            : nextSession,
+        );
         return Array.from(sessionMap.values()).sort(
           (left, right) => right.timestamp - left.timestamp,
         );
