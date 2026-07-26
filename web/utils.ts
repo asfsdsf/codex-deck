@@ -76,6 +76,17 @@ export function formatTime(timestamp: number): string {
   return date.toLocaleDateString();
 }
 
+export function formatSessionTimeLabel(
+  createdAt: number | null | undefined,
+  lastUserMessageAt: number,
+): string {
+  const lastUserMessageLabel = formatTime(lastUserMessageAt);
+  if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) {
+    return lastUserMessageLabel;
+  }
+  return `${formatTime(createdAt)}-${lastUserMessageLabel}`;
+}
+
 function padTimestampSegment(value: number, length: number = 2): string {
   return String(value).padStart(length, "0");
 }

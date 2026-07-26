@@ -914,12 +914,19 @@ function normalizeThreadUpdatedAt(updatedAt: number | null): number {
   return updatedAt >= 1e12 ? updatedAt : updatedAt * 1000;
 }
 
+function getSessionLastUserMessageAt(session: Session): number {
+  return session.lastUserMessageAt ?? session.timestamp;
+}
+
 function toSessionFromThreadSummary(thread: CodexThreadSummary): Session {
   const project = thread.cwd.trim();
+  const timestamp = normalizeThreadUpdatedAt(thread.updatedAt);
   return {
     id: thread.threadId,
     display: getThreadSummaryDisplay(thread),
-    timestamp: normalizeThreadUpdatedAt(thread.updatedAt),
+    createdAt: timestamp,
+    lastUserMessageAt: timestamp,
+    timestamp,
     project,
     projectName: project ? getPathBaseName(project) : "",
   };
@@ -6200,7 +6207,9 @@ export default function CodexDeckApp() {
       }
 
       return Array.from(sessionMap.values()).sort(
-        (left, right) => right.timestamp - left.timestamp,
+        (left, right) =>
+          getSessionLastUserMessageAt(right) -
+          getSessionLastUserMessageAt(left),
       );
     });
     setLoading(false);
@@ -6219,7 +6228,8 @@ export default function CodexDeckApp() {
           sessionMap.set(update.id, update);
         }
         return Array.from(sessionMap.values()).sort(
-          (a, b) => b.timestamp - a.timestamp,
+          (a, b) =>
+            getSessionLastUserMessageAt(b) - getSessionLastUserMessageAt(a),
         );
       });
 
@@ -7184,10 +7194,19 @@ export default function CodexDeckApp() {
       const existing = sessionMap.get(session.id);
       sessionMap.set(
         session.id,
-        existing ? { ...session, timestamp: existing.timestamp } : session,
+        existing
+          ? {
+              ...session,
+              createdAt: existing.createdAt,
+              lastUserMessageAt: existing.lastUserMessageAt,
+              timestamp: existing.timestamp,
+            }
+          : session,
       );
       return Array.from(sessionMap.values()).sort(
-        (left, right) => right.timestamp - left.timestamp,
+        (left, right) =>
+          getSessionLastUserMessageAt(right) -
+          getSessionLastUserMessageAt(left),
       );
     });
     if (session.project) {
@@ -7222,10 +7241,13 @@ export default function CodexDeckApp() {
         // Fall back to a minimal local entry so the new session is selectable immediately.
       }
 
+      const createdAt = Date.now();
       upsertSessionInLocalState({
         id: normalizedSessionId,
         display: "(new session)",
-        timestamp: Date.now(),
+        createdAt,
+        lastUserMessageAt: createdAt,
+        timestamp: createdAt,
         project: normalizedProjectRoot,
         projectName: normalizedProjectRoot
           ? getPathBaseName(normalizedProjectRoot)
@@ -8734,10 +8756,18 @@ export default function CodexDeckApp() {
             return session;
           }
           found = true;
-          return { ...session, timestamp };
+          return {
+            ...session,
+            lastUserMessageAt: timestamp,
+            timestamp,
+          };
         });
         return found
-          ? next.sort((left, right) => right.timestamp - left.timestamp)
+          ? next.sort(
+              (left, right) =>
+                getSessionLastUserMessageAt(right) -
+                getSessionLastUserMessageAt(left),
+            )
           : current;
       });
     },
@@ -9135,11 +9165,18 @@ export default function CodexDeckApp() {
         sessionMap.set(
           nextSession.id,
           existing
-            ? { ...nextSession, timestamp: existing.timestamp }
+            ? {
+                ...nextSession,
+                createdAt: existing.createdAt,
+                lastUserMessageAt: existing.lastUserMessageAt,
+                timestamp: existing.timestamp,
+              }
             : nextSession,
         );
         return Array.from(sessionMap.values()).sort(
-          (left, right) => right.timestamp - left.timestamp,
+          (left, right) =>
+            getSessionLastUserMessageAt(right) -
+            getSessionLastUserMessageAt(left),
         );
       });
 

@@ -183,6 +183,18 @@ test("getSessions sorts file-backed sessions by latest user message time", async
         "2026-01-01T00:06:00.000Z",
       ),
     ]);
+    await writeHistoryFile(rootDir, [
+      JSON.stringify({
+        session_id: SESSION_A,
+        ts: Date.parse("2026-01-01T00:01:00.000Z") / 1000,
+        text: "older user message",
+      }),
+      JSON.stringify({
+        session_id: SESSION_B,
+        ts: Date.parse("2026-01-01T00:02:00.000Z") / 1000,
+        text: "stale history message",
+      }),
+    ]);
 
     setStorageDir(rootDir);
     await loadStorage();
@@ -196,10 +208,16 @@ test("getSessions sorts file-backed sessions by latest user message time", async
       sessions[0]?.timestamp,
       Date.parse("2026-01-01T00:05:00.000Z"),
     );
+    assert.equal(sessions[0]?.createdAt, 1000);
+    assert.equal(
+      sessions[0]?.lastUserMessageAt,
+      Date.parse("2026-01-01T00:05:00.000Z"),
+    );
     assert.equal(
       sessions[1]?.timestamp,
       Date.parse("2026-01-01T00:01:00.000Z"),
     );
+    assert.equal(sessions[1]?.createdAt, 2000);
   } finally {
     await cleanup();
   }

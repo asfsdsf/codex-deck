@@ -7,12 +7,14 @@ import {
   type RefObject,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { formatTime } from "../utils";
+import { formatSessionTimeLabel } from "../utils";
 
 interface SessionListItem {
   id: string;
   display: string;
   projectName: string;
+  createdAt?: number;
+  lastUserMessageAt?: number;
   timestamp: number;
   workflowRoleLabel?: string | null;
 }
@@ -197,8 +199,14 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                         <span className="text-[10px] text-zinc-500 font-medium">
                           {session.projectName}
                         </span>
-                        <span className="text-[10px] text-zinc-600">
-                          {formatTime(session.timestamp)}
+                        <span
+                          className="text-[10px] text-zinc-600"
+                          title="Created - last user message"
+                        >
+                          {formatSessionTimeLabel(
+                            session.createdAt,
+                            session.lastUserMessageAt ?? session.timestamp,
+                          )}
                         </span>
                       </div>
                       <p className="text-[12px] text-zinc-300 leading-snug line-clamp-2 break-words">

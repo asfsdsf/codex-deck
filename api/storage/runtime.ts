@@ -28,6 +28,9 @@ export interface HistoryEntry {
 export interface Session {
   id: string;
   display: string;
+  createdAt?: number;
+  lastUserMessageAt?: number;
+  /** Backward-compatible alias for lastUserMessageAt. */
   timestamp: number;
   project: string;
   projectName: string;
@@ -1320,8 +1323,6 @@ interface SessionWaitStateCacheEntry {
 
 interface SessionUserMessageTimestampCacheEntry {
   filePath: string;
-  mtimeMs: number;
-  size: number;
   timestamp: number;
 }
 
@@ -1398,6 +1399,7 @@ export function initStorage(dir?: string): void {
   codexHistoryPath = join(codexDir, "history.jsonl");
   codexSessionsDir = join(codexDir, "sessions");
   sessionWaitStateCache.clear();
+  sessionUserMessageTimestampCache.clear();
 }
 
 export function getCodexDir(): string {
@@ -4600,20 +4602,16 @@ async function getLatestUserMessageTimestamp(
   sessionId: string,
   filePath: string,
 ): Promise<number> {
+  const cached = sessionUserMessageTimestampCache.get(sessionId);
+  if (cached?.filePath === filePath) {
+    return cached.timestamp;
+  }
+
   let fileStat;
   try {
     fileStat = await stat(filePath);
   } catch {
     return 0;
-  }
-
-  const cached = sessionUserMessageTimestampCache.get(sessionId);
-  if (
-    cached?.filePath === filePath &&
-    cached.mtimeMs === fileStat.mtimeMs &&
-    cached.size === fileStat.size
-  ) {
-    return cached.timestamp;
   }
 
   let timestamp = 0;
@@ -4662,8 +4660,6 @@ async function getLatestUserMessageTimestamp(
 
   sessionUserMessageTimestampCache.set(sessionId, {
     filePath,
-    mtimeMs: fileStat.mtimeMs,
-    size: fileStat.size,
     timestamp,
   });
   return timestamp;
@@ -4760,24 +4756,31 @@ export async function getSessions(): Promise<Session[]> {
       }
 
       const historyEntry = history.get(sessionId);
-
-      const latestUserMessageTimestamp = historyEntry
+      const historyUserMessageTimestamp = historyEntry
         ? toEpochMilliseconds(historyEntry.timestamp)
-        : filePath
-          ? await getLatestUserMessageTimestamp(sessionId, filePath)
-          : 0;
+        : 0;
+      const fileUserMessageTimestamp = filePath
+        ? await getLatestUserMessageTimestamp(sessionId, filePath)
+        : 0;
+      const latestUserMessageTimestamp = Math.max(
+        historyUserMessageTimestamp,
+        fileUserMessageTimestamp,
+      );
 
-      let timestamp = latestUserMessageTimestamp;
-      if (timestamp <= 0 && meta?.timestamp) {
-        timestamp = meta.timestamp;
-      } else if (timestamp <= 0 && filePath) {
+      let createdAt = meta?.timestamp ?? 0;
+      if (createdAt <= 0 && filePath) {
         try {
           const fileStat = await stat(filePath);
-          timestamp = fileStat.birthtimeMs || fileStat.mtimeMs;
+          createdAt = fileStat.birthtimeMs || fileStat.mtimeMs;
         } catch {
-          timestamp = 0;
+          createdAt = 0;
         }
       }
+      if (createdAt <= 0 && historyEntry) {
+        createdAt = toEpochMilliseconds(historyEntry.timestamp);
+      }
+
+      const lastUserMessageAt = latestUserMessageTimestamp || createdAt;
 
       let display = "";
       const cachedDisplay = sessionDisplayCache.get(sessionId);
@@ -4797,13 +4800,19 @@ export async function getSessions(): Promise<Session[]> {
       sessions.push({
         id: sessionId,
         display,
-        timestamp,
+        createdAt,
+        lastUserMessageAt,
+        timestamp: lastUserMessageAt,
         project,
         projectName: getProjectName(project),
       });
     }
 
-    return sessions.sort((a, b) => b.timestamp - a.timestamp);
+    return sessions.sort(
+      (a, b) =>
+        (b.lastUserMessageAt ?? b.timestamp) -
+        (a.lastUserMessageAt ?? a.timestamp),
+    );
   });
 }
 

@@ -5,6 +5,7 @@ import {
   formatDurationFromTimestamps,
   formatDurationMs,
   formatLocalTimestamp,
+  formatSessionTimeLabel,
   formatTime,
   getPageSliceBounds,
   getTotalPages,
@@ -22,6 +23,16 @@ test("formatTime formats recent relative timestamps", () => {
   assert.equal(formatTime(now - 5 * 60 * 1000), "5m");
   assert.equal(formatTime(now - 2 * 60 * 60 * 1000), "2h");
   assert.equal(formatTime(now - 3 * 24 * 60 * 60 * 1000), "3d");
+});
+
+test("formatSessionTimeLabel shows creation and last user message times", () => {
+  const now = Date.now();
+
+  assert.equal(
+    formatSessionTimeLabel(now - 24 * 60 * 60 * 1000, now - 5 * 60 * 1000),
+    "1d-5m",
+  );
+  assert.equal(formatSessionTimeLabel(undefined, now - 5 * 60 * 1000), "5m");
 });
 
 test("formatLocalTimestamp formats ISO timestamp in local timezone", () => {
