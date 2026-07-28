@@ -32,6 +32,7 @@ import type {
   FixDanglingSessionResponse,
   EditConversationMessageResponse,
   SessionExistsResponse,
+  SessionContentSearchResponse,
   SessionFileContentResponse,
   SessionFileSearchResponse,
   SessionFileTreeResponse,
@@ -1233,6 +1234,15 @@ export async function getSessionExists(
 ): Promise<SessionExistsResponse> {
   return requestJson<SessionExistsResponse>(
     `/api/sessions/${encodeURIComponent(sessionId)}/exists`,
+  );
+}
+
+export async function searchSessionContent(
+  query: string,
+): Promise<SessionContentSearchResponse> {
+  const params = new URLSearchParams({ query });
+  return requestJson<SessionContentSearchResponse>(
+    `/api/sessions/search?${params.toString()}`,
   );
 }
 

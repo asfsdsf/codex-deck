@@ -805,7 +805,11 @@ export class RemoteClient {
 
   public async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     const method = init?.method || "GET";
-    const requestTimeoutMs = path.includes("waitMs=") ? 35_000 : 15_000;
+    const requestTimeoutMs = path.startsWith("/api/sessions/search?")
+      ? 70_000
+      : path.includes("waitMs=")
+        ? 35_000
+        : 15_000;
     const executeRequest = () =>
       this.callRemote<RemoteHttpProxyResponse>(
         "http",

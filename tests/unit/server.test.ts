@@ -220,6 +220,26 @@ test("server routes return sessions/projects/conversation/context and fix dangli
       true,
     );
 
+    const deepSearch = await requestJson(
+      server,
+      "/api/sessions/search?query=HELLO%20SERVER",
+    );
+    assert.equal(deepSearch.status, 200);
+    assert.equal(
+      (deepSearch.body as { sessionIds?: string[] }).sessionIds?.includes(
+        SESSION_ID,
+      ),
+      true,
+    );
+    assert.ok(
+      ["rg", "ag", "ack", "grep"].includes(
+        (deepSearch.body as { command?: string }).command ?? "",
+      ),
+    );
+
+    const emptyDeepSearch = await requestJson(server, "/api/sessions/search");
+    assert.equal(emptyDeepSearch.status, 400);
+
     const projects = await requestJson(server, "/api/projects");
     assert.equal(projects.status, 200);
     assert.deepEqual(projects.body, ["/repo/app"]);

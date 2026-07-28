@@ -9,6 +9,10 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { formatSessionTimeLabel } from "../utils";
 import type { SessionStatus } from "../session-status";
+import type {
+  SessionContentSearchCommand,
+  SessionContentSearchResponse,
+} from "@codex-deck/api";
 
 interface SessionListItem {
   id: string;
@@ -108,6 +112,7 @@ interface SessionListProps {
   deleteButtonLabel?: string;
   searchControls?: ReactNode;
   searchPlaceholder?: string;
+  onDeepSearch?: (query: string) => Promise<SessionContentSearchResponse>;
 }
 
 const SessionList = memo(function SessionList(props: SessionListProps) {
@@ -124,13 +129,70 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     deleteButtonLabel = "Delete session",
     searchControls,
     searchPlaceholder = "Search...",
+    onDeepSearch,
   } = props;
   const [search, setSearch] = useState("");
+  const [deepSearchResult, setDeepSearchResult] = useState<{
+    query: string;
+    sessionIds: Set<string>;
+    command: SessionContentSearchCommand;
+  } | null>(null);
+  const [deepSearchLoading, setDeepSearchLoading] = useState(false);
+  const [deepSearchError, setDeepSearchError] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
+  const deepSearchRequestIdRef = useRef(0);
+
+  const handleSearchChange = (value: string) => {
+    deepSearchRequestIdRef.current += 1;
+    setSearch(value);
+    setDeepSearchResult(null);
+    setDeepSearchError(null);
+    setDeepSearchLoading(false);
+  };
+
+  const handleDeepSearch = async () => {
+    const query = search.trim();
+    if (!query || !onDeepSearch || deepSearchLoading) {
+      return;
+    }
+
+    const requestId = deepSearchRequestIdRef.current + 1;
+    deepSearchRequestIdRef.current = requestId;
+    setDeepSearchLoading(true);
+    setDeepSearchError(null);
+    try {
+      const result = await onDeepSearch(query);
+      if (deepSearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      setDeepSearchResult({
+        query,
+        sessionIds: new Set(result.sessionIds),
+        command: result.command,
+      });
+    } catch (error) {
+      if (deepSearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      setDeepSearchResult(null);
+      setDeepSearchError(
+        error instanceof Error ? error.message : "Deep search failed.",
+      );
+    } finally {
+      if (deepSearchRequestIdRef.current === requestId) {
+        setDeepSearchLoading(false);
+      }
+    }
+  };
 
   const filteredSessions = useMemo(() => {
     if (!search.trim()) {
       return sessions;
+    }
+    if (onDeepSearch && deepSearchResult?.query === search.trim()) {
+      return sessions.filter((session) =>
+        deepSearchResult.sessionIds.has(session.id),
+      );
     }
     const query = search.toLowerCase();
     return sessions.filter(
@@ -138,7 +200,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
         s.display.toLowerCase().includes(query) ||
         s.projectName.toLowerCase().includes(query),
     );
-  }, [sessions, search]);
+  }, [deepSearchResult, onDeepSearch, sessions, search]);
 
   const virtualizer = useVirtualizer({
     count: filteredSessions.length,
@@ -175,14 +237,17 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
               ref={searchInputRef}
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               placeholder={searchPlaceholder}
               className="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none"
             />
             {search && (
               <button
-                onClick={() => setSearch("")}
+                type="button"
+                onClick={() => handleSearchChange("")}
                 className="text-zinc-600 hover:text-zinc-400 transition-colors"
+                aria-label="Clear search"
+                title="Clear search"
               >
                 <svg
                   className="w-4 h-4"
@@ -199,8 +264,55 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                 </svg>
               </button>
             )}
+            {search.trim() && onDeepSearch ? (
+              <button
+                type="button"
+                onClick={() => void handleDeepSearch()}
+                disabled={deepSearchLoading}
+                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-cyan-700/60 bg-cyan-950/40 px-2 text-[11px] font-medium text-cyan-300 transition-colors hover:border-cyan-600 hover:bg-cyan-900/40 disabled:cursor-wait disabled:opacity-60"
+                aria-label="Deep search all session content"
+                title="Search all session history files"
+              >
+                {deepSearchLoading ? (
+                  <svg
+                    className="h-3 w-3 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="9"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                    />
+                    <path
+                      className="opacity-90"
+                      d="M12 3a9 9 0 018.5 6"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeWidth="3"
+                    />
+                  </svg>
+                ) : null}
+                Deep
+              </button>
+            ) : null}
           </div>
         </div>
+        {onDeepSearch && deepSearchError ? (
+          <p className="text-[10px] text-red-400" role="alert">
+            {deepSearchError}
+          </p>
+        ) : onDeepSearch && deepSearchResult ? (
+          <p className="text-[10px] text-cyan-500/90" aria-live="polite">
+            {filteredSessions.length} deep search match
+            {filteredSessions.length === 1 ? "" : "es"} via{" "}
+            {deepSearchResult.command}
+          </p>
+        ) : null}
       </div>
 
       <div ref={parentRef} className="flex-1 overflow-y-auto">

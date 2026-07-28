@@ -36,6 +36,19 @@ export interface Session {
   projectName: string;
 }
 
+export type SessionContentSearchCommand = "rg" | "ag" | "ack" | "grep";
+
+export interface SessionContentSearchResponse {
+  query: string;
+  command: SessionContentSearchCommand;
+  sessionIds: string[];
+}
+
+export interface SessionSearchFileEntry {
+  sessionId: string;
+  filePath: string;
+}
+
 export interface SessionsDeltaResponse {
   version: number;
   isFullSnapshot: boolean;
@@ -1404,6 +1417,13 @@ export function initStorage(dir?: string): void {
 
 export function getCodexDir(): string {
   return codexDir;
+}
+
+export function getSessionSearchFileEntries(): SessionSearchFileEntry[] {
+  return Array.from(fileIndex, ([sessionId, filePath]) => ({
+    sessionId,
+    filePath,
+  }));
 }
 
 // Backward-compatible export to avoid breaking existing imports.

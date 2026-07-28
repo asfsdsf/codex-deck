@@ -70,6 +70,7 @@ import {
   respondCodexApprovalRequest,
   respondCodexUserInputRequest,
   searchSessionFiles,
+  searchSessionContent,
   sendTerminalInput,
   sendCodexMessage,
   sendWorkflowControlMessage,
@@ -1654,6 +1655,14 @@ test("conversation and session routes request expected endpoints", async () => {
       });
     }
 
+    if (String(input).includes("/sessions/search")) {
+      return jsonResponse({
+        query: "deep text",
+        command: "rg",
+        sessionIds: ["abc"],
+      });
+    }
+
     if (String(input).includes("/terminal-runs/")) {
       if (String(input).includes("/terminal-runs/clean")) {
         return jsonResponse({ ok: true });
@@ -1698,6 +1707,7 @@ test("conversation and session routes request expected endpoints", async () => {
   const diff = await getSessionDiff("abc", "unstaged");
   const tree = await getSessionFileTree("abc");
   const search = await searchSessionFiles("abc", "app", 10);
+  const deepSearch = await searchSessionContent("deep text");
   const content = await getSessionFileContent("abc", "src/app.ts");
   const terminalRuns = await getSessionTerminalRuns("abc");
   const cleaned = await cleanSessionBackgroundTerminalRuns("abc");
@@ -1711,6 +1721,7 @@ test("conversation and session routes request expected endpoints", async () => {
   assert.equal(diff.mode, "unstaged");
   assert.deepEqual(tree.files, ["src/app.ts"]);
   assert.deepEqual(search.files, ["src/app.ts"]);
+  assert.deepEqual(deepSearch.sessionIds, ["abc"]);
   assert.equal(content.path, "src/app.ts");
   assert.equal(terminalRuns.runs[0]?.processId, "1000");
   assert.equal(cleaned.ok, true);
@@ -1725,6 +1736,7 @@ test("conversation and session routes request expected endpoints", async () => {
     "/api/sessions/abc/diff?mode=unstaged:GET",
     "/api/sessions/abc/file-tree:GET",
     "/api/sessions/abc/file-search?query=app&limit=10:GET",
+    "/api/sessions/search?query=deep+text:GET",
     "/api/sessions/abc/file-content?path=src%2Fapp.ts&page=1:GET",
     "/api/sessions/abc/terminal-runs:GET",
     "/api/sessions/abc/terminal-runs/clean:POST",

@@ -213,6 +213,7 @@ import {
   getSessionFileContent,
   getWorkflowProjectFileContent,
   searchSessionFiles,
+  searchSessionContent,
   getSessionFileTreeNodes,
   getWorkflowProjectFileTreeNodes,
   getSessionDiff,
@@ -12332,6 +12333,9 @@ export default function CodexDeckApp() {
                   : "Delete session"
             }
             searchControls={null}
+            onDeepSearch={
+              centerView === "session" ? searchSessionContent : undefined
+            }
           />
           <div
             role="separator"

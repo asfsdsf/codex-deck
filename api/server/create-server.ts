@@ -12,6 +12,7 @@ import {
   loadStorage,
   getCodexDir,
   getSessions,
+  getSessionSearchFileEntries,
   getProjects,
   getSessionContext,
   getCodexConfigDefaults,
@@ -69,6 +70,7 @@ import {
   type SessionFileTreeNodesResponse,
   type SessionFileSearchResponse,
   type SessionFileContentResponse,
+  type SessionContentSearchResponse,
   type SessionsDeltaResponse,
   type SessionHooksResponse,
   type SessionHooksConfigWriteRequest,
@@ -100,6 +102,10 @@ import {
   type TerminalEventsResponse,
   type TerminalStreamEvent,
 } from "../storage";
+import {
+  searchSessionContent,
+  SessionSearchCommandUnavailableError,
+} from "../session-content-search";
 import {
   initWatcher,
   startWatcher,
@@ -2028,6 +2034,40 @@ export function createServer(options: ServerOptions) {
   app.get("/api/sessions", async (c) => {
     const sessions = await getSessions();
     return c.json(sessions);
+  });
+
+  app.get("/api/sessions/search", async (c) => {
+    const query = c.req.query("query")?.trim() ?? "";
+    if (!query) {
+      return c.json({ error: "query is required" }, 400);
+    }
+    if (query.length > 500) {
+      return c.json({ error: "query must be at most 500 characters" }, 400);
+    }
+
+    try {
+      const result = await searchSessionContent({
+        query,
+        searchRoot: join(getCodexDir(), "sessions"),
+        sessionFiles: getSessionSearchFileEntries(),
+        signal: c.req.raw.signal,
+      });
+      const activeSessionIds = new Set(
+        (await getSessions()).map((session) => session.id),
+      );
+      return c.json({
+        ...result,
+        sessionIds: result.sessionIds.filter((sessionId) =>
+          activeSessionIds.has(sessionId),
+        ),
+      } satisfies SessionContentSearchResponse);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      return c.json(
+        { error: message },
+        error instanceof SessionSearchCommandUnavailableError ? 503 : 500,
+      );
+    }
   });
 
   app.get("/api/sessions/delta", async (c) => {
