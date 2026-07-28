@@ -8,6 +8,11 @@ interface ParsedStringLiteral {
   end: number;
 }
 
+interface ParsedLiteral {
+  value: unknown;
+  end: number;
+}
+
 function isIdentifierCharacter(character: string | undefined): boolean {
   return !!character && /[A-Za-z0-9_$]/.test(character);
 }
@@ -179,6 +184,138 @@ function findObjectStringProperty(
   return null;
 }
 
+function parsePrimitiveLiteral(
+  source: string,
+  start: number,
+): ParsedLiteral | null {
+  const stringLiteral = parseStringLiteral(source, start);
+  if (stringLiteral) {
+    return stringLiteral;
+  }
+
+  for (const [literal, value] of [
+    ["true", true],
+    ["false", false],
+    ["null", null],
+  ] as const) {
+    if (
+      source.startsWith(literal, start) &&
+      !isIdentifierCharacter(source[start + literal.length])
+    ) {
+      return { value, end: start + literal.length };
+    }
+  }
+
+  const numberMatch = source
+    .slice(start)
+    .match(/^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/);
+  if (!numberMatch) {
+    return null;
+  }
+  const value = Number(numberMatch[0]);
+  return Number.isFinite(value)
+    ? { value, end: start + numberMatch[0].length }
+    : null;
+}
+
+function parseSimpleObjectArgument(
+  source: string,
+  objectStart: number,
+  objectEnd: number,
+): Record<string, unknown> | null {
+  const input: Record<string, unknown> = {};
+  let index = objectStart + 1;
+
+  while (index < objectEnd) {
+    index = skipWhitespace(source, index);
+    if (index >= objectEnd) {
+      return input;
+    }
+
+    let propertyName: string;
+    const quotedProperty = parseStringLiteral(source, index);
+    if (quotedProperty) {
+      propertyName = quotedProperty.value;
+      index = quotedProperty.end;
+    } else {
+      const propertyMatch = source.slice(index).match(/^[A-Za-z_$][\w$]*/);
+      if (!propertyMatch) {
+        return null;
+      }
+      propertyName = propertyMatch[0];
+      index += propertyName.length;
+    }
+
+    index = skipWhitespace(source, index);
+    if (source[index] !== ":") {
+      return null;
+    }
+    index = skipWhitespace(source, index + 1);
+
+    const parsedValue = parsePrimitiveLiteral(source, index);
+    if (!parsedValue) {
+      return null;
+    }
+    input[propertyName] = parsedValue.value;
+    index = skipWhitespace(source, parsedValue.end);
+
+    if (index >= objectEnd) {
+      return input;
+    }
+    if (source[index] !== ",") {
+      return null;
+    }
+    index += 1;
+  }
+
+  return input;
+}
+
+function parseObjectArgument(
+  source: string,
+  objectStart: number,
+): Record<string, unknown> | null {
+  if (source[objectStart] !== "{") {
+    return null;
+  }
+
+  let depth = 0;
+  for (let index = objectStart; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+    if (character === '"' || character === "'" || character === "`") {
+      const parsed = parseStringLiteral(source, index);
+      if (!parsed) {
+        return null;
+      }
+      index = parsed.end - 1;
+      continue;
+    }
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+    if (character !== "}") {
+      continue;
+    }
+
+    depth -= 1;
+    if (depth !== 0) {
+      continue;
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(source.slice(objectStart, index + 1));
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return parseSimpleObjectArgument(source, objectStart, index);
+    }
+  }
+
+  return null;
+}
+
 function findAssignedString(
   raw: string,
   identifier: string,
@@ -229,6 +366,12 @@ function parseExecCommand(raw: string): NormalizedToolUse | null {
     return null;
   }
 
+  const parsedInput = parseObjectArgument(raw, argumentStart);
+  const parsedCommand = parsedInput?.cmd ?? parsedInput?.command;
+  if (typeof parsedCommand === "string") {
+    return { name: "exec_command", input: parsedInput };
+  }
+
   const command = findObjectStringProperty(
     raw,
     argumentStart,
@@ -237,6 +380,25 @@ function parseExecCommand(raw: string): NormalizedToolUse | null {
   return command === null
     ? null
     : { name: "exec_command", input: { cmd: command } };
+}
+
+function parseWriteStdin(raw: string): NormalizedToolUse | null {
+  const argumentStart = findCallArgumentStart(raw, "write_stdin");
+  if (argumentStart === null) {
+    return null;
+  }
+
+  const parsedInput = parseObjectArgument(raw, argumentStart);
+  const sessionId = parsedInput?.session_id;
+  if (
+    !parsedInput ||
+    (typeof sessionId !== "number" && typeof sessionId !== "string") ||
+    typeof parsedInput.chars !== "string"
+  ) {
+    return null;
+  }
+
+  return { name: "write_stdin", input: parsedInput };
 }
 
 export function normalizeToolUse(
@@ -250,7 +412,8 @@ export function normalizeToolUse(
 
   return (
     parseApplyPatch(input.raw) ??
-    parseExecCommand(input.raw) ?? {
+    parseExecCommand(input.raw) ??
+    parseWriteStdin(input.raw) ?? {
       name: toolName || "",
       input,
     }

@@ -3,6 +3,11 @@ import { shouldShowTokenLimitNotice } from "./token-limit-notices";
 import { formatDurationMs, sanitizeText } from "./utils";
 import { parseGoalInternalContext } from "./goal-internal-context";
 import { normalizeToolUse } from "./tool-use-normalization";
+import {
+  getPatchLineTotals,
+  parsePatchSummaryRows,
+  type PatchSummaryRow,
+} from "./patch-summary";
 
 export type ViewportMessageGroup = "default" | "important";
 export type ViewportTextTone =
@@ -44,14 +49,6 @@ export interface CollapsedViewportContext {
   toolInputMapByCallId?: Map<string, Record<string, unknown>>;
 }
 
-interface PatchSummaryRow {
-  operation: "add" | "update" | "delete";
-  path: string;
-  movePath: string | null;
-  added: number;
-  removed: number;
-}
-
 const IMPORTANT_TOOL_NAMES = new Set([
   "request_user_input",
   "update_plan",
@@ -61,8 +58,6 @@ const IMPORTANT_TOOL_NAMES = new Set([
 
 const PROPOSED_PLAN_BLOCK_REGEX =
   /^<proposed_plan>\n([\s\S]*?)\n<\/proposed_plan>([\s\S]*)$/;
-const PATCH_FILE_HEADER_REGEX = /^\*\*\* (Add|Update|Delete) File: (.+)$/;
-const PATCH_MOVE_TO_HEADER_REGEX = /^\*\*\* Move to: (.+)$/;
 
 function normalizeInlineText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -291,52 +286,6 @@ function getFirstNonEmptyLine(value: string): string | null {
   );
 }
 
-function parsePatchSummaryRows(raw: string): PatchSummaryRow[] {
-  const rows: PatchSummaryRow[] = [];
-  let currentRow: PatchSummaryRow | null = null;
-
-  for (const line of raw.replace(/\r\n/g, "\n").split("\n")) {
-    const headerMatch = line.match(PATCH_FILE_HEADER_REGEX);
-    if (headerMatch) {
-      currentRow = {
-        operation:
-          headerMatch[1].toLowerCase() === "add"
-            ? "add"
-            : headerMatch[1].toLowerCase() === "delete"
-              ? "delete"
-              : "update",
-        path: headerMatch[2].trim(),
-        movePath: null,
-        added: 0,
-        removed: 0,
-      };
-      rows.push(currentRow);
-      continue;
-    }
-
-    if (!currentRow) {
-      continue;
-    }
-
-    const moveMatch = line.match(PATCH_MOVE_TO_HEADER_REGEX);
-    if (moveMatch) {
-      currentRow.movePath = moveMatch[1].trim();
-      continue;
-    }
-
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      currentRow.added += 1;
-      continue;
-    }
-
-    if (line.startsWith("-") && !line.startsWith("---")) {
-      currentRow.removed += 1;
-    }
-  }
-
-  return rows;
-}
-
 function buildPatchLine(
   row: PatchSummaryRow,
   projectPath: string | null | undefined,
@@ -375,8 +324,7 @@ function summarizePatch(
     return buildPatchLine(rows[0], projectPath);
   }
 
-  const added = rows.reduce((sum, row) => sum + row.added, 0);
-  const removed = rows.reduce((sum, row) => sum + row.removed, 0);
+  const { added, removed } = getPatchLineTotals(rows);
   return plainLine(
     "tool",
     `Edited ${rows.length} files (+${added} -${removed})`,
@@ -571,6 +519,30 @@ function summarizeCommandToolUse(
   if (toolName === "write_stdin") {
     const sessionText =
       typeof input.session_id === "number" ? `session ${input.session_id}` : "";
+    if (
+      typeof input.chars === "string" &&
+      input.chars.length === 0 &&
+      sessionText
+    ) {
+      const waitMs =
+        typeof input.yield_time_ms === "number" &&
+        Number.isFinite(input.yield_time_ms)
+          ? input.yield_time_ms
+          : null;
+      if (waitMs !== null) {
+        const waitDetail = `up to ${formatDurationMs(waitMs)}`;
+        return plainLine("tool", `Waiting for ${sessionText} · ${waitDetail}`, [
+          plainSegment("label", "Waiting for"),
+          detailSegment(sessionText),
+          punctuationSegment("·"),
+          detailSegment(waitDetail),
+        ]);
+      }
+      return plainLine("tool", `Waiting for ${sessionText}`, [
+        plainSegment("label", "Waiting for"),
+        detailSegment(sessionText),
+      ]);
+    }
     if (command && sessionText) {
       return plainLine(`tool`, `Wrote to ${sessionText} · ${command}`, [
         plainSegment("label", "Wrote to"),

@@ -50,3 +50,29 @@ test("getSearchableToolUseText indexes commands wrapped by exec", () => {
 
   assert.equal(text, "exec_command\ncat /repo/README.md");
 });
+
+test("getSearchableToolUseText indexes JSON-wrapped exec commands", () => {
+  const text = getSearchableToolUseText({
+    type: "tool_use",
+    id: "call_json_exec",
+    name: "exec",
+    input: {
+      raw: 'const r = await tools.exec_command({"cmd":"pwd && ls","workdir":"/repo"});text(r.output)',
+    },
+  });
+
+  assert.equal(text, "exec_command\npwd && ls");
+});
+
+test("getSearchableToolUseText indexes wrapped write_stdin sessions", () => {
+  const text = getSearchableToolUseText({
+    type: "tool_use",
+    id: "call_write_stdin",
+    name: "exec",
+    input: {
+      raw: 'const r = await tools.write_stdin({session_id:17188, chars:"", yield_time_ms:30000, max_output_tokens:5000}); text(r)',
+    },
+  });
+
+  assert.equal(text, "write_stdin\nsession 17188");
+});

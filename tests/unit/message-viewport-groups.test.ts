@@ -417,6 +417,28 @@ test("collapsed text mode unwraps exec file reads", () => {
   });
 });
 
+test("collapsed text mode unwraps JSON-wrapped exec commands", () => {
+  const line = getCollapsedViewportLine(
+    createAssistantMessage([
+      {
+        type: "tool_use",
+        id: "json-wrapped-command",
+        name: "exec",
+        input: {
+          raw: 'const r = await tools.exec_command({"cmd":"pnpm test","workdir":"/repo","yield_time_ms":10000});text(r.output)\n',
+        },
+      },
+    ]),
+    { projectPath: "/repo" },
+  );
+
+  assert.deepEqual(line, {
+    tone: "tool",
+    text: "pnpm test",
+    segments: [{ kind: "command", text: "pnpm test" }],
+  });
+});
+
 test("collapsed text mode unwraps exec apply_patch calls", () => {
   const rawPatch = [
     "*** Begin Patch",
@@ -502,6 +524,32 @@ test("collapsed text mode summarizes yielded process waits", () => {
     ],
   });
   assert.equal(getCollapsedViewportLine(resultMessage, context), null);
+});
+
+test("collapsed text mode summarizes wrapped write_stdin polling", () => {
+  const line = getCollapsedViewportLine(
+    createAssistantMessage([
+      {
+        type: "tool_use",
+        id: "wrapped-write-stdin",
+        name: "exec",
+        input: {
+          raw: 'const r = await tools.write_stdin({session_id:17188, chars:"", yield_time_ms:30000, max_output_tokens:5000}); text(r)\n',
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(line, {
+    tone: "tool",
+    text: "Waiting for session 17188 · up to 30s",
+    segments: [
+      { kind: "label", text: "Waiting for" },
+      { kind: "detail", text: "session 17188" },
+      { kind: "punctuation", text: "·" },
+      { kind: "detail", text: "up to 30s" },
+    ],
+  });
 });
 
 test("collapsed text mode falls back for unsupported sed commands", () => {

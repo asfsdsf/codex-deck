@@ -135,6 +135,63 @@ test("MessageBlock renders wrapped exec commands as command tools", () => {
   assert.doesNotMatch(html, /tools\.exec_command/);
 });
 
+test("MessageBlock renders JSON-wrapped exec command options", () => {
+  const html = renderMessageBlock({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "json-wrapped-command",
+          name: "exec",
+          input: {
+            raw: 'const r = await tools.exec_command({"cmd":"pwd && ls","workdir":"/repo","yield_time_ms":10000,"max_output_tokens":20000});\ntext(r.output);\n',
+          },
+        },
+      ],
+    },
+  });
+
+  assert.match(html, /exec_command/);
+  assert.match(html, /pwd &amp;&amp; ls/);
+  assert.match(html, /workdir/);
+  assert.match(html, /\/repo/);
+  assert.match(html, /yield_time_ms/);
+  assert.match(html, /max_output_tokens/);
+  assert.doesNotMatch(html, /tools\.exec_command/);
+});
+
+test("MessageBlock renders wrapped write_stdin polling details", () => {
+  const html = renderMessageBlock({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "wrapped-write-stdin",
+          name: "exec",
+          input: {
+            raw: 'const r = await tools.write_stdin({session_id:17188, chars:"", yield_time_ms:30000, max_output_tokens:5000}); text(r)\n',
+          },
+        },
+      ],
+    },
+  });
+
+  assert.match(html, /write_stdin/);
+  assert.match(html, /Process input/);
+  assert.match(html, /Session/);
+  assert.match(html, /17188/);
+  assert.match(html, /\(empty\)/);
+  assert.match(html, /Wait up to/);
+  assert.match(html, /30s/);
+  assert.match(html, /Output limit/);
+  assert.match(html, /5,000 tokens/);
+  assert.doesNotMatch(html, /tools\.write_stdin/);
+});
+
 test("MessageBlock renders wrapped apply_patch calls as patch tools", () => {
   const rawPatch = [
     "*** Begin Patch",
@@ -167,6 +224,38 @@ test("MessageBlock renders wrapped apply_patch calls as patch tools", () => {
   assert.match(html, /apply_patch/);
   assert.match(html, /src\/example\.ts/);
   assert.doesNotMatch(html, /tools\.apply_patch/);
+});
+
+test("MessageBlock shows patch line counts in the folded preview", () => {
+  const html = renderMessageBlock({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "folded-patch",
+          name: "apply_patch",
+          input: {
+            raw: [
+              "*** Begin Patch",
+              "*** Update File: /repo/src/example.ts",
+              "@@ -1,2 +1,3 @@",
+              " const a = 1;",
+              "-const b = 2;",
+              "+const b = 3;",
+              "+const c = 4;",
+              "*** End Patch",
+            ].join("\n"),
+          },
+        },
+      ],
+    },
+  });
+
+  assert.match(html, /apply_patch/);
+  assert.match(html, /example\.ts \(\+2 -1\)/);
+  assert.doesNotMatch(html, /const b = 2/);
 });
 
 test("MessageBlock renders yielded process waits with a concise preview", () => {

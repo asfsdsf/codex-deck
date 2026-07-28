@@ -71,6 +71,7 @@ import {
 } from "./tool-renderers";
 import { parseTerminalRestartNoticeMessage } from "../terminal-session-notices";
 import { normalizeToolUse } from "../tool-use-normalization";
+import { getPatchLineTotals, parsePatchSummaryRows } from "../patch-summary";
 
 interface MessageBlockProps {
   message: ConversationMessage;
@@ -2977,12 +2978,17 @@ function withMultilineCollapsedIndicator(
 }
 
 function getApplyPatchPreview(raw: string): string | null {
-  const match = raw.match(/\*\*\* (?:Add|Update|Delete) File: (.+)/);
-  if (!match) {
+  const rows = parsePatchSummaryRows(raw);
+  if (rows.length === 0) {
     return null;
   }
 
-  return getFilePathPreview(match[1].trim());
+  const target =
+    rows.length === 1
+      ? getFilePathPreview(rows[0].movePath ?? rows[0].path)
+      : `${rows.length} files`;
+  const { added, removed } = getPatchLineTotals(rows);
+  return `${target} (+${added} -${removed})`;
 }
 
 function getPatchTypePillClassName(fileType: string): string {
@@ -3253,6 +3259,81 @@ function getWaitCellId(input: Record<string, unknown>): string | null {
   return null;
 }
 
+function WriteStdinInputRenderer(props: {
+  input: Record<string, unknown>;
+  embedded?: boolean;
+  hideHeader?: boolean;
+}) {
+  const { input, embedded = false, hideHeader = false } = props;
+  const sessionId =
+    typeof input.session_id === "number" && Number.isFinite(input.session_id)
+      ? String(input.session_id)
+      : typeof input.session_id === "string" && input.session_id.trim()
+        ? input.session_id.trim()
+        : null;
+  const chars = typeof input.chars === "string" ? input.chars : null;
+  const waitMs =
+    typeof input.yield_time_ms === "number" &&
+    Number.isFinite(input.yield_time_ms)
+      ? input.yield_time_ms
+      : null;
+  const maxTokens =
+    typeof input.max_output_tokens === "number" &&
+    Number.isFinite(input.max_output_tokens)
+      ? input.max_output_tokens
+      : null;
+  const rows = [
+    sessionId ? { label: "Session", value: sessionId } : null,
+    chars !== null ? { label: "Input", value: chars || "(empty)" } : null,
+    waitMs !== null
+      ? { label: "Wait up to", value: formatDurationMs(waitMs) }
+      : null,
+    maxTokens !== null
+      ? {
+          label: "Output limit",
+          value: `${Math.max(0, Math.round(maxTokens)).toLocaleString()} tokens`,
+        }
+      : null,
+  ].filter((row): row is { label: string; value: string } => row !== null);
+
+  if (rows.length === 0) {
+    return (
+      <GenericToolInputRenderer
+        input={input}
+        embedded={embedded}
+        hideHeader={hideHeader}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`overflow-hidden ${embedded ? "rounded-md bg-zinc-900/40" : "rounded-lg border border-zinc-700/50 bg-zinc-900/70"}`}
+    >
+      {!hideHeader && (
+        <div
+          className={`border-b border-zinc-700/50 px-3 py-2 text-xs font-medium text-zinc-300 ${embedded ? "bg-zinc-800/25" : "bg-zinc-800/30"}`}
+        >
+          Process input
+        </div>
+      )}
+      <div className="divide-y divide-zinc-800/50">
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            className="flex items-start gap-3 px-3 py-2 text-xs"
+          >
+            <span className="w-36 shrink-0 text-zinc-500">{row.label}</span>
+            <span className="whitespace-pre-wrap break-all font-mono text-zinc-300">
+              {row.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WaitInputRenderer(props: {
   input: Record<string, unknown>;
   embedded?: boolean;
@@ -3388,6 +3469,20 @@ function renderFormattedToolInput(
   }
 
   if (
+    toolName === "write_stdin" &&
+    typeof input.chars === "string" &&
+    input.chars.length === 0
+  ) {
+    return (
+      <WriteStdinInputRenderer
+        input={input}
+        embedded={embedded}
+        hideHeader={hideHeader}
+      />
+    );
+  }
+
+  if (
     (toolName === "bash" ||
       toolName === "exec_command" ||
       toolName === "write_stdin") &&
@@ -3409,12 +3504,27 @@ function renderFormattedToolInput(
             ? `session ${input.session_id}`
             : undefined;
 
+      const remainingInput = Object.fromEntries(
+        Object.entries(input).filter(
+          ([key]) => key !== "cmd" && key !== "command" && key !== "chars",
+        ),
+      );
+
       return (
-        <BashRenderer
-          input={{ command, description }}
-          embedded={embedded}
-          hideHeader={hideHeader}
-        />
+        <div className="space-y-2">
+          <BashRenderer
+            input={{ command, description }}
+            embedded={embedded}
+            hideHeader={hideHeader}
+          />
+          {Object.keys(remainingInput).length > 0 && (
+            <GenericToolInputRenderer
+              input={remainingInput}
+              embedded={embedded}
+              hideHeader={hideHeader}
+            />
+          )}
+        </div>
       );
     }
   }
@@ -3669,8 +3779,27 @@ const TOOL_PREVIEW_HANDLERS: Record<string, PreviewHandler> = {
           String(input.cmd),
         )
       : null,
-  write_stdin: (input) =>
-    input.session_id ? `session ${String(input.session_id)}` : null,
+  write_stdin: (input) => {
+    const sessionId =
+      typeof input.session_id === "number" ||
+      typeof input.session_id === "string"
+        ? String(input.session_id)
+        : null;
+    if (!sessionId) {
+      return null;
+    }
+    if (typeof input.chars === "string" && input.chars.length > 0) {
+      return `session ${sessionId} · ${getTruncatedPreview(input.chars)}`;
+    }
+    const waitMs =
+      typeof input.yield_time_ms === "number" &&
+      Number.isFinite(input.yield_time_ms)
+        ? input.yield_time_ms
+        : null;
+    return waitMs === null
+      ? `session ${sessionId}`
+      : `session ${sessionId} · up to ${formatDurationMs(waitMs)}`;
+  },
   apply_patch: (input) =>
     typeof input.raw === "string"
       ? withMultilineCollapsedIndicator(
@@ -3778,7 +3907,10 @@ function getToolCopyText(
 
 function getToolExpandedLabel(toolName: string): string | null {
   const name = toolName.toLowerCase();
-  if (name === "exec_command" || name === "bash" || name === "write_stdin") {
+  if (name === "write_stdin") {
+    return "Process input";
+  }
+  if (name === "exec_command" || name === "bash") {
     return "Command";
   }
   return null;

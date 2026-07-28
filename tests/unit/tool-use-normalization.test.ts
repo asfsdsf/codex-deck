@@ -9,7 +9,28 @@ test("normalizeToolUse unwraps exec_command calls", () => {
     }),
     {
       name: "exec_command",
-      input: { cmd: "cat /repo/file with spaces.md" },
+      input: {
+        cmd: "cat /repo/file with spaces.md",
+        workdir: "/repo",
+        yield_time_ms: 10000,
+      },
+    },
+  );
+});
+
+test("normalizeToolUse unwraps JSON exec_command calls and preserves options", () => {
+  assert.deepEqual(
+    normalizeToolUse("exec", {
+      raw: 'const r = await tools.exec_command({"cmd":"pwd && ls","workdir":"/repo","yield_time_ms":10000,"max_output_tokens":20000});\ntext(r.output);\n',
+    }),
+    {
+      name: "exec_command",
+      input: {
+        cmd: "pwd && ls",
+        workdir: "/repo",
+        yield_time_ms: 10000,
+        max_output_tokens: 20000,
+      },
     },
   );
 });
@@ -30,6 +51,23 @@ test("normalizeToolUse unwraps apply_patch variables", () => {
       ].join("\n"),
     },
   });
+});
+
+test("normalizeToolUse unwraps write_stdin calls and preserves options", () => {
+  assert.deepEqual(
+    normalizeToolUse("exec", {
+      raw: 'const r = await tools.write_stdin({session_id:17188, chars:"", yield_time_ms:30000, max_output_tokens:5000}); text(r)\n',
+    }),
+    {
+      name: "write_stdin",
+      input: {
+        session_id: 17188,
+        chars: "",
+        yield_time_ms: 30000,
+        max_output_tokens: 5000,
+      },
+    },
+  );
 });
 
 test("normalizeToolUse preserves unknown exec programs", () => {
