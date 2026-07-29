@@ -17,6 +17,7 @@ export interface CodexDeckConfig {
   dir?: string;
   dev?: boolean;
   open?: boolean;
+  translationCommand?: string;
   remote?: CodexDeckRemoteConfig;
 }
 
@@ -53,6 +54,7 @@ export interface ResolvedCodexDeckOptions {
   remoteMachineId?: string;
   remotePinnedRealmId?: string;
   remotePinnedOpaqueServerKey?: string;
+  translationCommand?: string;
 }
 
 const DEFAULT_PORT = 12001;
@@ -138,6 +140,13 @@ function assignTopLevel(
       const value = parseTomlBoolean(rawValue);
       if (value !== undefined) {
         config.open = value;
+      }
+      break;
+    }
+    case "translation_command": {
+      const value = parseTomlString(rawValue);
+      if (value?.trim()) {
+        config.translationCommand = value;
       }
       break;
     }
@@ -234,6 +243,10 @@ export function mergeCodexDeckConfigs(
   if (open !== undefined) {
     merged.open = open;
   }
+  const translationCommand = high.translationCommand ?? low.translationCommand;
+  if (translationCommand !== undefined) {
+    merged.translationCommand = translationCommand;
+  }
   if (high.remote || low.remote) {
     const remote: CodexDeckRemoteConfig = {};
     for (const key of Object.values(REMOTE_KEY_MAP)) {
@@ -318,5 +331,6 @@ export function resolveCodexDeckOptions(
       cli.remotePinnedOpaqueServerKey ??
       env.CODEXDECK_REMOTE_PINNED_OPAQUE_SERVER_KEY ??
       config.remote?.pinnedOpaqueServerKey,
+    translationCommand: config.translationCommand,
   };
 }

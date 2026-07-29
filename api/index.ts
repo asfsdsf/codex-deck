@@ -153,6 +153,7 @@ const server = createServer({
   remoteMachineId: opts.remoteMachineId || deriveMachineId(opts.dir),
   remotePinnedRealmId: opts.remotePinnedRealmId,
   remotePinnedOpaqueServerPublicKey: opts.remotePinnedOpaqueServerKey,
+  translationCommand: opts.translationCommand,
 });
 
 process.on("SIGINT", () => {

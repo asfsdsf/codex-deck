@@ -515,6 +515,16 @@ export interface EditConversationMessageResponse {
   appServerRestarted?: boolean;
 }
 
+export interface TranslateTextRequest {
+  text: string;
+  inputLang?: string;
+  outputLang?: string;
+}
+
+export interface TranslateTextResponse {
+  translatedText: string;
+}
+
 export interface DeleteTerminalResponse {
   ok: boolean;
   deletedSessionIds: string[];

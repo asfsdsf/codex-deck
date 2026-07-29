@@ -77,6 +77,8 @@ import type {
   SessionDiffResponse,
   SessionTerminalRunOutputResponse,
   SessionTerminalRunsResponse,
+  TranslateTextRequest,
+  TranslateTextResponse,
   CreateCodexThreadRequest,
   CreateCodexThreadResponse,
   CodexUserInputRequest,
@@ -1281,6 +1283,18 @@ export async function getConversation(
   return requestJson<ConversationMessage[]>(
     `/api/conversation/${encodeURIComponent(sessionId)}`,
   );
+}
+
+export async function translateText(
+  request: TranslateTextRequest,
+): Promise<TranslateTextResponse> {
+  return requestJson<TranslateTextResponse>("/api/translate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
 }
 
 export async function editConversationMessage(

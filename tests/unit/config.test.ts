@@ -80,6 +80,26 @@ test("parseConfigToml rejects out-of-range and non-integer ports", () => {
   assert.equal(parseConfigToml("port = -5").port, undefined);
 });
 
+test("parseConfigToml parses translation_command", () => {
+  const config = parseConfigToml(
+    'translation_command = "translate_cmd $PROMPT $INPUT_LANG $OUTPUT_LANG"',
+  );
+  assert.equal(
+    config.translationCommand,
+    "translate_cmd $PROMPT $INPUT_LANG $OUTPUT_LANG",
+  );
+
+  // Empty or unquoted values are ignored.
+  assert.equal(
+    parseConfigToml('translation_command = ""').translationCommand,
+    undefined,
+  );
+  assert.equal(
+    parseConfigToml("translation_command = nope").translationCommand,
+    undefined,
+  );
+});
+
 test("findConfigFiles returns existing files in priority order", () => {
   const root = makeTempDir();
   const cwd = join(root, "project");
@@ -155,6 +175,19 @@ test("mergeCodexDeckConfigs keeps remote undefined when neither file sets it", (
   });
 });
 
+test("mergeCodexDeckConfigs merges translationCommand per key", () => {
+  const high = parseConfigToml('translation_command = "cmd-a $PROMPT"');
+  const low = parseConfigToml('translation_command = "cmd-b $PROMPT"');
+  assert.equal(
+    mergeCodexDeckConfigs(high, low).translationCommand,
+    "cmd-a $PROMPT",
+  );
+  assert.equal(
+    mergeCodexDeckConfigs({}, low).translationCommand,
+    "cmd-b $PROMPT",
+  );
+});
+
 test("resolveCodexDeckOptions applies built-in defaults", () => {
   const opts = resolveCodexDeckOptions({}, {}, { CODEX_HOME: "/codex" });
   assert.equal(opts.port, 12001);
@@ -162,6 +195,13 @@ test("resolveCodexDeckOptions applies built-in defaults", () => {
   assert.equal(opts.dev, false);
   assert.equal(opts.open, true);
   assert.equal(opts.remoteServerUrl, undefined);
+  assert.equal(opts.translationCommand, undefined);
+});
+
+test("resolveCodexDeckOptions resolves translationCommand from config file", () => {
+  const config = parseConfigToml('translation_command = "cmd $PROMPT"');
+  const opts = resolveCodexDeckOptions({}, config, {});
+  assert.equal(opts.translationCommand, "cmd $PROMPT");
 });
 
 test("resolveCodexDeckOptions prioritizes CLI > config file > defaults", () => {

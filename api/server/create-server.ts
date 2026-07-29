@@ -148,6 +148,7 @@ import {
 import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../remote/internal-proxy";
 import { RemoteServerClient } from "../remote/remote-server-client";
 import { registerTerminalRoutes } from "./terminal-routes";
+import { registerTranslationRoutes } from "./translation-routes";
 import { registerSystemRoutes } from "./system-routes";
 import { registerSettingsRoutes } from "./settings-routes";
 import {
@@ -1718,6 +1719,7 @@ export interface ServerOptions {
   remotePinnedRealmId?: string;
   remotePinnedOpaqueServerPublicKey?: string;
   remoteProxyAccessToken?: string;
+  translationCommand?: string;
 }
 
 interface SessionSkillsChangedEvent {
@@ -1750,6 +1752,7 @@ export function createServer(options: ServerOptions) {
     remotePinnedRealmId,
     remotePinnedOpaqueServerPublicKey,
     remoteProxyAccessToken,
+    translationCommand,
   } = options;
 
   initStorage(codexDir);
@@ -2159,6 +2162,7 @@ export function createServer(options: ServerOptions) {
   registerSystemRoutes(app);
   registerSettingsRoutes(app);
   registerTerminalRoutes(app);
+  registerTranslationRoutes(app, { translationCommand });
   registerHooksRoutes(app, {
     workflowRouteUnavailable,
     resolveSessionProjectPath,

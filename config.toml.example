@@ -22,6 +22,13 @@
 # Open the browser automatically on start (inverse of --no-open).
 # open = true
 
+# Shell command used to translate message text. $PROMPT (the text to
+# translate), $INPUT_LANG and $OUTPUT_LANG are substituted with
+# shell-escaped values; the command must print the translated text to
+# stdout. On macOS this overrides the built-in system translation; on
+# Linux it is required for translation to work.
+# translation_command = "translate_cmd $PROMPT $INPUT_LANG $OUTPUT_LANG"
+
 # Remote mode: attach this CLI to a remote codex-deck server.
 # These mirror the --remote-* flags and CODEXDECK_REMOTE_* env vars.
 # server_url, username, password, and setup_token are all required

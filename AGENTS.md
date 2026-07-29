@@ -53,6 +53,7 @@ Hono framework on Node.js HTTP server. Key modules:
 - **`storage.ts`** — Reads/parses Codex session data from `~/.codex/` (history.jsonl + per-session .jsonl files). Exports all shared TypeScript interfaces used by both backend and frontend.
 - **`watcher.ts`** — Chokidar-based filesystem watcher with 20ms debounce. Monitors history.jsonl and sessions/ directory, fans out change events for SSE.
 - **`codex-app-server.ts`** — Bridges web UI to `codex app-server` subprocess via RPC for interactive mode (create threads, send messages, interrupt, handle user-input prompts).
+- **`translation.ts`** — Translates message text for `POST /api/translate` (route in `api/server/translation-routes.ts`). Uses the `translation_command` config template when set (any platform, wins on macOS); otherwise the macOS built-in Translation framework via a lazily compiled Swift helper cached under the OS temp dir.
 - **`path-utils.ts`** — Backend path normalization.
 
 ### Remote Server Adoption (`server/`, `wire/`)

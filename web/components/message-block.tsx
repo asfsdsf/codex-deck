@@ -28,6 +28,8 @@ import {
   ImageIcon,
   Clock3,
   Target,
+  Languages,
+  Loader2,
 } from "lucide-react";
 import { shouldDefaultExpandToolUse } from "../message-block-utils";
 import { getTokenLimitNoticeRepeatCount } from "../token-limit-notices";
@@ -72,6 +74,11 @@ import {
 import { parseTerminalRestartNoticeMessage } from "../terminal-session-notices";
 import { normalizeToolUse } from "../tool-use-normalization";
 import { getPatchLineTotals, parsePatchSummaryRows } from "../patch-summary";
+import {
+  useBlockTranslation,
+  type BlockTranslationState,
+} from "../hooks/use-block-translation";
+import { SafeMarkdown } from "./safe-markdown";
 
 interface MessageBlockProps {
   message: ConversationMessage;
@@ -1768,6 +1775,90 @@ function AiTerminalUserFeedbackRenderer(props: {
   );
 }
 
+function TranslateToggleButton(props: {
+  state: BlockTranslationState;
+  className?: string;
+  title?: string;
+}) {
+  const { state, className = "", title } = props;
+  const active = state.showing;
+  const buttonTitle =
+    title ?? (active ? "Show original" : "Translate");
+  return (
+    <button
+      type="button"
+      onClick={state.toggle}
+      disabled={state.status === "loading"}
+      className={`p-1 rounded hover:bg-zinc-700/50 transition-colors ${className}`}
+      title={buttonTitle}
+      aria-label={buttonTitle}
+      aria-pressed={active}
+    >
+      {state.status === "loading" ? (
+        <Loader2 size={12} className="animate-spin text-zinc-400" />
+      ) : (
+        <Languages
+          size={12}
+          className={
+            active
+              ? "text-cyan-300"
+              : state.status === "error"
+                ? "text-rose-400"
+                : "text-zinc-500 hover:text-zinc-300"
+          }
+        />
+      )}
+    </button>
+  );
+}
+
+/**
+ * Returns the translatable text for a content block, or null when the
+ * block has no text worth translating. Text blocks are translated at the
+ * message level instead, so they return null here.
+ */
+function getBlockTranslationSource(block: ContentBlock): string | null {
+  switch (block.type) {
+    case "thinking": {
+      const thinking = block.thinking ?? "";
+      return thinking.trim() ? thinking : null;
+    }
+    case "reasoning":
+    case "agent_reasoning": {
+      if (!block.text) {
+        return null;
+      }
+      const text = formatReasoningText(block.text);
+      return text || null;
+    }
+    case "tool_use": {
+      const input =
+        block.input && typeof block.input === "object" && !Array.isArray(block.input)
+          ? (block.input as Record<string, unknown>)
+          : undefined;
+      if (!input || Object.keys(input).length === 0) {
+        return null;
+      }
+      const normalized = normalizeToolUse(block.name, input);
+      const copyText = getToolCopyText(
+        normalized.name.toLowerCase(),
+        normalized.input,
+      );
+      return copyText?.trim() ? copyText : null;
+    }
+    case "tool_result": {
+      const raw =
+        typeof block.content === "string"
+          ? block.content
+          : JSON.stringify(block.content, null, 2);
+      const resultContent = sanitizeText(raw);
+      return resultContent.trim() ? resultContent : null;
+    }
+    default:
+      return null;
+  }
+}
+
 const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const {
     message,
@@ -1812,6 +1903,19 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const [editDraft, setEditDraft] = useState(message.editText ?? "");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const messageTranslationSource =
+    message.type === "user" || message.type === "assistant"
+      ? getMessageCopyText(content)
+      : null;
+  const messageTranslation = useBlockTranslation(
+    messageTranslationSource,
+    isUser ? "zh" : "en",
+    isUser ? "en" : "zh",
+  );
+  const translatedMessageText =
+    messageTranslation.showing && messageTranslation.translated !== null
+      ? messageTranslation.translated
+      : null;
 
   useEffect(() => {
     if (!searchForcePrimaryExpanded) {
@@ -2643,6 +2747,11 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 aria-label="Edit history message"
                 className="block min-h-24 w-full resize-y rounded-lg border border-white/20 bg-zinc-950/30 py-2 pl-3 pr-24 font-mono text-sm leading-relaxed text-white outline-none placeholder:text-white/45 focus:border-white/45 disabled:cursor-wait disabled:opacity-70"
               />
+            ) : translatedMessageText !== null ? (
+              <SafeMarkdown
+                content={translatedMessageText}
+                onFilePathLinkClick={onFilePathLinkClick}
+              />
             ) : typeof content === "string" ? (
               (() => {
                 const sanitized = sanitizeText(content);
@@ -2782,6 +2891,25 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                     </button>
                   )}
                   {showMessageCopyButton && messageCopyText && (
+                    <TranslateToggleButton
+                      state={messageTranslation}
+                      title={
+                        messageTranslation.showing
+                          ? "Show original"
+                          : isUser
+                            ? "Translate message to English"
+                            : "Translate message to Chinese"
+                      }
+                      className={`rounded-lg border ${
+                        isUser
+                          ? isPendingUserTone
+                            ? "border-zinc-400/30 bg-zinc-900/55"
+                            : "border-indigo-300/35 bg-indigo-900/45"
+                          : "border-cyan-300/35 bg-cyan-900/35"
+                      }`}
+                    />
+                  )}
+                  {showMessageCopyButton && messageCopyText && (
                     <CopyButton
                       text={messageCopyText}
                       title="Copy message"
@@ -2803,6 +2931,12 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
         {editError && (
           <div className="mt-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs text-rose-200">
             {editError}
+          </div>
+        )}
+
+        {messageTranslation.status === "error" && messageTranslation.error && (
+          <div className="mt-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs text-rose-200">
+            Translation failed: {messageTranslation.error}
           </div>
         )}
 
@@ -4246,6 +4380,16 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     return shouldDefaultExpandToolUse(block.name, input);
   });
   const [jsonViewMode, setJsonViewMode] = useState<JsonViewMode>("formatted");
+  const blockTranslationSource = getBlockTranslationSource(block);
+  const blockTranslation = useBlockTranslation(
+    blockTranslationSource,
+    "en",
+    "zh",
+  );
+  const translatedBlockText =
+    blockTranslation.showing && blockTranslation.translated !== null
+      ? blockTranslation.translated
+      : null;
 
   useEffect(() => {
     if (forceExpanded) {
@@ -4331,19 +4475,27 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
   if (block.type === "thinking" && block.thinking) {
     return wrapSearchableBlock(
       <div className={expanded ? "w-full" : ""}>
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/15 text-[11px] text-amber-400/90 transition-colors border border-amber-500/20"
-        >
-          <Lightbulb size={12} className="opacity-70" />
-          <span className="font-medium">thinking</span>
-          <span className="text-[10px] opacity-50 ml-0.5">
-            {expanded ? "▼" : "▶"}
-          </span>
-        </button>
+        <div className="inline-flex items-center gap-1">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/15 text-[11px] text-amber-400/90 transition-colors border border-amber-500/20"
+          >
+            <Lightbulb size={12} className="opacity-70" />
+            <span className="font-medium">thinking</span>
+            <span className="text-[10px] opacity-50 ml-0.5">
+              {expanded ? "▼" : "▶"}
+            </span>
+          </button>
+          {expanded && blockTranslationSource && (
+            <TranslateToggleButton
+              state={blockTranslation}
+              className="rounded-lg border border-amber-500/20 bg-amber-500/10 hover:bg-amber-500/15"
+            />
+          )}
+        </div>
         {expanded && (
           <pre className="text-xs text-zinc-400 bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 mt-2 whitespace-pre-wrap max-h-80 overflow-y-auto">
-            {block.thinking}
+            {translatedBlockText ?? block.thinking}
           </pre>
         )}
       </div>,
@@ -4383,13 +4535,26 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
                 {expanded ? "▼" : "▶"}
               </span>
             </button>
+            {expanded && blockTranslationSource && (
+              <TranslateToggleButton
+                state={blockTranslation}
+                className="rounded-lg border border-fuchsia-500/20 bg-fuchsia-500/10 hover:bg-fuchsia-500/15"
+              />
+            )}
           </div>
           {expanded && (
             <div className="border-t border-fuchsia-500/20 bg-fuchsia-500/8 px-3 py-2.5">
-              <MarkdownRenderer
-                content={reasoningText}
-                onFilePathLinkClick={onFilePathLinkClick}
-              />
+              {translatedBlockText !== null ? (
+                <SafeMarkdown
+                  content={translatedBlockText}
+                  onFilePathLinkClick={onFilePathLinkClick}
+                />
+              ) : (
+                <MarkdownRenderer
+                  content={reasoningText}
+                  onFilePathLinkClick={onFilePathLinkClick}
+                />
+              )}
             </div>
           )}
         </div>
@@ -4430,13 +4595,26 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
                 {expanded ? "▼" : "▶"}
               </span>
             </button>
+            {expanded && blockTranslationSource && (
+              <TranslateToggleButton
+                state={blockTranslation}
+                className="rounded-lg border border-amber-500/20 bg-amber-500/10 hover:bg-amber-500/15"
+              />
+            )}
           </div>
           {expanded && (
             <div className="border-t border-amber-500/20 bg-amber-500/8 px-3 py-2.5">
-              <MarkdownRenderer
-                content={reasoningText}
-                onFilePathLinkClick={onFilePathLinkClick}
-              />
+              {translatedBlockText !== null ? (
+                <SafeMarkdown
+                  content={translatedBlockText}
+                  onFilePathLinkClick={onFilePathLinkClick}
+                />
+              ) : (
+                <MarkdownRenderer
+                  content={reasoningText}
+                  onFilePathLinkClick={onFilePathLinkClick}
+                />
+              )}
             </div>
           )}
         </div>
@@ -4533,6 +4711,14 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
                 className="rounded-lg border border-slate-500/20 bg-slate-500/10 hover:bg-slate-500/15"
               />
             )}
+            {isExpanded &&
+              jsonViewMode === "formatted" &&
+              blockTranslationSource && (
+                <TranslateToggleButton
+                  state={blockTranslation}
+                  className="rounded-lg border border-slate-500/20 bg-slate-500/10 hover:bg-slate-500/15"
+                />
+              )}
             {supportsRawToggle && isExpanded && (
               <button
                 type="button"
@@ -4558,22 +4744,29 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
           </div>
           {isExpanded && hasDetails && (
             <div className="border-t border-slate-500/20 px-2.5 py-2">
-              {hasInput && input && (
-                <div>
-                  {renderToolInput(
-                    normalizedBlock,
-                    input,
-                    jsonViewMode,
-                    true,
-                    onFilePathLinkClick,
-                    interactiveUserInputRequest,
-                    selectedAnswersForRequest,
-                    submittingUserInputRequest,
-                    onSelectUserInputOption,
-                    onChangeUserInputOtherText,
-                    onSubmitUserInputAnswers,
-                  )}
-                </div>
+              {translatedBlockText !== null ? (
+                <pre className="whitespace-pre-wrap break-words text-xs text-zinc-300">
+                  {translatedBlockText}
+                </pre>
+              ) : (
+                hasInput &&
+                input && (
+                  <div>
+                    {renderToolInput(
+                      normalizedBlock,
+                      input,
+                      jsonViewMode,
+                      true,
+                      onFilePathLinkClick,
+                      interactiveUserInputRequest,
+                      selectedAnswersForRequest,
+                      submittingUserInputRequest,
+                      onSelectUserInputOption,
+                      onChangeUserInputOtherText,
+                      onSubmitUserInputAnswers,
+                    )}
+                  </div>
+                )
               )}
               {approvalRequest && (
                 <ApprovalRequestRenderer
@@ -4722,6 +4915,18 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
                 }`}
               />
             )}
+            {expanded &&
+              jsonViewMode === "formatted" &&
+              blockTranslationSource && (
+                <TranslateToggleButton
+                  state={blockTranslation}
+                  className={`rounded-lg border ${
+                    isError
+                      ? "border-rose-500/25 bg-rose-500/10 hover:bg-rose-500/15"
+                      : "border-teal-500/25 bg-teal-500/10 hover:bg-teal-500/15"
+                  }`}
+                />
+              )}
             {supportsRawToggle && expanded && (
               <button
                 type="button"
@@ -4753,7 +4958,11 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
                 isError ? "border-rose-500/20" : "border-teal-500/20"
               }`}
             >
-              {supportsRawToggle && jsonViewMode === "raw" ? (
+              {translatedBlockText !== null ? (
+                <pre className="whitespace-pre-wrap break-words text-xs text-zinc-300">
+                  {translatedBlockText}
+                </pre>
+              ) : supportsRawToggle && jsonViewMode === "raw" ? (
                 <JsonRenderer value={rawJsonValue} />
               ) : (
                 <ToolResultRenderer
