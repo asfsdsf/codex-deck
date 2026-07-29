@@ -141,6 +141,20 @@ function stringifyJson(value: unknown): string {
   }
 }
 
+export function isRichContentParts(value: unknown): value is RichContentPart[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (part) =>
+        isRecord(part) &&
+        (((part.type === "input_text" || part.type === "output_text") &&
+          typeof part.text === "string") ||
+          (part.type === "input_image" && typeof part.image_url === "string")),
+    )
+  );
+}
+
 function JsonResultRenderer(props: {
   value: unknown;
   onFilePathLinkClick?: (href: string) => boolean;
@@ -888,15 +902,25 @@ function RichContentRenderer(props: {
           (part.type === "input_text" || part.type === "output_text") &&
           typeof part.text === "string"
         ) {
+          const parsedText = tryParseJson(part.text);
+          const isStructuredJson =
+            isRecord(parsedText) || Array.isArray(parsedText);
+
           return (
             <div
               key={index}
               className="rounded-lg border border-zinc-700/50 bg-zinc-900/70 px-3 py-2.5"
             >
-              <MarkdownRenderer
-                content={part.text}
-                onFilePathLinkClick={onFilePathLinkClick}
-              />
+              {isStructuredJson ? (
+                <JsonResultRenderer
+                  value={parsedText}
+                  onFilePathLinkClick={onFilePathLinkClick}
+                />
+              ) : (
+                <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs leading-relaxed text-zinc-200">
+                  {part.text}
+                </pre>
+              )}
             </div>
           );
         }
@@ -1197,6 +1221,16 @@ export function FunctionToolResultRenderer(
           onFilePathLinkClick={onFilePathLinkClick}
         />
       </div>
+    );
+  }
+
+  if (isRichContentParts(parsed)) {
+    return (
+      <RichContentRenderer
+        parts={parsed}
+        embedded={embedded}
+        onFilePathLinkClick={onFilePathLinkClick}
+      />
     );
   }
 

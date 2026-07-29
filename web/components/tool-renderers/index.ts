@@ -10,4 +10,7 @@ export { ReadRenderer, FileContentRenderer } from "./read-renderer";
 export { CopyButton } from "./copy-button";
 export { AskQuestionRenderer } from "./ask-question-renderer";
 export { TaskRenderer } from "./task-renderer";
-export { FunctionToolResultRenderer } from "./function-result-renderer";
+export {
+  FunctionToolResultRenderer,
+  isRichContentParts,
+} from "./function-result-renderer";

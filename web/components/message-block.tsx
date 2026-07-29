@@ -66,6 +66,7 @@ import {
   FunctionToolResultRenderer,
   GlobRenderer,
   GrepRenderer,
+  isRichContentParts,
   ReadRenderer,
   TaskRenderer,
   TodoRenderer,
@@ -4139,6 +4140,23 @@ function getToolResultPreview(
     return imageCount > 0
       ? `${imageCount} image${imageCount > 1 ? "s" : ""}`
       : null;
+  }
+
+  if (isRichContentParts(parsed)) {
+    const text = parsed
+      .map((part) => (typeof part.text === "string" ? part.text : ""))
+      .filter(Boolean)
+      .join("\n");
+    const firstLine = text
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (firstLine) {
+      return withMultilineCollapsedIndicator(
+        getTruncatedPreview(firstLine, 120),
+        text,
+      );
+    }
   }
 
   if (name === "spawn_agent" && isRecord(parsed)) {
