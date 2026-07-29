@@ -12,5 +12,7 @@ export { AskQuestionRenderer } from "./ask-question-renderer";
 export { TaskRenderer } from "./task-renderer";
 export {
   FunctionToolResultRenderer,
-  isRichContentParts,
+  getRichContentEnvelope,
+  getRichContentPartText,
+  hasRichContentParts,
 } from "./function-result-renderer";

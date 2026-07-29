@@ -64,9 +64,11 @@ import {
   CopyButton,
   EditRenderer,
   FunctionToolResultRenderer,
+  getRichContentEnvelope,
+  getRichContentPartText,
   GlobRenderer,
   GrepRenderer,
-  isRichContentParts,
+  hasRichContentParts,
   ReadRenderer,
   TaskRenderer,
   TodoRenderer,
@@ -1783,8 +1785,7 @@ function TranslateToggleButton(props: {
 }) {
   const { state, className = "", title } = props;
   const active = state.showing;
-  const buttonTitle =
-    title ?? (active ? "Show original" : "Translate");
+  const buttonTitle = title ?? (active ? "Show original" : "Translate");
   return (
     <button
       type="button"
@@ -1834,7 +1835,9 @@ function getBlockTranslationSource(block: ContentBlock): string | null {
     }
     case "tool_use": {
       const input =
-        block.input && typeof block.input === "object" && !Array.isArray(block.input)
+        block.input &&
+        typeof block.input === "object" &&
+        !Array.isArray(block.input)
           ? (block.input as Record<string, unknown>)
           : undefined;
       if (!input || Object.keys(input).length === 0) {
@@ -4126,6 +4129,34 @@ function getExecBody(content: string): string {
     : content;
 }
 
+function getRichContentPreview(value: unknown): string | null {
+  const parts = hasRichContentParts(value)
+    ? value
+    : isRecord(value)
+      ? getRichContentEnvelope(value)?.parts
+      : undefined;
+  if (!parts) {
+    return null;
+  }
+
+  const text = parts
+    .map((part) => getRichContentPartText(part) ?? "")
+    .filter(Boolean)
+    .join("\n");
+  const firstLine = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) {
+    return null;
+  }
+
+  return withMultilineCollapsedIndicator(
+    getTruncatedPreview(firstLine, 120),
+    text,
+  );
+}
+
 function getToolResultPreview(
   toolName: string,
   content: string,
@@ -4142,21 +4173,9 @@ function getToolResultPreview(
       : null;
   }
 
-  if (isRichContentParts(parsed)) {
-    const text = parsed
-      .map((part) => (typeof part.text === "string" ? part.text : ""))
-      .filter(Boolean)
-      .join("\n");
-    const firstLine = text
-      .split("\n")
-      .map((line) => line.trim())
-      .find(Boolean);
-    if (firstLine) {
-      return withMultilineCollapsedIndicator(
-        getTruncatedPreview(firstLine, 120),
-        text,
-      );
-    }
+  const richContentPreview = getRichContentPreview(parsed);
+  if (richContentPreview) {
+    return richContentPreview;
   }
 
   if (name === "spawn_agent" && isRecord(parsed)) {

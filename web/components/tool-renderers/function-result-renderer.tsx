@@ -44,10 +44,14 @@ interface ExecResultMeta {
   body: string;
 }
 
-interface RichContentPart {
-  type?: string;
-  text?: string;
-  image_url?: string;
+interface RichTextPart {
+  type: string;
+  text: string;
+}
+
+interface RichImagePart {
+  type: string;
+  image_url: string;
 }
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
@@ -141,18 +145,47 @@ function stringifyJson(value: unknown): string {
   }
 }
 
-export function isRichContentParts(value: unknown): value is RichContentPart[] {
+function isRichTextPart(part: unknown): part is RichTextPart {
+  return (
+    isRecord(part) &&
+    (part.type === "input_text" ||
+      part.type === "output_text" ||
+      part.type === "text") &&
+    typeof part.text === "string"
+  );
+}
+
+function isRichImagePart(part: unknown): part is RichImagePart {
+  return (
+    isRecord(part) &&
+    part.type === "input_image" &&
+    typeof part.image_url === "string"
+  );
+}
+
+export function hasRichContentParts(value: unknown): value is unknown[] {
   return (
     Array.isArray(value) &&
-    value.length > 0 &&
-    value.every(
-      (part) =>
-        isRecord(part) &&
-        (((part.type === "input_text" || part.type === "output_text") &&
-          typeof part.text === "string") ||
-          (part.type === "input_image" && typeof part.image_url === "string")),
-    )
+    value.some((part) => isRichTextPart(part) || isRichImagePart(part))
   );
+}
+
+export function getRichContentPartText(part: unknown): string | null {
+  return isRichTextPart(part) ? part.text : null;
+}
+
+const RICH_CONTENT_ENVELOPE_KEYS = ["content", "output", "result", "parts"];
+
+export function getRichContentEnvelope(
+  value: Record<string, unknown>,
+): { key: string; parts: unknown[] } | null {
+  for (const key of RICH_CONTENT_ENVELOPE_KEYS) {
+    const parts = value[key];
+    if (hasRichContentParts(parts)) {
+      return { key, parts };
+    }
+  }
+  return null;
 }
 
 function JsonResultRenderer(props: {
@@ -888,21 +921,37 @@ function ExecResultRenderer(props: {
   );
 }
 
+const RICH_CONTENT_MAX_DEPTH = 3;
+
 function RichContentRenderer(props: {
-  parts: RichContentPart[];
+  parts: unknown[];
   embedded?: boolean;
+  depth?: number;
   onFilePathLinkClick?: (href: string) => boolean;
 }) {
-  const { parts, embedded = false, onFilePathLinkClick } = props;
+  const { parts, embedded = false, depth = 0, onFilePathLinkClick } = props;
 
   return (
     <div className={`w-full ${embedded ? "" : "mt-2"} space-y-3`}>
       {parts.map((part, index) => {
-        if (
-          (part.type === "input_text" || part.type === "output_text") &&
-          typeof part.text === "string"
-        ) {
+        if (isRichTextPart(part)) {
           const parsedText = tryParseJson(part.text);
+
+          if (
+            depth < RICH_CONTENT_MAX_DEPTH &&
+            hasRichContentParts(parsedText)
+          ) {
+            return (
+              <RichContentRenderer
+                key={index}
+                parts={parsedText}
+                embedded
+                depth={depth + 1}
+                onFilePathLinkClick={onFilePathLinkClick}
+              />
+            );
+          }
+
           const isStructuredJson =
             isRecord(parsedText) || Array.isArray(parsedText);
 
@@ -925,7 +974,7 @@ function RichContentRenderer(props: {
           );
         }
 
-        if (part.type === "input_image" && typeof part.image_url === "string") {
+        if (isRichImagePart(part)) {
           return (
             <div
               key={index}
@@ -1167,7 +1216,7 @@ export function FunctionToolResultRenderer(
     if (Array.isArray(parsed)) {
       return (
         <RichContentRenderer
-          parts={parsed as RichContentPart[]}
+          parts={parsed}
           embedded={embedded}
           onFilePathLinkClick={onFilePathLinkClick}
         />
@@ -1224,7 +1273,7 @@ export function FunctionToolResultRenderer(
     );
   }
 
-  if (isRichContentParts(parsed)) {
+  if (hasRichContentParts(parsed)) {
     return (
       <RichContentRenderer
         parts={parsed}
@@ -1232,6 +1281,41 @@ export function FunctionToolResultRenderer(
         onFilePathLinkClick={onFilePathLinkClick}
       />
     );
+  }
+
+  if (isRecord(parsed)) {
+    const envelope = getRichContentEnvelope(parsed);
+    if (envelope) {
+      const siblingEntries = Object.entries(parsed).filter(
+        ([key]) => key !== envelope.key,
+      );
+      const siblingsAreScalars = siblingEntries.every(
+        ([, value]) =>
+          value === null ||
+          value === undefined ||
+          ["string", "number", "boolean"].includes(typeof value),
+      );
+
+      if (siblingsAreScalars) {
+        return (
+          <div className={`w-full ${embedded ? "" : "mt-2"} space-y-3`}>
+            {siblingEntries.length > 0 && (
+              <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/70 px-3 py-2.5">
+                <MarkdownRenderer
+                  content={toMarkdownList(Object.fromEntries(siblingEntries))}
+                  onFilePathLinkClick={onFilePathLinkClick}
+                />
+              </div>
+            )}
+            <RichContentRenderer
+              parts={envelope.parts}
+              embedded
+              onFilePathLinkClick={onFilePathLinkClick}
+            />
+          </div>
+        );
+      }
+    }
   }
 
   if (parsed !== null) {
