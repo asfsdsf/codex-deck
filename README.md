@@ -198,6 +198,35 @@ Options:
   -h, --help           Show help
 ```
 
+### Config file
+
+codex-deck also reads optional TOML config files:
+
+1. `./config.toml` (current working directory)
+2. `$CODEX_HOME/codex-deck/config.toml` (`$CODEX_HOME` defaults to `~/.codex`; this lookup does not follow `--dir`)
+
+Both files are read when present and merged per key: a key set in `./config.toml` wins, and keys only set in `$CODEX_HOME/codex-deck/config.toml` still apply.
+
+When the same option is set in multiple places, the priority is: command-line arguments > environment variables > config file > built-in defaults.
+
+```toml
+port = 12001
+dir = "/path/to/codex-home"
+dev = false
+open = true
+
+[remote]
+server_url = "https://your-server-host"
+username = "your-username"
+password = "your-password"
+setup_token = "your-setup-token"
+machine_id = "stable-machine-id"        # optional
+pinned_realm_id = "realm-id"            # optional
+pinned_opaque_server_key = "public-key" # optional
+```
+
+All keys are optional. The `[remote]` keys mirror the `--remote-*` flags and `CODEXDECK_REMOTE_*` environment variables.
+
 ## Installation (Remote mode)
 
 Quick map:

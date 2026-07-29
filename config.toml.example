@@ -1,0 +1,42 @@
+# codex-deck configuration
+#
+# Location (both files are read and merged per key; ./config.toml wins
+# for keys set in both):
+#   1. ./config.toml (current working directory)
+#   2. $CODEX_HOME/codex-deck/config.toml ($CODEX_HOME defaults to ~/.codex)
+#
+# Option priority: command-line arguments > environment variables >
+# config file > built-in defaults.
+#
+# All keys are optional; delete or comment out what you don't need.
+
+# Port to listen on (--port).
+# port = 12001
+
+# Codex directory path (--dir). Defaults to $CODEX_HOME or ~/.codex.
+# dir = "/path/to/codex-home"
+
+# Enable CORS for development, frontend at localhost:12000 (--dev).
+# dev = false
+
+# Open the browser automatically on start (inverse of --no-open).
+# open = true
+
+# Remote mode: attach this CLI to a remote codex-deck server.
+# These mirror the --remote-* flags and CODEXDECK_REMOTE_* env vars.
+# server_url, username, password, and setup_token are all required
+# to enable remote mode.
+# [remote]
+# server_url = "https://your-server-host"
+# username = "your-username"
+# password = "your-password"
+# setup_token = "your-setup-token"
+
+# Stable machine id for remote mode (derived automatically when omitted).
+# machine_id = "stable-machine-id"
+
+# Pinned remote auth realm id. Refuse login if server bootstrap realm differs.
+# pinned_realm_id = "realm-id"
+
+# Pinned remote OPAQUE server public key. Refuse login if bootstrap key differs.
+# pinned_opaque_server_key = "public-key"

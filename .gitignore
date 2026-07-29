@@ -19,6 +19,9 @@ shared/dist/
 .env.local
 .env.*.local
 
+# Local codex-deck config (may contain remote credentials)
+config.toml
+
 # Editor directories
 .idea/
 .vscode/

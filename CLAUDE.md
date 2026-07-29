@@ -47,7 +47,8 @@ Run the tests that match the surface you changed:
 
 Hono framework on Node.js HTTP server. Key modules:
 
-- **`index.ts`** — CLI entry point (Commander.js). Parses `--port`, `--dir`, `--dev`, `--no-open`.
+- **`index.ts`** — CLI entry point (Commander.js). Parses `--port`, `--dir`, `--dev`, `--no-open`, and remote-mode flags.
+- **`config.ts`** — Optional TOML config files (`./config.toml` and `$CODEX_HOME/codex-deck/config.toml`, merged per key with the local file winning). Option priority: CLI args > env vars > config file > built-in defaults.
 - **`server.ts`** — All Hono routes: session listing, conversation fetching, file diffs/tree/content, terminal runs, SSE streaming, and interactive Codex thread management. Also serves built frontend assets from `dist/web/`.
 - **`storage.ts`** — Reads/parses Codex session data from `~/.codex/` (history.jsonl + per-session .jsonl files). Exports all shared TypeScript interfaces used by both backend and frontend.
 - **`watcher.ts`** — Chokidar-based filesystem watcher with 20ms debounce. Monitors history.jsonl and sessions/ directory, fans out change events for SSE.
