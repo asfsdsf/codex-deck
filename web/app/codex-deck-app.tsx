@@ -58,6 +58,8 @@ import {
   EyeOff,
   Moon,
   Sun,
+  Languages,
+  Loader2,
 } from "lucide-react";
 import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
 import {
@@ -241,6 +243,7 @@ import {
   getCodexThreadSummaries,
   bindTerminalSession,
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
+  translateText,
 } from "../api";
 import {
   buildAiTerminalRejectionFeedback,
@@ -1925,6 +1928,16 @@ const MessageComposer = memo(function MessageComposer(
   } = props;
   const composerResetKey = draftResetKey ?? sessionId ?? "";
   const [draft, setDraft] = useState("");
+  const [draftTranslation, setDraftTranslation] = useState<{
+    status: "idle" | "loading" | "active" | "error";
+    original: string | null;
+    error: string | null;
+  }>({ status: "idle", original: null, error: null });
+  const draftTranslationRequestRef = useRef(0);
+  const resetDraftTranslation = useCallback(() => {
+    draftTranslationRequestRef.current += 1;
+    setDraftTranslation({ status: "idle", original: null, error: null });
+  }, []);
   const [historyNavigation, setHistoryNavigation] =
     useState<HistoryNavigationState>({
       index: null,
@@ -1983,6 +1996,7 @@ const MessageComposer = memo(function MessageComposer(
 
   useEffect(() => {
     setDraft("");
+    resetDraftTranslation();
     setHistoryNavigation({
       index: null,
       draftBeforeNavigation: "",
@@ -2006,7 +2020,7 @@ const MessageComposer = memo(function MessageComposer(
     dragDepthRef.current = 0;
     setIsDragActive(false);
     setShowMobileAttachMenu(false);
-  }, [clearImageAttachments, composerResetKey]);
+  }, [clearImageAttachments, composerResetKey, resetDraftTranslation]);
 
   useEffect(() => {
     const updateMobilePhoneState = () => {
@@ -2164,6 +2178,7 @@ const MessageComposer = memo(function MessageComposer(
 
   const clearAfterSendSuccess = useCallback(() => {
     setDraft("");
+    resetDraftTranslation();
     setHistoryNavigation({
       index: null,
       draftBeforeNavigation: "",
@@ -2176,7 +2191,7 @@ const MessageComposer = memo(function MessageComposer(
     setDismissedSkillSelectorQuery(null);
     setSelectedSkillSelectorIndex(0);
     clearImageAttachments();
-  }, [clearImageAttachments]);
+  }, [clearImageAttachments, resetDraftTranslation]);
 
   const focusComposerInput = useCallback(() => {
     const applyFocus = () => {
@@ -2195,6 +2210,48 @@ const MessageComposer = memo(function MessageComposer(
 
     window.requestAnimationFrame(applyFocus);
   }, []);
+
+  const handleTranslateDraft = useCallback(() => {
+    if (draftTranslation.status === "loading") {
+      return;
+    }
+    if (draftTranslation.status === "active") {
+      setDraft(draftTranslation.original ?? "");
+      setDraftTranslation({ status: "idle", original: null, error: null });
+      focusComposerInput();
+      return;
+    }
+    const source = draft;
+    if (!source.trim()) {
+      return;
+    }
+    const requestId = (draftTranslationRequestRef.current += 1);
+    setDraftTranslation({ status: "loading", original: null, error: null });
+    // Reverse of message-block translation: user language -> LLM language.
+    translateText({ text: source, inputLang: "zh", outputLang: "en" })
+      .then((response) => {
+        if (draftTranslationRequestRef.current !== requestId) {
+          return;
+        }
+        setDraft(response.translatedText);
+        setDraftTranslation({
+          status: "active",
+          original: source,
+          error: null,
+        });
+        focusComposerInput();
+      })
+      .catch((err: unknown) => {
+        if (draftTranslationRequestRef.current !== requestId) {
+          return;
+        }
+        setDraftTranslation({
+          status: "error",
+          original: null,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }, [draft, draftTranslation, focusComposerInput]);
 
   const activeFileMention = useMemo(
     () => findActiveFileMentionToken(draft, cursorPosition),
@@ -2754,6 +2811,11 @@ const MessageComposer = memo(function MessageComposer(
       >
         <div className="w-8 h-0.5 rounded-full bg-zinc-600 group-hover:bg-zinc-400 transition-colors" />
       </div>
+      {draftTranslation.status === "error" && draftTranslation.error && (
+        <div className="mb-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs text-rose-200">
+          Translation failed: {draftTranslation.error}
+        </div>
+      )}
       <div className="flex items-end gap-1.5">
         <div
           ref={composerContainerRef}
@@ -2846,6 +2908,10 @@ const MessageComposer = memo(function MessageComposer(
             value={draft}
             onChange={(event) => {
               const nextDraft = event.target.value;
+              if (draftTranslation.status !== "idle") {
+                // Editing the draft invalidates any translated/restored text.
+                resetDraftTranslation();
+              }
               if (historyNavigation.index !== null) {
                 setHistoryNavigation({
                   index: null,
@@ -3153,6 +3219,44 @@ const MessageComposer = memo(function MessageComposer(
             </svg>
           </button>
         </div>
+        <button
+          type="button"
+          onClick={handleTranslateDraft}
+          disabled={
+            isSendingLocked ||
+            composerBusy ||
+            draftTranslation.status === "loading" ||
+            (!hasDraftText && draftTranslation.status !== "active")
+          }
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/80 text-zinc-300 transition-colors hover:bg-zinc-800/80 hover:text-zinc-100 disabled:opacity-50"
+          title={
+            draftTranslation.status === "active"
+              ? "Show original"
+              : draftTranslation.status === "error"
+                ? (draftTranslation.error ?? "Translation failed")
+                : "Translate to English"
+          }
+          aria-label={
+            draftTranslation.status === "active"
+              ? "Show original"
+              : "Translate to English"
+          }
+          aria-pressed={draftTranslation.status === "active"}
+        >
+          {draftTranslation.status === "loading" ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : (
+            <Languages
+              className={`h-5 w-5 ${
+                draftTranslation.status === "active"
+                  ? "text-cyan-300"
+                  : draftTranslation.status === "error"
+                    ? "text-rose-400"
+                    : ""
+              }`}
+            />
+          )}
+        </button>
         <button
           onMouseDown={(event) => {
             if (event.button === 0) {
