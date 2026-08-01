@@ -449,6 +449,7 @@ interface ActiveCodexConfig {
   modelProvider: string | null;
   reasoningEffort: CodexReasoningEffort | null;
   serviceTier: CodexServiceTier | null;
+  providerBaseUrl: string | null;
 }
 
 export interface CodexTurnFileDiff {
@@ -802,6 +803,7 @@ class CodexAppServerClient {
   private authFileFingerprint: string | null = null;
   private authReloadInFlight: Promise<void> | null = null;
   private lastKnownProviderId: string | null = null;
+  private lastKnownProviderBaseUrl: string | null = null;
   private providerReloadInFlight: Promise<void> | null = null;
   private appServerRestartInFlight: Promise<boolean> | null = null;
 
@@ -2258,6 +2260,7 @@ class CodexAppServerClient {
     this.readCoalescer.clearMatching(() => true);
     this.newlyStartedThreadIds.clear();
     this.lastKnownProviderId = null;
+    this.lastKnownProviderBaseUrl = null;
     if (!wasRunning) {
       return false;
     }
@@ -2354,14 +2357,16 @@ class CodexAppServerClient {
     await this.close();
     this.readCoalescer.clearMatching(() => true);
     this.lastKnownProviderId = null;
+    this.lastKnownProviderBaseUrl = null;
   }
 
   /**
-   * The app-server subprocess caches the model provider at startup. When the
-   * configured provider changes externally (for example, the user swaps
-   * providers in the codex-deck UI), restart the subprocess so the next
-   * request picks up the new provider. The restart is skipped while any
-   * loaded thread is actively generating; the next idle call retries.
+   * The app-server subprocess caches the model provider (including its
+   * base_url) at startup. When the configured provider or its base_url
+   * changes externally (for example, the user edits config.toml), restart
+   * the subprocess so the next request picks up the new provider config.
+   * The restart is skipped while any loaded thread is actively generating;
+   * the next idle call retries.
    */
   private async reloadProviderIfChanged(
     activeConfig: ActiveCodexConfig,
@@ -2389,14 +2394,19 @@ class CodexAppServerClient {
     }
 
     const currentProvider = activeConfig.modelProvider;
+    const currentProviderBaseUrl = activeConfig.providerBaseUrl;
 
     // Lazily baseline the provider on the first call after process startup.
     if (this.lastKnownProviderId === null) {
       this.lastKnownProviderId = currentProvider;
+      this.lastKnownProviderBaseUrl = currentProviderBaseUrl;
       return;
     }
 
-    if (currentProvider === this.lastKnownProviderId) {
+    const providerChanged = currentProvider !== this.lastKnownProviderId;
+    const baseUrlChanged =
+      currentProviderBaseUrl !== this.lastKnownProviderBaseUrl;
+    if (!providerChanged && !baseUrlChanged) {
       return;
     }
 
@@ -2411,7 +2421,7 @@ class CodexAppServerClient {
         );
         if (status === "active") {
           console.warn(
-            "[codex-deck] model provider changed but a thread is actively generating; deferring app-server restart",
+            "[codex-deck] model provider config changed but a thread is actively generating; deferring app-server restart",
           );
           return;
         }
@@ -2423,11 +2433,14 @@ class CodexAppServerClient {
     }
 
     console.warn(
-      "[codex-deck] model provider changed; restarting codex app-server",
+      providerChanged
+        ? "[codex-deck] model provider changed; restarting codex app-server"
+        : "[codex-deck] model provider base_url changed; restarting codex app-server",
     );
     await this.close();
     this.readCoalescer.clearMatching(() => true);
     this.lastKnownProviderId = null;
+    this.lastKnownProviderBaseUrl = null;
   }
 
   private ensureStarted(): void {
@@ -4088,11 +4101,16 @@ function extractActiveConfigFromConfigReadResult(
   result: unknown,
 ): ActiveCodexConfig {
   const config = extractConfigFromConfigReadResult(result);
+  const modelProvider = asTrimmedString(config.model_provider);
   return {
     model: asTrimmedString(config.model),
-    modelProvider: asTrimmedString(config.model_provider),
+    modelProvider,
     reasoningEffort: toReasoningEffort(config.model_reasoning_effort),
     serviceTier: toServiceTier(config.model_service_tier),
+    providerBaseUrl: extractProviderBaseUrlFromConfigReadResult(
+      result,
+      modelProvider,
+    ),
   };
 }
 
