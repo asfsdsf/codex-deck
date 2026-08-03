@@ -225,6 +225,88 @@ test("parseConversationTextChunk renders thread goal updates as messages", () =>
   assert.equal(messages[0]?.threadGoal?.tokenBudget, 10000);
 });
 
+test("parseConversationTextChunk renders persisted collaboration items in both wire casings", () => {
+  const text = [
+    line({
+      timestamp: "2026-04-07T12:05:25.280Z",
+      type: "event_msg",
+      payload: {
+        type: "item_completed",
+        turn_id: "turn-snake",
+        item: {
+          type: "collab_agent_tool_call",
+          id: "collab-snake",
+          tool: "send_input",
+          status: "completed",
+          sender_thread_id: "root-thread",
+          receiver_thread_ids: ["child-thread"],
+          prompt: "Continue the investigation",
+          model: "custom-model",
+          reasoning_effort: "ultra",
+          agents_states: {
+            "child-thread": {
+              status: "running",
+              message: "Investigating",
+            },
+          },
+        },
+      },
+    }),
+    line({
+      timestamp: "2026-04-07T12:05:26.280Z",
+      type: "event_msg",
+      payload: {
+        type: "itemCompleted",
+        turnId: "turn-camel",
+        item: {
+          type: "subAgentActivity",
+          id: "activity-camel",
+          agentThreadId: "child-thread",
+          agentPath: "/root/child",
+          kind: "interacted",
+        },
+      },
+    }),
+  ].join("\n");
+
+  const { messages } = parseConversationTextChunk(`${text}\n`, 0);
+  assert.equal(messages.length, 2);
+
+  const firstBlock = messages[0]?.message?.content;
+  assert.ok(Array.isArray(firstBlock));
+  assert.deepEqual(firstBlock[0], {
+    type: "collab_agent_tool_call",
+    id: "collab-snake",
+    tool: "sendInput",
+    status: "completed",
+    senderThreadId: "root-thread",
+    receiverThreadIds: ["child-thread"],
+    prompt: "Continue the investigation",
+    model: "custom-model",
+    reasoningEffort: "ultra",
+    agentsStates: {
+      "child-thread": {
+        status: "running",
+        message: "Investigating",
+      },
+    },
+    timestamp: "2026-04-07T12:05:25.280Z",
+  });
+  assert.equal(messages[0]?.turnId, "turn-snake");
+
+  const secondBlock = messages[1]?.message?.content;
+  assert.ok(Array.isArray(secondBlock));
+  assert.deepEqual(secondBlock[0], {
+    type: "subagent_activity",
+    id: "activity-camel",
+    agentThreadId: "child-thread",
+    agentPath: "/root/child",
+    kind: "interacted",
+    timestamp: "2026-04-07T12:05:26.280Z",
+  });
+  assert.equal(messages[1]?.turnId, "turn-camel");
+});
+
 test("parseConversationTextChunk skips newline-terminated malformed lines", () => {
   const validLine = line({
     timestamp: "2026-04-07T12:05:34.190Z",

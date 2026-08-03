@@ -21,9 +21,12 @@ import type {
   CodexPetSelectionResponse,
   CodexPetsResponse,
   CodexThreadAgentListResponse,
+  CodexThreadAgentActionRequest,
+  CodexThreadAgentActionResponse,
   CodexThreadSummariesRequest,
   CodexThreadSummariesResponse,
   CodexModelOption,
+  CodexAgentWaitConfig,
   CodexConfigDefaultsResponse,
   CodexSessionContextResponse,
   DeleteTerminalResponse,
@@ -1152,6 +1155,36 @@ export async function listCodexAgentThreads(
     `/api/codex/threads/${encodeURIComponent(threadId)}/agent-threads`,
   );
   return Array.isArray(payload.threads) ? payload.threads : [];
+}
+
+export async function getCodexAgentWaitConfig(
+  threadId: string,
+): Promise<CodexAgentWaitConfig> {
+  const normalizedThreadId = threadId.trim();
+  return requestJson<CodexAgentWaitConfig>(
+    `/api/codex/threads/${encodeURIComponent(normalizedThreadId)}/agent-wait-config`,
+  );
+}
+
+export async function sendCodexAgentAction(
+  controllerThreadId: string,
+  input: CodexThreadAgentActionRequest,
+): Promise<CodexThreadAgentActionResponse> {
+  const normalizedThreadId = controllerThreadId.trim();
+  codexThreadStateLoader.clearMatching((key) =>
+    key.startsWith(`${normalizedThreadId}:`),
+  );
+  return requestJsonAndNotifyConversation<CodexThreadAgentActionResponse>(
+    normalizedThreadId,
+    `/api/codex/threads/${encodeURIComponent(normalizedThreadId)}/agent-actions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export async function getCodexThreadSummaries(

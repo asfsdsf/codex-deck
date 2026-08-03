@@ -56,6 +56,7 @@ export interface SessionsDeltaResponse {
   updates: Session[];
   removedSessionIds: string[];
   skillsChangedSessionIds: string[];
+  codexAppServerEvents?: CodexAppServerEvent[];
 }
 
 export type CodexReasoningEffort =
@@ -64,7 +65,10 @@ export type CodexReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max"
+  | "ultra"
+  | (string & {});
 
 export type CodexServiceTier = "fast" | "flex";
 
@@ -171,6 +175,37 @@ export interface CodexThreadStateResponse {
   statusDetails?: CodexThreadStatusDetails | null;
 }
 
+export type CodexSubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted";
+
+export type CodexCollabAgentToolCallStatus =
+  | "inProgress"
+  | "completed"
+  | "failed";
+
+export type CodexCollabAgentTool =
+  | "spawnAgent"
+  | "sendInput"
+  | "resumeAgent"
+  | "wait"
+  | "closeAgent";
+
+export type CodexCollabAgentStatus =
+  | "pendingInit"
+  | "running"
+  | "interrupted"
+  | "completed"
+  | "errored"
+  | "shutdown"
+  | "notFound";
+
+export interface CodexCollabAgentState {
+  status: CodexCollabAgentStatus;
+  message: string | null;
+}
+
 export type CodexAppServerEvent =
   | {
       type: "error";
@@ -208,6 +243,35 @@ export type CodexAppServerEvent =
       itemId: string;
       delta: string;
       contentIndex: number;
+    }
+  | {
+      type: "thread_status";
+      threadId: string;
+      status: CodexThreadRuntimeStatus;
+      turnId: string | null;
+    }
+  | {
+      type: "subagent_activity";
+      threadId: string;
+      turnId: string | null;
+      itemId: string;
+      agentThreadId: string;
+      agentPath: string;
+      kind: CodexSubAgentActivityKind;
+    }
+  | {
+      type: "collab_agent_tool_call";
+      threadId: string;
+      turnId: string | null;
+      itemId: string;
+      tool: CodexCollabAgentTool;
+      status: CodexCollabAgentToolCallStatus;
+      senderThreadId: string;
+      receiverThreadIds: string[];
+      prompt: string | null;
+      model: string | null;
+      reasoningEffort: CodexReasoningEffort | null;
+      agentsStates: Record<string, CodexCollabAgentState>;
     };
 
 export type CodexThreadRuntimeStatus =
@@ -224,6 +288,10 @@ export interface CodexThreadSummary {
   cwd: string;
   agentNickname: string | null;
   agentRole: string | null;
+  parentThreadId: string | null;
+  canAcceptDirectInput: boolean | null;
+  agentPath: string | null;
+  source: string | null;
   status: CodexThreadRuntimeStatus;
   updatedAt: number | null;
 }
@@ -311,6 +379,33 @@ export interface CodexMemoriesResetResponse {
 
 export interface CodexThreadAgentListResponse {
   threads: CodexThreadSummary[];
+}
+
+export interface CodexAgentWaitConfig {
+  minTimeoutMs: number;
+  maxTimeoutMs: number;
+  defaultTimeoutMs: number;
+}
+
+export type CodexAgentAction =
+  | "send_message"
+  | "followup_task"
+  | "wait"
+  | "interrupt_agent";
+
+export interface CodexThreadAgentActionRequest {
+  action: CodexAgentAction;
+  targetThreadId?: string;
+  message?: string;
+  timeoutMs?: number;
+}
+
+export interface CodexThreadAgentActionResponse {
+  ok: boolean;
+  action: CodexAgentAction;
+  controllerThreadId: string;
+  targetThreadId: string | null;
+  turnId: string | null;
 }
 
 export interface CodexThreadSummariesRequest {
@@ -1270,7 +1365,9 @@ export interface ContentBlock {
     | "tool_use"
     | "tool_result"
     | "reasoning"
-    | "agent_reasoning";
+    | "agent_reasoning"
+    | "subagent_activity"
+    | "collab_agent_tool_call";
   text?: string;
   image_url?: string;
   thinking?: string;
@@ -1282,6 +1379,17 @@ export interface ContentBlock {
   is_error?: boolean;
   timestamp?: string;
   token_usage?: TokenUsage;
+  agentThreadId?: string;
+  agentPath?: string;
+  kind?: CodexSubAgentActivityKind;
+  tool?: CodexCollabAgentTool;
+  status?: CodexCollabAgentToolCallStatus;
+  senderThreadId?: string;
+  receiverThreadIds?: string[];
+  prompt?: string | null;
+  model?: string | null;
+  reasoningEffort?: CodexReasoningEffort | null;
+  agentsStates?: Record<string, CodexCollabAgentState>;
 }
 
 export interface TokenUsage {
@@ -1605,18 +1713,8 @@ function parseTopLevelTomlStringSettings(
 function toConfiguredReasoningEffort(
   value: string | null | undefined,
 ): CodexReasoningEffort | null {
-  if (
-    value === "none" ||
-    value === "minimal" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "xhigh"
-  ) {
-    return value;
-  }
-
-  return null;
+  const normalized = value?.trim() ?? "";
+  return normalized ? (normalized as CodexReasoningEffort) : null;
 }
 
 function getJsonRecordValue(
@@ -2012,10 +2110,9 @@ function getPayloadType(payload: Record<string, unknown>): string {
     return "";
   }
 
+  const nestedRecord = nested as Record<string, unknown>;
   const nestedType =
-    typeof (nested as Record<string, unknown>).type === "string"
-      ? (nested as Record<string, unknown>).type
-      : "";
+    typeof nestedRecord.type === "string" ? nestedRecord.type : "";
   return nestedType.trim();
 }
 

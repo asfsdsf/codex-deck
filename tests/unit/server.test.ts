@@ -5038,7 +5038,7 @@ test("codex thread creation and message endpoints validate payloads", async () =
     const invalidEffort = await requestJson(server, "/api/codex/threads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: tempDir, effort: "very-high" }),
+      body: JSON.stringify({ cwd: tempDir, effort: "" }),
     });
     assert.equal(invalidEffort.status, 400);
 
@@ -5116,7 +5116,7 @@ test("codex thread creation and message endpoints validate payloads", async () =
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "hello", effort: "bad" }),
+        body: JSON.stringify({ text: "hello", effort: "" }),
       },
     );
     assert.equal(invalidMsgEffort.status, 400);
@@ -5142,7 +5142,7 @@ test("codex thread creation and message endpoints validate payloads", async () =
           text: "hello",
           collaborationMode: {
             mode: "plan",
-            settings: { reasoningEffort: "bad" },
+            settings: { reasoningEffort: "" },
           },
         }),
       },
@@ -5994,6 +5994,8 @@ test("message route forwards serviceTier to app-server", async () => {
   );
   const server = createServer({ port: 13015, codexDir: rootDir, open: false });
   let capturedServiceTier: string | null | undefined;
+  let capturedModel: string | null | undefined;
+  let capturedEffort: string | null | undefined;
 
   const mockClient: CodexAppServerClientFacade = {
     listModels: async () => [],
@@ -6001,6 +6003,8 @@ test("message route forwards serviceTier to app-server", async () => {
     createThread: async () => "thread-id",
     sendMessage: async (input) => {
       capturedServiceTier = input.serviceTier;
+      capturedModel = input.model;
+      capturedEffort = input.effort;
       return { turnId: "turn-fast" };
     },
     getThreadState: async () => ({
@@ -6032,7 +6036,9 @@ test("message route forwards serviceTier to app-server", async () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: "hello",
+          model: "custom/provider-model",
           serviceTier: "fast",
+          effort: "ultra",
         }),
       },
     );
@@ -6043,6 +6049,8 @@ test("message route forwards serviceTier to app-server", async () => {
       "turn-fast",
     );
     assert.equal(capturedServiceTier, "fast");
+    assert.equal(capturedModel, "custom/provider-model");
+    assert.equal(capturedEffort, "ultra");
   } finally {
     setCodexAppServerClientForTests(null);
     server.stop();
@@ -6118,7 +6126,7 @@ test("message route strips null collaboration mode overrides before forwarding",
             mode: "plan",
             settings: {
               model: null,
-              reasoningEffort: "high",
+              reasoningEffort: "future-effort",
               developerInstructions: null,
             },
           },
@@ -6133,7 +6141,7 @@ test("message route strips null collaboration mode overrides before forwarding",
       {
         mode: "plan",
         settings: {
-          reasoningEffort: "high",
+          reasoningEffort: "future-effort",
         },
       },
     ]);
@@ -6182,6 +6190,10 @@ test("thread management routes forward rename/fork/archive/compact/agent request
     cwd: "/repo/main",
     agentNickname: "atlas",
     agentRole: "explorer",
+    parentThreadId: "thread-main",
+    canAcceptDirectInput: false,
+    agentPath: "/root/agent",
+    source: "subagent_thread_spawn",
     status: "idle" as const,
     updatedAt: Date.now() - 1000,
   };
@@ -6420,7 +6432,7 @@ test("thread management routes forward rename/fork/archive/compact/agent request
         .threads ?? [];
     assert.deepEqual(
       agentThreads.map((thread) => thread.threadId),
-      ["thread-main", "thread-agent"],
+      ["thread-agent"],
     );
 
     const summariesResponse = await requestJson(
@@ -6442,6 +6454,254 @@ test("thread management routes forward rename/fork/archive/compact/agent request
       "thread-agent",
       "thread-main",
     ]);
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("agent routes enforce descendants and forward parent-mediated actions", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir("server-agent-actions");
+  const server = createServer({ port: 13017, codexDir: rootDir, open: false });
+  const sentMessages: Array<{ threadId: string; text?: string }> = [];
+  const waitConfigCwds: Array<string | null> = [];
+  const makeSummary = (
+    threadId: string,
+    parentThreadId: string | null,
+    canAcceptDirectInput: boolean,
+    agentPath: string | null,
+    updatedAt: number,
+  ) => ({
+    threadId,
+    name: threadId,
+    preview: `${threadId} preview`,
+    cwd: "/repo",
+    agentNickname: null,
+    agentRole: null,
+    parentThreadId,
+    canAcceptDirectInput,
+    agentPath,
+    source: parentThreadId ? "subagent_thread_spawn" : "cli",
+    status: "idle" as const,
+    updatedAt,
+  });
+  const summaries = [
+    makeSummary("root-thread", null, true, null, 10),
+    makeSummary("child-thread", "root-thread", false, "/root/child", 30),
+    makeSummary(
+      "grandchild-thread",
+      "child-thread",
+      false,
+      "/root/child/grandchild",
+      20,
+    ),
+    makeSummary("unrelated-thread", "other-root", false, "/other/agent", 40),
+    makeSummary("other-root", null, true, null, 50),
+  ];
+  const summariesById = new Map(
+    summaries.map((summary) => [summary.threadId, summary]),
+  );
+
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    listCollaborationModes: async () => [],
+    createThread: async () => "unused-thread",
+    listAgentThreads: async () => summaries,
+    getThreadSummary: async (threadId: string) => {
+      const summary = summariesById.get(threadId);
+      if (!summary) {
+        throw new Error("thread not found");
+      }
+      return summary;
+    },
+    getAgentWaitConfig: async (cwd) => {
+      waitConfigCwds.push(cwd ?? null);
+      return {
+        minTimeoutMs: 500,
+        maxTimeoutMs: 1_000,
+        defaultTimeoutMs: 750,
+      };
+    },
+    sendMessage: async (input) => {
+      sentMessages.push(input);
+      return { turnId: "turn-agent-action" };
+    },
+    getThreadState: async () => ({
+      threadId: "root-thread",
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: "root-thread",
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    await loadStorage();
+    setCodexAppServerClientForTests(mockClient);
+
+    const descendantsResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-threads",
+    );
+    assert.equal(descendantsResponse.status, 200);
+    assert.deepEqual(
+      (
+        descendantsResponse.body as {
+          threads?: Array<{ threadId: string }>;
+        }
+      ).threads?.map((thread) => thread.threadId),
+      ["child-thread", "grandchild-thread"],
+    );
+
+    const waitConfigResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-wait-config",
+    );
+    assert.equal(waitConfigResponse.status, 200);
+    assert.deepEqual(waitConfigResponse.body, {
+      minTimeoutMs: 500,
+      maxTimeoutMs: 1_000,
+      defaultTimeoutMs: 750,
+    });
+
+    const unrelatedResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-actions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send_message",
+          targetThreadId: "unrelated-thread",
+          message: "should be rejected",
+        }),
+      },
+    );
+    assert.equal(unrelatedResponse.status, 404);
+    assert.equal(sentMessages.length, 0);
+
+    const sendResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-actions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send_message",
+          targetThreadId: "grandchild-thread",
+          message: "Inspect the failing test",
+        }),
+      },
+    );
+    assert.equal(sendResponse.status, 200);
+    assert.match(
+      sentMessages[0]?.text ?? "",
+      /Invoke the collaboration tool `send_message` now/,
+    );
+    assert.match(
+      sentMessages[0]?.text ?? "",
+      /"target":"\/root\/child\/grandchild"/,
+    );
+    assert.match(sentMessages[0]?.text ?? "", /Inspect the failing test/);
+
+    const followupResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-actions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "followup_task",
+          targetThreadId: "child-thread",
+          message: "Run the focused test",
+        }),
+      },
+    );
+    assert.equal(followupResponse.status, 200);
+    assert.match(
+      sentMessages[1]?.text ?? "",
+      /Invoke the collaboration tool `followup_task` now/,
+    );
+
+    const waitResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-actions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "wait",
+          targetThreadId: "child-thread",
+          timeoutMs: 750,
+        }),
+      },
+    );
+    assert.equal(waitResponse.status, 200);
+    assert.match(
+      sentMessages[2]?.text ?? "",
+      /Invoke the collaboration tool `wait_agent` now/,
+    );
+    assert.match(sentMessages[2]?.text ?? "", /\{"timeout_ms":750\}/);
+
+    const shortWaitResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-actions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "wait",
+          targetThreadId: "child-thread",
+          timeoutMs: 499,
+        }),
+      },
+    );
+    assert.equal(shortWaitResponse.status, 400);
+    assert.match(
+      String((shortWaitResponse.body as { error?: unknown }).error),
+      /between 500 and 1000/,
+    );
+    assert.equal(sentMessages.length, 3);
+
+    const interruptResponse = await requestJson(
+      server,
+      "/api/codex/threads/root-thread/agent-actions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "interrupt_agent",
+          targetThreadId: "child-thread",
+        }),
+      },
+    );
+    assert.equal(interruptResponse.status, 200);
+    assert.match(
+      sentMessages[3]?.text ?? "",
+      /Invoke the collaboration tool `interrupt_agent` now/,
+    );
+
+    const directChildResponse = await requestJson(
+      server,
+      "/api/codex/threads/child-thread/messages",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "direct child input" }),
+      },
+    );
+    assert.equal(directChildResponse.status, 403);
+    assert.equal(sentMessages.length, 4);
+    assert.deepEqual(waitConfigCwds, ["/repo", "/repo", "/repo"]);
   } finally {
     setCodexAppServerClientForTests(null);
     server.stop();

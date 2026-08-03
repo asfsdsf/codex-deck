@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
+  CodexAppServerEvent,
   ConversationMessage,
   Session,
   WorkflowDaemonStatusResponse,
@@ -27,6 +28,7 @@ import {
   fixDanglingSession,
   forkCodexThread,
   getCodexConfigDefaults,
+  getCodexAgentWaitConfig,
   getSystemContext,
   getCodexThreadState,
   getCodexThreadGoal,
@@ -72,6 +74,7 @@ import {
   searchSessionFiles,
   searchSessionContent,
   sendTerminalInput,
+  sendCodexAgentAction,
   sendCodexMessage,
   sendWorkflowControlMessage,
   setCodexThreadName,
@@ -454,7 +457,9 @@ function mockRemoteSessionsDeltaRequests(
     updates: Session[];
     removedSessionIds: string[];
     skillsChangedSessionIds: string[];
+    codexAppServerEvents?: CodexAppServerEvent[];
   }>,
+  conversationChunk = false,
 ): () => void {
   const originalIsConnected = RemoteClient.prototype.isConnected;
   const originalRequestJson = RemoteClient.prototype.requestJson;
@@ -465,6 +470,23 @@ function mockRemoteSessionsDeltaRequests(
   RemoteClient.prototype.requestJson = async function <T>(
     path: string,
   ): Promise<T> {
+    if (
+      conversationChunk &&
+      path.startsWith("/api/conversation/remote-session/raw-chunk?")
+    ) {
+      const url = new URL(path, "http://codex-deck.test");
+      const requestedOffset = Number.parseInt(
+        url.searchParams.get("offset") ?? "0",
+        10,
+      );
+      return {
+        chunkBase64: "",
+        nextOffset: Number.isFinite(requestedOffset) ? requestedOffset : 0,
+        done: true,
+        fileId: "remote-session-file",
+      } as T;
+    }
+
     assert.equal(path.startsWith("/api/sessions/delta?"), true);
     assert.equal(path.includes("waitMs=0"), true);
     const response = responses[
@@ -476,6 +498,7 @@ function mockRemoteSessionsDeltaRequests(
       updates: [],
       removedSessionIds: [],
       skillsChangedSessionIds: [],
+      codexAppServerEvents: [],
     };
     requestIndex += 1;
     return response as T;
@@ -862,6 +885,63 @@ test("createCodexThread and sendCodexMessage send JSON POST payloads", async () 
   assert.deepEqual(JSON.parse(String(calls[1].init?.body ?? "{}")), {
     text: "hello",
     serviceTier: "fast",
+  });
+});
+
+test("agent APIs encode thread ids and forward action payloads", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes("/agent-threads")) {
+      return jsonResponse({ threads: [] });
+    }
+    if (url.includes("/agent-wait-config")) {
+      return jsonResponse({
+        minTimeoutMs: 500,
+        maxTimeoutMs: 1_000,
+        defaultTimeoutMs: 750,
+      });
+    }
+    return jsonResponse({
+      ok: true,
+      action: "followup_task",
+      controllerThreadId: "parent/thread",
+      targetThreadId: "child/thread",
+      turnId: "turn-1",
+    });
+  };
+
+  assert.deepEqual(await listCodexAgentThreads("parent/thread"), []);
+  assert.deepEqual(await getCodexAgentWaitConfig("parent/thread"), {
+    minTimeoutMs: 500,
+    maxTimeoutMs: 1_000,
+    defaultTimeoutMs: 750,
+  });
+  const response = await sendCodexAgentAction("parent/thread", {
+    action: "followup_task",
+    targetThreadId: "child/thread",
+    message: "Continue the task",
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(
+    calls[0]?.url,
+    "/api/codex/threads/parent%2Fthread/agent-threads",
+  );
+  assert.equal(
+    calls[1]?.url,
+    "/api/codex/threads/parent%2Fthread/agent-wait-config",
+  );
+  assert.equal(
+    calls[2]?.url,
+    "/api/codex/threads/parent%2Fthread/agent-actions",
+  );
+  assert.equal(calls[2]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[2]?.init?.body ?? "{}")), {
+    action: "followup_task",
+    targetThreadId: "child/thread",
+    message: "Continue the task",
   });
 });
 
@@ -2026,6 +2106,79 @@ test("subscribeSessionsStream applies remote delta payloads", async () => {
     assert.deepEqual(skillsPayloads, ["session-d"]);
 
     unsubscribe();
+  } finally {
+    restoreRemoteClient();
+    restoreTimers();
+  }
+});
+
+test("remote session deltas deliver app-server events to matching conversations", async () => {
+  const timerController = new ManualTimerController();
+  const restoreTimers = timerController.install();
+  const fullSnapshotEvent: CodexAppServerEvent = {
+    type: "subagent_activity",
+    threadId: "remote-session",
+    turnId: "turn-1",
+    itemId: "activity-1",
+    agentThreadId: "remote-child",
+    agentPath: "/root/remote-child",
+    kind: "started",
+  };
+  const incrementalEvent: CodexAppServerEvent = {
+    type: "thread_status",
+    threadId: "remote-session",
+    status: "active",
+    turnId: "turn-1",
+  };
+  const restoreRemoteClient = mockRemoteSessionsDeltaRequests(
+    [
+      {
+        version: 2,
+        isFullSnapshot: true,
+        sessions: [],
+        updates: [],
+        removedSessionIds: [],
+        skillsChangedSessionIds: [],
+        codexAppServerEvents: [fullSnapshotEvent],
+      },
+      {
+        version: 3,
+        isFullSnapshot: false,
+        sessions: [],
+        updates: [],
+        removedSessionIds: [],
+        skillsChangedSessionIds: [],
+        codexAppServerEvents: [fullSnapshotEvent, incrementalEvent],
+      },
+    ],
+    true,
+  );
+  const received: CodexAppServerEvent[] = [];
+
+  try {
+    const unsubscribeConversation = subscribeConversationStream(
+      "remote-session",
+      { onMessages: () => {} },
+      {
+        initialOffset: 1,
+        onCodexAppServerEvent: (event) => received.push(event),
+      },
+    );
+    const unsubscribeSessions = subscribeSessionsStream({
+      onSessions: () => {},
+      onSessionsUpdate: () => {},
+      onSessionsRemoved: () => {},
+    });
+
+    await flushAsyncWork();
+    assert.deepEqual(received, [fullSnapshotEvent]);
+
+    await timerController.runNext();
+    await timerController.runNext();
+    assert.deepEqual(received, [fullSnapshotEvent, incrementalEvent]);
+
+    unsubscribeSessions();
+    unsubscribeConversation();
   } finally {
     restoreRemoteClient();
     restoreTimers();

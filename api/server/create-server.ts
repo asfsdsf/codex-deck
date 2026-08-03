@@ -47,7 +47,11 @@ import {
   type CodexMemoriesResetResponse,
   type CodexMemoriesSettingsWriteRequest,
   type CodexMemoriesSettingsWriteResponse,
+  type CodexAgentWaitConfig,
   type CodexThreadAgentListResponse,
+  type CodexAgentAction,
+  type CodexThreadAgentActionRequest,
+  type CodexThreadAgentActionResponse,
   type CodexThreadSummariesRequest,
   type CodexThreadSummariesResponse,
   type CodexUserInputRequest,
@@ -298,6 +302,153 @@ function parseOptionalServiceTier(
     return null;
   }
   return isCodexServiceTier(value) ? value : undefined;
+}
+
+const CODEX_AGENT_ACTIONS = new Set<CodexAgentAction>([
+  "send_message",
+  "followup_task",
+  "wait",
+  "interrupt_agent",
+]);
+const CODEX_AGENT_WAIT_MIN_TIMEOUT_MS = 10_000;
+const CODEX_AGENT_WAIT_MAX_TIMEOUT_MS = 3_600_000;
+const DEFAULT_CODEX_AGENT_WAIT_CONFIG: CodexAgentWaitConfig = {
+  minTimeoutMs: CODEX_AGENT_WAIT_MIN_TIMEOUT_MS,
+  maxTimeoutMs: CODEX_AGENT_WAIT_MAX_TIMEOUT_MS,
+  defaultTimeoutMs: 30_000,
+};
+
+function isCodexAgentAction(value: unknown): value is CodexAgentAction {
+  return (
+    typeof value === "string" &&
+    CODEX_AGENT_ACTIONS.has(value as CodexAgentAction)
+  );
+}
+
+function isStrictDescendantThread(
+  threadId: string,
+  ancestorThreadId: string,
+  summariesById: Map<string, CodexThreadSummary>,
+): boolean {
+  let currentId = threadId;
+  const visited = new Set<string>();
+
+  while (!visited.has(currentId)) {
+    visited.add(currentId);
+    const summary = summariesById.get(currentId);
+    const parentThreadId = summary?.parentThreadId?.trim() ?? "";
+    if (!parentThreadId) {
+      return false;
+    }
+    if (parentThreadId === ancestorThreadId) {
+      return true;
+    }
+    currentId = parentThreadId;
+  }
+
+  return false;
+}
+
+function filterStrictDescendantThreads(
+  ancestorThreadId: string,
+  summaries: CodexThreadSummary[],
+): CodexThreadSummary[] {
+  const summariesById = new Map(
+    summaries.map((summary) => [summary.threadId, summary]),
+  );
+  return summaries
+    .filter(
+      (summary) =>
+        summary.threadId !== ancestorThreadId &&
+        isStrictDescendantThread(
+          summary.threadId,
+          ancestorThreadId,
+          summariesById,
+        ),
+    )
+    .sort((left, right) => {
+      const leftUpdated = left.updatedAt ?? 0;
+      const rightUpdated = right.updatedAt ?? 0;
+      if (rightUpdated !== leftUpdated) {
+        return rightUpdated - leftUpdated;
+      }
+      return left.threadId.localeCompare(right.threadId);
+    });
+}
+
+async function listStrictDescendantThreads(
+  client: ReturnType<typeof getCodexAppServerClient>,
+  ancestorThreadId: string,
+): Promise<CodexThreadSummary[]> {
+  if (client.listAgentThreads) {
+    const summaries = await client.listAgentThreads(ancestorThreadId);
+    return filterStrictDescendantThreads(ancestorThreadId, summaries);
+  }
+
+  if (!client.listLoadedThreadIds || !client.getThreadSummary) {
+    throw new Error(
+      "Agent thread listing is not available for this codex client",
+    );
+  }
+
+  const loadedThreadIds = await client.listLoadedThreadIds();
+  const candidateIds = [...new Set([ancestorThreadId, ...loadedThreadIds])];
+  const results = await Promise.allSettled(
+    candidateIds.map((threadId) => client.getThreadSummary!(threadId)),
+  );
+  const summaries = results
+    .filter(
+      (result): result is PromiseFulfilledResult<CodexThreadSummary> =>
+        result.status === "fulfilled",
+    )
+    .map((result) => result.value);
+  return filterStrictDescendantThreads(ancestorThreadId, summaries);
+}
+
+function getAgentActionTarget(
+  action: CodexAgentAction,
+  target: CodexThreadSummary,
+): string {
+  return target.agentPath?.trim() || target.threadId;
+}
+
+function buildCodexAgentActionInstruction(input: {
+  action: CodexAgentAction;
+  target: CodexThreadSummary;
+  message?: string;
+  timeoutMs?: number;
+}): string {
+  const toolName = input.action === "wait" ? "wait_agent" : input.action;
+  const target = getAgentActionTarget(input.action, input.target);
+  const toolArguments =
+    input.action === "wait"
+      ? { timeout_ms: input.timeoutMs }
+      : { target, ...(input.message ? { message: input.message } : {}) };
+  const targetDescription = input.target.agentPath
+    ? `${input.target.agentPath} (${input.target.threadId})`
+    : input.target.threadId;
+
+  return [
+    "The Codex Deck UI requested a parent-mediated sub-agent control action.",
+    `Invoke the collaboration tool \`${toolName}\` now; do not merely describe the action.`,
+    `Selected target: ${targetDescription}.`,
+    input.action === "wait"
+      ? "The V2 wait_agent tool monitors collaboration activity globally and accepts only the timeout argument; use the selected target as context for this wait."
+      : "Use the selected target's canonical agent path (or its thread id fallback) exactly as provided.",
+    `Call arguments: ${JSON.stringify(toolArguments)}`,
+    "After the tool call completes, briefly report its result to the user.",
+  ].join("\n");
+}
+
+async function readCodexAgentWaitConfig(
+  client: ReturnType<typeof getCodexAppServerClient>,
+  cwd?: string | null,
+): Promise<CodexAgentWaitConfig> {
+  if (!client.getAgentWaitConfig) {
+    return { ...DEFAULT_CODEX_AGENT_WAIT_CONFIG };
+  }
+
+  return client.getAgentWaitConfig(cwd);
 }
 
 function isCodexThreadGoalStatus(
@@ -1736,6 +1887,7 @@ interface SessionDeltaEvent {
   removedSessionIds: string[];
   skillsChangedSessionIds: string[];
   forceFullSnapshot: boolean;
+  codexAppServerEvents: CodexAppServerEvent[];
 }
 
 export function createServer(options: ServerOptions) {
@@ -1811,6 +1963,7 @@ export function createServer(options: ServerOptions) {
     removedSessionIds?: string[];
     skillsChangedSessionIds?: string[];
     forceFullSnapshot?: boolean;
+    codexAppServerEvents?: CodexAppServerEvent[];
   }) => {
     const changedSessionIds = [
       ...new Set(
@@ -1834,12 +1987,14 @@ export function createServer(options: ServerOptions) {
       ),
     ];
     const forceFullSnapshot = Boolean(event.forceFullSnapshot);
+    const codexAppServerEvents = event.codexAppServerEvents ?? [];
 
     if (
       !forceFullSnapshot &&
       changedSessionIds.length === 0 &&
       removedSessionIds.length === 0 &&
-      skillsChangedSessionIds.length === 0
+      skillsChangedSessionIds.length === 0 &&
+      codexAppServerEvents.length === 0
     ) {
       return;
     }
@@ -1851,6 +2006,7 @@ export function createServer(options: ServerOptions) {
       removedSessionIds,
       skillsChangedSessionIds,
       forceFullSnapshot,
+      codexAppServerEvents,
     });
     if (sessionDeltaEvents.length > SESSION_DELTA_LOG_LIMIT) {
       sessionDeltaEvents.splice(
@@ -1917,6 +2073,9 @@ export function createServer(options: ServerOptions) {
         ? Math.floor(sinceVersion)
         : 0;
     const eventsStartVersion = sessionDeltaEvents[0]?.version ?? currentVersion;
+    const bufferedCodexAppServerEvents = sessionDeltaEvents.flatMap(
+      (event) => event.codexAppServerEvents,
+    );
 
     if (
       normalizedSinceVersion <= 0 ||
@@ -1929,6 +2088,7 @@ export function createServer(options: ServerOptions) {
         updates: [],
         removedSessionIds: [],
         skillsChangedSessionIds: [],
+        codexAppServerEvents: bufferedCodexAppServerEvents,
       };
     }
 
@@ -1943,6 +2103,7 @@ export function createServer(options: ServerOptions) {
         updates: [],
         removedSessionIds: [],
         skillsChangedSessionIds: [],
+        codexAppServerEvents: [],
       };
     }
 
@@ -1954,12 +2115,14 @@ export function createServer(options: ServerOptions) {
         updates: [],
         removedSessionIds: [],
         skillsChangedSessionIds: [],
+        codexAppServerEvents: bufferedCodexAppServerEvents,
       };
     }
 
     const changedSessionIds = new Set<string>();
     const removedSessionIds = new Set<string>();
     const skillsChangedSessionIds = new Set<string>();
+    const codexAppServerEvents: CodexAppServerEvent[] = [];
 
     for (const event of relevantEvents) {
       for (const sessionId of event.changedSessionIds) {
@@ -1971,6 +2134,7 @@ export function createServer(options: ServerOptions) {
       for (const sessionId of event.skillsChangedSessionIds) {
         skillsChangedSessionIds.add(sessionId);
       }
+      codexAppServerEvents.push(...event.codexAppServerEvents);
     }
 
     const sessions = await getSessions();
@@ -1993,6 +2157,7 @@ export function createServer(options: ServerOptions) {
       updates,
       removedSessionIds: finalRemovedSessionIds,
       skillsChangedSessionIds: [...skillsChangedSessionIds],
+      codexAppServerEvents,
     };
   };
 
@@ -2015,6 +2180,14 @@ export function createServer(options: ServerOptions) {
   };
 
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
+    if (
+      event.type === "thread_status" ||
+      event.type === "subagent_activity" ||
+      event.type === "collab_agent_tool_call" ||
+      event.type === "error"
+    ) {
+      recordSessionDeltaEvent({ codexAppServerEvents: [event] });
+    }
     for (const listener of appServerEventListeners) {
       listener(event);
     }
@@ -4243,47 +4416,161 @@ export function createServer(options: ServerOptions) {
 
     try {
       const client = getCodexAppServerClient();
-      if (!client.listLoadedThreadIds || !client.getThreadSummary) {
-        return c.json(
-          {
-            error:
-              "Agent thread listing is not available for this codex client",
-          },
-          503,
-        );
-      }
-
-      const loadedThreadIds = await client.listLoadedThreadIds();
-      const candidateIds = [...new Set([threadId, ...loadedThreadIds])];
-      const summaries = await Promise.allSettled(
-        candidateIds.map((id) => client.getThreadSummary!(id)),
-      );
-
-      const threads = summaries
-        .filter(
-          (result): result is PromiseFulfilledResult<CodexThreadSummary> =>
-            result.status === "fulfilled",
-        )
-        .map((result) => result.value)
-        .sort((left, right) => {
-          if (left.threadId === threadId && right.threadId !== threadId) {
-            return -1;
-          }
-          if (right.threadId === threadId && left.threadId !== threadId) {
-            return 1;
-          }
-
-          const leftUpdated = left.updatedAt ?? 0;
-          const rightUpdated = right.updatedAt ?? 0;
-          if (rightUpdated !== leftUpdated) {
-            return rightUpdated - leftUpdated;
-          }
-
-          return left.threadId.localeCompare(right.threadId);
-        });
+      const threads = await listStrictDescendantThreads(client, threadId);
 
       const response: CodexThreadAgentListResponse = {
         threads,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.get("/api/codex/threads/:id/agent-wait-config", async (c) => {
+    const controllerThreadId = c.req.param("id")?.trim();
+    if (!controllerThreadId) {
+      return c.json({ error: "controller thread id is required" }, 400);
+    }
+
+    try {
+      const client = getCodexAppServerClient();
+      const controllerSummary = client.getThreadSummary
+        ? await client.getThreadSummary(controllerThreadId)
+        : null;
+      const config = await readCodexAgentWaitConfig(
+        client,
+        controllerSummary?.cwd ?? null,
+      );
+      return c.json(config);
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
+  app.post("/api/codex/threads/:id/agent-actions", async (c) => {
+    const controllerThreadId = c.req.param("id")?.trim();
+    if (!controllerThreadId) {
+      return c.json({ error: "controller thread id is required" }, 400);
+    }
+
+    try {
+      const body =
+        (await c.req.json()) as Partial<CodexThreadAgentActionRequest>;
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return c.json({ error: "request body must be an object" }, 400);
+      }
+
+      if (!isCodexAgentAction(body.action)) {
+        return c.json({ error: "action is invalid" }, 400);
+      }
+
+      const targetThreadId =
+        typeof body.targetThreadId === "string"
+          ? body.targetThreadId.trim()
+          : "";
+      if (!targetThreadId) {
+        return c.json({ error: "targetThreadId is required" }, 400);
+      }
+
+      const message =
+        typeof body.message === "string" ? body.message.trim() : "";
+      if (
+        (body.action === "send_message" || body.action === "followup_task") &&
+        !message
+      ) {
+        return c.json({ error: "message is required for this action" }, 400);
+      }
+      if (body.message !== undefined && typeof body.message !== "string") {
+        return c.json({ error: "message must be a string" }, 400);
+      }
+
+      const client = getCodexAppServerClient();
+      let controllerSummary: CodexThreadSummary | null = null;
+      if (client.getThreadSummary) {
+        controllerSummary = await client.getThreadSummary(controllerThreadId);
+        if (controllerSummary.canAcceptDirectInput === false) {
+          return c.json(
+            {
+              error:
+                "This sub-agent is controlled by its parent. Direct input is disabled.",
+            },
+            403,
+          );
+        }
+      }
+
+      const waitConfig =
+        body.action === "wait"
+          ? await readCodexAgentWaitConfig(
+              client,
+              controllerSummary?.cwd ?? null,
+            )
+          : DEFAULT_CODEX_AGENT_WAIT_CONFIG;
+      const timeoutMs =
+        body.timeoutMs === undefined
+          ? waitConfig.defaultTimeoutMs
+          : body.timeoutMs;
+      if (
+        body.action === "wait" &&
+        (typeof timeoutMs !== "number" ||
+          !Number.isInteger(timeoutMs) ||
+          timeoutMs < waitConfig.minTimeoutMs ||
+          timeoutMs > waitConfig.maxTimeoutMs)
+      ) {
+        return c.json(
+          {
+            error: `timeoutMs must be an integer between ${waitConfig.minTimeoutMs} and ${waitConfig.maxTimeoutMs}`,
+          },
+          400,
+        );
+      }
+
+      const descendants = await listStrictDescendantThreads(
+        client,
+        controllerThreadId,
+      );
+      const target = descendants.find(
+        (thread) => thread.threadId === targetThreadId,
+      );
+      if (!target) {
+        return c.json(
+          { error: "target thread is not a descendant of the controller" },
+          404,
+        );
+      }
+
+      const instruction = buildCodexAgentActionInstruction({
+        action: body.action,
+        target,
+        ...(message ? { message } : {}),
+        ...(body.action === "wait" ? { timeoutMs } : {}),
+      });
+      const result = await client.sendMessage({
+        threadId: controllerThreadId,
+        text: instruction,
+      });
+
+      for (const listener of conversationWakeListeners) {
+        listener(controllerThreadId);
+      }
+
+      const response: CodexThreadAgentActionResponse = {
+        ok: true,
+        action: body.action,
+        controllerThreadId,
+        targetThreadId,
+        turnId: result.turnId,
       };
       return c.json(response);
     } catch (error) {
@@ -4303,6 +4590,7 @@ export function createServer(options: ServerOptions) {
     }
 
     try {
+      const client = getCodexAppServerClient();
       const body = (await c.req.json()) as Partial<SendCodexMessageRequest>;
       const inputItems = parseSendMessageInputItems(body.input);
       if (body.input !== undefined && inputItems === undefined) {
@@ -4351,7 +4639,20 @@ export function createServer(options: ServerOptions) {
         return c.json({ error: "collaborationMode is invalid" }, 400);
       }
 
-      const result = await getCodexAppServerClient().sendMessage({
+      if (client.getThreadSummary) {
+        const threadSummary = await client.getThreadSummary(threadId);
+        if (threadSummary.canAcceptDirectInput === false) {
+          return c.json(
+            {
+              error:
+                "This sub-agent is controlled by its parent. Direct input is disabled.",
+            },
+            403,
+          );
+        }
+      }
+
+      const result = await client.sendMessage({
         threadId,
         input,
         ...(normalizedCwd ? { cwd: normalizedCwd } : {}),

@@ -25,6 +25,7 @@ import {
   Database,
   HardDrive,
   Bot,
+  Activity,
   ImageIcon,
   Clock3,
   Target,
@@ -2086,7 +2087,9 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
         block.type === "tool_result" ||
         block.type === "thinking" ||
         block.type === "reasoning" ||
-        block.type === "agent_reasoning"
+        block.type === "agent_reasoning" ||
+        block.type === "subagent_activity" ||
+        block.type === "collab_agent_tool_call"
       );
     });
   };
@@ -4378,6 +4381,141 @@ function ApprovalRequestRenderer(props: {
   );
 }
 
+function formatCollaborationTool(tool: ContentBlock["tool"]): string {
+  switch (tool) {
+    case "spawnAgent":
+      return "spawn agent";
+    case "sendInput":
+      return "send message";
+    case "resumeAgent":
+      return "follow up";
+    case "closeAgent":
+      return "interrupt agent";
+    case "wait":
+      return "wait";
+    default:
+      return "collaboration";
+  }
+}
+
+function formatCollaborationStatus(status: ContentBlock["status"]): string {
+  switch (status) {
+    case "inProgress":
+      return "In progress";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    default:
+      return "Updated";
+  }
+}
+
+function CollaborationBlockRenderer(props: {
+  block: ContentBlock;
+}): JSX.Element | null {
+  const { block } = props;
+
+  if (block.type === "subagent_activity") {
+    return (
+      <div className="w-full max-w-full rounded-lg border border-fuchsia-500/25 bg-fuchsia-500/10 px-3 py-2.5 text-xs text-fuchsia-50">
+        <div className="flex flex-wrap items-center gap-2">
+          <Activity size={13} className="shrink-0 text-fuchsia-200" />
+          <span className="font-medium">Sub-agent activity</span>
+          <span className="rounded border border-fuchsia-300/25 bg-fuchsia-400/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fuchsia-200">
+            {block.kind ?? "updated"}
+          </span>
+        </div>
+        {block.agentPath || block.agentThreadId ? (
+          <div className="mt-2 space-y-1 text-[11px] text-fuchsia-100/75">
+            {block.agentPath ? (
+              <div className="break-all font-mono">{block.agentPath}</div>
+            ) : null}
+            {block.agentThreadId ? (
+              <div className="break-all text-fuchsia-100/55">
+                Thread: {block.agentThreadId}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (block.type !== "collab_agent_tool_call") {
+    return null;
+  }
+
+  const receiverThreadIds = block.receiverThreadIds ?? [];
+  const agentStates = Object.entries(block.agentsStates ?? {});
+  const statusTone =
+    block.status === "failed"
+      ? "border-rose-400/30 bg-rose-500/10 text-rose-100"
+      : block.status === "completed"
+        ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+        : "border-cyan-400/30 bg-cyan-500/10 text-cyan-100";
+
+  return (
+    <div className="w-full max-w-full overflow-hidden rounded-lg border border-cyan-500/25 bg-cyan-500/10 text-xs text-cyan-50">
+      <div className="flex flex-wrap items-center gap-2 border-b border-cyan-500/20 px-3 py-2">
+        <Bot size={13} className="shrink-0 text-cyan-200" />
+        <span className="font-medium">
+          Collaboration: {formatCollaborationTool(block.tool)}
+        </span>
+        <span
+          className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${statusTone}`}
+        >
+          {formatCollaborationStatus(block.status)}
+        </span>
+      </div>
+      <div className="space-y-2 px-3 py-2.5 text-[11px] text-cyan-100/75">
+        {block.senderThreadId ? (
+          <div className="break-all">
+            <span className="text-cyan-100/45">Sender:</span>{" "}
+            <span className="font-mono">{block.senderThreadId}</span>
+          </div>
+        ) : null}
+        {receiverThreadIds.length > 0 ? (
+          <div className="break-all">
+            <span className="text-cyan-100/45">Targets:</span>{" "}
+            <span className="font-mono">{receiverThreadIds.join(", ")}</span>
+          </div>
+        ) : null}
+        {block.model || block.reasoningEffort ? (
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {block.model ? <span>Model: {block.model}</span> : null}
+            {block.reasoningEffort ? (
+              <span>Reasoning: {block.reasoningEffort}</span>
+            ) : null}
+          </div>
+        ) : null}
+        {block.prompt ? (
+          <div className="border-t border-cyan-500/15 pt-2 whitespace-pre-wrap break-words text-cyan-50/90">
+            {block.prompt}
+          </div>
+        ) : null}
+        {agentStates.length > 0 ? (
+          <div className="border-t border-cyan-500/15 pt-2">
+            <div className="mb-1 uppercase tracking-wide text-cyan-100/45">
+              Agent states
+            </div>
+            <div className="space-y-1">
+              {agentStates.map(([threadId, state]) => (
+                <div key={threadId} className="break-words">
+                  <span className="font-mono text-cyan-100/85">{threadId}</span>
+                  <span className="mx-1 text-cyan-100/40">·</span>
+                  <span>{state.status}</span>
+                  {state.message ? <span> · {state.message}</span> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function ContentBlockRenderer(props: ContentBlockRendererProps) {
   const {
     block,
@@ -4657,6 +4795,13 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
         </div>
       </div>,
     );
+  }
+
+  if (
+    block.type === "subagent_activity" ||
+    block.type === "collab_agent_tool_call"
+  ) {
+    return wrapSearchableBlock(<CollaborationBlockRenderer block={block} />);
   }
 
   if (block.type === "tool_use") {

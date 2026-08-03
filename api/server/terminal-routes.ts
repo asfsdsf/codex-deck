@@ -1,6 +1,9 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { getCodexAppServerClient } from "../codex-app-server";
+import {
+  getCodexAppServerClient,
+  isCodexReasoningEffort,
+} from "../codex-app-server";
 import { getLocalTerminalManager } from "../local-terminal";
 import { getSystemContextSnapshot } from "../system-context";
 import { sanitizeTerminalChatTranscript } from "../terminal-chat-transcript-sanitizer";
@@ -76,14 +79,6 @@ import {
 } from "../../web/terminal-session-notices";
 
 let terminalArtifactWatchersInstalled = false;
-const VALID_REASONING_EFFORTS = new Set([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
 
 function parseOptionalString(value: unknown): string | null | undefined {
   if (value === undefined) {
@@ -104,9 +99,7 @@ function parseOptionalEffort(
   if (value === null) {
     return null;
   }
-  return typeof value === "string" && VALID_REASONING_EFFORTS.has(value)
-    ? value
-    : undefined;
+  return isCodexReasoningEffort(value) ? value : undefined;
 }
 
 function parseOptionalCollaborationMode(

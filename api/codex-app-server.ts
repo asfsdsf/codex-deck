@@ -12,7 +12,13 @@ import {
   type Interface as ReadlineInterface,
 } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
-import type { CodexAppServerEvent, CodexTurnError } from "./storage";
+import type {
+  CodexAgentWaitConfig,
+  CodexAppServerEvent,
+  CodexCollabAgentState,
+  CodexCollabAgentStatus,
+  CodexTurnError,
+} from "./storage";
 import {
   buildHookStateBatchWriteInput,
   parseHooksListResult,
@@ -30,7 +36,10 @@ export type CodexReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max"
+  | "ultra"
+  | (string & {});
 
 export type CodexServiceTier = "fast" | "flex";
 
@@ -289,6 +298,10 @@ export interface CodexThreadSummary {
   cwd: string;
   agentNickname: string | null;
   agentRole: string | null;
+  parentThreadId: string | null;
+  canAcceptDirectInput: boolean | null;
+  agentPath: string | null;
+  source: string | null;
   status: CodexThreadRuntimeStatus;
   updatedAt: number | null;
 }
@@ -427,10 +440,23 @@ interface AppServerThreadRecord {
   name?: unknown;
   preview?: unknown;
   cwd?: unknown;
+  parentThreadId?: unknown;
+  parent_thread_id?: unknown;
+  canAcceptDirectInput?: unknown;
+  can_accept_direct_input?: unknown;
+  agentPath?: unknown;
+  agent_path?: unknown;
+  source?: unknown;
+  threadSource?: unknown;
+  thread_source?: unknown;
+  path?: unknown;
   agentNickname?: unknown;
+  agent_nickname?: unknown;
   agentRole?: unknown;
+  agent_role?: unknown;
   status?: unknown;
   updatedAt?: unknown;
+  updated_at?: unknown;
 }
 
 interface AppServerThreadResumeRecord {
@@ -451,6 +477,12 @@ interface ActiveCodexConfig {
   serviceTier: CodexServiceTier | null;
   providerBaseUrl: string | null;
 }
+
+const DEFAULT_CODEX_AGENT_WAIT_CONFIG: CodexAgentWaitConfig = {
+  minTimeoutMs: 10_000,
+  maxTimeoutMs: 3_600_000,
+  defaultTimeoutMs: 30_000,
+};
 
 export interface CodexTurnFileDiff {
   path: string;
@@ -926,6 +958,16 @@ class CodexAppServerClient {
         return modes;
       },
     );
+  }
+
+  public async getAgentWaitConfig(
+    cwd?: string | null,
+  ): Promise<CodexAgentWaitConfig> {
+    const result = await this.request("config/read", {
+      includeLayers: false,
+      ...(typeof cwd === "string" && cwd.trim() ? { cwd: cwd.trim() } : {}),
+    });
+    return extractAgentWaitConfigFromConfigReadResult(result);
   }
 
   public async listSkills(
@@ -1610,6 +1652,59 @@ class CodexAppServerClient {
     }
 
     return ids;
+  }
+
+  public async listAgentThreads(
+    ancestorThreadId: string,
+  ): Promise<CodexThreadSummary[]> {
+    const normalizedAncestorThreadId = ancestorThreadId.trim();
+    if (!normalizedAncestorThreadId) {
+      throw new Error("ancestorThreadId is required");
+    }
+
+    const threads: CodexThreadSummary[] = [];
+    let cursor: string | null = null;
+    const seenCursors = new Set<string | null>();
+
+    while (seenCursors.add(cursor) && threads.length < 1000) {
+      const result = await this.request("thread/list", {
+        cursor,
+        limit: 100,
+        sortKey: "updated_at",
+        sortDirection: "desc",
+        modelProviders: [],
+        sourceKinds: ["subAgentThreadSpawn"],
+        archived: false,
+        useStateDbOnly: true,
+        ancestorThreadId: normalizedAncestorThreadId,
+      });
+      const record = asRecord(result);
+      const data = record?.data;
+      if (!Array.isArray(data)) {
+        throw new CodexAppServerTransportError(
+          "Missing agent thread data in codex app-server response",
+        );
+      }
+
+      for (const value of data) {
+        const summary = extractThreadSummaryFromValue(value);
+        if (!summary || summary.threadId === normalizedAncestorThreadId) {
+          continue;
+        }
+        threads.push(summary);
+        if (threads.length >= 1000) {
+          break;
+        }
+      }
+
+      const nextCursor = asTrimmedString(record?.nextCursor);
+      if (!nextCursor) {
+        break;
+      }
+      cursor = nextCursor;
+    }
+
+    return threads;
   }
 
   public async sendMessage(
@@ -2648,6 +2743,21 @@ class CodexAppServerClient {
       return;
     }
 
+    if (method === "thread/status/changed") {
+      this.handleThreadStatusChangedNotification(params);
+      return;
+    }
+
+    if (method === "thread/started") {
+      this.handleThreadStartedNotification(params);
+      return;
+    }
+
+    if (method === "turn/started" || method === "turn/completed") {
+      this.handleTurnLifecycleNotification(method, params);
+      return;
+    }
+
     if (!params || typeof params !== "object") {
       return;
     }
@@ -2695,6 +2805,61 @@ class CodexAppServerClient {
     if (method === "serverRequest/resolved") {
       this.handleServerRequestResolved(params);
     }
+  }
+
+  private handleThreadStartedNotification(params: unknown): void {
+    const record = asRecord(params);
+    const thread = asRecord(record?.thread);
+    const threadId = asTrimmedString(
+      thread?.id ?? record?.threadId ?? record?.thread_id,
+    );
+    if (!threadId) {
+      return;
+    }
+
+    this.emitAppServerEvent({
+      type: "thread_status",
+      threadId,
+      status: toThreadRuntimeStatus(thread?.status),
+      turnId: null,
+    });
+  }
+
+  private handleThreadStatusChangedNotification(params: unknown): void {
+    const record = asRecord(params);
+    const threadId = asTrimmedString(record?.threadId ?? record?.thread_id);
+    if (!threadId) {
+      return;
+    }
+
+    this.emitAppServerEvent({
+      type: "thread_status",
+      threadId,
+      status: toThreadRuntimeStatus(record?.status),
+      turnId: null,
+    });
+  }
+
+  private handleTurnLifecycleNotification(
+    method: "turn/started" | "turn/completed",
+    params: unknown,
+  ): void {
+    const record = asRecord(params);
+    const turn = asRecord(record?.turn);
+    const threadId = asTrimmedString(record?.threadId ?? record?.thread_id);
+    const turnId = asTrimmedString(
+      turn?.id ?? record?.turnId ?? record?.turn_id,
+    );
+    if (!threadId) {
+      return;
+    }
+
+    this.emitAppServerEvent({
+      type: "thread_status",
+      threadId,
+      status: method === "turn/started" ? "active" : "idle",
+      turnId,
+    });
   }
 
   private handleErrorNotification(params: unknown): void {
@@ -2827,6 +2992,12 @@ class CodexAppServerClient {
       return;
     }
 
+    this.emitCollabAgentItemEvent(
+      threadId,
+      asTrimmedString(notification.turnId ?? notification.turn_id),
+      item,
+    );
+
     const itemType = asTrimmedString(item.type)?.toLowerCase() ?? "";
     if (itemType !== "commandexecution" && itemType !== "command_execution") {
       return;
@@ -2868,6 +3039,12 @@ class CodexAppServerClient {
       return;
     }
 
+    this.emitCollabAgentItemEvent(
+      threadId,
+      asTrimmedString(notification.turnId ?? notification.turn_id),
+      item,
+    );
+
     const itemType = asTrimmedString(item.type)?.toLowerCase() ?? "";
     if (itemType !== "commandexecution" && itemType !== "command_execution") {
       return;
@@ -2906,6 +3083,83 @@ class CodexAppServerClient {
       this.unmapLiveTerminalProcessId(threadId, callId);
       this.consumePendingLiveDelta(threadId, callId);
     }
+  }
+
+  private emitCollabAgentItemEvent(
+    threadId: string,
+    turnId: string | null,
+    item: Record<string, unknown>,
+  ): void {
+    const itemType = asTrimmedString(item.type)?.toLowerCase() ?? "";
+    const itemId = asTrimmedString(item.id);
+    if (!itemId) {
+      return;
+    }
+
+    if (itemType === "subagentactivity" || itemType === "sub_agent_activity") {
+      const agentThreadId = asTrimmedString(
+        item.agentThreadId ?? item.agent_thread_id,
+      );
+      const agentPath = asTrimmedString(item.agentPath ?? item.agent_path);
+      const kind = toSubAgentActivityKind(item.kind);
+      if (!agentThreadId || !agentPath || !kind) {
+        return;
+      }
+
+      this.emitAppServerEvent({
+        type: "subagent_activity",
+        threadId,
+        turnId,
+        itemId,
+        agentThreadId,
+        agentPath,
+        kind,
+      });
+      return;
+    }
+
+    if (
+      itemType !== "collabagenttoolcall" &&
+      itemType !== "collab_agent_tool_call"
+    ) {
+      return;
+    }
+
+    const tool = toCollabAgentTool(item.tool);
+    const status = toCollabAgentToolCallStatus(item.status);
+    const senderThreadId = asTrimmedString(
+      item.senderThreadId ?? item.sender_thread_id,
+    );
+    if (!tool || !status || !senderThreadId) {
+      return;
+    }
+
+    const receiverThreadIds = Array.isArray(
+      item.receiverThreadIds ?? item.receiver_thread_ids,
+    )
+      ? ((item.receiverThreadIds ?? item.receiver_thread_ids) as unknown[])
+          .map((value) => asTrimmedString(value))
+          .filter((value): value is string => value !== null)
+      : [];
+
+    this.emitAppServerEvent({
+      type: "collab_agent_tool_call",
+      threadId,
+      turnId,
+      itemId,
+      tool,
+      status,
+      senderThreadId,
+      receiverThreadIds,
+      prompt: asString(item.prompt),
+      model: asTrimmedString(item.model),
+      reasoningEffort: toReasoningEffort(
+        item.reasoningEffort ?? item.reasoning_effort,
+      ),
+      agentsStates: toCollabAgentStates(
+        item.agentsStates ?? item.agents_states,
+      ),
+    });
   }
 
   private handleCommandExecutionOutputDeltaNotification(params: unknown): void {
@@ -3319,17 +3573,12 @@ function asNullableFiniteNumber(value: unknown): number | null | undefined {
 }
 
 function toReasoningEffort(value: unknown): CodexReasoningEffort | null {
-  if (
-    value === "none" ||
-    value === "minimal" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "xhigh"
-  ) {
-    return value;
+  if (typeof value !== "string") {
+    return null;
   }
-  return null;
+
+  const normalized = value.trim();
+  return normalized ? (normalized as CodexReasoningEffort) : null;
 }
 
 function toServiceTier(value: unknown): CodexServiceTier | null {
@@ -3452,8 +3701,9 @@ function collectSupportedReasoningEfforts(
       continue;
     }
 
+    const record = entry as Record<string, unknown>;
     const effort = toReasoningEffort(
-      (entry as Record<string, unknown>).reasoningEffort,
+      record.reasoningEffort ?? record.reasoning_effort,
     );
 
     if (effort) {
@@ -3987,6 +4237,19 @@ function extractThreadStatusFromReadResult(
 }
 
 function toThreadRuntimeStatus(value: unknown): CodexThreadRuntimeStatus {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (
+      normalized === "notLoaded" ||
+      normalized === "idle" ||
+      normalized === "systemError" ||
+      normalized === "active"
+    ) {
+      return normalized;
+    }
+    return "unknown";
+  }
+
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return "unknown";
   }
@@ -4003,6 +4266,107 @@ function toThreadRuntimeStatus(value: unknown): CodexThreadRuntimeStatus {
   return "unknown";
 }
 
+function extractThreadSourceMetadata(thread: AppServerThreadRecord): {
+  parentThreadId: string | null;
+  canAcceptDirectInput: boolean | null;
+  agentPath: string | null;
+  agentNickname: string | null;
+  agentRole: string | null;
+  source: string | null;
+} {
+  const sourceValue = thread.source;
+  const sourceRecord = asRecord(sourceValue);
+  const subAgentRecord = sourceRecord
+    ? asRecord(sourceRecord.subAgent ?? sourceRecord.sub_agent)
+    : null;
+  const threadSpawnRecord = subAgentRecord
+    ? asRecord(subAgentRecord.threadSpawn ?? subAgentRecord.thread_spawn)
+    : null;
+
+  const parentThreadId =
+    asTrimmedString(thread.parentThreadId ?? thread.parent_thread_id) ??
+    asTrimmedString(
+      threadSpawnRecord?.parentThreadId ?? threadSpawnRecord?.parent_thread_id,
+    ) ??
+    null;
+  const canAcceptDirectInput =
+    asBoolean(thread.canAcceptDirectInput ?? thread.can_accept_direct_input) ??
+    null;
+  const agentPath =
+    asTrimmedString(thread.agentPath ?? thread.agent_path) ??
+    asTrimmedString(
+      threadSpawnRecord?.agentPath ?? threadSpawnRecord?.agent_path,
+    ) ??
+    null;
+  const agentNickname =
+    asTrimmedString(thread.agentNickname ?? thread.agent_nickname) ??
+    asTrimmedString(
+      threadSpawnRecord?.agentNickname ?? threadSpawnRecord?.agent_nickname,
+    ) ??
+    null;
+  const agentRole =
+    asTrimmedString(thread.agentRole ?? thread.agent_role) ??
+    asTrimmedString(
+      threadSpawnRecord?.agentRole ?? threadSpawnRecord?.agent_role,
+    ) ??
+    null;
+
+  let source =
+    asTrimmedString(thread.threadSource ?? thread.thread_source) ?? null;
+  if (!source) {
+    source = asTrimmedString(sourceValue);
+  }
+  if (!source && threadSpawnRecord) {
+    source = "subagent_thread_spawn";
+  }
+  if (!source && subAgentRecord) {
+    source = "subagent";
+  }
+  if (!source && sourceRecord) {
+    const sourceKey = Object.keys(sourceRecord)[0]?.trim();
+    source = sourceKey || null;
+  }
+
+  return {
+    parentThreadId,
+    canAcceptDirectInput,
+    agentPath,
+    agentNickname,
+    agentRole,
+    source,
+  };
+}
+
+function extractThreadSummaryFromValue(
+  value: unknown,
+): CodexThreadSummary | null {
+  const thread = asRecord(value) as AppServerThreadRecord | null;
+  if (!thread) {
+    return null;
+  }
+
+  const threadId = asTrimmedString(thread.id);
+  if (!threadId) {
+    return null;
+  }
+
+  const metadata = extractThreadSourceMetadata(thread);
+  return {
+    threadId,
+    name: asNullableString(thread.name),
+    preview: asString(thread.preview)?.trim() ?? "",
+    cwd: asString(thread.cwd)?.trim() ?? "",
+    agentNickname: metadata.agentNickname,
+    agentRole: metadata.agentRole,
+    parentThreadId: metadata.parentThreadId,
+    canAcceptDirectInput: metadata.canAcceptDirectInput,
+    agentPath: metadata.agentPath,
+    source: metadata.source,
+    status: toThreadRuntimeStatus(thread.status),
+    updatedAt: asFiniteNumber(thread.updatedAt ?? thread.updated_at),
+  };
+}
+
 function extractThreadSummaryFromResult(result: unknown): CodexThreadSummary {
   if (!result || typeof result !== "object") {
     throw new CodexAppServerTransportError(
@@ -4017,28 +4381,112 @@ function extractThreadSummaryFromResult(result: unknown): CodexThreadSummary {
     );
   }
 
-  const thread = threadValue as AppServerThreadRecord;
-  const threadId = asString(thread.id)?.trim();
-  if (!threadId) {
+  const summary = extractThreadSummaryFromValue(threadValue);
+  if (!summary) {
     throw new CodexAppServerTransportError(
       "Missing thread id in codex app-server response",
     );
   }
 
-  const name = asNullableString(thread.name);
-  const preview = asString(thread.preview)?.trim() ?? "";
-  const cwd = asString(thread.cwd)?.trim() ?? "";
+  return summary;
+}
 
-  return {
-    threadId,
-    name,
-    preview,
-    cwd,
-    agentNickname: asNullableString(thread.agentNickname) ?? null,
-    agentRole: asNullableString(thread.agentRole) ?? null,
-    status: toThreadRuntimeStatus(thread.status),
-    updatedAt: asFiniteNumber(thread.updatedAt),
-  };
+function toSubAgentActivityKind(
+  value: unknown,
+): "started" | "interacted" | "interrupted" | null {
+  const normalized = asTrimmedString(value)?.replaceAll("_", "").toLowerCase();
+  if (normalized === "started") {
+    return "started";
+  }
+  if (normalized === "interacted") {
+    return "interacted";
+  }
+  if (normalized === "interrupted") {
+    return "interrupted";
+  }
+  return null;
+}
+
+function toCollabAgentTool(
+  value: unknown,
+): "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent" | null {
+  const normalized = asTrimmedString(value)?.replaceAll("_", "").toLowerCase();
+  switch (normalized) {
+    case "spawnagent":
+      return "spawnAgent";
+    case "sendinput":
+      return "sendInput";
+    case "resumeagent":
+      return "resumeAgent";
+    case "wait":
+      return "wait";
+    case "closeagent":
+      return "closeAgent";
+    default:
+      return null;
+  }
+}
+
+function toCollabAgentToolCallStatus(
+  value: unknown,
+): "inProgress" | "completed" | "failed" | null {
+  const normalized = asTrimmedString(value)?.replaceAll("_", "").toLowerCase();
+  switch (normalized) {
+    case "inprogress":
+      return "inProgress";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
+
+function toCollabAgentStatus(value: unknown): CodexCollabAgentStatus | null {
+  const normalized = asTrimmedString(value)?.replaceAll("_", "").toLowerCase();
+  switch (normalized) {
+    case "pendinginit":
+      return "pendingInit";
+    case "running":
+      return "running";
+    case "interrupted":
+      return "interrupted";
+    case "completed":
+      return "completed";
+    case "errored":
+      return "errored";
+    case "shutdown":
+      return "shutdown";
+    case "notfound":
+      return "notFound";
+    default:
+      return null;
+  }
+}
+
+function toCollabAgentStates(
+  value: unknown,
+): Record<string, CodexCollabAgentState> {
+  const record = asRecord(value);
+  if (!record) {
+    return {};
+  }
+
+  const states: Record<string, CodexCollabAgentState> = {};
+  for (const [threadId, stateValue] of Object.entries(record)) {
+    const normalizedThreadId = threadId.trim();
+    const stateRecord = asRecord(stateValue);
+    const status = stateRecord ? toCollabAgentStatus(stateRecord.status) : null;
+    if (!normalizedThreadId || !status) {
+      continue;
+    }
+    states[normalizedThreadId] = {
+      status,
+      message: stateRecord ? asString(stateRecord.message) : null,
+    };
+  }
+  return states;
 }
 
 function extractThreadGoalFromSetResult(result: unknown): CodexThreadGoal {
@@ -4112,6 +4560,51 @@ function extractActiveConfigFromConfigReadResult(
       modelProvider,
     ),
   };
+}
+
+function extractAgentWaitConfigFromConfigReadResult(
+  result: unknown,
+): CodexAgentWaitConfig {
+  const config = extractConfigFromConfigReadResult(result);
+  const features = asRecord(config.features);
+  const multiAgentV2 = asRecord(
+    features?.multi_agent_v2 ?? features?.multiAgentV2,
+  );
+
+  const readTimeout = (
+    snakeCaseName: string,
+    camelCaseName: string,
+  ): number => {
+    const value = asFiniteNumber(
+      multiAgentV2?.[snakeCaseName] ?? multiAgentV2?.[camelCaseName],
+    );
+    return value !== null && Number.isInteger(value) && value >= 0
+      ? value
+      : DEFAULT_CODEX_AGENT_WAIT_CONFIG[
+          snakeCaseName === "min_wait_timeout_ms"
+            ? "minTimeoutMs"
+            : snakeCaseName === "max_wait_timeout_ms"
+              ? "maxTimeoutMs"
+              : "defaultTimeoutMs"
+        ];
+  };
+
+  const minTimeoutMs = readTimeout("min_wait_timeout_ms", "minWaitTimeoutMs");
+  const maxTimeoutMs = readTimeout("max_wait_timeout_ms", "maxWaitTimeoutMs");
+  const defaultTimeoutMs = readTimeout(
+    "default_wait_timeout_ms",
+    "defaultWaitTimeoutMs",
+  );
+
+  if (
+    minTimeoutMs > maxTimeoutMs ||
+    defaultTimeoutMs < minTimeoutMs ||
+    defaultTimeoutMs > maxTimeoutMs
+  ) {
+    return { ...DEFAULT_CODEX_AGENT_WAIT_CONFIG };
+  }
+
+  return { minTimeoutMs, maxTimeoutMs, defaultTimeoutMs };
 }
 
 function extractConfigFromConfigReadResult(
@@ -4636,6 +5129,7 @@ export interface CodexAppServerClientFacade {
   restartAppServer?: () => Promise<boolean>;
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
   listCollaborationModes: () => Promise<CodexCollaborationModeOption[]>;
+  getAgentWaitConfig?: (cwd?: string | null) => Promise<CodexAgentWaitConfig>;
   listHooks?: (input: CodexHooksListInput) => Promise<CodexHooksListEntry[]>;
   writeHookState?: (updates: CodexHookStateUpdate[]) => Promise<void>;
   listSkills?: (input: CodexSkillsListInput) => Promise<CodexSkillsListEntry[]>;
@@ -4667,6 +5161,9 @@ export interface CodexAppServerClientFacade {
   getThreadSummary?: (threadId: string) => Promise<CodexThreadSummary>;
   getThreadLiveStatus?: (threadId: string) => Promise<CodexThreadLiveStatus>;
   listLoadedThreadIds?: () => Promise<string[]>;
+  listAgentThreads?: (
+    ancestorThreadId: string,
+  ) => Promise<CodexThreadSummary[]>;
   sendMessage: (
     input: SendCodexMessageInput,
   ) => Promise<SendCodexMessageResult>;
@@ -4714,6 +5211,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     restartAppServer: () => client!.restartAppServer(),
     listModels: (limit?: number) => client!.listModels(limit),
     listCollaborationModes: () => client!.listCollaborationModes(),
+    getAgentWaitConfig: (cwd?: string | null) =>
+      client!.getAgentWaitConfig(cwd),
     listHooks: (input: CodexHooksListInput) => client!.listHooks(input),
     writeHookState: (updates: CodexHookStateUpdate[]) =>
       client!.writeHookState(updates),
@@ -4744,6 +5243,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     getThreadLiveStatus: (threadId: string) =>
       client!.getThreadLiveStatus(threadId),
     listLoadedThreadIds: () => client!.listLoadedThreadIds(),
+    listAgentThreads: (ancestorThreadId: string) =>
+      client!.listAgentThreads(ancestorThreadId),
     sendMessage: (input: SendCodexMessageInput) => client!.sendMessage(input),
     getThreadState: (threadId: string, requestedTurnId?: string | null) =>
       client!.getThreadState(threadId, requestedTurnId),

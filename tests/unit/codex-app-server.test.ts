@@ -14,18 +14,262 @@ import {
   isCodexReasoningEffort,
 } from "../../api/codex-app-server";
 
-test("isCodexReasoningEffort validates supported values", () => {
+test("isCodexReasoningEffort accepts known and custom values", () => {
   assert.equal(isCodexReasoningEffort("none"), true);
   assert.equal(isCodexReasoningEffort("minimal"), true);
   assert.equal(isCodexReasoningEffort("low"), true);
   assert.equal(isCodexReasoningEffort("medium"), true);
   assert.equal(isCodexReasoningEffort("high"), true);
   assert.equal(isCodexReasoningEffort("xhigh"), true);
+  assert.equal(isCodexReasoningEffort("max"), true);
+  assert.equal(isCodexReasoningEffort("ultra"), true);
+  assert.equal(isCodexReasoningEffort("future-effort"), true);
 
   assert.equal(isCodexReasoningEffort(""), false);
-  assert.equal(isCodexReasoningEffort("ultra"), false);
+  assert.equal(isCodexReasoningEffort("  "), false);
   assert.equal(isCodexReasoningEffort(null), false);
   assert.equal(isCodexReasoningEffort(undefined), false);
+});
+
+test("model listing preserves max, ultra, and model-defined reasoning efforts", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    assert.equal(method, "model/list");
+    assert.deepEqual(params, { limit: 200 });
+    return {
+      data: [
+        {
+          id: "gpt-5.6-sol",
+          displayName: "GPT-5.6-Sol",
+          description: "Frontier model",
+          isDefault: true,
+          hidden: false,
+          defaultReasoningEffort: "ultra",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "xhigh" },
+            { reasoningEffort: "max" },
+            { reasoningEffort: "ultra" },
+            { reasoningEffort: "future-effort" },
+          ],
+        },
+      ],
+    };
+  };
+
+  try {
+    assert.deepEqual(await client.listModels(), [
+      {
+        id: "gpt-5.6-sol",
+        displayName: "GPT-5.6-Sol",
+        description: "Frontier model",
+        isDefault: true,
+        hidden: false,
+        defaultReasoningEffort: "ultra",
+        supportedReasoningEfforts: ["xhigh", "max", "ultra", "future-effort"],
+      },
+    ]);
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client extracts nested sub-agent thread metadata", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    assert.equal(method, "thread/read");
+    assert.deepEqual(params, {
+      threadId: "child-thread",
+      includeTurns: false,
+    });
+    return {
+      thread: {
+        id: "child-thread",
+        name: "Worker",
+        preview: "Inspect the repository",
+        cwd: "/repo",
+        status: { type: "active" },
+        updatedAt: 1_730_000_000,
+        canAcceptDirectInput: false,
+        source: {
+          subAgent: {
+            thread_spawn: {
+              parent_thread_id: "parent-thread",
+              agent_path: "/root/worker",
+              agent_nickname: "atlas",
+              agent_role: "explorer",
+            },
+          },
+        },
+      },
+    };
+  };
+
+  try {
+    assert.deepEqual(await client.getThreadSummary("child-thread"), {
+      threadId: "child-thread",
+      name: "Worker",
+      preview: "Inspect the repository",
+      cwd: "/repo",
+      agentNickname: "atlas",
+      agentRole: "explorer",
+      parentThreadId: "parent-thread",
+      canAcceptDirectInput: false,
+      agentPath: "/root/worker",
+      source: "subagent_thread_spawn",
+      status: "active",
+      updatedAt: 1_730_000_000,
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client lists paginated V2 sub-agent descendants", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    assert.equal(method, "thread/list");
+    if (params.cursor === null) {
+      return {
+        data: [
+          {
+            id: "child-a",
+            parentThreadId: "root-thread",
+            preview: "first child",
+            cwd: "/repo",
+            source: "cli",
+            status: { type: "idle" },
+            updatedAt: 20,
+          },
+        ],
+        nextCursor: "page-two",
+      };
+    }
+    assert.equal(params.cursor, "page-two");
+    return {
+      data: [
+        {
+          id: "child-b",
+          parentThreadId: "root-thread",
+          preview: "second child",
+          cwd: "/repo",
+          source: "cli",
+          status: { type: "idle" },
+          updatedAt: 10,
+        },
+      ],
+      nextCursor: null,
+    };
+  };
+
+  try {
+    const threads = await client.listAgentThreads("root-thread");
+    assert.deepEqual(
+      threads.map((thread) => thread.threadId),
+      ["child-a", "child-b"],
+    );
+    assert.deepEqual(requests, [
+      {
+        method: "thread/list",
+        params: {
+          cursor: null,
+          limit: 100,
+          sortKey: "updated_at",
+          sortDirection: "desc",
+          modelProviders: [],
+          sourceKinds: ["subAgentThreadSpawn"],
+          archived: false,
+          useStateDbOnly: true,
+          ancestorThreadId: "root-thread",
+        },
+      },
+      {
+        method: "thread/list",
+        params: {
+          cursor: "page-two",
+          limit: 100,
+          sortKey: "updated_at",
+          sortDirection: "desc",
+          modelProviders: [],
+          sourceKinds: ["subAgentThreadSpawn"],
+          archived: false,
+          useStateDbOnly: true,
+          ancestorThreadId: "root-thread",
+        },
+      },
+    ]);
+  } finally {
+    await client.close();
+  }
+});
+
+test("app-server client reads effective multi-agent wait config", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    return {
+      config: {
+        features: {
+          multi_agent_v2: {
+            min_wait_timeout_ms: 500,
+            max_wait_timeout_ms: 1_000,
+            default_wait_timeout_ms: 750,
+          },
+        },
+      },
+    };
+  };
+
+  try {
+    assert.deepEqual(await client.getAgentWaitConfig(" /repo "), {
+      minTimeoutMs: 500,
+      maxTimeoutMs: 1_000,
+      defaultTimeoutMs: 750,
+    });
+    assert.deepEqual(requests, [
+      {
+        method: "config/read",
+        params: {
+          includeLayers: false,
+          cwd: "/repo",
+        },
+      },
+    ]);
+  } finally {
+    await client.close();
+  }
 });
 
 test("Codex app-server error classes preserve structured fields", () => {
@@ -358,13 +602,13 @@ test("app-server client updates loaded thread settings before starting a turn", 
       threadId: "thread-1",
       input: [{ type: "text", text: "hello" }],
       model: "gpt-5.1-codex-mini",
-      effort: "high",
+      effort: "ultra",
       serviceTier: "fast",
       collaborationMode: {
         mode: "default",
         settings: {
           model: "gpt-5.1-codex-mini",
-          reasoningEffort: "high",
+          reasoningEffort: "future-effort",
         },
       },
     });
@@ -376,12 +620,12 @@ test("app-server client updates loaded thread settings before starting a turn", 
       threadId: "thread-1",
       model: "gpt-5.1-codex-mini",
       serviceTier: "fast",
-      effort: "high",
+      effort: "ultra",
       collaborationMode: {
         mode: "default",
         settings: {
           model: "gpt-5.1-codex-mini",
-          reasoning_effort: "high",
+          reasoning_effort: "future-effort",
         },
       },
     });
@@ -1172,6 +1416,29 @@ test("app-server notifications are emitted as live codex events", async () => {
     },
   ]);
 
+  handleNotification("turn/started", {
+    thread_id: "thread-2",
+    turn: { id: "turn-2" },
+  });
+  handleNotification("turn/completed", {
+    threadId: "thread-2",
+    turn: { id: "turn-3" },
+  });
+  assert.deepEqual(events.slice(5), [
+    {
+      type: "thread_status",
+      threadId: "thread-2",
+      status: "active",
+      turnId: "turn-2",
+    },
+    {
+      type: "thread_status",
+      threadId: "thread-2",
+      status: "idle",
+      turnId: "turn-3",
+    },
+  ]);
+
   unsubscribe();
   handleNotification("error", {
     threadId: "thread-1",
@@ -1182,7 +1449,7 @@ test("app-server notifications are emitted as live codex events", async () => {
       additionalDetails: null,
     },
   });
-  assert.equal(events.length, 5);
+  assert.equal(events.length, 7);
 });
 
 interface AuthReloadTestClient {
@@ -1254,6 +1521,95 @@ test("app-server client restarts when auth.json changes and threads are idle", a
   } finally {
     rmSync(codexHome, { recursive: true, force: true });
   }
+});
+
+test("app-server projects live sub-agent and collaboration items", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const events: unknown[] = [];
+  const unsubscribe = client.subscribeAppServerEvents((event) => {
+    events.push(event);
+  });
+  const handleNotification = (
+    client as unknown as {
+      handleServerNotification: (method: string, params: unknown) => void;
+    }
+  ).handleServerNotification.bind(client);
+
+  handleNotification("thread/status/changed", {
+    threadId: "root-thread",
+    status: { type: "active" },
+  });
+  handleNotification("item/started", {
+    threadId: "root-thread",
+    turnId: "turn-1",
+    item: {
+      id: "activity-1",
+      type: "subAgentActivity",
+      agentThreadId: "child-thread",
+      agentPath: "/root/worker",
+      kind: "started",
+    },
+  });
+  handleNotification("item/completed", {
+    threadId: "root-thread",
+    turnId: "turn-1",
+    item: {
+      id: "collab-1",
+      type: "collabAgentToolCall",
+      tool: "send_input",
+      status: "completed",
+      senderThreadId: "root-thread",
+      receiverThreadIds: ["child-thread"],
+      prompt: "Continue the investigation",
+      model: "gpt-5.2-codex",
+      reasoning_effort: "ultra",
+      agentsStates: {
+        "child-thread": {
+          status: "running",
+          message: "Investigating",
+        },
+      },
+    },
+  });
+
+  unsubscribe();
+  assert.deepEqual(events, [
+    {
+      type: "thread_status",
+      threadId: "root-thread",
+      status: "active",
+      turnId: null,
+    },
+    {
+      type: "subagent_activity",
+      threadId: "root-thread",
+      turnId: "turn-1",
+      itemId: "activity-1",
+      agentThreadId: "child-thread",
+      agentPath: "/root/worker",
+      kind: "started",
+    },
+    {
+      type: "collab_agent_tool_call",
+      threadId: "root-thread",
+      turnId: "turn-1",
+      itemId: "collab-1",
+      tool: "sendInput",
+      status: "completed",
+      senderThreadId: "root-thread",
+      receiverThreadIds: ["child-thread"],
+      prompt: "Continue the investigation",
+      model: "gpt-5.2-codex",
+      reasoningEffort: "ultra",
+      agentsStates: {
+        "child-thread": {
+          status: "running",
+          message: "Investigating",
+        },
+      },
+    },
+  ]);
+  await client.close();
 });
 
 test("app-server client defers auth restart while a thread is active", async () => {

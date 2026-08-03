@@ -14,6 +14,8 @@ import {
 } from "react";
 import type {
   CodexAppServerEvent,
+  CodexAgentAction,
+  CodexAgentWaitConfig,
   CodexCollaborationModeOption,
   CodexConfigDefaultsResponse,
   CodexModelOption,
@@ -60,6 +62,11 @@ import {
   Sun,
   Languages,
   Loader2,
+  Send,
+  Clock3,
+  OctagonX,
+  Activity,
+  ExternalLink,
 } from "lucide-react";
 import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
 import {
@@ -81,6 +88,10 @@ import ProjectSelector from "../components/project-selector";
 import ComposerPicker, {
   type ComposerPickerItem,
 } from "../components/composer-picker";
+import CodexValuePicker, {
+  type CodexValuePickerHandle,
+  type CodexValuePickerOption,
+} from "../components/codex-value-picker";
 import CenteredConfirmDialog from "../components/centered-confirm-dialog";
 import { PetCompanion, PetPicker } from "../components/pet-companion";
 import MemoriesModal from "../components/memories-modal";
@@ -212,6 +223,7 @@ import {
   updateRemoteAdminSetupToken,
   getConversation,
   getCodexConfigDefaults,
+  getCodexAgentWaitConfig,
   getSessionFileContent,
   getWorkflowProjectFileContent,
   searchSessionFiles,
@@ -240,6 +252,7 @@ import {
   clearCodexThreadGoal,
   setCodexThreadGoal,
   listCodexAgentThreads,
+  sendCodexAgentAction,
   getCodexThreadSummaries,
   bindTerminalSession,
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
@@ -496,9 +509,10 @@ const REASONING_EFFORTS: CodexReasoningEffort[] = [
   "medium",
   "high",
   "xhigh",
+  "max",
+  "ultra",
 ];
 
-const DEFAULT_OPTION_VALUE = "__default__";
 const FIX_DANGLING_WAIT_THRESHOLD_MS = 8_000;
 const WAIT_STATE_SETTLE_DELAY_MS = 750;
 const MESSAGE_BOX_MIN_HEIGHT = 36;
@@ -629,6 +643,14 @@ interface SideThreadState {
 interface SideThreadContext {
   parentThreadId: string;
   parentDisplay: string;
+}
+
+interface AgentActivityEntry {
+  id: string;
+  timestamp: number;
+  label: string;
+  detail: string | null;
+  tone: "info" | "success" | "warning";
 }
 
 interface ConnectionFailureNotice {
@@ -983,22 +1005,6 @@ function isSkillSelectorPlaceholderItem(itemId: string): boolean {
     itemId === SKILL_SELECTOR_EMPTY_ITEM_ID ||
     itemId === SKILL_SELECTOR_ERROR_ITEM_ID
   );
-}
-
-function openNativeSelectMenu(select: HTMLSelectElement): void {
-  select.focus();
-  if (
-    typeof (select as HTMLSelectElement & { showPicker?: () => void })
-      .showPicker === "function"
-  ) {
-    (
-      select as HTMLSelectElement & {
-        showPicker: () => void;
-      }
-    ).showPicker();
-    return;
-  }
-  select.click();
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
@@ -3862,6 +3868,27 @@ export default function CodexDeckApp() {
     null,
   );
   const [agentThreads, setAgentThreads] = useState<CodexThreadSummary[]>([]);
+  const [agentPickerRootThreadId, setAgentPickerRootThreadId] = useState<
+    string | null
+  >(null);
+  const [selectedAgentThreadId, setSelectedAgentThreadId] = useState<
+    string | null
+  >(null);
+  const [threadSummaryById, setThreadSummaryById] = useState<
+    Map<string, CodexThreadSummary>
+  >(() => new Map());
+  const [agentActivityByThreadId, setAgentActivityByThreadId] = useState<
+    Map<string, AgentActivityEntry[]>
+  >(() => new Map());
+  const [agentActionDraft, setAgentActionDraft] = useState("");
+  const [agentWaitTimeoutMs, setAgentWaitTimeoutMs] = useState("30000");
+  const [agentWaitConfig, setAgentWaitConfig] = useState<CodexAgentWaitConfig>({
+    minTimeoutMs: 10_000,
+    maxTimeoutMs: 3_600_000,
+    defaultTimeoutMs: 30_000,
+  });
+  const [agentActionBusy, setAgentActionBusy] =
+    useState<CodexAgentAction | null>(null);
   const [statusTokenUsage, setStatusTokenUsage] =
     useState<TokenUsageSummary | null>(null);
   const [threadStatusDetails, setThreadStatusDetails] =
@@ -3901,8 +3928,8 @@ export default function CodexDeckApp() {
   );
   const toolbarWidthRef = useRef<HTMLDivElement | null>(null);
   const toolbarMeasureRef = useRef<HTMLDivElement | null>(null);
-  const modelSelectRef = useRef<HTMLSelectElement | null>(null);
-  const compactModelSelectRef = useRef<HTMLSelectElement | null>(null);
+  const modelSelectRef = useRef<CodexValuePickerHandle | null>(null);
+  const compactModelSelectRef = useRef<CodexValuePickerHandle | null>(null);
   const sessionListSearchInputRef = useRef<HTMLInputElement | null>(null);
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
   const sessionViewRef = useRef<SessionViewHandle | null>(null);
@@ -6454,6 +6481,8 @@ export default function CodexDeckApp() {
       }
       event.preventDefault();
       setShowAgentPicker(false);
+      setAgentPickerRootThreadId(null);
+      setSelectedAgentThreadId(null);
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -6576,6 +6605,96 @@ export default function CodexDeckApp() {
 
   const handleCodexAppServerEvent = useCallback(
     (event: CodexAppServerEvent) => {
+      const updateThreadStatus = (
+        threadId: string,
+        status: CodexThreadSummary["status"],
+      ) => {
+        setThreadSummaryById((current) => {
+          const summary = current.get(threadId);
+          if (!summary || summary.status === status) {
+            return current;
+          }
+          const next = new Map(current);
+          next.set(threadId, { ...summary, status });
+          return next;
+        });
+        setAgentThreads((current) =>
+          current.map((thread) =>
+            thread.threadId === threadId ? { ...thread, status } : thread,
+          ),
+        );
+      };
+
+      const appendAgentActivity = (
+        threadId: string,
+        entry: AgentActivityEntry,
+      ) => {
+        setAgentActivityByThreadId((current) => {
+          const next = new Map(current);
+          const entries = next.get(threadId) ?? [];
+          next.set(threadId, [...entries, entry].slice(-40));
+          return next;
+        });
+      };
+
+      if (event.type === "thread_status") {
+        updateThreadStatus(event.threadId, event.status);
+        return;
+      }
+
+      if (event.type === "subagent_activity") {
+        const label =
+          event.kind === "started"
+            ? "Started"
+            : event.kind === "interacted"
+              ? "Interacted with"
+              : "Interrupted";
+        appendAgentActivity(event.agentThreadId, {
+          id: `${event.itemId}:${event.kind}`,
+          timestamp: Date.now(),
+          label,
+          detail: event.agentPath,
+          tone: event.kind === "interrupted" ? "warning" : "info",
+        });
+        updateThreadStatus(
+          event.agentThreadId,
+          event.kind === "interrupted" ? "idle" : "active",
+        );
+        return;
+      }
+
+      if (event.type === "collab_agent_tool_call") {
+        const statusLabel =
+          event.status === "inProgress"
+            ? "started"
+            : event.status === "completed"
+              ? "completed"
+              : "failed";
+        const receiverThreadIds =
+          event.receiverThreadIds.length > 0
+            ? event.receiverThreadIds
+            : [event.senderThreadId];
+        for (const receiverThreadId of receiverThreadIds) {
+          appendAgentActivity(receiverThreadId, {
+            id: `${event.itemId}:${receiverThreadId}:${event.status}`,
+            timestamp: Date.now(),
+            label: `${event.tool} ${statusLabel}`,
+            detail: event.prompt,
+            tone:
+              event.status === "failed"
+                ? "warning"
+                : event.status === "completed"
+                  ? "success"
+                  : "info",
+          });
+          updateThreadStatus(
+            receiverThreadId,
+            event.status === "inProgress" ? "active" : "idle",
+          );
+        }
+        return;
+      }
+
       if (event.type !== "error") {
         return;
       }
@@ -6728,6 +6847,14 @@ export default function CodexDeckApp() {
         if (cancelled) {
           return;
         }
+
+        setThreadSummaryById((current) => {
+          const next = new Map(current);
+          for (const thread of payload.threads) {
+            next.set(thread.threadId, thread);
+          }
+          return next;
+        });
 
         const namesById = new Map<string, string>();
         for (const thread of payload.threads) {
@@ -7083,6 +7210,11 @@ export default function CodexDeckApp() {
 
     const effortSet = new Set<CodexReasoningEffort>();
 
+    // Max and ultra are app-server capabilities. Older model catalogs may not
+    // advertise them even though the current Codex runtime accepts both.
+    effortSet.add("max");
+    effortSet.add("ultra");
+
     if (selectedModel && selectedModel.supportedReasoningEfforts.length > 0) {
       for (const effort of selectedModel.supportedReasoningEfforts) {
         effortSet.add(effort);
@@ -7099,8 +7231,37 @@ export default function CodexDeckApp() {
       effortSet.add(selectedEffort);
     }
 
-    return REASONING_EFFORTS.filter((effort) => effortSet.has(effort));
+    const knownEfforts = REASONING_EFFORTS.filter((effort) =>
+      effortSet.has(effort),
+    );
+    const customEfforts = [...effortSet].filter(
+      (effort) => !REASONING_EFFORTS.includes(effort),
+    );
+    return [...knownEfforts, ...customEfforts];
   }, [filteredModels, selectedModelId, selectedEffort]);
+  const modelPickerOptions = useMemo<CodexValuePickerOption[]>(
+    () =>
+      filteredModels.map((model) => ({
+        value: model.id,
+        label: model.displayName,
+        description: model.description || undefined,
+      })),
+    [filteredModels],
+  );
+  const effortPickerOptions = useMemo<CodexValuePickerOption[]>(
+    () =>
+      effortOptions.map((effort) => ({
+        value: effort,
+        label: effort,
+        description:
+          effort === "max"
+            ? "Maximum reasoning depth for the hardest problems"
+            : effort === "ultra"
+              ? "Maximum reasoning with automatic task delegation"
+              : undefined,
+      })),
+    [effortOptions],
+  );
   const effectiveModelId = useMemo(
     () =>
       getEffectiveModelId({
@@ -9091,6 +9252,13 @@ export default function CodexDeckApp() {
         return false;
       }
 
+      if (threadSummaryById.get(sessionId)?.canAcceptDirectInput === false) {
+        setInteractionError(
+          "This sub-agent is controlled by its parent. Direct input is disabled.",
+        );
+        return false;
+      }
+
       const normalizedText = payload.text.trim();
       const normalizedImages = payload.images.filter(
         (imageUrl) =>
@@ -9253,6 +9421,7 @@ export default function CodexDeckApp() {
       notifySessionUnavailable,
       selectedModelId,
       selectedEffort,
+      threadSummaryById,
       enqueuePendingUserMessage,
       markPendingUserMessageAwaitingConfirmation,
       markSessionUserMessagedAt,
@@ -9454,6 +9623,16 @@ export default function CodexDeckApp() {
 
   const upsertSessionFromThreadSummary = useCallback(
     (thread: CodexThreadSummary) => {
+      setThreadSummaryById((current) => {
+        const previous = current.get(thread.threadId);
+        if (previous && JSON.stringify(previous) === JSON.stringify(thread)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(thread.threadId, thread);
+        return next;
+      });
+
       const nextSession = toSessionFromThreadSummary(thread);
       setSessions((current) => {
         const sessionMap = new Map(
@@ -9609,17 +9788,46 @@ export default function CodexDeckApp() {
     showCommandNoticeForDuration("Returned to the main thread.");
   }, [selectedSession, showCommandNoticeForDuration, sideThreadsById]);
 
+  const refreshAgentThreads = useCallback(
+    async (rootThreadId: string): Promise<CodexThreadSummary[]> => {
+      const normalizedRootThreadId = rootThreadId.trim();
+      if (!normalizedRootThreadId) {
+        return [];
+      }
+
+      const threads = (
+        await listCodexAgentThreads(normalizedRootThreadId)
+      ).filter((thread) => thread.threadId !== normalizedRootThreadId);
+      setAgentThreads(threads);
+      for (const thread of threads) {
+        upsertSessionFromThreadSummary(thread);
+      }
+      return threads;
+    },
+    [upsertSessionFromThreadSummary],
+  );
+
   const openAgentPickerFromCommand = useCallback(
     async (threadId: string): Promise<boolean> => {
+      const normalizedThreadId = threadId.trim();
+      if (!normalizedThreadId) {
+        return false;
+      }
+
+      setAgentPickerRootThreadId(normalizedThreadId);
+      setSelectedAgentThreadId(null);
       setShowAgentPicker(true);
       setLoadingAgentThreads(true);
       setAgentThreadsError(null);
 
       try {
-        const threads = await listCodexAgentThreads(threadId);
-        setAgentThreads(threads);
-        for (const thread of threads) {
-          upsertSessionFromThreadSummary(thread);
+        await refreshAgentThreads(normalizedThreadId);
+        try {
+          const waitConfig = await getCodexAgentWaitConfig(normalizedThreadId);
+          setAgentWaitConfig(waitConfig);
+          setAgentWaitTimeoutMs(String(waitConfig.defaultTimeoutMs));
+        } catch {
+          // Agent listing remains useful when the optional config read is unavailable.
         }
         return true;
       } catch (error) {
@@ -9632,7 +9840,230 @@ export default function CodexDeckApp() {
         setLoadingAgentThreads(false);
       }
     },
-    [upsertSessionFromThreadSummary],
+    [refreshAgentThreads],
+  );
+
+  useEffect(() => {
+    if (
+      !showAgentPicker ||
+      !agentPickerRootThreadId ||
+      !apiReady ||
+      !isPageVisible
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        await refreshAgentThreads(agentPickerRootThreadId);
+        if (!cancelled) {
+          setAgentThreadsError(null);
+        }
+      } catch (error) {
+        if (!cancelled && agentThreads.length === 0) {
+          setAgentThreadsError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void refresh();
+    }, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    apiReady,
+    agentPickerRootThreadId,
+    agentThreads.length,
+    isPageVisible,
+    refreshAgentThreads,
+    showAgentPicker,
+  ]);
+
+  const selectedThreadSummary = selectedSession
+    ? (threadSummaryById.get(selectedSession) ?? null)
+    : null;
+  const selectedAgentThread = selectedAgentThreadId
+    ? (threadSummaryById.get(selectedAgentThreadId) ??
+      agentThreads.find(
+        (thread) => thread.threadId === selectedAgentThreadId,
+      ) ??
+      null)
+    : null;
+  const selectedAgentActivity = selectedAgentThread
+    ? (agentActivityByThreadId.get(selectedAgentThread.threadId) ?? [])
+    : [];
+
+  useEffect(() => {
+    if (
+      !apiReady ||
+      !isPageVisible ||
+      centerView !== "session" ||
+      !selectedSession
+    ) {
+      return;
+    }
+
+    const missingIds = new Set<string>();
+    const selectedSummary = threadSummaryById.get(selectedSession);
+    if (!selectedSummary) {
+      missingIds.add(selectedSession);
+    }
+    if (
+      selectedSummary?.parentThreadId &&
+      !threadSummaryById.has(selectedSummary.parentThreadId)
+    ) {
+      missingIds.add(selectedSummary.parentThreadId);
+    }
+    if (missingIds.size === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    void getCodexThreadSummaries({ threadIds: Array.from(missingIds) })
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        for (const thread of payload.threads) {
+          upsertSessionFromThreadSummary(thread);
+        }
+      })
+      .catch(() => {
+        // A persisted unloaded thread can still be opened read-only without metadata.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiReady,
+    centerView,
+    isPageVisible,
+    selectedSession,
+    threadSummaryById,
+    upsertSessionFromThreadSummary,
+  ]);
+
+  const resolveAgentControllerThreadId = useCallback(
+    async (target: CodexThreadSummary): Promise<string | null> => {
+      let parentThreadId = target.parentThreadId?.trim() ?? "";
+      const visited = new Set<string>();
+      while (parentThreadId && !visited.has(parentThreadId)) {
+        visited.add(parentThreadId);
+        let parent = threadSummaryById.get(parentThreadId) ?? null;
+        if (!parent) {
+          try {
+            const payload = await getCodexThreadSummaries({
+              threadIds: [parentThreadId],
+            });
+            parent =
+              payload.threads.find(
+                (thread) => thread.threadId === parentThreadId,
+              ) ?? null;
+            if (parent) {
+              upsertSessionFromThreadSummary(parent);
+            }
+          } catch {
+            // Let the server perform the final strict validation.
+          }
+        }
+
+        if (!parent || parent.canAcceptDirectInput !== false) {
+          return parentThreadId;
+        }
+        parentThreadId = parent.parentThreadId?.trim() ?? "";
+      }
+      return null;
+    },
+    [threadSummaryById, upsertSessionFromThreadSummary],
+  );
+
+  const handleAgentAction = useCallback(
+    async (action: CodexAgentAction): Promise<boolean> => {
+      const targetThreadId = selectedAgentThreadId?.trim() ?? "";
+      const target = targetThreadId
+        ? (threadSummaryById.get(targetThreadId) ??
+          agentThreads.find((thread) => thread.threadId === targetThreadId) ??
+          null)
+        : null;
+      if (!target) {
+        setInteractionError("Select a sub-agent first.");
+        return false;
+      }
+
+      const message = agentActionDraft.trim();
+      if (
+        (action === "send_message" || action === "followup_task") &&
+        !message
+      ) {
+        setInteractionError("Enter a message for the selected sub-agent.");
+        return false;
+      }
+
+      const parsedTimeout = Number(agentWaitTimeoutMs.trim());
+      if (
+        action === "wait" &&
+        (!Number.isInteger(parsedTimeout) ||
+          parsedTimeout < agentWaitConfig.minTimeoutMs ||
+          parsedTimeout > agentWaitConfig.maxTimeoutMs)
+      ) {
+        setInteractionError(
+          `Wait timeout must be an integer from ${agentWaitConfig.minTimeoutMs} to ${agentWaitConfig.maxTimeoutMs} ms.`,
+        );
+        return false;
+      }
+
+      const controllerThreadId = await resolveAgentControllerThreadId(target);
+      if (!controllerThreadId) {
+        setInteractionError(
+          "The selected sub-agent has no controllable parent.",
+        );
+        return false;
+      }
+
+      setAgentActionBusy(action);
+      setInteractionError(null);
+      try {
+        await sendCodexAgentAction(controllerThreadId, {
+          action,
+          targetThreadId: target.threadId,
+          ...(message ? { message } : {}),
+          ...(action === "wait" ? { timeoutMs: parsedTimeout } : {}),
+        });
+        if (action !== "wait") {
+          setAgentActionDraft("");
+        }
+        showCommandNoticeForDuration(
+          action === "wait"
+            ? "Waiting for sub-agent activity."
+            : "Sub-agent action sent.",
+        );
+        return true;
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      } finally {
+        setAgentActionBusy(null);
+      }
+    },
+    [
+      agentActionDraft,
+      agentThreads,
+      agentWaitConfig,
+      agentWaitTimeoutMs,
+      resolveAgentControllerThreadId,
+      selectedAgentThreadId,
+      showCommandNoticeForDuration,
+      threadSummaryById,
+    ],
   );
 
   const focusSessionSearchInput = useCallback(() => {
@@ -9661,11 +10092,11 @@ export default function CodexDeckApp() {
   }, []);
 
   const openModelSelectorFromCommand = useCallback((): boolean => {
-    const openFromRef = (select: HTMLSelectElement | null): boolean => {
-      if (!select) {
+    const openFromRef = (picker: CodexValuePickerHandle | null): boolean => {
+      if (!picker) {
         return false;
       }
-      openNativeSelectMenu(select);
+      picker.open();
       return true;
     };
 
@@ -10417,12 +10848,19 @@ export default function CodexDeckApp() {
     setShowRenameModal(false);
   }, [activeComposerSessionId, handleRenameThread, renameDraft]);
 
-  const handleSelectAgentThread = useCallback(
+  const handleInspectAgentThread = useCallback((thread: CodexThreadSummary) => {
+    setSelectedAgentThreadId(thread.threadId);
+    setAgentThreadsError(null);
+  }, []);
+
+  const handleOpenAgentTranscript = useCallback(
     (thread: CodexThreadSummary) => {
       upsertSessionFromThreadSummary(thread);
       setSelectedSession(thread.threadId);
       setCenterView("session");
       setShowAgentPicker(false);
+      setAgentPickerRootThreadId(null);
+      setSelectedAgentThreadId(null);
       setAgentThreadsError(null);
     },
     [upsertSessionFromThreadSummary],
@@ -11777,6 +12215,7 @@ export default function CodexDeckApp() {
     onIdlePrimaryAction?:
       | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
       | null;
+    composerDisabledReason?: string | null;
   }) => (
     <>
       <div className="border-t border-zinc-800/60 bg-zinc-950 px-2.5 py-2">
@@ -11801,32 +12240,20 @@ export default function CodexDeckApp() {
                 Plan
               </span>
             </button>
-            <select
-              value={selectedModelId || DEFAULT_OPTION_VALUE}
-              onChange={() => {}}
-              disabled
-              tabIndex={-1}
-              className="h-8 min-w-[160px] bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
-            >
-              <option value={selectedModelId || DEFAULT_OPTION_VALUE}>
+            <div className="h-8 min-w-[160px] rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs leading-8 text-zinc-300">
+              <span className="block truncate">
                 {selectedModelId
                   ? (filteredModels.find(
                       (model) => model.id === selectedModelId,
                     )?.displayName ?? selectedModelId)
                   : modelControlLabel}
-              </option>
-            </select>
-            <select
-              value={selectedEffort || DEFAULT_OPTION_VALUE}
-              onChange={() => {}}
-              disabled
-              tabIndex={-1}
-              className="h-8 min-w-[140px] bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
-            >
-              <option value={selectedEffort || DEFAULT_OPTION_VALUE}>
+              </span>
+            </div>
+            <div className="h-8 min-w-[140px] rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs leading-8 text-zinc-300">
+              <span className="block truncate">
                 {selectedEffort || effortControlLabel}
-              </option>
-            </select>
+              </span>
+            </div>
             <span className="text-xs text-zinc-500 whitespace-nowrap">
               {contextWindowText}
             </span>
@@ -11900,47 +12327,25 @@ export default function CodexDeckApp() {
                   Plan
                 </span>
               </button>
-              <select
+              <CodexValuePicker
                 ref={modelSelectRef}
-                value={selectedModelId || DEFAULT_OPTION_VALUE}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setSelectedModelId(
-                    value === DEFAULT_OPTION_VALUE ? "" : value,
-                  );
-                }}
-                className="h-8 min-w-[160px] bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
-              >
-                <option value={DEFAULT_OPTION_VALUE}>
-                  {modelControlLabel}
-                </option>
-                {filteredModels.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.displayName}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={selectedEffort || DEFAULT_OPTION_VALUE}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setSelectedEffort(
-                    value === DEFAULT_OPTION_VALUE
-                      ? ""
-                      : (value as CodexReasoningEffort),
-                  );
-                }}
-                className="h-8 min-w-[140px] bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
-              >
-                <option value={DEFAULT_OPTION_VALUE}>
-                  {effortControlLabel}
-                </option>
-                {effortOptions.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
-                  </option>
-                ))}
-              </select>
+                value={selectedModelId}
+                defaultLabel={modelControlLabel}
+                options={modelPickerOptions}
+                onChange={setSelectedModelId}
+                inputAriaLabel="Model"
+                inputPlaceholder="Search or enter a model ID"
+                className="min-w-[160px]"
+              />
+              <CodexValuePicker
+                value={selectedEffort}
+                defaultLabel={effortControlLabel}
+                options={effortPickerOptions}
+                onChange={setSelectedEffort}
+                inputAriaLabel="Reasoning effort"
+                inputPlaceholder="Search or enter a reasoning mode"
+                className="min-w-[140px]"
+              />
               <span className="ml-auto text-xs text-zinc-500">
                 {contextWindowText}
               </span>
@@ -11950,70 +12355,60 @@ export default function CodexDeckApp() {
 
         {isToolbarCompact && isToolbarControlsExpanded && (
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <select
+            <CodexValuePicker
               ref={compactModelSelectRef}
-              value={selectedModelId || DEFAULT_OPTION_VALUE}
-              onChange={(event) => {
-                const value = event.target.value;
-                setSelectedModelId(value === DEFAULT_OPTION_VALUE ? "" : value);
-              }}
-              className="h-8 min-w-[160px] bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
-            >
-              <option value={DEFAULT_OPTION_VALUE}>{modelControlLabel}</option>
-              {filteredModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedEffort || DEFAULT_OPTION_VALUE}
-              onChange={(event) => {
-                const value = event.target.value;
-                setSelectedEffort(
-                  value === DEFAULT_OPTION_VALUE
-                    ? ""
-                    : (value as CodexReasoningEffort),
-                );
-              }}
-              className="h-8 min-w-[140px] bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
-            >
-              <option value={DEFAULT_OPTION_VALUE}>{effortControlLabel}</option>
-              {effortOptions.map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </select>
+              value={selectedModelId}
+              defaultLabel={modelControlLabel}
+              options={modelPickerOptions}
+              onChange={setSelectedModelId}
+              inputAriaLabel="Model"
+              inputPlaceholder="Search or enter a model ID"
+              className="min-w-[160px]"
+            />
+            <CodexValuePicker
+              value={selectedEffort}
+              defaultLabel={effortControlLabel}
+              options={effortPickerOptions}
+              onChange={setSelectedEffort}
+              inputAriaLabel="Reasoning effort"
+              inputPlaceholder="Search or enter a reasoning mode"
+              className="min-w-[140px]"
+            />
           </div>
         )}
       </div>
 
-      <MessageComposer
-        sessionId={input.sessionId}
-        draftResetKey={input.draftResetKey}
-        history={input.history}
-        slashCommands={input.slashCommands}
-        isGeneratingForSelectedSession={input.isGeneratingForSession}
-        isSendingLocked={input.isSendingLocked}
-        sendingMessage={input.sendingMessage}
-        stoppingTurn={input.stoppingTurn}
-        idlePrimaryActionLabel={input.idlePrimaryActionLabel}
-        idlePrimaryActionBusy={input.idlePrimaryActionBusy}
-        idlePrimaryActionBusyLabel={input.idlePrimaryActionBusyLabel}
-        allowIdlePrimaryActionWithoutContent={
-          input.allowIdlePrimaryActionWithoutContent
-        }
-        idlePrimaryActionOnlyWithoutContent={
-          input.idlePrimaryActionOnlyWithoutContent
-        }
-        onIdlePrimaryAction={input.onIdlePrimaryAction}
-        messageBoxHeight={messageBoxHeight}
-        onResizeMessageBoxStart={handleResizeMessageBoxStart}
-        onSendMessage={input.onSendMessage}
-        onRunSlashCommand={input.onRunSlashCommand}
-        onStopConversation={input.onStopConversation}
-      />
+      {input.composerDisabledReason ? (
+        <div className="border-t border-zinc-800/60 bg-zinc-950 px-3 py-3 text-xs text-amber-200">
+          {input.composerDisabledReason}
+        </div>
+      ) : (
+        <MessageComposer
+          sessionId={input.sessionId}
+          draftResetKey={input.draftResetKey}
+          history={input.history}
+          slashCommands={input.slashCommands}
+          isGeneratingForSelectedSession={input.isGeneratingForSession}
+          isSendingLocked={input.isSendingLocked}
+          sendingMessage={input.sendingMessage}
+          stoppingTurn={input.stoppingTurn}
+          idlePrimaryActionLabel={input.idlePrimaryActionLabel}
+          idlePrimaryActionBusy={input.idlePrimaryActionBusy}
+          idlePrimaryActionBusyLabel={input.idlePrimaryActionBusyLabel}
+          allowIdlePrimaryActionWithoutContent={
+            input.allowIdlePrimaryActionWithoutContent
+          }
+          idlePrimaryActionOnlyWithoutContent={
+            input.idlePrimaryActionOnlyWithoutContent
+          }
+          onIdlePrimaryAction={input.onIdlePrimaryAction}
+          messageBoxHeight={messageBoxHeight}
+          onResizeMessageBoxStart={handleResizeMessageBoxStart}
+          onSendMessage={input.onSendMessage}
+          onRunSlashCommand={input.onRunSlashCommand}
+          onStopConversation={input.onStopConversation}
+        />
+      )}
     </>
   );
 
@@ -12836,77 +13231,254 @@ export default function CodexDeckApp() {
             onClick={(event) => {
               if (event.target === event.currentTarget) {
                 setShowAgentPicker(false);
+                setAgentPickerRootThreadId(null);
+                setSelectedAgentThreadId(null);
               }
             }}
           >
-            <div className="w-full max-w-xl rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-2xl backdrop-blur">
+            <div className="w-full max-w-4xl rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-2xl backdrop-blur">
               <div className="border-b border-zinc-800 px-4 py-3">
-                <div className="text-sm font-semibold text-zinc-100">
-                  Multi-agents
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-zinc-100">
+                    Multi-agents
+                  </div>
+                  <Activity className="h-4 w-4 text-cyan-300" />
                 </div>
                 <div className="mt-1 text-xs text-zinc-400">
-                  Select an agent thread to watch.
+                  Descendants of{" "}
+                  {agentPickerRootThreadId || "the selected thread"}.
                 </div>
               </div>
-              <div className="max-h-80 space-y-2 overflow-y-auto p-4">
-                {loadingAgentThreads ? (
-                  <div className="rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400">
-                    Loading agent threads...
-                  </div>
-                ) : agentThreads.length === 0 ? (
-                  <div className="rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400">
-                    {agentThreadsError || "No agents available yet."}
-                  </div>
-                ) : (
-                  agentThreads.map((thread) => {
-                    const label =
-                      thread.name?.trim() ||
-                      thread.agentNickname?.trim() ||
-                      thread.preview.trim() ||
-                      thread.threadId;
-                    const subtitleParts = [
-                      thread.agentRole?.trim() || null,
-                      thread.agentNickname?.trim() || null,
-                      formatThreadStatus(thread.status),
-                    ].filter((value): value is string => !!value);
-                    const isCurrent = selectedSession === thread.threadId;
+              <div className="grid max-h-[min(70vh,44rem)] min-h-0 gap-4 overflow-y-auto p-4 md:grid-cols-[minmax(0,1fr)_minmax(18rem,0.85fr)]">
+                <div className="min-w-0 space-y-2">
+                  {loadingAgentThreads ? (
+                    <div className="rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400">
+                      Loading agent threads...
+                    </div>
+                  ) : agentThreads.length === 0 ? (
+                    <div className="rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400">
+                      {agentThreadsError || "No agents available yet."}
+                    </div>
+                  ) : (
+                    agentThreads.map((thread) => {
+                      const label =
+                        thread.name?.trim() ||
+                        thread.agentNickname?.trim() ||
+                        thread.preview.trim() ||
+                        thread.threadId;
+                      const subtitleParts = [
+                        thread.agentRole?.trim() || null,
+                        thread.agentNickname?.trim() || null,
+                        formatThreadStatus(thread.status),
+                        thread.canAcceptDirectInput === false
+                          ? "parent-controlled"
+                          : null,
+                      ].filter((value): value is string => !!value);
+                      const isCurrent =
+                        selectedAgentThreadId === thread.threadId;
 
-                    return (
-                      <button
-                        key={thread.threadId}
-                        type="button"
-                        onClick={() => {
-                          handleSelectAgentThread(thread);
-                        }}
-                        className={`w-full rounded border px-3 py-2 text-left transition-colors ${
-                          isCurrent
-                            ? "border-blue-500/50 bg-blue-500/20 text-blue-100"
-                            : "border-zinc-800 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-sm">{label}</span>
-                          {isCurrent ? (
-                            <CircleDot className="h-4 w-4 shrink-0" />
-                          ) : (
-                            <Circle className="h-4 w-4 shrink-0 text-zinc-600" />
-                          )}
+                      return (
+                        <button
+                          key={thread.threadId}
+                          type="button"
+                          onClick={() => handleInspectAgentThread(thread)}
+                          className={`w-full rounded border px-3 py-2 text-left transition-colors ${
+                            isCurrent
+                              ? "border-blue-500/50 bg-blue-500/20 text-blue-100"
+                              : "border-zinc-800 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="min-w-0 truncate text-sm">
+                              {label}
+                            </span>
+                            {isCurrent ? (
+                              <CircleDot className="h-4 w-4 shrink-0" />
+                            ) : (
+                              <Circle className="h-4 w-4 shrink-0 text-zinc-600" />
+                            )}
+                          </div>
+                          <div className="mt-1 text-[11px] text-zinc-400">
+                            {subtitleParts.join(" | ")}
+                          </div>
+                          <div className="mt-1 break-all text-[11px] text-zinc-500">
+                            {thread.agentPath || thread.threadId}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="min-w-0 rounded border border-zinc-800 bg-zinc-950/45 p-3">
+                  {!selectedAgentThread ? (
+                    <div className="flex min-h-48 items-center justify-center text-center text-xs text-zinc-500">
+                      Select an agent to inspect activity or send a
+                      parent-mediated action.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="border-b border-zinc-800 pb-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-zinc-100">
+                              {selectedAgentThread.name?.trim() ||
+                                selectedAgentThread.agentNickname?.trim() ||
+                                "Sub-agent"}
+                            </div>
+                            <div className="mt-1 break-all font-mono text-[11px] text-cyan-300">
+                              {selectedAgentThread.agentPath ||
+                                selectedAgentThread.threadId}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="text-[11px] text-zinc-400">
+                              {formatThreadStatus(selectedAgentThread.status)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenAgentTranscript(selectedAgentThread)
+                              }
+                              className="inline-flex h-7 items-center gap-1 rounded border border-cyan-700/60 bg-cyan-700/20 px-2 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-700/30"
+                              title="Open the sub-agent transcript"
+                            >
+                              <ExternalLink
+                                aria-hidden="true"
+                                className="h-3.5 w-3.5"
+                              />
+                              Open transcript
+                            </button>
+                          </div>
                         </div>
-                        <div className="mt-1 text-[11px] text-zinc-400">
-                          {subtitleParts.join(" | ")}
+                        <div className="mt-2 text-[11px] text-zinc-500">
+                          Parent:{" "}
+                          {selectedAgentThread.parentThreadId || "unknown"}
                         </div>
-                        <div className="mt-1 break-all text-[11px] text-zinc-500">
-                          {thread.threadId}
+                        {selectedAgentThread.canAcceptDirectInput === false && (
+                          <div className="mt-2 text-[11px] text-amber-300">
+                            Parent-controlled. Direct input is disabled.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        <textarea
+                          value={agentActionDraft}
+                          onChange={(event) =>
+                            setAgentActionDraft(event.target.value)
+                          }
+                          rows={3}
+                          placeholder="Message or follow-up task for this agent"
+                          className="w-full resize-y rounded border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-500/70"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={agentActionBusy !== null}
+                            onClick={() =>
+                              void handleAgentAction("send_message")
+                            }
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-cyan-700/60 bg-cyan-700/25 px-2 text-xs text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            Send message
+                          </button>
+                          <button
+                            type="button"
+                            disabled={agentActionBusy !== null}
+                            onClick={() =>
+                              void handleAgentAction("followup_task")
+                            }
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-blue-700/60 bg-blue-700/25 px-2 text-xs text-blue-100 hover:bg-blue-700/35 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            Follow up
+                          </button>
                         </div>
-                      </button>
-                    );
-                  })
-                )}
+                        <div className="flex items-center gap-2">
+                          <Clock3 className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                          <input
+                            type="number"
+                            min={agentWaitConfig.minTimeoutMs}
+                            max={agentWaitConfig.maxTimeoutMs}
+                            step={1000}
+                            value={agentWaitTimeoutMs}
+                            onChange={(event) =>
+                              setAgentWaitTimeoutMs(event.target.value)
+                            }
+                            aria-label="Wait timeout in milliseconds"
+                            className="h-8 min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 outline-none focus:border-cyan-500/70"
+                          />
+                          <button
+                            type="button"
+                            disabled={agentActionBusy !== null}
+                            onClick={() => void handleAgentAction("wait")}
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-700 bg-zinc-800 px-2.5 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Clock3 className="h-3.5 w-3.5" />
+                            Wait
+                          </button>
+                          <button
+                            type="button"
+                            disabled={agentActionBusy !== null}
+                            onClick={() =>
+                              void handleAgentAction("interrupt_agent")
+                            }
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-amber-700/60 bg-amber-700/20 px-2.5 text-xs text-amber-100 hover:bg-amber-700/30 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <OctagonX className="h-3.5 w-3.5" />
+                            Interrupt
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                          Recent activity
+                        </div>
+                        {selectedAgentActivity.length === 0 ? (
+                          <div className="text-xs text-zinc-600">
+                            No live activity received yet.
+                          </div>
+                        ) : (
+                          <div className="max-h-36 space-y-1.5 overflow-y-auto">
+                            {[...selectedAgentActivity]
+                              .reverse()
+                              .map((entry) => (
+                                <div
+                                  key={entry.id}
+                                  className="text-[11px] text-zinc-400"
+                                >
+                                  <span
+                                    className={
+                                      entry.tone === "warning"
+                                        ? "text-amber-300"
+                                        : entry.tone === "success"
+                                          ? "text-emerald-300"
+                                          : "text-cyan-300"
+                                    }
+                                  >
+                                    {entry.label}
+                                  </span>
+                                  {entry.detail ? ` · ${entry.detail}` : ""}
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex justify-end border-t border-zinc-800 px-4 py-3">
                 <button
                   type="button"
-                  onClick={() => setShowAgentPicker(false)}
+                  onClick={() => {
+                    setShowAgentPicker(false);
+                    setAgentPickerRootThreadId(null);
+                    setSelectedAgentThreadId(null);
+                  }}
                   className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80"
                 >
                   Close
@@ -13949,6 +14521,10 @@ export default function CodexDeckApp() {
                 onSendMessage: handleSendMessage,
                 onRunSlashCommand: handleRunSlashCommand,
                 onStopConversation: handleStopConversation,
+                composerDisabledReason:
+                  selectedThreadSummary?.canAcceptDirectInput === false
+                    ? "This sub-agent is controlled by its parent. Direct input is disabled."
+                    : null,
               })}
             </div>
           ) : (

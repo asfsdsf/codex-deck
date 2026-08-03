@@ -1,4 +1,5 @@
 import type {
+  CodexAppServerEvent,
   ConversationMessage,
   SessionsDeltaResponse,
   TerminalListResponse,
@@ -74,6 +75,79 @@ function getConversationSeenKey(message: ConversationMessage): string {
       ? JSON.stringify(message.message.content ?? null)
       : "";
   return `${message.timestamp ?? ""}|${message.type}|${message.turnId ?? ""}|${content}`;
+}
+
+function getCodexAppServerEventKey(event: CodexAppServerEvent): string {
+  switch (event.type) {
+    case "error":
+      return [
+        event.type,
+        event.threadId,
+        event.turnId,
+        event.willRetry,
+        event.error?.message ?? "",
+        event.error?.additionalDetails ?? "",
+      ].join("|");
+    case "assistant_delta":
+    case "plan_delta":
+      return [
+        event.type,
+        event.threadId,
+        event.turnId,
+        event.itemId,
+        event.delta,
+      ].join("|");
+    case "reasoning_summary_delta":
+      return [
+        event.type,
+        event.threadId,
+        event.turnId,
+        event.itemId,
+        event.summaryIndex,
+        event.delta,
+      ].join("|");
+    case "reasoning_text_delta":
+      return [
+        event.type,
+        event.threadId,
+        event.turnId,
+        event.itemId,
+        event.contentIndex,
+        event.delta,
+      ].join("|");
+    case "thread_status":
+      return [
+        event.type,
+        event.threadId,
+        event.status,
+        event.turnId ?? "",
+      ].join("|");
+    case "subagent_activity":
+      return [
+        event.type,
+        event.threadId,
+        event.turnId ?? "",
+        event.itemId,
+        event.agentThreadId,
+        event.agentPath,
+        event.kind,
+      ].join("|");
+    case "collab_agent_tool_call":
+      return [
+        event.type,
+        event.threadId,
+        event.turnId ?? "",
+        event.itemId,
+        event.tool,
+        event.status,
+        event.senderThreadId,
+        event.receiverThreadIds.join(","),
+        event.prompt ?? "",
+        event.model ?? "",
+        event.reasoningEffort ?? "",
+        JSON.stringify(event.agentsStates),
+      ].join("|");
+  }
 }
 
 function collectChangedWorkflowKeys(
@@ -220,9 +294,15 @@ export function createRemoteTransport(
   remoteClient: RemoteClient,
 ): WebTransport {
   const conversationWakeListeners = new Map<string, Set<() => void>>();
+  const conversationAppServerSubscribers = new Map<
+    string,
+    Set<(event: CodexAppServerEvent) => void>
+  >();
   const workflowWakeListeners = new Set<() => void>();
   const workflowDaemonStatusWakeListeners = new Set<() => void>();
   const workflowDetailWakeListeners = new Map<string, Set<() => void>>();
+  const seenCodexAppServerEventKeys = new Set<string>();
+  const seenCodexAppServerEventOrder: string[] = [];
 
   const registerConversationWake = (
     sessionId: string,
@@ -242,6 +322,53 @@ export function createRemoteTransport(
         conversationWakeListeners.delete(sessionId);
       }
     };
+  };
+
+  const registerConversationAppServerSubscriber = (
+    sessionId: string,
+    subscriber: (event: CodexAppServerEvent) => void,
+  ): (() => void) => {
+    const subscribers =
+      conversationAppServerSubscribers.get(sessionId) ??
+      new Set<(event: CodexAppServerEvent) => void>();
+    subscribers.add(subscriber);
+    conversationAppServerSubscribers.set(sessionId, subscribers);
+
+    return () => {
+      const current = conversationAppServerSubscribers.get(sessionId);
+      if (!current) {
+        return;
+      }
+      current.delete(subscriber);
+      if (current.size === 0) {
+        conversationAppServerSubscribers.delete(sessionId);
+      }
+    };
+  };
+
+  const dispatchConversationAppServerEvent = (
+    event: CodexAppServerEvent,
+    handler?: (event: CodexAppServerEvent) => void,
+  ) => {
+    const eventKey = getCodexAppServerEventKey(event);
+    if (seenCodexAppServerEventKeys.has(eventKey)) {
+      return;
+    }
+    seenCodexAppServerEventKeys.add(eventKey);
+    seenCodexAppServerEventOrder.push(eventKey);
+    if (seenCodexAppServerEventOrder.length > 4096) {
+      const oldestKey = seenCodexAppServerEventOrder.shift();
+      if (oldestKey) {
+        seenCodexAppServerEventKeys.delete(oldestKey);
+      }
+    }
+
+    handler?.(event);
+    for (const subscriber of conversationAppServerSubscribers.get(
+      event.threadId,
+    ) ?? []) {
+      subscriber(event);
+    }
   };
 
   const registerWorkflowWake = (wake: () => void): (() => void) => {
@@ -336,19 +463,25 @@ export function createRemoteTransport(
                 handlers.onSkillsChanged?.({ sessionId });
               }
             }
-            return;
+          } else {
+            if (delta.updates.length > 0) {
+              handlers.onSessionsUpdate(delta.updates);
+            }
+            if (delta.removedSessionIds.length > 0) {
+              handlers.onSessionsRemoved(delta.removedSessionIds);
+            }
+            if (delta.skillsChangedSessionIds.length > 0) {
+              for (const sessionId of delta.skillsChangedSessionIds) {
+                handlers.onSkillsChanged?.({ sessionId });
+              }
+            }
           }
 
-          if (delta.updates.length > 0) {
-            handlers.onSessionsUpdate(delta.updates);
-          }
-          if (delta.removedSessionIds.length > 0) {
-            handlers.onSessionsRemoved(delta.removedSessionIds);
-          }
-          if (delta.skillsChangedSessionIds.length > 0) {
-            for (const sessionId of delta.skillsChangedSessionIds) {
-              handlers.onSkillsChanged?.({ sessionId });
-            }
+          for (const event of delta.codexAppServerEvents ?? []) {
+            dispatchConversationAppServerEvent(
+              event,
+              handlers.onCodexAppServerEvent,
+            );
           }
         } catch (error) {
           console.error(error);
@@ -373,6 +506,12 @@ export function createRemoteTransport(
       let initialized = offset > 0;
       let backfillBeforeOffset: number | null = null;
       let fileId: string | null = null;
+      const unregisterAppServerSubscriber = options.onCodexAppServerEvent
+        ? registerConversationAppServerSubscriber(
+            sessionId,
+            options.onCodexAppServerEvent,
+          )
+        : null;
 
       const subscription = createWakeablePollingSubscription(async () => {
         try {
@@ -506,6 +645,7 @@ export function createRemoteTransport(
       );
 
       return () => {
+        unregisterAppServerSubscriber?.();
         unregisterWake();
         subscription.unsubscribe();
       };

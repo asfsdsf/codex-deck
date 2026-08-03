@@ -1,5 +1,10 @@
 import type {
+  CodexCollabAgentState,
+  CodexCollabAgentStatus,
+  CodexCollabAgentTool,
+  CodexCollabAgentToolCallStatus,
   CodexThreadGoal,
+  CodexSubAgentActivityKind,
   ContentBlock,
   ConversationMessage,
   TokenUsage,
@@ -826,6 +831,203 @@ function parseThreadGoalFromPayload(
   };
 }
 
+function parseCollabAgentTool(value: unknown): CodexCollabAgentTool | null {
+  const normalized = asTrimmedString(value)
+    ?.replace(/[\s_-]/g, "")
+    .toLowerCase();
+  switch (normalized) {
+    case "spawnagent":
+      return "spawnAgent";
+    case "sendinput":
+    case "sendmessage":
+      return "sendInput";
+    case "resumeagent":
+    case "followuptask":
+      return "resumeAgent";
+    case "wait":
+    case "waitagent":
+      return "wait";
+    case "closeagent":
+    case "interruptagent":
+      return "closeAgent";
+    default:
+      return null;
+  }
+}
+
+function parseCollabAgentToolCallStatus(
+  value: unknown,
+): CodexCollabAgentToolCallStatus | null {
+  const normalized = asTrimmedString(value)
+    ?.replace(/[\s_-]/g, "")
+    .toLowerCase();
+  switch (normalized) {
+    case "inprogress":
+      return "inProgress";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
+
+function parseSubAgentActivityKind(
+  value: unknown,
+): CodexSubAgentActivityKind | null {
+  const normalized = asTrimmedString(value)?.toLowerCase();
+  if (
+    normalized === "started" ||
+    normalized === "interacted" ||
+    normalized === "interrupted"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function parseCollabAgentStatus(value: unknown): CodexCollabAgentStatus | null {
+  const normalized = asTrimmedString(value)
+    ?.replace(/[\s_-]/g, "")
+    .toLowerCase();
+  switch (normalized) {
+    case "pendinginit":
+      return "pendingInit";
+    case "running":
+      return "running";
+    case "interrupted":
+      return "interrupted";
+    case "completed":
+      return "completed";
+    case "errored":
+      return "errored";
+    case "shutdown":
+      return "shutdown";
+    case "notfound":
+      return "notFound";
+    default:
+      return null;
+  }
+}
+
+function parseCollabAgentStates(
+  value: unknown,
+): Record<string, CodexCollabAgentState> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const states: Record<string, CodexCollabAgentState> = {};
+  for (const [threadId, rawState] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    if (!rawState || typeof rawState !== "object" || Array.isArray(rawState)) {
+      continue;
+    }
+    const state = rawState as Record<string, unknown>;
+    const status = parseCollabAgentStatus(state.status);
+    if (!status) {
+      continue;
+    }
+    states[threadId] = {
+      status,
+      message: typeof state.message === "string" ? state.message : null,
+    };
+  }
+  return states;
+}
+
+function parsePersistedCollaborationItem(value: unknown): ContentBlock | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const item = value as Record<string, unknown>;
+  const itemType = asTrimmedString(item.type)
+    ?.replace(/[\s_-]/g, "")
+    .toLowerCase();
+  const id = asTrimmedString(item.id);
+  if (!id) {
+    return null;
+  }
+
+  if (itemType === "subagentactivity") {
+    const agentThreadId = asTrimmedString(
+      item.agent_thread_id ?? item.agentThreadId,
+    );
+    const agentPath = asTrimmedString(item.agent_path ?? item.agentPath);
+    const kind = parseSubAgentActivityKind(item.kind);
+    if (!agentThreadId || !agentPath || !kind) {
+      return null;
+    }
+    return {
+      type: "subagent_activity",
+      id,
+      agentThreadId,
+      agentPath,
+      kind,
+    };
+  }
+
+  if (itemType !== "collabagenttoolcall") {
+    return null;
+  }
+
+  const tool = parseCollabAgentTool(item.tool);
+  const status = parseCollabAgentToolCallStatus(item.status);
+  const senderThreadId = asTrimmedString(
+    item.sender_thread_id ?? item.senderThreadId,
+  );
+  if (!tool || !status || !senderThreadId) {
+    return null;
+  }
+
+  const rawReceiverThreadIds =
+    item.receiver_thread_ids ?? item.receiverThreadIds;
+  const receiverThreadIds = Array.isArray(rawReceiverThreadIds)
+    ? rawReceiverThreadIds
+        .map((threadId) => asTrimmedString(threadId))
+        .filter((threadId): threadId is string => threadId !== null)
+    : [];
+  const reasoningEffort = asTrimmedString(
+    item.reasoning_effort ?? item.reasoningEffort,
+  );
+
+  return {
+    type: "collab_agent_tool_call",
+    id,
+    tool,
+    status,
+    senderThreadId,
+    receiverThreadIds,
+    prompt: typeof item.prompt === "string" ? item.prompt : null,
+    model: asTrimmedString(item.model),
+    reasoningEffort,
+    agentsStates: parseCollabAgentStates(
+      item.agents_states ?? item.agentsStates,
+    ),
+  };
+}
+
+function createPersistedCollaborationMessage(
+  block: ContentBlock,
+  uuid: string,
+  timestamp?: string,
+  turnId?: string,
+): ConversationMessage {
+  return {
+    type: "assistant",
+    uuid,
+    timestamp,
+    turnId,
+    message: {
+      role: "assistant",
+      content: [{ ...block, timestamp }],
+    },
+  };
+}
+
 function parseToolUseFromPayload(
   payload: Record<string, unknown>,
   timestamp: string | undefined,
@@ -917,15 +1119,37 @@ function parseCodexConversation(
 
     const payload = record.payload as Record<string, unknown>;
     const payloadType = typeof payload.type === "string" ? payload.type : "";
+    const normalizedPayloadType = payloadType
+      .replace(/[\s_-]/g, "")
+      .toLowerCase();
 
     if (record.type === "event_msg") {
+      if (normalizedPayloadType === "itemcompleted") {
+        const collaborationBlock = parsePersistedCollaborationItem(
+          payload.item,
+        );
+        if (!collaborationBlock) {
+          continue;
+        }
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId);
+        pushConversationMessage(
+          messages,
+          createPersistedCollaborationMessage(
+            collaborationBlock,
+            `${offset}:collaboration:${messages.length}`,
+            timestamp,
+            turnId ?? undefined,
+          ),
+        );
+        continue;
+      }
+
       if (payloadType === "thread_goal_updated") {
         const goal = parseThreadGoalFromPayload(payload);
         if (!goal) {
           continue;
         }
-        const turnId =
-          typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId) ?? "";
         pushConversationMessage(
           messages,
           createThreadGoalMessage(
@@ -941,8 +1165,7 @@ function parseCodexConversation(
       if (payloadType === "turn_aborted") {
         const reason =
           typeof payload.reason === "string" ? payload.reason.trim() : "";
-        const turnId =
-          typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId) ?? "";
         const text =
           reason === "interrupted" || !reason
             ? TURN_ABORTED_DEFAULT_TEXT
@@ -1041,8 +1264,7 @@ function parseCodexConversation(
       }
 
       if (payloadType === "task_started") {
-        const turnId =
-          typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId) ?? "";
         pushConversationMessage(messages, {
           type: "task_started",
           uuid: `${offset}:task-started:${messages.length}`,
@@ -1053,8 +1275,7 @@ function parseCodexConversation(
       }
 
       if (payloadType === "task_complete") {
-        const turnId =
-          typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId) ?? "";
         pushConversationMessage(messages, {
           type: "task_complete",
           uuid: `${offset}:task-complete:${messages.length}`,
