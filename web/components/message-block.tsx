@@ -1912,10 +1912,13 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     message.type === "user" || message.type === "assistant"
       ? getMessageCopyText(content)
       : null;
+  // History translation is for the reader, so user and assistant messages
+  // use the same English-to-Chinese direction. The composer intentionally
+  // reverses this direction when translating a draft for the LLM.
   const messageTranslation = useBlockTranslation(
     messageTranslationSource,
-    isUser ? "zh" : "en",
-    isUser ? "en" : "zh",
+    "en",
+    "zh",
   );
   const translatedMessageText =
     messageTranslation.showing && messageTranslation.translated !== null
@@ -2903,9 +2906,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                       title={
                         messageTranslation.showing
                           ? "Show original"
-                          : isUser
-                            ? "Translate message to English"
-                            : "Translate message to Chinese"
+                          : "Translate message to Chinese"
                       }
                       className={`rounded-lg border ${
                         isUser

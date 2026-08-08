@@ -877,6 +877,19 @@ test("MessageBlock keeps normal user markdown rendering for unrelated messages",
   assert.doesNotMatch(html, /Terminal Step/);
 });
 
+test("MessageBlock translates user messages to the reader language", () => {
+  const html = renderMessageBlock({
+    type: "user",
+    message: {
+      role: "user",
+      content: "Please run the tests.",
+    },
+  });
+
+  assert.match(html, /title="Translate message to Chinese"/);
+  assert.doesNotMatch(html, /Translate message to English/);
+});
+
 test("MessageBlock offers editing only for messages marked editable", () => {
   const editableMessage: ConversationMessage = {
     type: "assistant",
