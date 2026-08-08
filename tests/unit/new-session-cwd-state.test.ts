@@ -3,51 +3,42 @@ import assert from "node:assert/strict";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
-  maybeAutoFillNewSessionCwd,
+  resolveNewSessionCwdForCreate,
   setNewSessionCwdFromUserInput,
 } from "../../web/new-session-cwd-state";
 
-test("new session cwd auto-fills when a single project is available and the field is pristine", () => {
-  assert.deepEqual(
-    maybeAutoFillNewSessionCwd(EMPTY_NEW_SESSION_CWD_STATE, {
-      selectedProject: null,
-      candidates: ["/repo/app"],
-    }),
-    {
-      value: "/repo/app",
-      preserveManualEmpty: false,
-    },
-  );
+test("new session cwd starts empty and only stores user input", () => {
+  assert.deepEqual(EMPTY_NEW_SESSION_CWD_STATE, { value: "" });
+  assert.deepEqual(setNewSessionCwdFromUserInput("/repo/app"), {
+    value: "/repo/app",
+  });
 });
 
 test("new session cwd stays empty after the user clears the field", () => {
-  const autoFilled = maybeAutoFillNewSessionCwd(EMPTY_NEW_SESSION_CWD_STATE, {
-    selectedProject: null,
-    candidates: ["/repo/app"],
-  });
   const cleared = setNewSessionCwdFromUserInput("");
 
-  assert.deepEqual(autoFilled, {
-    value: "/repo/app",
-    preserveManualEmpty: false,
-  });
-  assert.deepEqual(
-    maybeAutoFillNewSessionCwd(cleared, {
-      selectedProject: null,
-      candidates: ["/repo/app"],
-    }),
-    cleared,
+  assert.deepEqual(cleared, { value: "" });
+});
+
+test("project selection clears the input", () => {
+  assert.deepEqual(clearNewSessionCwdForProjectSelection(), { value: "" });
+});
+
+test("new session creation uses the current path when the input is empty", () => {
+  assert.equal(
+    resolveNewSessionCwdForCreate("", "/repo/current"),
+    "/repo/current",
+  );
+  assert.equal(
+    resolveNewSessionCwdForCreate("  ", "/repo/current"),
+    "/repo/current",
   );
 });
 
-test("project selection clears keep the input empty instead of restoring the lone project path", () => {
-  const clearedForSelection = clearNewSessionCwdForProjectSelection();
-
-  assert.deepEqual(
-    maybeAutoFillNewSessionCwd(clearedForSelection, {
-      selectedProject: null,
-      candidates: ["/repo/app"],
-    }),
-    clearedForSelection,
+test("new session creation prefers an explicit input path", () => {
+  assert.equal(
+    resolveNewSessionCwdForCreate(" /repo/custom ", "/repo/current"),
+    "/repo/custom",
   );
+  assert.equal(resolveNewSessionCwdForCreate("", ""), "");
 });

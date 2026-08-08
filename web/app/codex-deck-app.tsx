@@ -98,7 +98,7 @@ import MemoriesModal from "../components/memories-modal";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
-  maybeAutoFillNewSessionCwd,
+  resolveNewSessionCwdForCreate,
   type NewSessionCwdState,
   setNewSessionCwdFromUserInput,
 } from "../new-session-cwd-state";
@@ -6334,26 +6334,6 @@ export default function CodexDeckApp() {
   }, [apiReady]);
 
   useEffect(() => {
-    setNewSessionCwdState((current) =>
-      maybeAutoFillNewSessionCwd(current, {
-        selectedProject,
-        candidates: projects,
-      }),
-    );
-  }, [selectedProject, projects]);
-
-  useEffect(() => {
-    setNewSessionCwdState((current) =>
-      maybeAutoFillNewSessionCwd(current, {
-        selectedProject: selectedTerminalProject,
-        candidates: terminals
-          .map((terminal) => terminal.project)
-          .filter((project) => project.length > 0),
-      }),
-    );
-  }, [selectedTerminalProject, terminals]);
-
-  useEffect(() => {
     if (!activeComposerSessionId) {
       setContextLeftPercent(null);
       setContextUsedTokens(null);
@@ -7541,25 +7521,23 @@ export default function CodexDeckApp() {
     ],
   );
 
-  const terminalCwdForCreate =
-    newSessionCwd.trim() ||
+  const terminalCurrentCwd =
     selectedTerminalProject?.trim() ||
     selectedTerminalData?.cwd?.trim() ||
     selectedProject?.trim() ||
     selectedSessionData?.project?.trim() ||
     "";
 
-  const sessionCwdForCreate =
-    newSessionCwd.trim() ||
-    selectedProject?.trim() ||
-    selectedSessionData?.project?.trim() ||
-    "";
+  const sessionCurrentCwd =
+    selectedProject?.trim() || selectedSessionData?.project?.trim() || "";
 
   const handleCreateTerminal = useCallback(
     async (cwdOverride?: string): Promise<boolean> => {
       const normalizedOverride =
         typeof cwdOverride === "string" ? cwdOverride.trim() : "";
-      const cwd = normalizedOverride || terminalCwdForCreate;
+      const cwd =
+        normalizedOverride ||
+        resolveNewSessionCwdForCreate(newSessionCwd, terminalCurrentCwd);
 
       if (!cwd) {
         setInteractionError(
@@ -7590,14 +7568,16 @@ export default function CodexDeckApp() {
         setCreatingSession(false);
       }
     },
-    [isMobilePhone, terminalCwdForCreate],
+    [isMobilePhone, newSessionCwd, terminalCurrentCwd],
   );
 
   const handleCreateSession = useCallback(
     async (cwdOverride?: string): Promise<boolean> => {
       const normalizedOverride =
         typeof cwdOverride === "string" ? cwdOverride.trim() : "";
-      const cwd = normalizedOverride || sessionCwdForCreate;
+      const cwd =
+        normalizedOverride ||
+        resolveNewSessionCwdForCreate(newSessionCwd, sessionCurrentCwd);
 
       if (!cwd) {
         setInteractionError(
@@ -7634,7 +7614,13 @@ export default function CodexDeckApp() {
         setCreatingSession(false);
       }
     },
-    [sessionCwdForCreate, selectedModelId, selectedEffort, isMobilePhone],
+    [
+      newSessionCwd,
+      selectedModelId,
+      selectedEffort,
+      isMobilePhone,
+      sessionCurrentCwd,
+    ],
   );
 
   const upsertSessionInLocalState = useCallback((session: Session) => {
@@ -11957,8 +11943,8 @@ export default function CodexDeckApp() {
   }, [fixDanglingTargetSessionId, fixingDangling]);
 
   const newSessionPlaceholder =
-    (centerView === "terminal" ? terminalCwdForCreate : sessionCwdForCreate) ||
-    "/path/to/project/";
+    (centerView === "terminal" ? terminalCurrentCwd : sessionCurrentCwd) ||
+    "Project path";
   const contextWindowText =
     typeof contextLeftPercent === "number"
       ? `${Math.max(0, Math.min(100, Math.round(contextLeftPercent)))}% context left`
@@ -12431,7 +12417,7 @@ export default function CodexDeckApp() {
 
     return (
       <>
-        <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
             onClick={onToggleRailCollapsedByDefault}
@@ -12455,11 +12441,14 @@ export default function CodexDeckApp() {
             <button
               type="button"
               onClick={() => onCopyProjectPath(session.project)}
-              className="max-w-[14rem] shrink-0 truncate text-left text-xs text-zinc-600 transition-colors hover:text-zinc-300"
+              className="inline-flex h-6 max-w-[14rem] shrink-0 items-center gap-1 rounded border border-zinc-700/70 bg-zinc-900/60 px-1.5 text-left text-[11px] text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-200"
               title={`Copy project path: ${session.project}`}
               aria-label="Copy project path"
             >
-              {session.projectName || getPathBaseName(session.project)}
+              <span className="min-w-0 truncate">
+                {session.projectName || getPathBaseName(session.project)}
+              </span>
+              <Copy aria-hidden="true" className="h-3 w-3 shrink-0" />
             </button>
           ) : (
             <span className="text-xs text-zinc-600 shrink-0">
@@ -12751,7 +12740,7 @@ export default function CodexDeckApp() {
                       )
                     }
                     placeholder={newSessionPlaceholder}
-                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded-lg border border-zinc-800 px-2.5 transition-colors focus:border-cyan-500/40 focus:outline-none"
+                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded-lg border border-zinc-800 px-2.5 placeholder:text-zinc-500 transition-colors focus:border-cyan-500/40 focus:outline-none"
                   />
                   <button
                     onClick={() => {
