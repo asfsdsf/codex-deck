@@ -15,7 +15,11 @@ export function addCodexHomeToApiUrl(
   url: string,
   homeId = activeCodexHomeId,
 ): string {
-  if (!url.startsWith("/api/") || url.startsWith("/api/codex-homes")) {
+  if (
+    !url.startsWith("/api/") ||
+    url.startsWith("/api/codex-homes") ||
+    url.startsWith("/api/codex-deck/config")
+  ) {
     return url;
   }
   const normalizedHomeId = homeId.trim() || MAIN_CODEX_HOME_ID;

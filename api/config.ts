@@ -1,5 +1,7 @@
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { resolveDefaultCodexHome } from "./codex-home";
 
 export interface CodexDeckRemoteConfig {
@@ -64,6 +66,7 @@ export interface ResolvedCodexDeckOptions {
 }
 
 const DEFAULT_PORT = 12001;
+export const MAX_CODEX_DECK_CONFIG_BYTES = 1024 * 1024;
 
 const REMOTE_KEY_MAP: Record<string, keyof CodexDeckRemoteConfig> = {
   server_url: "serverUrl",
@@ -324,7 +327,7 @@ export function loadCodexDeckConfig(
 }
 
 export function loadCodexDeckHomeConfig(codexHome: string): CodexDeckConfig {
-  const path = join(codexHome, "codex-deck", "config.toml");
+  const path = getCodexDeckHomeConfigPath(codexHome);
   try {
     return parseConfigToml(readFileSync(path, "utf-8"));
   } catch (err) {
@@ -338,6 +341,68 @@ export function loadCodexDeckHomeConfig(codexHome: string): CodexDeckConfig {
     }
     return {};
   }
+}
+
+export interface CodexDeckHomeConfigFile {
+  path: string;
+  content: string;
+  revision: string;
+}
+
+export function getCodexDeckHomeConfigPath(codexHome: string): string {
+  return join(codexHome, "codex-deck", "config.toml");
+}
+
+export function getCodexDeckConfigRevision(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+export async function readCodexDeckHomeConfigFile(
+  codexHome: string,
+): Promise<CodexDeckHomeConfigFile> {
+  const path = getCodexDeckHomeConfigPath(codexHome);
+  let content = "";
+  try {
+    content = await readFile(path, "utf-8");
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return {
+    path,
+    content,
+    revision: getCodexDeckConfigRevision(content),
+  };
+}
+
+export async function writeCodexDeckHomeConfigFile(
+  codexHome: string,
+  content: string,
+): Promise<CodexDeckHomeConfigFile> {
+  if (content.includes("\0")) {
+    throw new Error("Config content must not contain null bytes");
+  }
+  if (Buffer.byteLength(content, "utf-8") > MAX_CODEX_DECK_CONFIG_BYTES) {
+    throw new Error(
+      `Config content must be at most ${MAX_CODEX_DECK_CONFIG_BYTES} bytes`,
+    );
+  }
+
+  const path = getCodexDeckHomeConfigPath(codexHome);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tempPath, content, { encoding: "utf-8", mode: 0o600 });
+  await rename(tempPath, path);
+  return {
+    path,
+    content,
+    revision: getCodexDeckConfigRevision(content),
+  };
 }
 
 export function resolveCodexDeckRuntimeConfig(

@@ -236,7 +236,9 @@ pinned_opaque_server_key = "public-key" # optional
 
 All keys are optional. The `[remote]` keys mirror the `--remote-*` flags and `CODEXDECK_REMOTE_*` environment variables.
 
-Additional Codex homes are declared only by the main config with named `[codex_homes.<id>]` tables. Each available home appears in the selector at the top of the left pane. Missing directories, duplicate paths, reserved IDs, and other invalid entries remain visible but disabled. Config changes require restarting codex-deck.
+Additional Codex homes are declared only by the main config with named `[codex_homes.<id>]` tables. Each available home appears in the selector at the top of the left pane. Missing directories, duplicate paths, reserved IDs, and other invalid entries remain visible but disabled.
+
+The web app's Settings button at the bottom of the left pane opens a structured editor for server startup, translation, additional Codex homes, and remote connection settings. An Advanced section remains available for direct TOML editing. Applying changes writes `<main-codex-home>/codex-deck/config.toml`, updates `translation_command` and the additional Codex home catalog immediately, and preserves unrelated TOML when structured controls are used. Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) are saved but require restarting codex-deck; the UI lists the affected keys after applying.
 
 Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Only the main codex-deck process opens a network port; additional homes communicate with it over internal process IPC. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
 

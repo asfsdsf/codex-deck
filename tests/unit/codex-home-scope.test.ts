@@ -32,6 +32,10 @@ test("API URL scoping preserves main URLs and existing query parameters", () => 
     "/api/codex-homes",
   );
   assert.equal(
+    addCodexHomeToApiUrl("/api/codex-deck/config", "work"),
+    "/api/codex-deck/config",
+  );
+  assert.equal(
     addCodexHomeToApiUrl("/assets/app.js", "work"),
     "/assets/app.js",
   );

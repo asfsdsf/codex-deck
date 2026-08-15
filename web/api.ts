@@ -28,6 +28,9 @@ import type {
   CodexModelOption,
   CodexAgentWaitConfig,
   CodexConfigDefaultsResponse,
+  CodexDeckConfigFileResponse,
+  CodexDeckConfigWriteRequest,
+  CodexDeckConfigWriteResponse,
   CodexHomeDescriptor,
   CodexSessionContextResponse,
   DeleteTerminalResponse,
@@ -189,6 +192,22 @@ export async function listCodexHomes(): Promise<CodexHomesResponse> {
         ? response.mainHomeId
         : "main",
   };
+}
+
+export async function getCodexDeckConfig(): Promise<CodexDeckConfigFileResponse> {
+  return requestJson<CodexDeckConfigFileResponse>("/api/codex-deck/config");
+}
+
+export async function applyCodexDeckConfig(
+  input: CodexDeckConfigWriteRequest,
+): Promise<CodexDeckConfigWriteResponse> {
+  return requestJson<CodexDeckConfigWriteResponse>("/api/codex-deck/config", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
 }
 
 const READONLY_CLI_CACHE_TTL_MS = 30_000;

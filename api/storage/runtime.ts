@@ -523,6 +523,25 @@ export interface CodexHomesResponse {
   mainHomeId: string;
 }
 
+export interface CodexDeckConfigFileResponse {
+  path: string;
+  content: string;
+  revision: string;
+}
+
+export interface CodexDeckConfigWriteRequest {
+  content: string;
+  revision: string;
+}
+
+export interface CodexDeckConfigWriteResponse extends CodexDeckConfigFileResponse {
+  ok: true;
+  appliedKeys: string[];
+  restartRequiredKeys: string[];
+  homes: CodexHomeDescriptor[];
+  mainHomeId: string;
+}
+
 export interface CodexConfigDefaultsResponse {
   model: string | null;
   reasoningEffort: CodexReasoningEffort | null;

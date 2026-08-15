@@ -11,6 +11,7 @@ import type {
 import { encodeBase64 } from "@zuoyehaoduoa/wire";
 import {
   __TEST_ONLY__ as WEB_API_TEST_ONLY,
+  applyCodexDeckConfig,
   applyWorkflowMerge,
   bindWorkflowSession,
   bindTerminalSession,
@@ -28,6 +29,7 @@ import {
   fixDanglingSession,
   forkCodexThread,
   getCodexConfigDefaults,
+  getCodexDeckConfig,
   getCodexAgentWaitConfig,
   getSystemContext,
   getCodexThreadState,
@@ -820,6 +822,41 @@ test("codex config endpoints return normalized payloads", async () => {
     "/api/codex/collaboration-modes",
     "/api/codex/defaults",
   ]);
+});
+
+test("Codex Deck config endpoints load and apply the main home file", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return jsonResponse({
+      ok: init?.method === "POST" ? true : undefined,
+      path: "/codex/codex-deck/config.toml",
+      content: 'translation_command = "cmd"\n',
+      revision: "revision-2",
+      appliedKeys: ["translation_command"],
+      restartRequiredKeys: [],
+      homes: [],
+      mainHomeId: "main",
+    });
+  };
+
+  const loaded = await getCodexDeckConfig();
+  const applied = await applyCodexDeckConfig({
+    content: loaded.content,
+    revision: loaded.revision,
+  });
+
+  assert.equal(loaded.path, "/codex/codex-deck/config.toml");
+  assert.equal(applied.ok, true);
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    ["/api/codex-deck/config", "/api/codex-deck/config"],
+  );
+  assert.equal(calls[1]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), {
+    content: 'translation_command = "cmd"\n',
+    revision: "revision-2",
+  });
 });
 
 test("codex config endpoints reuse cached responses within a page", async () => {

@@ -133,6 +133,26 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
       transport: "ipc",
     });
 
+    await manager.updateHomes([
+      {
+        ...home,
+        translationCommand: "translate-updated",
+      },
+    ]);
+    const updatedResponse = await manager.fetch(
+      "work",
+      new Request("http://codex-deck.test/api/echo?codexHome=work"),
+    );
+    assert.equal(updatedResponse.status, 200);
+    assert.deepEqual(await updatedResponse.json(), {
+      url: "/api/echo",
+      method: "GET",
+      body: "",
+      codexHome: home.path,
+      translationCommand: "translate-updated",
+      transport: "ipc",
+    });
+
     const streamResponse = await manager.fetch(
       "work",
       new Request("http://codex-deck.test/stream?codexHome=work"),

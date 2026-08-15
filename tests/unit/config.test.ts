@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,8 +15,10 @@ import {
   loadCodexDeckConfig,
   mergeCodexDeckConfigs,
   parseConfigToml,
+  readCodexDeckHomeConfigFile,
   resolveCodexDeckRuntimeConfig,
   resolveCodexDeckOptions,
+  writeCodexDeckHomeConfigFile,
 } from "../../api/config";
 
 function makeTempDir(): string {
@@ -143,6 +151,25 @@ test("findConfigFiles returns existing files in priority order", () => {
 test("findConfigFiles returns an empty list when no config file exists", () => {
   const root = makeTempDir();
   assert.deepEqual(findConfigFiles(join(root, "cwd"), join(root, "home")), []);
+});
+
+test("Codex Deck home config files are read and written atomically", async () => {
+  const codexHome = makeTempDir();
+  const missing = await readCodexDeckHomeConfigFile(codexHome);
+  assert.equal(missing.content, "");
+  assert.equal(missing.revision.length, 64);
+
+  const content = [
+    "# kept comment",
+    'translation_command = "printf translated"',
+    "",
+  ].join("\n");
+  const written = await writeCodexDeckHomeConfigFile(codexHome, content);
+
+  assert.equal(readFileSync(written.path, "utf-8"), content);
+  assert.equal(written.revision.length, 64);
+  assert.equal(statSync(written.path).mode & 0o777, 0o600);
+  assert.deepEqual(await readCodexDeckHomeConfigFile(codexHome), written);
 });
 
 test("loadCodexDeckConfig reads and parses the discovered file", () => {

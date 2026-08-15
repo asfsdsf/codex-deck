@@ -175,10 +175,13 @@ import { registerHooksRoutes } from "./hooks-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
 import { CodexHomeRuntimeManager } from "../codex-home-runtime-manager";
 import {
+  buildCodexHomeRegistry,
   MAIN_CODEX_HOME_ID,
   toCodexHomeDescriptor,
   type ResolvedCodexHome,
 } from "../codex-home-registry";
+import type { CodexDeckConfig } from "../config";
+import { registerConfigRoutes } from "./config-routes";
 import {
   getTerminalBindingsByTerminalIds,
   onTerminalBindingChange,
@@ -1899,6 +1902,44 @@ interface SessionDeltaEvent {
   codexAppServerEvents: CodexAppServerEvent[];
 }
 
+const STARTUP_CONFIG_KEYS = ["port", "dir", "dev", "open"] as const;
+const REMOTE_CONFIG_KEYS = [
+  ["serverUrl", "remote.server_url"],
+  ["username", "remote.username"],
+  ["password", "remote.password"],
+  ["setupToken", "remote.setup_token"],
+  ["machineId", "remote.machine_id"],
+  ["pinnedRealmId", "remote.pinned_realm_id"],
+  ["pinnedOpaqueServerKey", "remote.pinned_opaque_server_key"],
+] as const;
+
+function getChangedConfigKeys(
+  previous: CodexDeckConfig,
+  next: CodexDeckConfig,
+): string[] {
+  const changed: string[] = [];
+  for (const key of STARTUP_CONFIG_KEYS) {
+    if (previous[key] !== next[key]) {
+      changed.push(key);
+    }
+  }
+  if (previous.translationCommand !== next.translationCommand) {
+    changed.push("translation_command");
+  }
+  if (
+    JSON.stringify(previous.codexHomes ?? {}) !==
+    JSON.stringify(next.codexHomes ?? {})
+  ) {
+    changed.push("codex_homes");
+  }
+  for (const [property, configKey] of REMOTE_CONFIG_KEYS) {
+    if (previous.remote?.[property] !== next.remote?.[property]) {
+      changed.push(configKey);
+    }
+  }
+  return changed;
+}
+
 export function createServer(options: ServerOptions) {
   const {
     port,
@@ -1934,10 +1975,10 @@ export function createServer(options: ServerOptions) {
     },
     ...additionalCodexHomes,
   ];
-  const homeRuntimeManager =
-    runtimeEntryPath && additionalCodexHomes.length > 0
-      ? new CodexHomeRuntimeManager(additionalCodexHomes, runtimeEntryPath)
-      : null;
+  const homeRuntimeManager = runtimeEntryPath
+    ? new CodexHomeRuntimeManager(additionalCodexHomes, runtimeEntryPath)
+    : null;
+  let runtimeTranslationCommand = translationCommand;
 
   const app = new Hono();
   const internalRemoteProxyAccessToken = remoteServerUrl
@@ -1972,13 +2013,17 @@ export function createServer(options: ServerOptions) {
   );
 
   app.use("/api/*", async (c, next) => {
+    if (c.req.path === "/api/codex-deck/config") {
+      await next();
+      return;
+    }
     const homeId = c.req.query("codexHome")?.trim();
     if (!homeId || homeId === MAIN_CODEX_HOME_ID) {
       await next();
       return;
     }
-    const home = additionalCodexHomes.find(
-      (candidate) => candidate.id === homeId,
+    const home = allCodexHomes.find(
+      (candidate) => !candidate.isMain && candidate.id === homeId,
     );
     if (!home) {
       return c.json({ error: "Unknown Codex home" }, 404);
@@ -2392,9 +2437,48 @@ export function createServer(options: ServerOptions) {
   });
   registerWorkflowRoutes(app, { workflowRouteUnavailable });
   registerSystemRoutes(app);
+  registerConfigRoutes(app, {
+    codexHome: getCodexDir(),
+    applyConfig: async (previousConfig, nextConfig) => {
+      const changedKeys = getChangedConfigKeys(previousConfig, nextConfig);
+      const appliedKeys: string[] = [];
+
+      if (changedKeys.includes("translation_command")) {
+        runtimeTranslationCommand = nextConfig.translationCommand;
+        appliedKeys.push("translation_command");
+      }
+
+      if (
+        changedKeys.includes("codex_homes") ||
+        changedKeys.includes("translation_command")
+      ) {
+        const registry = buildCodexHomeRegistry({
+          mainCodexHome: getCodexDir(),
+          mainConfig: nextConfig,
+        });
+        const nextAdditionalHomes = registry.filter((home) => !home.isMain);
+        await homeRuntimeManager?.updateHomes(nextAdditionalHomes);
+        allCodexHomes.splice(0, allCodexHomes.length, ...registry);
+        if (changedKeys.includes("codex_homes")) {
+          appliedKeys.push("codex_homes");
+        }
+      }
+
+      return {
+        appliedKeys,
+        restartRequiredKeys: changedKeys.filter(
+          (key) => !appliedKeys.includes(key),
+        ),
+        homes: allCodexHomes.map(toCodexHomeDescriptor),
+        mainHomeId: MAIN_CODEX_HOME_ID,
+      };
+    },
+  });
   registerSettingsRoutes(app);
   registerTerminalRoutes(app);
-  registerTranslationRoutes(app, { translationCommand });
+  registerTranslationRoutes(app, {
+    getTranslationCommand: () => runtimeTranslationCommand,
+  });
   registerHooksRoutes(app, {
     workflowRouteUnavailable,
     resolveSessionProjectPath,

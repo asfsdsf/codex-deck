@@ -86,6 +86,31 @@ export class CodexHomeRuntimeManager {
     return this.homesById.get(homeId) ?? null;
   }
 
+  public async updateHomes(homes: ResolvedCodexHome[]): Promise<void> {
+    const nextHomesById = new Map(homes.map((home) => [home.id, home]));
+    const changedHomeIds = new Set<string>();
+
+    for (const [homeId, current] of this.homesById) {
+      const next = nextHomesById.get(homeId);
+      if (
+        !next ||
+        current.path !== next.path ||
+        current.available !== next.available ||
+        current.translationCommand !== next.translationCommand
+      ) {
+        changedHomeIds.add(homeId);
+      }
+    }
+
+    await Promise.all(
+      Array.from(changedHomeIds, (homeId) => this.stopRuntime(homeId)),
+    );
+    this.homesById.clear();
+    for (const [homeId, home] of nextHomesById) {
+      this.homesById.set(homeId, home);
+    }
+  }
+
   public async fetch(homeId: string, request: Request): Promise<Response> {
     const home = this.getHome(homeId);
     if (!home) {

@@ -68,6 +68,7 @@ import {
   OctagonX,
   Activity,
   ExternalLink,
+  Settings,
 } from "lucide-react";
 import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
 import {
@@ -96,6 +97,7 @@ import CodexValuePicker, {
 import CenteredConfirmDialog from "../components/centered-confirm-dialog";
 import { PetCompanion, PetPicker } from "../components/pet-companion";
 import MemoriesModal from "../components/memories-modal";
+import ConfigModal from "../components/config-modal";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
@@ -3881,6 +3883,7 @@ export default function CodexDeckApp() {
     useState(false);
   const [showCollabModePicker, setShowCollabModePicker] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renamingSession, setRenamingSession] = useState(false);
@@ -4214,6 +4217,7 @@ export default function CodexDeckApp() {
     setDeleteTerminalTargetId(null);
     setShowCollabModePicker(false);
     setShowStatusModal(false);
+    setShowConfigModal(false);
     setShowRenameModal(false);
     setRenameDraft("");
     setRenamingSession(false);
@@ -13110,64 +13114,78 @@ export default function CodexDeckApp() {
             </div>
           </div>
 
-          <SessionList
-            sessions={
-              centerView === "terminal"
-                ? terminalListItems
-                : centerView === "workflow"
-                  ? workflowListItems
-                  : filteredSessions
-            }
-            selectedSession={
-              centerView === "terminal"
-                ? selectedTerminalId
-                : centerView === "workflow"
-                  ? selectedWorkflowKey
-                  : selectedSession
-            }
-            onSelectSession={handleSelectLeftPaneItem}
-            onRequestDeleteSession={handleRequestDeleteLeftPaneItem}
-            loading={
-              centerView === "terminal"
-                ? loadingTerminals
-                : centerView === "workflow"
-                  ? loadingWorkflows
-                  : loading
-            }
-            searchInputRef={sessionListSearchInputRef}
-            emptyLabel={
-              centerView === "terminal"
-                ? "No active terminals found"
-                : centerView === "workflow"
-                  ? "No workflows found"
-                  : "No sessions found"
-            }
-            noMatchLabel={
-              centerView === "terminal"
-                ? "No terminals match"
-                : centerView === "workflow"
-                  ? "No workflows match"
-                  : "No sessions match"
-            }
-            countLabel={
-              centerView === "terminal"
-                ? "terminal"
-                : centerView === "workflow"
-                  ? "workflow"
-                  : "session"
-            }
-            deleteButtonLabel={
-              centerView === "terminal"
-                ? "Terminate terminal"
-                : centerView === "workflow"
-                  ? "Delete workflow"
-                  : "Delete session"
-            }
-            searchControls={null}
-            onDeepSearch={
-              centerView === "session" ? searchSessionContent : undefined
-            }
-          />
+          <div className="min-h-0 flex-1">
+            <SessionList
+              sessions={
+                centerView === "terminal"
+                  ? terminalListItems
+                  : centerView === "workflow"
+                    ? workflowListItems
+                    : filteredSessions
+              }
+              selectedSession={
+                centerView === "terminal"
+                  ? selectedTerminalId
+                  : centerView === "workflow"
+                    ? selectedWorkflowKey
+                    : selectedSession
+              }
+              onSelectSession={handleSelectLeftPaneItem}
+              onRequestDeleteSession={handleRequestDeleteLeftPaneItem}
+              loading={
+                centerView === "terminal"
+                  ? loadingTerminals
+                  : centerView === "workflow"
+                    ? loadingWorkflows
+                    : loading
+              }
+              searchInputRef={sessionListSearchInputRef}
+              emptyLabel={
+                centerView === "terminal"
+                  ? "No active terminals found"
+                  : centerView === "workflow"
+                    ? "No workflows found"
+                    : "No sessions found"
+              }
+              noMatchLabel={
+                centerView === "terminal"
+                  ? "No terminals match"
+                  : centerView === "workflow"
+                    ? "No workflows match"
+                    : "No sessions match"
+              }
+              countLabel={
+                centerView === "terminal"
+                  ? "terminal"
+                  : centerView === "workflow"
+                    ? "workflow"
+                    : "session"
+              }
+              deleteButtonLabel={
+                centerView === "terminal"
+                  ? "Terminate terminal"
+                  : centerView === "workflow"
+                    ? "Delete workflow"
+                    : "Delete session"
+              }
+              searchControls={null}
+              onDeepSearch={
+                centerView === "session" ? searchSessionContent : undefined
+              }
+            />
+          </div>
+          <div className="shrink-0 border-t border-zinc-800/60 bg-zinc-950/80 p-2">
+            <button
+              type="button"
+              onClick={() => setShowConfigModal(true)}
+              className="flex h-9 w-full items-center gap-2 rounded px-2.5 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-900/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+              title="Codex Deck settings"
+              aria-label="Codex Deck settings"
+            >
+              <Settings className="h-4 w-4 shrink-0" />
+              <span>Settings</span>
+            </button>
+          </div>
           <div
             role="separator"
             aria-label="Resize left pane"
@@ -13493,6 +13511,21 @@ export default function CodexDeckApp() {
           onHideResetConfirm={() => setShowMemoriesResetConfirm(false)}
           onConfirmReset={() => {
             void confirmResetMemories();
+          }}
+        />
+
+        <ConfigModal
+          open={showConfigModal}
+          onClose={() => setShowConfigModal(false)}
+          onApplied={(response) => {
+            setCodexHomes(response.homes);
+            const selectedHome = response.homes.find(
+              (home) => home.id === selectedCodexHomeId,
+            );
+            if (!selectedHome?.available) {
+              resetHomeBrowsingState(response.mainHomeId || MAIN_CODEX_HOME_ID);
+            }
+            showCommandNoticeForDuration("Applied Codex Deck config.");
           }}
         />
 
