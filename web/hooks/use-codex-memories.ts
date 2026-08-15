@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getCodexMemoriesSettings,
   resetCodexMemories,
@@ -7,6 +7,7 @@ import {
 
 interface UseCodexMemoriesInput {
   activeSessionId: string | null;
+  homeId: string;
   onError: (message: string) => void;
   onNotice: (message: string) => void;
 }
@@ -34,7 +35,7 @@ interface UseCodexMemoriesResult {
 export function useCodexMemories(
   input: UseCodexMemoriesInput,
 ): UseCodexMemoriesResult {
-  const { activeSessionId, onError, onNotice } = input;
+  const { activeSessionId, homeId, onError, onNotice } = input;
   const [showMemoriesModal, setShowMemoriesModal] = useState(false);
   const [memoriesUseEnabled, setMemoriesUseEnabled] = useState(false);
   const [memoriesGenerateEnabled, setMemoriesGenerateEnabled] = useState(false);
@@ -43,24 +44,44 @@ export function useCodexMemories(
   const [resettingMemories, setResettingMemories] = useState(false);
   const [showMemoriesResetConfirm, setShowMemoriesResetConfirm] =
     useState(false);
+  const homeIdRef = useRef(homeId);
+  homeIdRef.current = homeId;
+
+  useEffect(() => {
+    setShowMemoriesModal(false);
+    setShowMemoriesResetConfirm(false);
+    setMemoriesUseEnabled(false);
+    setMemoriesGenerateEnabled(false);
+    setLoadingMemoriesSettings(false);
+    setSavingMemoriesSettings(false);
+    setResettingMemories(false);
+  }, [homeId]);
 
   const openMemoriesModalFromCommand = useCallback(
     async (_threadId: string, cwd: string | null | undefined) => {
+      const requestHomeId = homeId;
       setShowMemoriesModal(true);
       setShowMemoriesResetConfirm(false);
       setLoadingMemoriesSettings(true);
       onError("");
       try {
         const settings = await getCodexMemoriesSettings(cwd ?? null);
+        if (homeIdRef.current !== requestHomeId) {
+          return;
+        }
         setMemoriesUseEnabled(settings.useMemories);
         setMemoriesGenerateEnabled(settings.generateMemories);
       } catch (error) {
-        onError(error instanceof Error ? error.message : String(error));
+        if (homeIdRef.current === requestHomeId) {
+          onError(error instanceof Error ? error.message : String(error));
+        }
       } finally {
-        setLoadingMemoriesSettings(false);
+        if (homeIdRef.current === requestHomeId) {
+          setLoadingMemoriesSettings(false);
+        }
       }
     },
-    [onError],
+    [homeId, onError],
   );
 
   const saveMemoriesSettings = useCallback(async () => {
@@ -69,6 +90,7 @@ export function useCodexMemories(
       return;
     }
 
+    const requestHomeId = homeId;
     setSavingMemoriesSettings(true);
     onError("");
     try {
@@ -77,17 +99,25 @@ export function useCodexMemories(
         generateMemories: memoriesGenerateEnabled,
         threadId: activeSessionId,
       });
+      if (homeIdRef.current !== requestHomeId) {
+        return;
+      }
       setMemoriesUseEnabled(settings.useMemories);
       setMemoriesGenerateEnabled(settings.generateMemories);
       setShowMemoriesModal(false);
       onNotice("Saved memory settings.");
     } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
+      if (homeIdRef.current === requestHomeId) {
+        onError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      setSavingMemoriesSettings(false);
+      if (homeIdRef.current === requestHomeId) {
+        setSavingMemoriesSettings(false);
+      }
     }
   }, [
     activeSessionId,
+    homeId,
     memoriesGenerateEnabled,
     memoriesUseEnabled,
     onError,
@@ -95,19 +125,27 @@ export function useCodexMemories(
   ]);
 
   const confirmResetMemories = useCallback(async () => {
+    const requestHomeId = homeId;
     setResettingMemories(true);
     onError("");
     try {
       await resetCodexMemories();
+      if (homeIdRef.current !== requestHomeId) {
+        return;
+      }
       setShowMemoriesResetConfirm(false);
       setShowMemoriesModal(false);
       onNotice("Reset local memories.");
     } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
+      if (homeIdRef.current === requestHomeId) {
+        onError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      setResettingMemories(false);
+      if (homeIdRef.current === requestHomeId) {
+        setResettingMemories(false);
+      }
     }
-  }, [onError, onNotice]);
+  }, [homeId, onError, onNotice]);
 
   return {
     showMemoriesModal,

@@ -18,6 +18,7 @@ import type {
   CodexAgentWaitConfig,
   CodexCollaborationModeOption,
   CodexConfigDefaultsResponse,
+  CodexHomeDescriptor,
   CodexModelOption,
   CodexReasoningEffort,
   CodexSkillMetadata,
@@ -183,6 +184,7 @@ import {
   isRemoteTransportEnabled,
   listCodexCollaborationModes,
   listCodexModels,
+  listCodexHomes,
   listRemoteAdminSetupTokens,
   listProjects,
   getWorkflowBySession as getWorkflowBySessionRequest,
@@ -258,6 +260,7 @@ import {
   getTerminalSessionRoles as getTerminalSessionRolesRequest,
   translateText,
 } from "../api";
+import { MAIN_CODEX_HOME_ID, setActiveCodexHomeId } from "../codex-home-scope";
 import {
   buildAiTerminalRejectionFeedback,
   extractConversationMessageText,
@@ -308,7 +311,7 @@ import {
   type BrowserTitleMode,
 } from "../browser-title";
 import {
-  SESSION_STATUS_STORAGE_KEY,
+  getSessionStatusStorageKey,
   getSessionStatus,
   markTrackedSessionReviewed,
   persistTrackedSessionStatuses,
@@ -1035,13 +1038,23 @@ async function copyTextToClipboard(text: string): Promise<void> {
   }
 }
 
-function loadMessageHistoryMap(): Record<string, string[]> {
+function homeScopedStorageKey(baseKey: string, homeId: string): string {
+  return homeId === MAIN_CODEX_HOME_ID
+    ? baseKey
+    : `${baseKey}:${encodeURIComponent(homeId)}`;
+}
+
+function loadMessageHistoryMap(
+  homeId = MAIN_CODEX_HOME_ID,
+): Record<string, string[]> {
   if (typeof window === "undefined") {
     return {};
   }
 
   try {
-    const raw = window.localStorage.getItem(MESSAGE_HISTORY_STORAGE_KEY);
+    const raw = window.localStorage.getItem(
+      homeScopedStorageKey(MESSAGE_HISTORY_STORAGE_KEY, homeId),
+    );
     if (!raw) {
       return {};
     }
@@ -1069,14 +1082,17 @@ function loadMessageHistoryMap(): Record<string, string[]> {
   }
 }
 
-function persistMessageHistoryMap(value: Record<string, string[]>): void {
+function persistMessageHistoryMap(
+  value: Record<string, string[]>,
+  homeId = MAIN_CODEX_HOME_ID,
+): void {
   if (typeof window === "undefined") {
     return;
   }
 
   try {
     window.localStorage.setItem(
-      MESSAGE_HISTORY_STORAGE_KEY,
+      homeScopedStorageKey(MESSAGE_HISTORY_STORAGE_KEY, homeId),
       JSON.stringify(value),
     );
   } catch {
@@ -1084,13 +1100,17 @@ function persistMessageHistoryMap(value: Record<string, string[]>): void {
   }
 }
 
-function loadSessionModeMap(): Record<string, CollaborationModeKey> {
+function loadSessionModeMap(
+  homeId = MAIN_CODEX_HOME_ID,
+): Record<string, CollaborationModeKey> {
   if (typeof window === "undefined") {
     return {};
   }
 
   try {
-    const raw = window.sessionStorage.getItem(SESSION_MODE_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(
+      homeScopedStorageKey(SESSION_MODE_STORAGE_KEY, homeId),
+    );
     if (!raw) {
       return {};
     }
@@ -1117,6 +1137,7 @@ function loadSessionModeMap(): Record<string, CollaborationModeKey> {
 
 function persistSessionModeMap(
   value: Record<string, CollaborationModeKey>,
+  homeId = MAIN_CODEX_HOME_ID,
 ): void {
   if (typeof window === "undefined") {
     return;
@@ -1124,7 +1145,7 @@ function persistSessionModeMap(
 
   try {
     window.sessionStorage.setItem(
-      SESSION_MODE_STORAGE_KEY,
+      homeScopedStorageKey(SESSION_MODE_STORAGE_KEY, homeId),
       JSON.stringify(value),
     );
   } catch {
@@ -3551,6 +3572,11 @@ export default function CodexDeckApp() {
   const [selectedRemoteMachine, setSelectedRemoteMachine] = useState<
     string | null
   >(null);
+  const [codexHomes, setCodexHomes] = useState<CodexHomeDescriptor[]>([]);
+  const [selectedCodexHomeId, setSelectedCodexHomeId] =
+    useState(MAIN_CODEX_HOME_ID);
+  const [codexHomesLoading, setCodexHomesLoading] = useState(true);
+  const [codexHomesError, setCodexHomesError] = useState<string | null>(null);
   const [remoteLatencyLoggingEnabled, setRemoteLatencyLoggingEnabledState] =
     useState<boolean>(() => isRemoteLatencyLoggingEnabled());
 
@@ -3763,7 +3789,7 @@ export default function CodexDeckApp() {
   >([]);
   const [sessionModeById, setSessionModeById] = useState<
     Record<string, CollaborationModeKey>
-  >(() => loadSessionModeMap());
+  >(() => loadSessionModeMap(MAIN_CODEX_HOME_ID));
   const [selectedModeKey, setSelectedModeKey] =
     useState<CollaborationModeKey>(DEFAULT_MODE_KEY);
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -3772,7 +3798,7 @@ export default function CodexDeckApp() {
   >("");
   const [messageHistoryBySession, setMessageHistoryBySession] = useState<
     Record<string, string[]>
-  >(() => loadMessageHistoryMap());
+  >(() => loadMessageHistoryMap(MAIN_CODEX_HOME_ID));
   const [pendingUserMessagesBySession, setPendingUserMessagesBySession] =
     useState<Record<string, PendingUserMessage[]>>({});
   const [newSessionCwdState, setNewSessionCwdState] =
@@ -3781,7 +3807,9 @@ export default function CodexDeckApp() {
   const [stoppingTurn, setStoppingTurn] = useState(false);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
   const [trackedSessionStatuses, setTrackedSessionStatuses] =
-    useState<TrackedSessionStatusMap>(() => readTrackedSessionStatuses());
+    useState<TrackedSessionStatusMap>(() =>
+      readTrackedSessionStatuses(undefined, MAIN_CODEX_HOME_ID),
+    );
   const [connectionFailureNotice, setConnectionFailureNotice] =
     useState<ConnectionFailureNotice | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -3962,6 +3990,7 @@ export default function CodexDeckApp() {
   const daemonCommandHistoryLoggedRef = useRef<Map<string, Set<string>>>(
     new Map(),
   );
+  const codexHomeGenerationRef = useRef(0);
 
   const trackWebManagedSessionTurn = useCallback(
     (sessionId: string, turnId?: string | null) => {
@@ -4061,21 +4090,247 @@ export default function CodexDeckApp() {
     setRemoteAutoRestoreServerUrl(null);
   }, [remoteServerUrl]);
 
-  const resetRemoteBrowsingState = useCallback(() => {
+  const resetHomeBrowsingState = useCallback((homeId: string) => {
+    const normalizedHomeId = homeId.trim() || MAIN_CODEX_HOME_ID;
+    codexHomeGenerationRef.current += 1;
+    setActiveCodexHomeId(normalizedHomeId);
+    setSelectedCodexHomeId(normalizedHomeId);
     setSessions([]);
     setProjects([]);
     setSelectedProject(null);
     setSelectedSession(null);
+    setTerminals([]);
+    setSelectedTerminalProject(null);
+    setSelectedTerminalId(null);
+    setPendingTerminalSelectionId(null);
     setWorkflows([]);
     setSelectedWorkflowProject(null);
     setSelectedWorkflowKey(null);
+    setPendingWorkflowSelectionKey(null);
+    setSelectedWorkflowTaskId(null);
+    setSelectedSessionWorkflowMatch(null);
     setWorkflowDetail(null);
+    setWorkflowDetailLoading(false);
+    setWorkflowDetailError(null);
     setWorkflowLog(null);
+    setWorkflowLogLoading(false);
+    setWorkflowLogError(null);
     setWorkflowDaemonStatus(null);
+    setWorkflowActionBusy(false);
+    setWorkflowActionLabel(null);
+    setWorkflowActionResultLabel(null);
+    setWorkflowActionResultOutput(null);
+    setWorkflowStopHint(null);
+    setShowWorkflowCreateModal(false);
+    setShowWorkflowIdPromptModal(false);
+    setWorkflowSkillInstallPrompt(null);
+    setTerminalSkillInstallPrompt(null);
+    setTerminalBindingBusy(false);
+    setWorkflowIdPromptDraft("");
+    setWorkflowCreateProjectRoot("");
+    setWorkflowCreateTitle("");
+    setWorkflowCreateRequest("");
+    setWorkflowCreateId("");
+    setWorkflowCreateTargetBranch("");
+    setWorkflowCreateTaskCount("1");
+    setWorkflowCreateMaxParallel("1");
+    setWorkflowCreateTasksJson("");
+    setWorkflowCreateSequential(false);
+    setWorkflowCreateMode("chat");
+    setWorkflowCreateChatSessionId(null);
+    setWorkflowCreateChatProjectRoot("");
+    setWorkflowCreateChatInput("");
+    setWorkflowCreateWaitingDotCount(0);
+    setWorkflowCreateChatPreviewMessage(null);
+    setWorkflowCreateChatPendingTurnId(null);
+    setWorkflowCreateImportedDraft(null);
+    setWorkflowLatestSessionPreview({ sessionId: null, message: null });
+    setWorkflowLatestSessionPreviewLoading(false);
+    setSessionWorkflowRolesById({});
+    setSessionTerminalRolesById({});
+    setTerminalEmbeddedMessages(EMPTY_TERMINAL_EMBEDDED_MESSAGES_STATE);
+    setTerminalEmbeddedMessagesLoading(false);
+    terminalEmbeddedRawMessagesRef.current = [];
+    setSessionDiff(null);
+    setSessionFileTreeNodes(null);
+    setSessionFileTreeLoadingMore(false);
+    setSessionFileContent(null);
+    setSelectedDiffFilePath(null);
+    setLoadingSessionDiff(false);
+    setSessionDiffError(null);
+    setLoadingSessionFileContent(false);
+    setSessionFileContentError(null);
+    setSelectedFileContentPage(1);
+    setSelectedFileTargetLine(null);
+    setTerminalRuns([]);
+    setLoadingTerminalRuns(false);
+    setTerminalRunsError(null);
+    setSelectedTerminalRunId(null);
+    setTerminalRunOutput("");
+    setLoadingTerminalRunOutput(false);
+    setTerminalRunOutputError(null);
+    setTerminalRunOutputIsRunning(false);
+    setSessionSkills(null);
+    setLoadingSessionSkills(false);
+    setSessionSkillsError(null);
+    setSelectedSkillPath(null);
+    setUpdatingSkillPath(null);
+    setModels([]);
+    setCollaborationModes([]);
+    setConfigDefaults({
+      model: null,
+      reasoningEffort: null,
+      planModeReasoningEffort: null,
+    });
+    setSelectedModeKey(DEFAULT_MODE_KEY);
+    setSelectedModelId("");
+    setSelectedEffort("");
+    setSessionModeById(loadSessionModeMap(normalizedHomeId));
+    setMessageHistoryBySession(loadMessageHistoryMap(normalizedHomeId));
+    setTrackedSessionStatuses(
+      readTrackedSessionStatuses(undefined, normalizedHomeId),
+    );
+    setNewSessionCwdState(EMPTY_NEW_SESSION_CWD_STATE);
+    setPendingUserMessagesBySession({});
+    pendingUserMessagesBySessionRef.current = {};
+    setSendingMessage(false);
+    setStoppingTurn(false);
+    setCreatingSession(false);
+    setConnectionFailureNotice(null);
+    connectionFailureNoticeRef.current = null;
+    setCommandNotice(null);
+    setThreadNameOverrides({});
+    setSideThreadsById({});
+    setFixingDangling(false);
+    setShowFixDanglingConfirm(false);
+    setFixDanglingTargetSessionId(null);
+    setWaitSilenceStartedAt(null);
+    setShowFixDangling(false);
+    setDeletingSession(false);
+    setDeleteSessionTargetId(null);
+    setWorkflowDeleteMode(null);
+    setDeleteWorkflowTargetId(null);
+    setTerminalDeleteMode(null);
+    setDeleteTerminalTargetId(null);
+    setShowCollabModePicker(false);
+    setShowStatusModal(false);
+    setShowRenameModal(false);
+    setRenameDraft("");
+    setRenamingSession(false);
+    setShowAgentPicker(false);
+    setShowWorkflowDangerConfirm(null);
+    setLoadingAgentThreads(false);
+    setAgentThreadsError(null);
+    setAgentThreads([]);
+    setAgentPickerRootThreadId(null);
+    setSelectedAgentThreadId(null);
+    setThreadSummaryById(new Map());
+    setAgentActivityByThreadId(new Map());
+    setAgentActionDraft("");
+    setAgentActionBusy(null);
+    pendingSendOptionsByIdRef.current.clear();
+    waitSuppressSessionsRef.current.clear();
+    queueAutosendSuppressSessionsRef.current.clear();
+    queueDrainInFlightSessionsRef.current.clear();
+    confirmedComposerUserMessageCountBySessionRef.current = {};
+    ignoredPendingConfirmationCountBySessionRef.current = {};
+    activeWaitSessionRef.current = null;
+    sessionSelectionRequestIdRef.current += 1;
+    workflowLogRequestIdRef.current += 1;
+    daemonCommandHistoryLoggedRef.current.clear();
+    pendingFilePathLinkTargetRef.current = null;
+    settleChimeTrackerRef.current.clear();
+    workflowCreateChatAbortRequestedRef.current = true;
+    workflowCreateChatRequestIdRef.current += 1;
+    workflowCreateChatActiveSessionIdRef.current = null;
+    if (workflowCreateChatPollTimeoutRef.current !== null) {
+      window.clearTimeout(workflowCreateChatPollTimeoutRef.current);
+      workflowCreateChatPollTimeoutRef.current = null;
+    }
+    workflowCreateChatPollResolveRef.current?.();
+    workflowCreateChatPollResolveRef.current = null;
+    workflowSkillInstallPromptResolveRef.current?.("cancel");
+    workflowSkillInstallPromptResolveRef.current = null;
+    terminalSkillInstallPromptResolveRef.current?.("cancel");
+    terminalSkillInstallPromptResolveRef.current = null;
+    setPendingTurn(null);
+    pendingTurnRef.current = null;
+    setThreadStatusDetails(null);
+    setStatusTokenUsage(null);
+    setContextLeftPercent(null);
+    setContextUsedTokens(null);
+    setContextModelWindow(null);
+    setInteractionError(null);
     setCenterView("session");
     setLoading(true);
+    setLoadingTerminals(true);
     setLoadingWorkflows(true);
   }, []);
+
+  const resetRemoteBrowsingState = useCallback(() => {
+    resetHomeBrowsingState(MAIN_CODEX_HOME_ID);
+  }, [resetHomeBrowsingState]);
+
+  useEffect(() => {
+    if (!apiReady) {
+      setCodexHomes([]);
+      setCodexHomesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const generation = codexHomeGenerationRef.current;
+    setCodexHomesLoading(true);
+    setCodexHomesError(null);
+    void listCodexHomes()
+      .then((response) => {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
+          return;
+        }
+        setCodexHomes(response.homes);
+        const selectedHome = response.homes.find(
+          (home) => home.id === selectedCodexHomeId,
+        );
+        if (!selectedHome?.available) {
+          resetHomeBrowsingState(response.mainHomeId || MAIN_CODEX_HOME_ID);
+        }
+      })
+      .catch((error) => {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
+          return;
+        }
+        setCodexHomesError(
+          error instanceof Error ? error.message : String(error),
+        );
+        setCodexHomes([]);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCodexHomesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiReady,
+    connectionMode,
+    resetHomeBrowsingState,
+    selectedCodexHomeId,
+    selectedRemoteMachine,
+  ]);
+
+  const handleSelectCodexHome = useCallback(
+    (homeId: string) => {
+      const target = codexHomes.find((home) => home.id === homeId);
+      if (!target?.available || target.id === selectedCodexHomeId) {
+        return;
+      }
+      resetHomeBrowsingState(target.id);
+    },
+    [codexHomes, resetHomeBrowsingState, selectedCodexHomeId],
+  );
 
   useEffect(() => {
     if (
@@ -4157,6 +4412,7 @@ export default function CodexDeckApp() {
     activePet,
   } = useCodexPets({
     apiReady,
+    homeId: selectedCodexHomeId,
     onError: (message) => setInteractionError(message || null),
     onNotice: showCommandNoticeForDuration,
   });
@@ -5202,6 +5458,7 @@ export default function CodexDeckApp() {
     confirmResetMemories,
   } = useCodexMemories({
     activeSessionId: activeComposerSessionId,
+    homeId: selectedCodexHomeId,
     onError: (message) => setInteractionError(message || null),
     onNotice: showCommandNoticeForDuration,
   });
@@ -6276,28 +6533,39 @@ export default function CodexDeckApp() {
       return;
     }
 
+    const generation = codexHomeGenerationRef.current;
     listProjects()
-      .then(setProjects)
+      .then((nextProjects) => {
+        if (codexHomeGenerationRef.current === generation) {
+          setProjects(nextProjects);
+        }
+      })
       .catch((error) => {
         console.error(error);
       });
-  }, [apiReady]);
+  }, [apiReady, selectedCodexHomeId]);
 
   useEffect(() => {
     if (!apiReady) {
       return;
     }
 
+    const generation = codexHomeGenerationRef.current;
     listActiveTerminals()
       .then((nextTerminals) => {
+        if (codexHomeGenerationRef.current !== generation) {
+          return;
+        }
         setTerminals(nextTerminals);
         setLoadingTerminals(false);
       })
       .catch((error) => {
         console.error(error);
-        setLoadingTerminals(false);
+        if (codexHomeGenerationRef.current === generation) {
+          setLoadingTerminals(false);
+        }
       });
-  }, [apiReady]);
+  }, [apiReady, selectedCodexHomeId]);
 
   useEffect(() => {
     if (!apiReady) {
@@ -6305,6 +6573,7 @@ export default function CodexDeckApp() {
     }
 
     let cancelled = false;
+    const generation = codexHomeGenerationRef.current;
 
     Promise.all([
       listCodexModels(),
@@ -6312,7 +6581,7 @@ export default function CodexDeckApp() {
       getCodexConfigDefaults(),
     ])
       .then(([modelsData, collaborationModesData, configDefaultsData]) => {
-        if (cancelled) {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
           return;
         }
 
@@ -6321,7 +6590,7 @@ export default function CodexDeckApp() {
         setConfigDefaults(configDefaultsData);
       })
       .catch((error) => {
-        if (!cancelled) {
+        if (!cancelled && codexHomeGenerationRef.current === generation) {
           setInteractionError(
             error instanceof Error ? error.message : String(error),
           );
@@ -6331,7 +6600,7 @@ export default function CodexDeckApp() {
     return () => {
       cancelled = true;
     };
-  }, [apiReady]);
+  }, [apiReady, selectedCodexHomeId]);
 
   useEffect(() => {
     if (!activeComposerSessionId) {
@@ -6740,20 +7009,24 @@ export default function CodexDeckApp() {
       return;
     }
 
+    const generation = codexHomeGenerationRef.current;
     return subscribeSessionsStream({
       onSessions: (sessions) => {
+        if (codexHomeGenerationRef.current !== generation) return;
         const event = new MessageEvent("sessions", {
           data: JSON.stringify(sessions),
         });
         handleSessionsFull(event);
       },
       onSessionsUpdate: (sessions) => {
+        if (codexHomeGenerationRef.current !== generation) return;
         const event = new MessageEvent("sessionsUpdate", {
           data: JSON.stringify(sessions),
         });
         handleSessionsUpdate(event);
       },
       onSessionsRemoved: (sessionIds) => {
+        if (codexHomeGenerationRef.current !== generation) return;
         const event = new MessageEvent("sessionsRemoved", {
           data: JSON.stringify({
             sessionIds,
@@ -6763,13 +7036,22 @@ export default function CodexDeckApp() {
         handleSessionsRemoved(event);
       },
       onSkillsChanged: ({ sessionId }) => {
+        if (codexHomeGenerationRef.current !== generation) return;
         const event = new MessageEvent("skillsChanged", {
           data: JSON.stringify({ sessionId }),
         });
         handleSkillsChanged(event);
       },
-      onCodexAppServerEvent: handleCodexAppServerEvent,
-      onError: handleSessionsError,
+      onCodexAppServerEvent: (event) => {
+        if (codexHomeGenerationRef.current === generation) {
+          handleCodexAppServerEvent(event);
+        }
+      },
+      onError: () => {
+        if (codexHomeGenerationRef.current === generation) {
+          handleSessionsError();
+        }
+      },
     });
   }, [
     apiReady,
@@ -6780,6 +7062,7 @@ export default function CodexDeckApp() {
     handleSkillsChanged,
     handleCodexAppServerEvent,
     handleSessionsError,
+    selectedCodexHomeId,
   ]);
 
   useEffect(() => {
@@ -6787,16 +7070,20 @@ export default function CodexDeckApp() {
       return;
     }
 
+    const generation = codexHomeGenerationRef.current;
     return subscribeTerminalsStream({
       onTerminals: (nextTerminals) => {
+        if (codexHomeGenerationRef.current !== generation) return;
         setTerminals(nextTerminals);
         setLoadingTerminals(false);
       },
       onError: () => {
-        setLoadingTerminals(false);
+        if (codexHomeGenerationRef.current === generation) {
+          setLoadingTerminals(false);
+        }
       },
     });
-  }, [apiReady, isPageVisible]);
+  }, [apiReady, isPageVisible, selectedCodexHomeId]);
 
   const { sessionIds, sessionIdsKey } = useMemo(
     () => getStableSessionIds(sessions),
@@ -6822,9 +7109,10 @@ export default function CodexDeckApp() {
     }
 
     let cancelled = false;
+    const generation = codexHomeGenerationRef.current;
     getCodexThreadSummaries({ threadIds: sessionIds })
       .then((payload) => {
-        if (cancelled) {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
           return;
         }
 
@@ -6876,9 +7164,10 @@ export default function CodexDeckApp() {
     }
 
     let cancelled = false;
+    const generation = codexHomeGenerationRef.current;
     getWorkflowSessionRolesRequest(sessionIds)
       .then((roles) => {
-        if (cancelled) {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
           return;
         }
 
@@ -7347,30 +7636,39 @@ export default function CodexDeckApp() {
   }, [normalizeModeKey]);
 
   useEffect(() => {
-    persistSessionModeMap(sessionModeById);
-  }, [sessionModeById]);
+    persistSessionModeMap(sessionModeById, selectedCodexHomeId);
+  }, [selectedCodexHomeId, sessionModeById]);
 
   useEffect(() => {
-    persistMessageHistoryMap(messageHistoryBySession);
-  }, [messageHistoryBySession]);
+    persistMessageHistoryMap(messageHistoryBySession, selectedCodexHomeId);
+  }, [messageHistoryBySession, selectedCodexHomeId]);
 
   useEffect(() => {
-    persistTrackedSessionStatuses(trackedSessionStatuses);
-  }, [trackedSessionStatuses]);
+    persistTrackedSessionStatuses(
+      trackedSessionStatuses,
+      undefined,
+      selectedCodexHomeId,
+    );
+  }, [selectedCodexHomeId, trackedSessionStatuses]);
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== null && event.key !== SESSION_STATUS_STORAGE_KEY) {
+      if (
+        event.key !== null &&
+        event.key !== getSessionStatusStorageKey(selectedCodexHomeId)
+      ) {
         return;
       }
-      setTrackedSessionStatuses(readTrackedSessionStatuses());
+      setTrackedSessionStatuses(
+        readTrackedSessionStatuses(undefined, selectedCodexHomeId),
+      );
     };
 
     window.addEventListener("storage", handleStorage);
     return () => {
       window.removeEventListener("storage", handleStorage);
     };
-  }, []);
+  }, [selectedCodexHomeId]);
 
   useEffect(() => {
     if (!activeComposerSessionId) {
@@ -8177,11 +8475,12 @@ export default function CodexDeckApp() {
     }
 
     let cancelled = false;
+    const generation = codexHomeGenerationRef.current;
     setLoadingWorkflows(true);
 
     const unsubscribe = subscribeWorkflowsStream({
       onWorkflows: (nextWorkflows) => {
-        if (cancelled) {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
           return;
         }
         setWorkflows((current) =>
@@ -8192,7 +8491,7 @@ export default function CodexDeckApp() {
         setLoadingWorkflows(false);
       },
       onError: () => {
-        if (cancelled) {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
           return;
         }
         setLoadingWorkflows(false);
@@ -8203,7 +8502,7 @@ export default function CodexDeckApp() {
       cancelled = true;
       unsubscribe();
     };
-  }, [apiReady, isPageVisible]);
+  }, [apiReady, isPageVisible, selectedCodexHomeId]);
 
   useEffect(() => {
     if (!apiReady || !isPageVisible) {
@@ -8211,16 +8510,17 @@ export default function CodexDeckApp() {
     }
 
     let cancelled = false;
+    const generation = codexHomeGenerationRef.current;
 
     const unsubscribe = subscribeWorkflowDaemonStatusStream({
       onDaemonStatus: (status) => {
-        if (cancelled) {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
           return;
         }
         setWorkflowDaemonStatus(status);
       },
       onError: () => {
-        if (cancelled) {
+        if (cancelled || codexHomeGenerationRef.current !== generation) {
           return;
         }
         setWorkflowDaemonStatus(null);
@@ -8231,7 +8531,7 @@ export default function CodexDeckApp() {
       cancelled = true;
       unsubscribe();
     };
-  }, [apiReady, centerView, isPageVisible]);
+  }, [apiReady, centerView, isPageVisible, selectedCodexHomeId]);
 
   useEffect(() => {
     if (!selectedSession) {
@@ -12578,6 +12878,49 @@ export default function CodexDeckApp() {
                   )}
                 </div>
               </div>
+            </div>
+
+            <div className="px-3 pb-2">
+              <label className="block">
+                <span className="sr-only">Codex home</span>
+                <select
+                  value={selectedCodexHomeId}
+                  onChange={(event) =>
+                    handleSelectCodexHome(event.target.value)
+                  }
+                  disabled={codexHomesLoading || codexHomes.length === 0}
+                  aria-label="Codex home"
+                  className="h-9 w-full rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs text-zinc-300 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {codexHomes.length === 0 ? (
+                    <option value={MAIN_CODEX_HOME_ID}>
+                      {codexHomesLoading ? "Loading Codex homes..." : "Main"}
+                    </option>
+                  ) : (
+                    codexHomes.map((home) => (
+                      <option
+                        key={`${home.id}:${home.isMain ? "main" : "configured"}`}
+                        value={home.id}
+                        disabled={!home.available}
+                      >
+                        {home.label}
+                        {home.isMain ? " · Main" : ""}
+                        {!home.available
+                          ? ` · ${home.unavailableReason || "Unavailable"}`
+                          : ""}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              {codexHomesError ? (
+                <p
+                  className="mt-1 truncate text-[10px] text-red-400"
+                  role="alert"
+                >
+                  {codexHomesError}
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2 px-3 pb-3">

@@ -1,4 +1,5 @@
 import type { Session, ConversationMessage } from "@codex-deck/api";
+import { addCodexHomeToApiUrl } from "../codex-home-scope";
 
 interface ApiErrorPayload {
   error?: string;
@@ -22,7 +23,7 @@ export async function requestLocalJson<T>(
   url: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(addCodexHomeToApiUrl(url), init);
   const text = await response.text();
   let payload: (T | ApiErrorPayload | { text?: string }) | null = null;
 

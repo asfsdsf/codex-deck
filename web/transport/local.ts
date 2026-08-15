@@ -24,6 +24,7 @@ import type {
   WorkflowsStreamHandlers,
   WebTransport,
 } from "./types";
+import { addCodexHomeToApiUrl } from "../codex-home-scope";
 
 const WORKFLOW_DETAIL_POLL_INTERVAL_MS = 3_000;
 const WORKFLOW_DAEMON_STATUS_POLL_INTERVAL_MS = 5_000;
@@ -159,7 +160,7 @@ export function createLocalTransport(): WebTransport {
     // Keep a single local EventSource for global realtime state so two visible
     // pages do not exhaust the browser's per-origin connection budget.
     unsubscribeSharedRealtimeStream = createReconnectingEventSource({
-      createUrl: () => "/api/sessions/stream",
+      createUrl: () => addCodexHomeToApiUrl("/api/sessions/stream"),
       configure: (eventSource) => {
         eventSource.addEventListener("sessions", (event) => {
           const sessions = JSON.parse(event.data);
@@ -465,7 +466,9 @@ export function createLocalTransport(): WebTransport {
 
       const unsubscribeConversationStream = createReconnectingEventSource({
         createUrl: () =>
-          `/api/conversation/${encodeURIComponent(sessionId)}/stream?offset=${offset}`,
+          addCodexHomeToApiUrl(
+            `/api/conversation/${encodeURIComponent(sessionId)}/stream?offset=${offset}`,
+          ),
         configure: (eventSource) => {
           eventSource.addEventListener("messages", (event) => {
             const payload = JSON.parse(event.data) as
@@ -537,7 +540,9 @@ export function createLocalTransport(): WebTransport {
           if (options.clientId?.trim()) {
             params.set("clientId", options.clientId.trim());
           }
-          return `/api/terminals/${encodeURIComponent(options.terminalId)}/stream?${params.toString()}`;
+          return addCodexHomeToApiUrl(
+            `/api/terminals/${encodeURIComponent(options.terminalId)}/stream?${params.toString()}`,
+          );
         },
         configure: (eventSource) => {
           eventSource.addEventListener("terminal", (message) => {

@@ -203,9 +203,9 @@ Options:
 codex-deck also reads optional TOML config files:
 
 1. `./config.toml` (current working directory)
-2. `$CODEX_HOME/codex-deck/config.toml` (`$CODEX_HOME` defaults to `~/.codex`; this lookup does not follow `--dir`)
+2. `<main-codex-home>/codex-deck/config.toml`
 
-Both files are read when present and merged per key: a key set in `./config.toml` wins, and keys only set in `$CODEX_HOME/codex-deck/config.toml` still apply.
+The main Codex home is the directory selected when the server starts, using `--dir`, the configured `dir`, `CODEX_HOME`, or `~/.codex`. Both files are read when present and merged per key: a key set in `./config.toml` wins, and keys only set in the main Codex home's config still apply.
 
 When the same option is set in multiple places, the priority is: command-line arguments > environment variables > config file > built-in defaults.
 
@@ -214,6 +214,15 @@ port = 12001
 dir = "/path/to/codex-home"
 dev = false
 open = true
+translation_command = "translate-command $PROMPT"
+
+[codex_homes.work]
+path = "/path/to/work-codex-home"
+label = "Work"
+
+[codex_homes.personal]
+path = "/path/to/personal-codex-home"
+label = "Personal"
 
 [remote]
 server_url = "https://your-server-host"
@@ -226,6 +235,12 @@ pinned_opaque_server_key = "public-key" # optional
 ```
 
 All keys are optional. The `[remote]` keys mirror the `--remote-*` flags and `CODEXDECK_REMOTE_*` environment variables.
+
+Additional Codex homes are declared only by the main config with named `[codex_homes.<id>]` tables. Each available home appears in the selector at the top of the left pane. Missing directories, duplicate paths, reserved IDs, and other invalid entries remain visible but disabled. Config changes require restarting codex-deck.
+
+Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
+
+Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) always come from the main config. Runtime settings may be overridden by the selected home's own `codex-deck/config.toml`; currently this applies to `translation_command`. If the selected home does not set it, the main config value is used.
 
 ## Installation (Remote mode)
 

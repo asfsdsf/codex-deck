@@ -12,6 +12,11 @@ import {
   resolveCodexDeckOptions,
   type CodexDeckCliOptions,
 } from "./config";
+import {
+  CODEX_HOME_RUNTIME_CHILD_ENV,
+  CODEX_HOME_RUNTIME_TRANSLATION_ENV,
+} from "./codex-home-runtime-manager";
+import { buildCodexHomeRegistry } from "./codex-home-registry";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -117,12 +122,26 @@ const cliOptions: CodexDeckCliOptions = {
     : undefined,
 };
 
-const { paths: configPaths, config } = loadCodexDeckConfig();
+const bootstrapConfig = loadCodexDeckConfig();
+const bootstrapOptions = resolveCodexDeckOptions(
+  cliOptions,
+  bootstrapConfig.config,
+);
+const { paths: configPaths, config } = loadCodexDeckConfig(
+  process.cwd(),
+  bootstrapOptions.dir,
+);
 for (const path of configPaths) {
   console.log(`Loaded config from ${path}`);
 }
 
-const opts = resolveCodexDeckOptions(cliOptions, config);
+const isRuntimeChild =
+  process.env[CODEX_HOME_RUNTIME_CHILD_ENV]?.trim() === "1";
+const resolvedOptions = resolveCodexDeckOptions(
+  { ...cliOptions, dir: bootstrapOptions.dir },
+  config,
+);
+const opts = isRuntimeChild ? { ...resolvedOptions, port: 0 } : resolvedOptions;
 
 if (process.env.CODEXDECK_REMOTE_ACCESS_PASSWORD?.trim()) {
   console.error(
@@ -141,19 +160,43 @@ if (
   process.exit(1);
 }
 
+const homeRegistry = isRuntimeChild
+  ? []
+  : buildCodexHomeRegistry({
+      mainCodexHome: opts.dir,
+      mainConfig: config,
+    });
+const additionalCodexHomes = homeRegistry.filter((home) => !home.isMain);
+for (const home of additionalCodexHomes) {
+  if (!home.available) {
+    console.warn(
+      `Codex home ${home.id} is unavailable: ${home.unavailableReason || "unknown reason"}`,
+    );
+  }
+}
+
 const server = createServer({
   port: opts.port,
   codexDir: opts.dir,
+  hostname: isRuntimeChild ? "127.0.0.1" : "0.0.0.0",
+  runtimeEntryPath: isRuntimeChild ? undefined : __filename,
+  additionalCodexHomes,
   dev: opts.dev,
-  open: opts.open,
-  remoteServerUrl: opts.remoteServerUrl,
-  remoteUsername: opts.remoteUsername,
-  remotePassword: opts.remotePassword,
-  remoteSetupToken: opts.remoteSetupToken,
-  remoteMachineId: opts.remoteMachineId || deriveMachineId(opts.dir),
-  remotePinnedRealmId: opts.remotePinnedRealmId,
-  remotePinnedOpaqueServerPublicKey: opts.remotePinnedOpaqueServerKey,
-  translationCommand: opts.translationCommand,
+  open: isRuntimeChild ? false : opts.open,
+  remoteServerUrl: isRuntimeChild ? undefined : opts.remoteServerUrl,
+  remoteUsername: isRuntimeChild ? undefined : opts.remoteUsername,
+  remotePassword: isRuntimeChild ? undefined : opts.remotePassword,
+  remoteSetupToken: isRuntimeChild ? undefined : opts.remoteSetupToken,
+  remoteMachineId: isRuntimeChild
+    ? undefined
+    : opts.remoteMachineId || deriveMachineId(opts.dir),
+  remotePinnedRealmId: isRuntimeChild ? undefined : opts.remotePinnedRealmId,
+  remotePinnedOpaqueServerPublicKey: isRuntimeChild
+    ? undefined
+    : opts.remotePinnedOpaqueServerKey,
+  translationCommand: isRuntimeChild
+    ? process.env[CODEX_HOME_RUNTIME_TRANSLATION_ENV]?.trim() || undefined
+    : config.translationCommand,
 });
 
 process.on("SIGINT", () => {
@@ -167,8 +210,29 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-server.start().catch((err) => {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`Failed to start server: ${message}`);
-  process.exit(1);
-});
+server
+  .start()
+  .then((httpServer) => {
+    if (!isRuntimeChild || !process.send) {
+      return;
+    }
+    const address = (
+      httpServer as unknown as {
+        address?: () => string | { port?: number } | null;
+      }
+    ).address?.();
+    const port =
+      address && typeof address === "object" ? address.port : undefined;
+    if (!Number.isInteger(port) || !port) {
+      throw new Error("Runtime server did not report its listening port");
+    }
+    process.send({ type: "codex-home-runtime-ready", port });
+  })
+  .catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isRuntimeChild && process.send) {
+      process.send({ type: "codex-home-runtime-error", error: message });
+    }
+    console.error(`Failed to start server: ${message}`);
+    process.exit(1);
+  });

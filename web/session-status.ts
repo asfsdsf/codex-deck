@@ -1,4 +1,5 @@
 export const SESSION_STATUS_STORAGE_KEY = "codex-deck:session-status:v1";
+const MAIN_CODEX_HOME_ID = "main";
 
 export type SessionStatus = "completed" | "running" | "unreviewed";
 
@@ -12,8 +13,17 @@ export type TrackedSessionStatusMap = Record<string, TrackedSessionStatus>;
 type ReadableStorage = Pick<Storage, "getItem">;
 type WritableStorage = Pick<Storage, "setItem">;
 
+export function getSessionStatusStorageKey(
+  homeId = MAIN_CODEX_HOME_ID,
+): string {
+  return homeId === MAIN_CODEX_HOME_ID
+    ? SESSION_STATUS_STORAGE_KEY
+    : `${SESSION_STATUS_STORAGE_KEY}:${encodeURIComponent(homeId)}`;
+}
+
 export function readTrackedSessionStatuses(
   storage?: ReadableStorage | null,
+  homeId = MAIN_CODEX_HOME_ID,
 ): TrackedSessionStatusMap {
   const targetStorage =
     storage ?? (typeof window === "undefined" ? null : window.localStorage);
@@ -22,7 +32,7 @@ export function readTrackedSessionStatuses(
   }
 
   try {
-    const raw = targetStorage.getItem(SESSION_STATUS_STORAGE_KEY);
+    const raw = targetStorage.getItem(getSessionStatusStorageKey(homeId));
     if (!raw) {
       return {};
     }
@@ -66,6 +76,7 @@ export function readTrackedSessionStatuses(
 export function persistTrackedSessionStatuses(
   value: TrackedSessionStatusMap,
   storage?: WritableStorage | null,
+  homeId = MAIN_CODEX_HOME_ID,
 ): void {
   const targetStorage =
     storage ?? (typeof window === "undefined" ? null : window.localStorage);
@@ -74,7 +85,10 @@ export function persistTrackedSessionStatuses(
   }
 
   try {
-    targetStorage.setItem(SESSION_STATUS_STORAGE_KEY, JSON.stringify(value));
+    targetStorage.setItem(
+      getSessionStatusStorageKey(homeId),
+      JSON.stringify(value),
+    );
   } catch {
     // Ignore storage write errors (private mode, quota, etc.).
   }

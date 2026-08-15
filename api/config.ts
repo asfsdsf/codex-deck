@@ -12,12 +12,18 @@ export interface CodexDeckRemoteConfig {
   pinnedOpaqueServerKey?: string;
 }
 
+export interface CodexDeckHomeConfig {
+  path?: string;
+  label?: string;
+}
+
 export interface CodexDeckConfig {
   port?: number;
   dir?: string;
   dev?: boolean;
   open?: boolean;
   translationCommand?: string;
+  codexHomes?: Record<string, CodexDeckHomeConfig>;
   remote?: CodexDeckRemoteConfig;
 }
 
@@ -71,7 +77,8 @@ const REMOTE_KEY_MAP: Record<string, keyof CodexDeckRemoteConfig> = {
 
 /**
  * Parses the small TOML subset supported by codex-deck config files:
- * comments, `[remote]` table, double-quoted strings, integers, booleans.
+ * comments, `[remote]` and `[codex_homes.<id>]` tables, double-quoted strings,
+ * integers, booleans.
  * Unknown keys, unknown tables, and malformed lines are ignored.
  */
 export function parseConfigToml(content: string): CodexDeckConfig {
@@ -103,6 +110,20 @@ export function parseConfigToml(content: string): CodexDeckConfig {
       const value = parseTomlString(rawValue);
       if (value !== undefined) {
         (config.remote ??= {})[mapped] = value;
+      }
+    } else if (table.startsWith("codex_homes.")) {
+      const homeId = table.slice("codex_homes.".length).trim();
+      if (!homeId || homeId.includes(".")) {
+        continue;
+      }
+      if (key !== "path" && key !== "label") {
+        continue;
+      }
+      const value = parseTomlString(rawValue);
+      if (value?.trim()) {
+        const home = (config.codexHomes ??= {})[homeId] ?? {};
+        home[key] = value;
+        config.codexHomes[homeId] = home;
       }
     }
   }
@@ -247,6 +268,27 @@ export function mergeCodexDeckConfigs(
   if (translationCommand !== undefined) {
     merged.translationCommand = translationCommand;
   }
+  if (high.codexHomes || low.codexHomes) {
+    const codexHomes: Record<string, CodexDeckHomeConfig> = {};
+    const ids = new Set([
+      ...Object.keys(low.codexHomes ?? {}),
+      ...Object.keys(high.codexHomes ?? {}),
+    ]);
+    for (const id of ids) {
+      const highHome = high.codexHomes?.[id];
+      const lowHome = low.codexHomes?.[id];
+      const home: CodexDeckHomeConfig = {
+        path: highHome?.path ?? lowHome?.path,
+        label: highHome?.label ?? lowHome?.label,
+      };
+      if (home.path !== undefined || home.label !== undefined) {
+        codexHomes[id] = home;
+      }
+    }
+    if (Object.keys(codexHomes).length > 0) {
+      merged.codexHomes = codexHomes;
+    }
+  }
   if (high.remote || low.remote) {
     const remote: CodexDeckRemoteConfig = {};
     for (const key of Object.values(REMOTE_KEY_MAP)) {
@@ -279,6 +321,33 @@ export function loadCodexDeckConfig(
     }
   }
   return { paths, config };
+}
+
+export function loadCodexDeckHomeConfig(codexHome: string): CodexDeckConfig {
+  const path = join(codexHome, "codex-deck", "config.toml");
+  try {
+    return parseConfigToml(readFileSync(path, "utf-8"));
+  } catch (err) {
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+    if (code !== "ENOENT") {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`Failed to read config file ${path}: ${message}`);
+    }
+    return {};
+  }
+}
+
+export function resolveCodexDeckRuntimeConfig(
+  mainConfig: CodexDeckConfig,
+  homeConfig: CodexDeckConfig,
+): Pick<ResolvedCodexDeckOptions, "translationCommand"> {
+  return {
+    translationCommand:
+      homeConfig.translationCommand ?? mainConfig.translationCommand,
+  };
 }
 
 /**

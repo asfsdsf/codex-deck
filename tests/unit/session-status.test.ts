@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   SESSION_STATUS_STORAGE_KEY,
+  getSessionStatusStorageKey,
   getSessionStatus,
   markTrackedSessionReviewed,
   persistTrackedSessionStatuses,
@@ -72,4 +73,39 @@ test("tracked status storage persists and removes entries", () => {
     removeTrackedSessionStatus(JSON.parse(writtenValue), "session-1"),
     {},
   );
+});
+
+test("tracked status storage is scoped by Codex home", () => {
+  assert.equal(getSessionStatusStorageKey("main"), SESSION_STATUS_STORAGE_KEY);
+  assert.equal(
+    getSessionStatusStorageKey("work home"),
+    `${SESSION_STATUS_STORAGE_KEY}:work%20home`,
+  );
+
+  let readKey = "";
+  const statuses = readTrackedSessionStatuses(
+    {
+      getItem(key: string) {
+        readKey = key;
+        return JSON.stringify({
+          "session-1": { status: "running", turnId: "turn-1" },
+        });
+      },
+    },
+    "work",
+  );
+  assert.equal(readKey, `${SESSION_STATUS_STORAGE_KEY}:work`);
+  assert.equal(statuses["session-1"]?.status, "running");
+
+  let writtenKey = "";
+  persistTrackedSessionStatuses(
+    statuses,
+    {
+      setItem(key: string) {
+        writtenKey = key;
+      },
+    },
+    "work",
+  );
+  assert.equal(writtenKey, `${SESSION_STATUS_STORAGE_KEY}:work`);
 });

@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   findConfigFiles,
+  loadCodexDeckHomeConfig,
   loadCodexDeckConfig,
   mergeCodexDeckConfigs,
   parseConfigToml,
+  resolveCodexDeckRuntimeConfig,
   resolveCodexDeckOptions,
 } from "../../api/config";
 
@@ -100,6 +102,28 @@ test("parseConfigToml parses translation_command", () => {
   );
 });
 
+test("parseConfigToml parses named Codex home tables", () => {
+  const config = parseConfigToml(
+    [
+      "[codex_homes.work]",
+      'path = "/data/codex-work"',
+      'label = "Work"',
+      "unknown = true",
+      "",
+      "[codex_homes.personal]",
+      'path = "/data/codex-personal"',
+      "",
+      "[codex_homes.invalid.nested]",
+      'path = "/ignored"',
+    ].join("\n"),
+  );
+
+  assert.deepEqual(config.codexHomes, {
+    work: { path: "/data/codex-work", label: "Work" },
+    personal: { path: "/data/codex-personal" },
+  });
+});
+
 test("findConfigFiles returns existing files in priority order", () => {
   const root = makeTempDir();
   const cwd = join(root, "project");
@@ -186,6 +210,46 @@ test("mergeCodexDeckConfigs merges translationCommand per key", () => {
     mergeCodexDeckConfigs({}, low).translationCommand,
     "cmd-b $PROMPT",
   );
+});
+
+test("mergeCodexDeckConfigs merges Codex home definitions per field", () => {
+  const high = parseConfigToml(
+    [
+      "[codex_homes.work]",
+      'label = "Work override"',
+      "",
+      "[codex_homes.personal]",
+      'path = "/personal"',
+    ].join("\n"),
+  );
+  const low = parseConfigToml(
+    ["[codex_homes.work]", 'path = "/work"', 'label = "Work"'].join("\n"),
+  );
+
+  assert.deepEqual(mergeCodexDeckConfigs(high, low).codexHomes, {
+    work: { path: "/work", label: "Work override" },
+    personal: { path: "/personal", label: undefined },
+  });
+});
+
+test("home runtime config overrides selected values and falls back to main", () => {
+  const root = makeTempDir();
+  const selectedHome = join(root, "selected");
+  mkdirSync(join(selectedHome, "codex-deck"), { recursive: true });
+  writeFileSync(
+    join(selectedHome, "codex-deck", "config.toml"),
+    'translation_command = "selected $PROMPT"\n',
+  );
+
+  const mainConfig = parseConfigToml('translation_command = "main $PROMPT"');
+  const selectedConfig = loadCodexDeckHomeConfig(selectedHome);
+
+  assert.deepEqual(resolveCodexDeckRuntimeConfig(mainConfig, selectedConfig), {
+    translationCommand: "selected $PROMPT",
+  });
+  assert.deepEqual(resolveCodexDeckRuntimeConfig(mainConfig, {}), {
+    translationCommand: "main $PROMPT",
+  });
 });
 
 test("resolveCodexDeckOptions applies built-in defaults", () => {

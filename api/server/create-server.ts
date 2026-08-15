@@ -173,6 +173,12 @@ import {
 import { registerWorkflowRoutes } from "./workflow-routes";
 import { registerHooksRoutes } from "./hooks-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
+import { CodexHomeRuntimeManager } from "../codex-home-runtime-manager";
+import {
+  MAIN_CODEX_HOME_ID,
+  toCodexHomeDescriptor,
+  type ResolvedCodexHome,
+} from "../codex-home-registry";
 import {
   getTerminalBindingsByTerminalIds,
   onTerminalBindingChange,
@@ -1860,6 +1866,9 @@ async function buildLastTurnDiffResponse(
 export interface ServerOptions {
   port: number;
   codexDir?: string;
+  hostname?: string;
+  runtimeEntryPath?: string;
+  additionalCodexHomes?: ResolvedCodexHome[];
   dev?: boolean;
   open?: boolean;
   remoteServerUrl?: string;
@@ -1894,6 +1903,9 @@ export function createServer(options: ServerOptions) {
   const {
     port,
     codexDir,
+    hostname = "0.0.0.0",
+    runtimeEntryPath,
+    additionalCodexHomes = [],
     dev = false,
     open: shouldOpen = true,
     remoteServerUrl,
@@ -1911,6 +1923,22 @@ export function createServer(options: ServerOptions) {
   configureCodexAppServerClient({ codexHome: getCodexDir() });
   initWatcher(getCodexDir());
 
+  const allCodexHomes: ResolvedCodexHome[] = [
+    {
+      id: MAIN_CODEX_HOME_ID,
+      label: "Main",
+      path: getCodexDir(),
+      isMain: true,
+      available: true,
+      unavailableReason: null,
+    },
+    ...additionalCodexHomes,
+  ];
+  const homeRuntimeManager =
+    runtimeEntryPath && additionalCodexHomes.length > 0
+      ? new CodexHomeRuntimeManager(additionalCodexHomes, runtimeEntryPath)
+      : null;
+
   const app = new Hono();
   const internalRemoteProxyAccessToken = remoteServerUrl
     ? remoteProxyAccessToken?.trim() || randomUUID()
@@ -1924,6 +1952,48 @@ export function createServer(options: ServerOptions) {
       internalRemoteProxyAccessToken
     );
   };
+
+  if (dev) {
+    app.use(
+      "*",
+      cors({
+        origin: ["http://localhost:12000"],
+        allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+        allowHeaders: ["Content-Type"],
+      }),
+    );
+  }
+
+  app.get("/api/codex-homes", (c) =>
+    c.json({
+      homes: allCodexHomes.map(toCodexHomeDescriptor),
+      mainHomeId: MAIN_CODEX_HOME_ID,
+    }),
+  );
+
+  app.use("/api/*", async (c, next) => {
+    const homeId = c.req.query("codexHome")?.trim();
+    if (!homeId || homeId === MAIN_CODEX_HOME_ID) {
+      await next();
+      return;
+    }
+    const home = additionalCodexHomes.find(
+      (candidate) => candidate.id === homeId,
+    );
+    if (!home) {
+      return c.json({ error: "Unknown Codex home" }, 404);
+    }
+    if (!home.available) {
+      return c.json(
+        { error: home.unavailableReason || "Codex home is unavailable" },
+        409,
+      );
+    }
+    if (!homeRuntimeManager) {
+      return c.json({ error: "Additional Codex homes are unavailable" }, 503);
+    }
+    return homeRuntimeManager.fetch(homeId, c.req.raw);
+  });
   const sessionsRemovedListeners = new Set<
     (event: SessionsRemovedEvent) => void
   >();
@@ -2195,17 +2265,6 @@ export function createServer(options: ServerOptions) {
       listener(event.threadId);
     }
   };
-
-  if (dev) {
-    app.use(
-      "*",
-      cors({
-        origin: ["http://localhost:12000"],
-        allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
-        allowHeaders: ["Content-Type"],
-      }),
-    );
-  }
 
   app.get("/api/sessions", async (c) => {
     const sessions = await getSessions();
@@ -5090,15 +5149,29 @@ export function createServer(options: ServerOptions) {
     port,
     start: async () => {
       await loadStorage();
-      const openUrl = `http://localhost:${dev ? 12000 : port}/`;
-
-      httpServer = serve({
-        fetch: app.fetch,
-        port,
-        // Bind to IPv4 explicitly. In WSL, binding to Node's default "::"
-        // can make localhost forwarding to Windows browsers unreliable.
-        hostname: "0.0.0.0",
+      httpServer = await new Promise<ServerType>((resolveServer, reject) => {
+        const server = serve(
+          {
+            fetch: app.fetch,
+            port,
+            // Bind to IPv4 explicitly. In WSL, binding to Node's default "::"
+            // can make localhost forwarding to Windows browsers unreliable.
+            hostname,
+          },
+          () => {
+            server.off("error", handleStartupError);
+            resolveServer(server);
+          },
+        );
+        const handleStartupError = (error: Error) => {
+          reject(error);
+        };
+        server.once("error", handleStartupError);
       });
+      const address = httpServer.address();
+      const listeningPort =
+        address && typeof address === "object" ? address.port : port;
+      const openUrl = `http://localhost:${dev ? 12000 : listeningPort}/`;
 
       if (
         remoteServerUrl &&
@@ -5114,7 +5187,7 @@ export function createServer(options: ServerOptions) {
           setupToken: remoteSetupToken,
           machineId: remoteMachineId,
           codexDir: getCodexDir(),
-          localPort: port,
+          localPort: listeningPort,
           pinnedRealmId: remotePinnedRealmId,
           pinnedOpaqueServerPublicKey: remotePinnedOpaqueServerPublicKey,
           appFetch: async (request) => app.fetch(request),
@@ -5151,6 +5224,7 @@ export function createServer(options: ServerOptions) {
       if (httpServer) {
         httpServer.close();
       }
+      homeRuntimeManager?.stop();
     },
   };
 }

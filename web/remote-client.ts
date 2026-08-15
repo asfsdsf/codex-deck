@@ -12,6 +12,7 @@ import {
   type RemoteMachineState,
   verifyRemoteRpcResultSignature,
 } from "@zuoyehaoduoa/wire";
+import { addCodexHomeToApiUrl } from "./codex-home-scope";
 
 interface BootstrapResponse {
   remoteAuthVersion: 2;
@@ -804,6 +805,7 @@ export class RemoteClient {
   }
 
   public async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+    path = addCodexHomeToApiUrl(path);
     const method = init?.method || "GET";
     const requestTimeoutMs = path.startsWith("/api/sessions/search?")
       ? 70_000

@@ -510,6 +510,19 @@ export interface SystemContextResponse {
   defaultShell: string | null;
 }
 
+export interface CodexHomeDescriptor {
+  id: string;
+  label: string;
+  isMain: boolean;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export interface CodexHomesResponse {
+  homes: CodexHomeDescriptor[];
+  mainHomeId: string;
+}
+
 export interface CodexConfigDefaultsResponse {
   model: string | null;
   reasoningEffort: CodexReasoningEffort | null;

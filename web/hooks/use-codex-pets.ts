@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CodexPetMetadata } from "@codex-deck/api";
 import { getCodexPets, selectCodexPet } from "../api";
 
 interface UseCodexPetsInput {
   apiReady: boolean;
+  homeId: string;
   onError: (message: string) => void;
   onNotice: (message: string) => void;
 }
@@ -21,41 +22,74 @@ interface UseCodexPetsResult {
 }
 
 export function useCodexPets(input: UseCodexPetsInput): UseCodexPetsResult {
-  const { apiReady, onError, onNotice } = input;
+  const { apiReady, homeId, onError, onNotice } = input;
   const [pets, setPets] = useState<CodexPetMetadata[]>([]);
   const [currentPetId, setCurrentPetId] = useState<string | null>(null);
   const [loadingPets, setLoadingPets] = useState(false);
   const [petsError, setPetsError] = useState<string | null>(null);
   const [showPetPicker, setShowPetPicker] = useState(false);
+  const homeIdRef = useRef(homeId);
+  const refreshRequestIdRef = useRef(0);
+  homeIdRef.current = homeId;
 
   const refreshPets = useCallback(async () => {
+    const requestHomeId = homeIdRef.current;
+    const requestId = refreshRequestIdRef.current + 1;
+    refreshRequestIdRef.current = requestId;
     setLoadingPets(true);
     setPetsError(null);
     try {
       const response = await getCodexPets();
+      if (
+        homeIdRef.current !== requestHomeId ||
+        refreshRequestIdRef.current !== requestId
+      ) {
+        return;
+      }
       setPets(response.pets);
       setCurrentPetId(response.currentPetId);
     } catch (error) {
+      if (
+        homeIdRef.current !== requestHomeId ||
+        refreshRequestIdRef.current !== requestId
+      ) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setPetsError(message);
     } finally {
-      setLoadingPets(false);
+      if (
+        homeIdRef.current === requestHomeId &&
+        refreshRequestIdRef.current === requestId
+      ) {
+        setLoadingPets(false);
+      }
     }
   }, []);
 
   useEffect(() => {
+    setPets([]);
+    setCurrentPetId(null);
+    setPetsError(null);
+    setShowPetPicker(false);
     if (!apiReady) {
+      refreshRequestIdRef.current += 1;
+      setLoadingPets(false);
       return;
     }
     void refreshPets();
-  }, [apiReady, refreshPets]);
+  }, [apiReady, homeId, refreshPets]);
 
   const selectPet = useCallback(
     async (petId: string): Promise<boolean> => {
+      const requestHomeId = homeId;
       onError("");
       setPetsError(null);
       try {
         const response = await selectCodexPet({ petId });
+        if (homeIdRef.current !== requestHomeId) {
+          return false;
+        }
         const selectedPet = response.pet;
         setCurrentPetId(response.currentPetId);
         if (selectedPet) {
@@ -79,13 +113,16 @@ export function useCodexPets(input: UseCodexPetsInput): UseCodexPetsResult {
         setShowPetPicker(false);
         return true;
       } catch (error) {
+        if (homeIdRef.current !== requestHomeId) {
+          return false;
+        }
         const message = error instanceof Error ? error.message : String(error);
         setPetsError(message);
         onError(message);
         return false;
       }
     },
-    [onError, onNotice],
+    [homeId, onError, onNotice],
   );
 
   const activePet = useMemo(() => {

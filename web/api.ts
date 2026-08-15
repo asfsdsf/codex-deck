@@ -28,6 +28,7 @@ import type {
   CodexModelOption,
   CodexAgentWaitConfig,
   CodexConfigDefaultsResponse,
+  CodexHomeDescriptor,
   CodexSessionContextResponse,
   DeleteTerminalResponse,
   DeleteWorkflowResponse,
@@ -113,6 +114,7 @@ import {
   subscribeWorkflowsStream as subscribeTransportWorkflowsStream,
 } from "./transport";
 import { readRemoteConversationSnapshot } from "./transport/remote";
+import { getActiveCodexHomeId } from "./codex-home-scope";
 import type {
   ConversationStreamHandlers,
   ConversationStreamSubscriptionOptions,
@@ -144,6 +146,11 @@ interface CodexModelsResponse {
   models: CodexModelOption[];
 }
 
+interface CodexHomesResponse {
+  homes: CodexHomeDescriptor[];
+  mainHomeId: string;
+}
+
 export interface RemoteAdminSetupToken {
   id: string;
   label: string;
@@ -173,6 +180,17 @@ export async function getSystemContext(): Promise<SystemContextResponse> {
   return requestJson<SystemContextResponse>("/api/system/context");
 }
 
+export async function listCodexHomes(): Promise<CodexHomesResponse> {
+  const response = await requestJson<CodexHomesResponse>("/api/codex-homes");
+  return {
+    homes: Array.isArray(response.homes) ? response.homes : [],
+    mainHomeId:
+      typeof response.mainHomeId === "string" && response.mainHomeId.trim()
+        ? response.mainHomeId
+        : "main",
+  };
+}
+
 const READONLY_CLI_CACHE_TTL_MS = 30_000;
 const THREAD_STATE_CACHE_TTL_MS = 250;
 const SESSION_ROLE_CACHE_TTL_MS = 250;
@@ -181,42 +199,6 @@ const WORKFLOW_SESSION_LOOKUP_CACHE_TTL_MS = 250;
 interface TimedCacheEntry<T> {
   value: T;
   expiresAt: number;
-}
-
-function createTimedLoader<T>(ttlMs: number, load: () => Promise<T>) {
-  let cache: TimedCacheEntry<T> | null = null;
-  let inFlight: Promise<T> | null = null;
-
-  return {
-    async load(): Promise<T> {
-      if (cache && cache.expiresAt > Date.now()) {
-        return cache.value;
-      }
-
-      if (inFlight) {
-        return inFlight;
-      }
-
-      inFlight = load()
-        .then((value) => {
-          cache = {
-            value,
-            expiresAt: Date.now() + ttlMs,
-          };
-          return value;
-        })
-        .finally(() => {
-          inFlight = null;
-        });
-
-      return inFlight;
-    },
-
-    clear(): void {
-      cache = null;
-      inFlight = null;
-    },
-  };
 }
 
 function createKeyedTimedLoader<T>(ttlMs: number) {
@@ -271,28 +253,26 @@ function createKeyedTimedLoader<T>(ttlMs: number) {
   };
 }
 
-const loadCodexModels = createTimedLoader(
+function homeScopedCacheKey(key: string): string {
+  return `${getActiveCodexHomeId()}:${key}`;
+}
+
+function currentHomeThreadCachePrefix(threadId: string): string {
+  return `${getActiveCodexHomeId()}:${threadId}:`;
+}
+
+const loadCodexModels = createKeyedTimedLoader<CodexModelOption[]>(
   READONLY_CLI_CACHE_TTL_MS,
-  async () => {
-    const payload = await requestJson<CodexModelsResponse>("/api/codex/models");
-    return Array.isArray(payload.models) ? payload.models : [];
-  },
 );
 
-const loadCodexCollaborationModes = createTimedLoader(
-  READONLY_CLI_CACHE_TTL_MS,
-  async () => {
-    const payload = await requestJson<CodexCollaborationModesResponse>(
-      "/api/codex/collaboration-modes",
-    );
-    return Array.isArray(payload.modes) ? payload.modes : [];
-  },
-);
+const loadCodexCollaborationModes = createKeyedTimedLoader<
+  CodexCollaborationModeOption[]
+>(READONLY_CLI_CACHE_TTL_MS);
 
-const loadCodexConfigDefaults = createTimedLoader(
-  READONLY_CLI_CACHE_TTL_MS,
-  () => requestJson<CodexConfigDefaultsResponse>("/api/codex/defaults"),
-);
+const loadCodexConfigDefaults =
+  createKeyedTimedLoader<CodexConfigDefaultsResponse>(
+    READONLY_CLI_CACHE_TTL_MS,
+  );
 
 const codexThreadStateLoader = createKeyedTimedLoader<CodexThreadStateResponse>(
   THREAD_STATE_CACHE_TTL_MS,
@@ -309,9 +289,9 @@ const terminalSessionRolesLoader = createKeyedTimedLoader<
 >(SESSION_ROLE_CACHE_TTL_MS);
 
 function resetApiRequestCaches(): void {
-  loadCodexModels.clear();
-  loadCodexCollaborationModes.clear();
-  loadCodexConfigDefaults.clear();
+  loadCodexModels.clearMatching(() => true);
+  loadCodexCollaborationModes.clearMatching(() => true);
+  loadCodexConfigDefaults.clearMatching(() => true);
   codexThreadStateLoader.clearMatching(() => true);
   workflowBySessionLoader.clearMatching(() => true);
   workflowSessionRolesLoader.clearMatching(() => true);
@@ -657,12 +637,15 @@ export async function getWorkflowBySession(
   sessionId: string,
 ): Promise<WorkflowSessionLookupResponse | null> {
   const normalizedSessionId = sessionId.trim();
-  return workflowBySessionLoader.getOrLoad(normalizedSessionId, async () => {
-    const response = await requestJson<WorkflowSessionLookupResult>(
-      `/api/workflows/by-session/${encodeURIComponent(normalizedSessionId)}`,
-    );
-    return response.match ?? null;
-  });
+  return workflowBySessionLoader.getOrLoad(
+    homeScopedCacheKey(normalizedSessionId),
+    async () => {
+      const response = await requestJson<WorkflowSessionLookupResult>(
+        `/api/workflows/by-session/${encodeURIComponent(normalizedSessionId)}`,
+      );
+      return response.match ?? null;
+    },
+  );
 }
 
 export async function getWorkflowSessionRoles(
@@ -672,7 +655,7 @@ export async function getWorkflowSessionRoles(
     .map((sessionId) => sessionId.trim())
     .filter((sessionId) => sessionId.length > 0)
     .sort();
-  const cacheKey = normalizedSessionIds.join("|");
+  const cacheKey = homeScopedCacheKey(normalizedSessionIds.join("|"));
   return workflowSessionRolesLoader.getOrLoad(cacheKey, async () => {
     const response = await requestJson<WorkflowSessionRolesResponse>(
       "/api/workflows/session-roles",
@@ -911,17 +894,30 @@ export function notifyWorkflowMutation(workflowKey?: string | null): void {
 }
 
 export async function listCodexModels(): Promise<CodexModelOption[]> {
-  return loadCodexModels.load();
+  return loadCodexModels.getOrLoad(getActiveCodexHomeId(), async () => {
+    const payload = await requestJson<CodexModelsResponse>("/api/codex/models");
+    return Array.isArray(payload.models) ? payload.models : [];
+  });
 }
 
 export async function listCodexCollaborationModes(): Promise<
   CodexCollaborationModeOption[]
 > {
-  return loadCodexCollaborationModes.load();
+  return loadCodexCollaborationModes.getOrLoad(
+    getActiveCodexHomeId(),
+    async () => {
+      const payload = await requestJson<CodexCollaborationModesResponse>(
+        "/api/codex/collaboration-modes",
+      );
+      return Array.isArray(payload.modes) ? payload.modes : [];
+    },
+  );
 }
 
 export async function getCodexConfigDefaults(): Promise<CodexConfigDefaultsResponse> {
-  return loadCodexConfigDefaults.load();
+  return loadCodexConfigDefaults.getOrLoad(getActiveCodexHomeId(), () =>
+    requestJson<CodexConfigDefaultsResponse>("/api/codex/defaults"),
+  );
 }
 
 export async function createCodexThread(
@@ -942,7 +938,7 @@ export async function sendCodexMessage(
 ): Promise<SendCodexMessageResponse> {
   const normalizedThreadId = threadId.trim();
   codexThreadStateLoader.clearMatching((key) =>
-    key.startsWith(`${normalizedThreadId}:`),
+    key.startsWith(currentHomeThreadCachePrefix(normalizedThreadId)),
   );
   return requestJsonAndNotifyConversation<SendCodexMessageResponse>(
     normalizedThreadId,
@@ -974,6 +970,7 @@ export async function getCodexThreadState(
   }
   const query = params.toString();
   const cacheKey = [
+    getActiveCodexHomeId(),
     normalizedThreadId,
     params.get("turnId") ?? "",
     options?.includeStatusDetails ? "status" : "",
@@ -990,7 +987,7 @@ export async function interruptCodexThread(
 ): Promise<InterruptCodexThreadResponse> {
   const normalizedThreadId = threadId.trim();
   codexThreadStateLoader.clearMatching((key) =>
-    key.startsWith(`${normalizedThreadId}:`),
+    key.startsWith(currentHomeThreadCachePrefix(normalizedThreadId)),
   );
   return requestJsonAndNotifyConversation<InterruptCodexThreadResponse>(
     normalizedThreadId,
@@ -1172,7 +1169,7 @@ export async function sendCodexAgentAction(
 ): Promise<CodexThreadAgentActionResponse> {
   const normalizedThreadId = controllerThreadId.trim();
   codexThreadStateLoader.clearMatching((key) =>
-    key.startsWith(`${normalizedThreadId}:`),
+    key.startsWith(currentHomeThreadCachePrefix(normalizedThreadId)),
   );
   return requestJsonAndNotifyConversation<CodexThreadAgentActionResponse>(
     normalizedThreadId,
@@ -1477,7 +1474,7 @@ export async function getTerminalSessionRoles(
     .map((sessionId) => sessionId.trim())
     .filter((sessionId) => sessionId.length > 0)
     .sort();
-  const cacheKey = normalizedSessionIds.join("|");
+  const cacheKey = homeScopedCacheKey(normalizedSessionIds.join("|"));
   return terminalSessionRolesLoader.getOrLoad(cacheKey, async () => {
     const response = await requestJson<TerminalSessionRolesResponse>(
       "/api/terminals/session-roles",
