@@ -238,7 +238,7 @@ All keys are optional. The `[remote]` keys mirror the `--remote-*` flags and `CO
 
 Additional Codex homes are declared only by the main config with named `[codex_homes.<id>]` tables. Each available home appears in the selector at the top of the left pane. Missing directories, duplicate paths, reserved IDs, and other invalid entries remain visible but disabled. Config changes require restarting codex-deck.
 
-Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
+Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Only the main codex-deck process opens a network port; additional homes communicate with it over internal process IPC. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
 
 Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) always come from the main config. Runtime settings may be overridden by the selected home's own `codex-deck/config.toml`; currently this applies to `translation_command`. If the selected home does not set it, the main config value is used.
 

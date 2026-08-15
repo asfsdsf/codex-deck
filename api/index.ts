@@ -16,6 +16,7 @@ import {
   CODEX_HOME_RUNTIME_CHILD_ENV,
   CODEX_HOME_RUNTIME_TRANSLATION_ENV,
 } from "./codex-home-runtime-manager";
+import { startCodexHomeRuntimeWorker } from "./codex-home-runtime-worker";
 import { buildCodexHomeRegistry } from "./codex-home-registry";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -141,7 +142,7 @@ const resolvedOptions = resolveCodexDeckOptions(
   { ...cliOptions, dir: bootstrapOptions.dir },
   config,
 );
-const opts = isRuntimeChild ? { ...resolvedOptions, port: 0 } : resolvedOptions;
+const opts = resolvedOptions;
 
 if (process.env.CODEXDECK_REMOTE_ACCESS_PASSWORD?.trim()) {
   console.error(
@@ -178,7 +179,7 @@ for (const home of additionalCodexHomes) {
 const server = createServer({
   port: opts.port,
   codexDir: opts.dir,
-  hostname: isRuntimeChild ? "127.0.0.1" : "0.0.0.0",
+  hostname: "0.0.0.0",
   runtimeEntryPath: isRuntimeChild ? undefined : __filename,
   additionalCodexHomes,
   dev: opts.dev,
@@ -210,29 +211,22 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-server
-  .start()
-  .then((httpServer) => {
-    if (!isRuntimeChild || !process.send) {
-      return;
-    }
-    const address = (
-      httpServer as unknown as {
-        address?: () => string | { port?: number } | null;
-      }
-    ).address?.();
-    const port =
-      address && typeof address === "object" ? address.port : undefined;
-    if (!Number.isInteger(port) || !port) {
-      throw new Error("Runtime server did not report its listening port");
-    }
-    process.send({ type: "codex-home-runtime-ready", port });
-  })
-  .catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    if (isRuntimeChild && process.send) {
-      process.send({ type: "codex-home-runtime-error", error: message });
-    }
-    console.error(`Failed to start server: ${message}`);
-    process.exit(1);
-  });
+const startup = isRuntimeChild
+  ? server.initialize().then(() =>
+      startCodexHomeRuntimeWorker({
+        fetch: (request) => server.app.fetch(request),
+      }),
+    )
+  : server.start().then(() => {});
+
+startup.catch((err) => {
+  const message = err instanceof Error ? err.message : String(err);
+  if (isRuntimeChild && process.send) {
+    process.send({
+      type: "codex-home-runtime-startup-error",
+      error: message,
+    });
+  }
+  console.error(`Failed to start server: ${message}`);
+  process.exit(1);
+});

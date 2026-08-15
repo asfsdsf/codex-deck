@@ -1,40 +1,79 @@
 import { fork, type ChildProcess } from "node:child_process";
 import type { ResolvedCodexHome } from "./codex-home-registry";
+import {
+  CODEX_HOME_RUNTIME_CHILD_ENV,
+  CODEX_HOME_RUNTIME_TRANSLATION_ENV,
+  isCodexHomeRuntimeChildMessage,
+  type CodexHomeRuntimeAbortMessage,
+  type CodexHomeRuntimeParentMessage,
+  type CodexHomeRuntimeResponseChunkMessage,
+  type CodexHomeRuntimeResponseEndMessage,
+  type CodexHomeRuntimeResponseErrorMessage,
+  type CodexHomeRuntimeResponseStartMessage,
+} from "./codex-home-runtime-ipc";
 
-export const CODEX_HOME_RUNTIME_CHILD_ENV = "CODEXDECK_RUNTIME_CHILD";
-export const CODEX_HOME_RUNTIME_TRANSLATION_ENV =
-  "CODEXDECK_RUNTIME_TRANSLATION_COMMAND";
+export {
+  CODEX_HOME_RUNTIME_CHILD_ENV,
+  CODEX_HOME_RUNTIME_TRANSLATION_ENV,
+} from "./codex-home-runtime-ipc";
 
-interface RuntimeReadyMessage {
-  type: "codex-home-runtime-ready";
-  port: number;
+interface PendingRuntimeRequest {
+  resolve: (response: Response) => void;
+  responseStarted: boolean;
+  streamController: ReadableStreamDefaultController<Uint8Array> | null;
+  removeAbortListener: () => void;
 }
-
-interface RuntimeErrorMessage {
-  type: "codex-home-runtime-error";
-  error: string;
-}
-
-type RuntimeMessage = RuntimeReadyMessage | RuntimeErrorMessage;
 
 interface RuntimeHandle {
   child: ChildProcess;
-  port: number;
+  pendingRequests: Map<string, PendingRuntimeRequest>;
 }
 
-function isRuntimeMessage(value: unknown): value is RuntimeMessage {
-  if (!value || typeof value !== "object" || !("type" in value)) {
-    return false;
-  }
-  const type = (value as { type?: unknown }).type;
-  return (
-    type === "codex-home-runtime-ready" || type === "codex-home-runtime-error"
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function runtimeErrorResponse(error: unknown): Response {
+  return Response.json(
+    { error: `Codex home runtime failed: ${toErrorMessage(error)}` },
+    { status: 502 },
   );
+}
+
+function abortedResponse(): Response {
+  return new Response(null, {
+    status: 499,
+    statusText: "Client Closed Request",
+  });
+}
+
+function sendRuntimeMessage(
+  child: ChildProcess,
+  message: CodexHomeRuntimeParentMessage,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!child.connected) {
+      reject(new Error("Codex home runtime IPC channel is closed"));
+      return;
+    }
+    try {
+      child.send(message, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 export class CodexHomeRuntimeManager {
   private readonly homesById: Map<string, ResolvedCodexHome>;
   private readonly runtimes = new Map<string, Promise<RuntimeHandle>>();
+  private nextRequestId = 0;
 
   public constructor(
     homes: ResolvedCodexHome[],
@@ -58,6 +97,16 @@ export class CodexHomeRuntimeManager {
         { status: 409 },
       );
     }
+    if (request.signal.aborted) {
+      return abortedResponse();
+    }
+
+    let runtime: RuntimeHandle;
+    try {
+      runtime = await this.getOrStartRuntime(home);
+    } catch (error) {
+      return runtimeErrorResponse(error);
+    }
 
     const sourceUrl = new URL(request.url);
     sourceUrl.searchParams.delete("codexHome");
@@ -66,42 +115,68 @@ export class CodexHomeRuntimeManager {
     headers.delete("content-length");
     headers.delete("host");
     const method = request.method.toUpperCase();
-    const body =
-      method === "GET" || method === "HEAD"
-        ? undefined
-        : await request.arrayBuffer();
-
-    let runtime: RuntimeHandle | null = null;
+    let bodyBase64: string | null = null;
     try {
-      runtime = await this.getOrStartRuntime(home);
-      const runtimeUrl = new URL(
-        `${sourceUrl.pathname}${sourceUrl.search}`,
-        `http://127.0.0.1:${runtime.port}`,
-      );
-      return await fetch(runtimeUrl, {
+      if (method !== "GET" && method !== "HEAD") {
+        const body = await request.arrayBuffer();
+        if (body.byteLength > 0) {
+          bodyBase64 = Buffer.from(body).toString("base64");
+        }
+      }
+    } catch (error) {
+      return request.signal.aborted
+        ? abortedResponse()
+        : runtimeErrorResponse(error);
+    }
+
+    const requestId = `${home.id}:${++this.nextRequestId}`;
+    let settleResponse: (response: Response) => void = () => {};
+    const responsePromise = new Promise<Response>((resolve) => {
+      settleResponse = resolve;
+    });
+    const onAbort = () => {
+      this.abortRequest(runtime, requestId);
+    };
+    runtime.pendingRequests.set(requestId, {
+      resolve: settleResponse,
+      responseStarted: false,
+      streamController: null,
+      removeAbortListener: () => {
+        request.signal.removeEventListener("abort", onAbort);
+      },
+    });
+    request.signal.addEventListener("abort", onAbort, { once: true });
+    if (request.signal.aborted) {
+      onAbort();
+      return responsePromise;
+    }
+
+    try {
+      await sendRuntimeMessage(runtime.child, {
+        type: "codex-home-runtime-request",
+        requestId,
+        url: sourceUrl.toString(),
         method,
-        headers,
-        body: body && body.byteLength > 0 ? body : undefined,
-        signal: request.signal,
-        redirect: "manual",
+        headers: Array.from(headers.entries()),
+        bodyBase64,
       });
     } catch (error) {
-      void this.stopRuntime(home.id, runtime?.child);
-      return Response.json(
-        {
-          error: `Codex home runtime failed: ${error instanceof Error ? error.message : String(error)}`,
-        },
-        { status: 502 },
-      );
+      this.finishRequest(runtime, requestId, runtimeErrorResponse(error));
     }
+
+    return responsePromise;
   }
 
   public stop(): void {
     for (const runtimePromise of this.runtimes.values()) {
       void runtimePromise
-        .then(({ child }) => {
-          if (!child.killed) {
-            child.kill("SIGTERM");
+        .then((runtime) => {
+          this.failPendingRequests(
+            runtime,
+            new Error("Codex home runtime stopped"),
+          );
+          if (!runtime.child.killed) {
+            runtime.child.kill("SIGTERM");
           }
         })
         .catch(() => {});
@@ -124,6 +199,142 @@ export class CodexHomeRuntimeManager {
     return runtime;
   }
 
+  private abortRequest(runtime: RuntimeHandle, requestId: string): void {
+    const pending = runtime.pendingRequests.get(requestId);
+    if (!pending) {
+      return;
+    }
+    const message: CodexHomeRuntimeAbortMessage = {
+      type: "codex-home-runtime-abort",
+      requestId,
+    };
+    void sendRuntimeMessage(runtime.child, message).catch(() => {});
+    runtime.pendingRequests.delete(requestId);
+    pending.removeAbortListener();
+    if (pending.responseStarted) {
+      try {
+        pending.streamController?.close();
+      } catch {}
+      return;
+    }
+    pending.resolve(abortedResponse());
+  }
+
+  private finishRequest(
+    runtime: RuntimeHandle,
+    requestId: string,
+    fallbackResponse?: Response,
+  ): void {
+    const pending = runtime.pendingRequests.get(requestId);
+    if (!pending) {
+      return;
+    }
+    runtime.pendingRequests.delete(requestId);
+    pending.removeAbortListener();
+    if (!pending.responseStarted) {
+      pending.resolve(
+        fallbackResponse ??
+          runtimeErrorResponse("Runtime ended before sending a response"),
+      );
+      return;
+    }
+    try {
+      pending.streamController?.close();
+    } catch {}
+  }
+
+  private handleResponseStart(
+    runtime: RuntimeHandle,
+    message: CodexHomeRuntimeResponseStartMessage,
+  ): void {
+    const pending = runtime.pendingRequests.get(message.requestId);
+    if (!pending || pending.responseStarted) {
+      return;
+    }
+    pending.responseStarted = true;
+    const body = message.hasBody
+      ? new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            pending.streamController = controller;
+          },
+          pull: () =>
+            sendRuntimeMessage(runtime.child, {
+              type: "codex-home-runtime-response-credit",
+              requestId: message.requestId,
+            }).catch(() => {
+              this.abortRequest(runtime, message.requestId);
+            }),
+          cancel: () => {
+            this.abortRequest(runtime, message.requestId);
+          },
+        })
+      : null;
+    pending.resolve(
+      new Response(body, {
+        status: message.status,
+        statusText: message.statusText,
+        headers: message.headers,
+      }),
+    );
+  }
+
+  private handleResponseChunk(
+    runtime: RuntimeHandle,
+    message: CodexHomeRuntimeResponseChunkMessage,
+  ): void {
+    const pending = runtime.pendingRequests.get(message.requestId);
+    if (!pending?.responseStarted || !pending.streamController) {
+      return;
+    }
+    try {
+      pending.streamController.enqueue(
+        Buffer.from(message.chunkBase64, "base64"),
+      );
+    } catch {
+      this.abortRequest(runtime, message.requestId);
+    }
+  }
+
+  private handleResponseEnd(
+    runtime: RuntimeHandle,
+    message: CodexHomeRuntimeResponseEndMessage,
+  ): void {
+    this.finishRequest(runtime, message.requestId);
+  }
+
+  private handleResponseError(
+    runtime: RuntimeHandle,
+    message: CodexHomeRuntimeResponseErrorMessage,
+  ): void {
+    const pending = runtime.pendingRequests.get(message.requestId);
+    if (!pending) {
+      return;
+    }
+    if (!pending.responseStarted) {
+      this.finishRequest(
+        runtime,
+        message.requestId,
+        runtimeErrorResponse(message.error),
+      );
+      return;
+    }
+    runtime.pendingRequests.delete(message.requestId);
+    pending.removeAbortListener();
+    pending.streamController?.error(new Error(message.error));
+  }
+
+  private failPendingRequests(runtime: RuntimeHandle, error: Error): void {
+    for (const [requestId, pending] of runtime.pendingRequests) {
+      if (!pending.responseStarted) {
+        pending.resolve(runtimeErrorResponse(error));
+      } else {
+        pending.streamController?.error(error);
+      }
+      pending.removeAbortListener();
+      runtime.pendingRequests.delete(requestId);
+    }
+  }
+
   private async stopRuntime(
     homeId: string,
     expectedChild?: ChildProcess,
@@ -134,16 +345,20 @@ export class CodexHomeRuntimeManager {
       return;
     }
     try {
-      const { child } = await runtimePromise;
+      const runtime = await runtimePromise;
       if (
         this.runtimes.get(homeId) !== runtimePromise ||
-        (expectedChild && child !== expectedChild)
+        (expectedChild && runtime.child !== expectedChild)
       ) {
         return;
       }
       this.runtimes.delete(homeId);
-      if (terminate && !child.killed) {
-        child.kill("SIGTERM");
+      this.failPendingRequests(
+        runtime,
+        new Error(`Codex home runtime ${homeId} exited`),
+      );
+      if (terminate && !runtime.child.killed) {
+        runtime.child.kill("SIGTERM");
       }
     } catch {
       if (this.runtimes.get(homeId) === runtimePromise) {
@@ -165,72 +380,86 @@ export class CodexHomeRuntimeManager {
         delete env[CODEX_HOME_RUNTIME_TRANSLATION_ENV];
       }
 
-      const child = fork(
-        this.entryPath,
-        ["--port", "0", "--dir", home.path, "--no-open"],
-        {
-          env,
-          execArgv: process.execArgv,
-          stdio: ["ignore", "inherit", "inherit", "ipc"],
-        },
-      );
+      const child = fork(this.entryPath, ["--dir", home.path, "--no-open"], {
+        env,
+        execArgv: process.execArgv,
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
+      });
+      const runtime: RuntimeHandle = {
+        child,
+        pendingRequests: new Map(),
+      };
       let settled = false;
       const timeout = setTimeout(() => {
         fail(new Error(`Timed out starting Codex home runtime ${home.id}`));
       }, 20_000);
 
-      const cleanup = () => {
+      const cleanupStartup = () => {
         clearTimeout(timeout);
-        child.off("message", handleMessage);
         child.off("error", fail);
-        child.off("exit", handleEarlyExit);
       };
       const fail = (error: Error) => {
         if (settled) {
           return;
         }
         settled = true;
-        cleanup();
+        cleanupStartup();
+        child.removeListener("message", handleMessage);
         if (!child.killed) {
           child.kill("SIGTERM");
         }
         reject(error);
       };
-      const handleEarlyExit = (
-        code: number | null,
-        signal: NodeJS.Signals | null,
-      ) => {
-        fail(
-          new Error(
-            `Codex home runtime ${home.id} exited before startup (${code ?? signal ?? "unknown"})`,
-          ),
-        );
-      };
-      const handleMessage = (message: unknown) => {
-        if (!isRuntimeMessage(message)) {
+      const handleMessage = (value: unknown) => {
+        if (!isCodexHomeRuntimeChildMessage(value)) {
           return;
         }
-        if (message.type === "codex-home-runtime-error") {
-          fail(new Error(message.error));
+        if (value.type === "codex-home-runtime-ready") {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanupStartup();
+          resolve(runtime);
           return;
         }
-        if (!Number.isInteger(message.port) || message.port <= 0) {
-          fail(
-            new Error(`Codex home runtime ${home.id} returned an invalid port`),
-          );
+        if (value.type === "codex-home-runtime-startup-error") {
+          fail(new Error(value.error));
           return;
         }
-        settled = true;
-        cleanup();
-        child.once("exit", () => {
-          void this.stopRuntime(home.id, child, false);
-        });
-        resolve({ child, port: message.port });
+        if (!settled) {
+          return;
+        }
+        if (value.type === "codex-home-runtime-response-start") {
+          this.handleResponseStart(runtime, value);
+        } else if (value.type === "codex-home-runtime-response-chunk") {
+          this.handleResponseChunk(runtime, value);
+        } else if (value.type === "codex-home-runtime-response-end") {
+          this.handleResponseEnd(runtime, value);
+        } else if (value.type === "codex-home-runtime-response-error") {
+          this.handleResponseError(runtime, value);
+        }
       };
 
       child.on("message", handleMessage);
       child.once("error", fail);
-      child.once("exit", handleEarlyExit);
+      child.once("exit", (code, signal) => {
+        if (!settled) {
+          fail(
+            new Error(
+              `Codex home runtime ${home.id} exited before startup (${code ?? signal ?? "unknown"})`,
+            ),
+          );
+          return;
+        }
+        this.failPendingRequests(
+          runtime,
+          new Error(
+            `Codex home runtime ${home.id} exited (${code ?? signal ?? "unknown"})`,
+          ),
+        );
+        void this.stopRuntime(home.id, child, false);
+      });
     });
   }
 }

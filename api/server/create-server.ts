@@ -5143,12 +5143,20 @@ export function createServer(options: ServerOptions) {
 
   let httpServer: ServerType | null = null;
   let remoteServerClient: RemoteServerClient | null = null;
+  let initializationPromise: Promise<void> | null = null;
+  const initialize = (): Promise<void> => {
+    if (!initializationPromise) {
+      initializationPromise = loadStorage();
+    }
+    return initializationPromise;
+  };
 
   return {
     app,
     port,
+    initialize,
     start: async () => {
-      await loadStorage();
+      await initialize();
       httpServer = await new Promise<ServerType>((resolveServer, reject) => {
         const server = serve(
           {
