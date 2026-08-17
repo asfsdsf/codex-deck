@@ -26,6 +26,7 @@ import {
   deleteSession,
   deleteTerminal,
   editConversationMessage,
+  fetchCodexModels,
   fixDanglingSession,
   forkCodexThread,
   getCodexConfigDefaults,
@@ -822,6 +823,23 @@ test("codex config endpoints return normalized payloads", async () => {
     "/api/codex/collaboration-modes",
     "/api/codex/defaults",
   ]);
+});
+
+test("fetchCodexModels asks the Codex Deck server to fetch provider models", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return jsonResponse({ models: [{ id: "provider-model" }] });
+  };
+
+  assert.deepEqual(await fetchCodexModels(" /repo "), [
+    { id: "provider-model" },
+  ]);
+  assert.equal(calls[0]?.url, "/api/codex/models/fetch");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    cwd: "/repo",
+  });
 });
 
 test("Codex Deck config endpoints load and apply the main home file", async () => {

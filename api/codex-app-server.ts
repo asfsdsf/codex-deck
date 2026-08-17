@@ -27,6 +27,7 @@ import {
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MODEL_LIMIT = 200;
 const MODELS_CACHE_TTL_MS = 30_000;
+const PROVIDER_MODELS_REQUEST_TIMEOUT_MS = 10_000;
 const COLLABORATION_MODES_CACHE_TTL_MS = 30_000;
 const THREAD_STATE_CACHE_TTL_MS = 250;
 
@@ -478,6 +479,19 @@ interface ActiveCodexConfig {
   providerBaseUrl: string | null;
 }
 
+interface ProviderRequestConfig {
+  baseUrl: string | null;
+  envKey: string | null;
+  headers: Record<string, string>;
+  envHeaders: Record<string, string>;
+  queryParams: Record<string, string>;
+}
+
+interface CodexAuthFileStatus {
+  authMode: CodexAuthMode | null;
+  apiKey: string | null;
+}
+
 const DEFAULT_CODEX_AGENT_WAIT_CONFIG: CodexAgentWaitConfig = {
   minTimeoutMs: 10_000,
   maxTimeoutMs: 3_600_000,
@@ -904,6 +918,95 @@ class CodexAppServerClient {
         return models;
       },
     );
+  }
+
+  public async fetchProviderModels(
+    cwd?: string | null,
+  ): Promise<CodexModelOption[]> {
+    await this.reloadAuthIfChanged();
+
+    const normalizedCwd = typeof cwd === "string" ? cwd.trim() : "";
+    const configReadResult = await this.request("config/read", {
+      includeLayers: false,
+      ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
+    });
+    const providerId =
+      extractActiveProviderIdFromConfigReadResult(configReadResult);
+    const providerConfig = extractProviderRequestConfig(
+      configReadResult,
+      providerId,
+    );
+    const authStatus = extractAuthStatusResult(
+      await this.request("getAuthStatus", {
+        includeToken: true,
+        refreshToken: false,
+      }),
+    );
+    const authFileStatus = this.readCodexAuthFileStatus();
+    const effectiveAuthMode = authStatus.authMode ?? authFileStatus.authMode;
+    if (
+      effectiveAuthMode === "chatgpt" ||
+      effectiveAuthMode === "chatgptAuthTokens" ||
+      effectiveAuthMode === "agentIdentity"
+    ) {
+      throw new Error(
+        "Model discovery requires Codex API key authentication and is unavailable in login mode",
+      );
+    }
+    const baseUrl = normalizeProviderBaseUrl(
+      providerId,
+      providerConfig.baseUrl,
+      effectiveAuthMode,
+    );
+    if (!baseUrl) {
+      throw new Error(
+        "The active model provider does not define a base_url for model discovery",
+      );
+    }
+
+    const url = buildProviderModelsUrl(baseUrl, providerConfig.queryParams);
+    const headers = new Headers({
+      Accept: "application/json",
+      "User-Agent": this.userAgent,
+      ...providerConfig.headers,
+    });
+    for (const [headerName, envName] of Object.entries(
+      providerConfig.envHeaders,
+    )) {
+      const value = readNonEmptyRuntimeEnvVar(envName, this.env);
+      if (value) {
+        headers.set(headerName, value);
+      }
+    }
+
+    const apiKey =
+      readNonEmptyRuntimeEnvVar(providerConfig.envKey, this.env) ??
+      authStatus.authToken ??
+      authFileStatus.apiKey ??
+      readNonEmptyRuntimeEnvVar("CODEX_API_KEY", this.env) ??
+      readNonEmptyRuntimeEnvVar("OPENAI_API_KEY", this.env);
+    if (apiKey && !headers.has("authorization") && !headers.has("x-api-key")) {
+      headers.set("Authorization", `Bearer ${apiKey}`);
+    }
+    if (!headers.has("authorization") && !headers.has("x-api-key")) {
+      throw new Error("No API key is available for provider model discovery");
+    }
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(PROVIDER_MODELS_REQUEST_TIMEOUT_MS),
+    });
+    const responseText = await response.text();
+    const payload = parseProviderModelsPayload(responseText);
+    if (!response.ok) {
+      const detail = getProviderModelsErrorMessage(payload, responseText);
+      throw new Error(
+        `Model provider request failed with status ${response.status}${detail ? `: ${detail}` : ""}`,
+      );
+    }
+
+    return normalizeProviderModels(payload);
   }
 
   public async listCollaborationModes(): Promise<
@@ -2382,6 +2485,23 @@ class CodexAppServerClient {
     return join(codexHome, "auth.json");
   }
 
+  private readCodexAuthFileStatus(): CodexAuthFileStatus {
+    try {
+      const payload = JSON.parse(
+        readFileSync(this.resolveAuthFilePath(), "utf-8"),
+      ) as Record<string, unknown>;
+      return {
+        authMode: toAuthMode(payload.auth_mode ?? payload.authMode),
+        apiKey:
+          asTrimmedString(payload.OPENAI_API_KEY) ??
+          asTrimmedString(payload.CODEX_API_KEY) ??
+          null,
+      };
+    } catch {
+      return { authMode: null, apiKey: null };
+    }
+  }
+
   private readAuthFileFingerprint(): string {
     try {
       const content = readFileSync(this.resolveAuthFilePath());
@@ -3651,12 +3771,15 @@ function normalizeProviderBaseUrl(
   return trimmedConfigured || null;
 }
 
-function readNonEmptyRuntimeEnvVar(name: string | null): string | null {
+function readNonEmptyRuntimeEnvVar(
+  name: string | null,
+  runtimeEnv?: NodeJS.ProcessEnv,
+): string | null {
   if (!name) {
     return null;
   }
 
-  const value = process.env[name];
+  const value = runtimeEnv?.[name] ?? process.env[name];
   return typeof value === "string" ? value.trim() || null : null;
 }
 
@@ -3664,6 +3787,7 @@ function resolveRuntimeProviderApiKey(
   providerId: string | null,
   configuredProviderEnvKey: string | null,
   authToken: string | null,
+  runtimeEnv?: NodeJS.ProcessEnv,
 ): string | null {
   const directAuthToken = authToken?.trim() || null;
   if (directAuthToken) {
@@ -3672,6 +3796,7 @@ function resolveRuntimeProviderApiKey(
 
   const configuredEnvApiKey = readNonEmptyRuntimeEnvVar(
     configuredProviderEnvKey,
+    runtimeEnv,
   );
   if (configuredEnvApiKey) {
     return configuredEnvApiKey;
@@ -3679,12 +3804,151 @@ function resolveRuntimeProviderApiKey(
 
   if (providerId === "openai") {
     return (
-      readNonEmptyRuntimeEnvVar("CODEX_API_KEY") ??
-      readNonEmptyRuntimeEnvVar("OPENAI_API_KEY")
+      readNonEmptyRuntimeEnvVar("CODEX_API_KEY", runtimeEnv) ??
+      readNonEmptyRuntimeEnvVar("OPENAI_API_KEY", runtimeEnv)
     );
   }
 
   return null;
+}
+
+function extractStringRecord(value: unknown): Record<string, string> {
+  const record = asRecord(value);
+  if (!record) {
+    return {};
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(record)) {
+    const normalizedKey = key.trim();
+    const normalizedValue = asTrimmedString(rawValue);
+    if (normalizedKey && normalizedValue) {
+      result[normalizedKey] = normalizedValue;
+    }
+  }
+  return result;
+}
+
+function extractProviderRequestConfig(
+  result: unknown,
+  providerId: string | null,
+): ProviderRequestConfig {
+  if (!providerId) {
+    return {
+      baseUrl: null,
+      envKey: null,
+      headers: {},
+      envHeaders: {},
+      queryParams: {},
+    };
+  }
+
+  const config = extractConfigFromConfigReadResult(result);
+  const providerTable = asRecord(config.model_providers);
+  const providerConfig = providerTable
+    ? asRecord(providerTable[providerId])
+    : null;
+  return {
+    baseUrl: asTrimmedString(providerConfig?.base_url) ?? null,
+    envKey: asTrimmedString(providerConfig?.env_key) ?? null,
+    headers: extractStringRecord(providerConfig?.http_headers),
+    envHeaders: extractStringRecord(providerConfig?.env_http_headers),
+    queryParams: extractStringRecord(providerConfig?.query_params),
+  };
+}
+
+function buildProviderModelsUrl(
+  baseUrl: string,
+  queryParams: Record<string, string>,
+): URL {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("The active model provider has an invalid base_url");
+  }
+
+  const normalizedPath = url.pathname.replace(/\/+$/, "");
+  url.pathname = normalizedPath.endsWith("/models")
+    ? normalizedPath
+    : `${normalizedPath}/models`;
+  for (const [name, value] of Object.entries(queryParams)) {
+    if (!url.searchParams.has(name)) {
+      url.searchParams.set(name, value);
+    }
+  }
+  return url;
+}
+
+function parseProviderModelsPayload(responseText: string): unknown {
+  if (!responseText.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(responseText) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function getProviderModelsErrorMessage(
+  payload: unknown,
+  responseText: string,
+): string | null {
+  const record = asRecord(payload);
+  const nestedError = asRecord(record?.error);
+  const message =
+    asTrimmedString(record?.error) ??
+    asTrimmedString(nestedError?.message) ??
+    asTrimmedString(record?.message);
+  if (message) {
+    return message.slice(0, 300);
+  }
+
+  const normalizedText = responseText.replace(/\s+/g, " ").trim();
+  return normalizedText ? normalizedText.slice(0, 300) : null;
+}
+
+function normalizeProviderModels(payload: unknown): CodexModelOption[] {
+  const record = asRecord(payload);
+  const entries = Array.isArray(payload)
+    ? payload
+    : Array.isArray(record?.data)
+      ? record.data
+      : Array.isArray(record?.models)
+        ? record.models
+        : null;
+  if (!entries) {
+    throw new Error("Model provider returned an invalid model list");
+  }
+
+  const models: CodexModelOption[] = [];
+  const seenIds = new Set<string>();
+  for (const entry of entries) {
+    const entryRecord = asRecord(entry);
+    const id =
+      (typeof entry === "string" ? entry.trim() : "") ||
+      asTrimmedString(entryRecord?.id) ||
+      asTrimmedString(entryRecord?.model) ||
+      asTrimmedString(entryRecord?.name);
+    if (!id || seenIds.has(id)) {
+      continue;
+    }
+    seenIds.add(id);
+    models.push({
+      id,
+      displayName:
+        asTrimmedString(entryRecord?.displayName) ||
+        asTrimmedString(entryRecord?.display_name) ||
+        id,
+      description: asTrimmedString(entryRecord?.description) || "",
+      isDefault: false,
+      hidden: false,
+      defaultReasoningEffort: null,
+      supportedReasoningEfforts: [],
+    });
+  }
+  return models;
 }
 
 function collectSupportedReasoningEfforts(
@@ -5128,6 +5392,7 @@ let configuredCodexHome: string | null = null;
 export interface CodexAppServerClientFacade {
   restartAppServer?: () => Promise<boolean>;
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
+  fetchProviderModels?: (cwd?: string | null) => Promise<CodexModelOption[]>;
   listCollaborationModes: () => Promise<CodexCollaborationModeOption[]>;
   getAgentWaitConfig?: (cwd?: string | null) => Promise<CodexAgentWaitConfig>;
   listHooks?: (input: CodexHooksListInput) => Promise<CodexHooksListEntry[]>;
@@ -5210,6 +5475,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
   return {
     restartAppServer: () => client!.restartAppServer(),
     listModels: (limit?: number) => client!.listModels(limit),
+    fetchProviderModels: (cwd?: string | null) =>
+      client!.fetchProviderModels(cwd),
     listCollaborationModes: () => client!.listCollaborationModes(),
     getAgentWaitConfig: (cwd?: string | null) =>
       client!.getAgentWaitConfig(cwd),

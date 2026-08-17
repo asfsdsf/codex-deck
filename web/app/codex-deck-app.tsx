@@ -186,6 +186,7 @@ import {
   isRemoteTransportEnabled,
   listCodexCollaborationModes,
   listCodexModels,
+  fetchCodexModels,
   listCodexHomes,
   listRemoteAdminSetupTokens,
   listProjects,
@@ -276,6 +277,7 @@ import {
   getEffortControlLabel,
   getModelControlLabel,
   getModelDisplayName,
+  mergeCodexModels,
 } from "../session-config-utils";
 import {
   deriveTerminalEmbeddedMessagesState,
@@ -3780,6 +3782,7 @@ export default function CodexDeckApp() {
       activeMatchIndex: null,
     });
   const [models, setModels] = useState<CodexModelOption[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
   const [configDefaults, setConfigDefaults] =
     useState<CodexConfigDefaultsResponse>({
       model: null,
@@ -3965,6 +3968,7 @@ export default function CodexDeckApp() {
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
   const sessionViewRef = useRef<SessionViewHandle | null>(null);
   const commandNoticeTimeoutRef = useRef<number | null>(null);
+  const modelFetchRequestIdRef = useRef(0);
   const waitStateSyncTimeoutRef = useRef<number | null>(null);
   const pageClientIdRef = useRef(createPageClientId());
   const confirmedComposerUserMessageCountBySessionRef = useRef<
@@ -6576,6 +6580,9 @@ export default function CodexDeckApp() {
       return;
     }
 
+    modelFetchRequestIdRef.current += 1;
+    setFetchingModels(false);
+    setModels([]);
     let cancelled = false;
     const generation = codexHomeGenerationRef.current;
 
@@ -6589,7 +6596,9 @@ export default function CodexDeckApp() {
           return;
         }
 
-        setModels(modelsData);
+        setModels((currentModels) =>
+          mergeCodexModels(modelsData, currentModels),
+        );
         setCollaborationModes(collaborationModesData);
         setConfigDefaults(configDefaultsData);
       })
@@ -7349,6 +7358,53 @@ export default function CodexDeckApp() {
     workflowDetail,
     workflows,
   ]);
+
+  const modelFetchCwd =
+    activeComposerSessionData?.project?.trim() ||
+    selectedTerminalData?.cwd?.trim() ||
+    workflowRightPaneProjectPath?.trim() ||
+    selectedProject?.trim() ||
+    null;
+  const handleFetchModels = useCallback(async () => {
+    if (fetchingModels) {
+      return;
+    }
+
+    const requestId = modelFetchRequestIdRef.current + 1;
+    modelFetchRequestIdRef.current = requestId;
+    const generation = codexHomeGenerationRef.current;
+    setFetchingModels(true);
+    setInteractionError(null);
+    try {
+      const fetchedModels = await fetchCodexModels(modelFetchCwd);
+      if (
+        modelFetchRequestIdRef.current !== requestId ||
+        codexHomeGenerationRef.current !== generation
+      ) {
+        return;
+      }
+      setModels((currentModels) => {
+        return mergeCodexModels(currentModels, fetchedModels);
+      });
+      showCommandNoticeForDuration(
+        `Fetched ${fetchedModels.length} models and merged them with the existing list.`,
+      );
+    } catch (error) {
+      if (
+        modelFetchRequestIdRef.current !== requestId ||
+        codexHomeGenerationRef.current !== generation
+      ) {
+        return;
+      }
+      setInteractionError(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      if (modelFetchRequestIdRef.current === requestId) {
+        setFetchingModels(false);
+      }
+    }
+  }, [fetchingModels, modelFetchCwd, showCommandNoticeForDuration]);
 
   const filteredModels = useMemo(
     () => models.filter((model) => !model.hidden),
@@ -12626,6 +12682,9 @@ export default function CodexDeckApp() {
                 inputAriaLabel="Model"
                 inputPlaceholder="Search or enter a model ID"
                 className="min-w-[160px]"
+                onRefresh={handleFetchModels}
+                refreshing={fetchingModels}
+                refreshAriaLabel="Fetch models from provider"
               />
               <CodexValuePicker
                 value={selectedEffort}
@@ -12654,6 +12713,9 @@ export default function CodexDeckApp() {
               inputAriaLabel="Model"
               inputPlaceholder="Search or enter a model ID"
               className="min-w-[160px]"
+              onRefresh={handleFetchModels}
+              refreshing={fetchingModels}
+              refreshAriaLabel="Fetch models from provider"
             />
             <CodexValuePicker
               value={selectedEffort}

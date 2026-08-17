@@ -9,7 +9,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, RefreshCw } from "lucide-react";
 
 export interface CodexValuePickerOption {
   value: string;
@@ -31,6 +31,9 @@ interface CodexValuePickerProps {
   inputPlaceholder: string;
   className?: string;
   disabled?: boolean;
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
+  refreshAriaLabel?: string;
 }
 
 const CodexValuePicker = forwardRef<
@@ -46,6 +49,9 @@ const CodexValuePicker = forwardRef<
     inputPlaceholder,
     className = "",
     disabled = false,
+    onRefresh,
+    refreshing = false,
+    refreshAriaLabel = "Refresh options",
   } = props;
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -165,7 +171,7 @@ const CodexValuePicker = forwardRef<
           aria-label={inputAriaLabel}
           className="absolute bottom-full left-0 z-50 mb-2 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded border border-zinc-700 bg-zinc-900 shadow-2xl"
         >
-          <div className="border-b border-zinc-800 p-2">
+          <div className="flex items-center gap-2 border-b border-zinc-800 p-2">
             <input
               ref={inputRef}
               value={query}
@@ -173,8 +179,24 @@ const CodexValuePicker = forwardRef<
               onKeyDown={handleInputKeyDown}
               aria-label={inputAriaLabel}
               placeholder={inputPlaceholder}
-              className="h-8 w-full rounded border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-500/70"
+              className="h-8 min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-500/70"
             />
+            {onRefresh && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void onRefresh()}
+                disabled={refreshing}
+                aria-label={refreshAriaLabel}
+                title={refreshAriaLabel}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-950 text-zinc-300 transition-colors hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                <RefreshCw
+                  aria-hidden="true"
+                  className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                />
+              </button>
+            )}
           </div>
           <div className="max-h-64 overflow-y-auto py-1">
             <button

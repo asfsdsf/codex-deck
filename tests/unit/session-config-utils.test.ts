@@ -13,6 +13,7 @@ import {
   getEffortControlLabel,
   getModelControlLabel,
   getModelDisplayName,
+  mergeCodexModels,
 } from "../../web/session-config-utils";
 
 const MODELS: CodexModelOption[] = [
@@ -140,6 +141,31 @@ test("session config utils format labels from effective values", () => {
   assert.equal(getEffortControlLabel("high"), "high(Default)");
   assert.equal(getModelControlLabel(MODELS, null), "Default");
   assert.equal(getEffortControlLabel(null), "Default");
+});
+
+test("mergeCodexModels preserves defaults and appends new provider models", () => {
+  const fetchedModels: CodexModelOption[] = [
+    {
+      ...MODELS[0],
+      displayName: "Fetched duplicate",
+    },
+    {
+      id: "provider-model",
+      displayName: "Provider model",
+      description: "Fetched from the active provider",
+      isDefault: false,
+      hidden: false,
+      defaultReasoningEffort: null,
+      supportedReasoningEfforts: [],
+    },
+  ];
+
+  const merged = mergeCodexModels(MODELS, fetchedModels);
+  assert.equal(merged.length, MODELS.length + 1);
+  assert.equal(merged[0], MODELS[0]);
+  assert.equal(merged[1], MODELS[1]);
+  assert.equal(merged[1]?.isDefault, true);
+  assert.equal(merged[2]?.id, "provider-model");
 });
 
 test("buildCollaborationModeInput includes effective plan settings", () => {

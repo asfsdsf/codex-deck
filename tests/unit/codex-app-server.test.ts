@@ -80,6 +80,197 @@ test("model listing preserves max, ultra, and model-defined reasoning efforts", 
   }
 });
 
+test("provider model fetching uses server-side provider config and credentials", async () => {
+  const originalFetch = globalThis.fetch;
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model_provider: "custom",
+          model_providers: {
+            custom: {
+              base_url: "https://provider.example/v1/",
+              http_headers: { "X-Client": "codex-deck" },
+              query_params: { api_version: "2026-08-01" },
+            },
+          },
+        },
+      };
+    }
+    assert.equal(method, "getAuthStatus");
+    return {
+      authMethod: "apiKey",
+      authToken: "secret-key",
+      requiresOpenaiAuth: false,
+    };
+  };
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(
+      url.origin + url.pathname,
+      "https://provider.example/v1/models",
+    );
+    assert.equal(url.searchParams.get("api_version"), "2026-08-01");
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Authorization"), "Bearer secret-key");
+    assert.equal(headers.get("X-Client"), "codex-deck");
+    return new Response(
+      JSON.stringify({
+        data: [
+          { id: "provider-model", description: "Remote model" },
+          { id: "provider-model" },
+          { id: "provider-model-2" },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    assert.deepEqual(await client.fetchProviderModels(" /repo "), [
+      {
+        id: "provider-model",
+        displayName: "provider-model",
+        description: "Remote model",
+        isDefault: false,
+        hidden: false,
+        defaultReasoningEffort: null,
+        supportedReasoningEfforts: [],
+      },
+      {
+        id: "provider-model-2",
+        displayName: "provider-model-2",
+        description: "",
+        isDefault: false,
+        hidden: false,
+        defaultReasoningEffort: null,
+        supportedReasoningEfforts: [],
+      },
+    ]);
+    assert.deepEqual(requests, [
+      {
+        method: "config/read",
+        params: { includeLayers: false, cwd: "/repo" },
+      },
+      {
+        method: "getAuthStatus",
+        params: { includeToken: true, refreshToken: false },
+      },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await client.close();
+  }
+});
+
+test("provider model fetching rejects Codex login mode before making a request", async () => {
+  const originalFetch = globalThis.fetch;
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method) => {
+    if (method === "config/read") {
+      return {
+        config: {
+          model_provider: "custom",
+          model_providers: {
+            custom: { base_url: "https://provider.example/v1" },
+          },
+        },
+      };
+    }
+    return {
+      authMethod: "chatgpt",
+      authToken: null,
+      requiresOpenaiAuth: true,
+    };
+  };
+  globalThis.fetch = async () => {
+    assert.fail("provider request must not run in login mode");
+  };
+
+  try {
+    await assert.rejects(
+      () => client.fetchProviderModels(),
+      /unavailable in login mode/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await client.close();
+  }
+});
+
+test("provider model fetching reads API-key auth from the Codex auth file", async () => {
+  const originalFetch = globalThis.fetch;
+  const codexHome = mkdtempSync(join(tmpdir(), "codex-model-auth-"));
+  writeFileSync(
+    join(codexHome, "auth.json"),
+    JSON.stringify({
+      auth_mode: "apikey",
+      OPENAI_API_KEY: "auth-file-key",
+    }),
+  );
+  const client = new __TEST_ONLY__.CodexAppServerClient({
+    env: { CODEX_HOME: codexHome },
+  });
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method) => {
+    if (method === "config/read") {
+      return {
+        config: {
+          model_provider: "custom",
+          model_providers: {
+            custom: { base_url: "https://provider.example/v1" },
+          },
+        },
+      };
+    }
+    return {
+      authMethod: null,
+      authToken: null,
+      requiresOpenaiAuth: false,
+    };
+  };
+  globalThis.fetch = async (_input, init) => {
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Authorization"), "Bearer auth-file-key");
+    return new Response(JSON.stringify({ data: [{ id: "provider-model" }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    assert.equal((await client.fetchProviderModels())[0]?.id, "provider-model");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await client.close();
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
 test("app-server client extracts nested sub-agent thread metadata", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
   (

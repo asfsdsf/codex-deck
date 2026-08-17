@@ -299,6 +299,77 @@ test("server routes return sessions/projects/conversation/context and fix dangli
   }
 });
 
+test("provider model fetch route delegates discovery to the Codex app-server client", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-provider-model-fetch",
+  );
+  const server = createServer({ port: 13035, codexDir: rootDir, open: false });
+  const requestedCwds: Array<string | null | undefined> = [];
+  const mockClient: CodexAppServerClientFacade = {
+    listModels: async () => [],
+    fetchProviderModels: async (cwd) => {
+      requestedCwds.push(cwd);
+      return [
+        {
+          id: "provider-model",
+          displayName: "Provider model",
+          description: "",
+          isDefault: false,
+          hidden: false,
+          defaultReasoningEffort: null,
+          supportedReasoningEfforts: [],
+        },
+      ];
+    },
+    listCollaborationModes: async () => [],
+    createThread: async () => "thread-id",
+    sendMessage: async () => ({ turnId: null }),
+    getThreadState: async () => ({
+      threadId: SESSION_ID,
+      activeTurnId: null,
+      isGenerating: false,
+      requestedTurnId: null,
+      requestedTurnStatus: null,
+    }),
+    getLastTurnDiff: async () => ({
+      threadId: SESSION_ID,
+      turnId: null,
+      files: [],
+    }),
+    interruptThread: async () => undefined,
+    listPendingUserInputRequests: () => [],
+    submitUserInput: async () => undefined,
+  };
+
+  try {
+    setCodexAppServerClientForTests(mockClient);
+    const response = await requestJson(server, "/api/codex/models/fetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: " /repo/app " }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(requestedCwds, ["/repo/app"]);
+    assert.deepEqual(response.body, {
+      models: [
+        {
+          id: "provider-model",
+          displayName: "Provider model",
+          description: "",
+          isDefault: false,
+          hidden: false,
+          defaultReasoningEffort: null,
+          supportedReasoningEfforts: [],
+        },
+      ],
+    });
+  } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("conversation message edit route updates paired user history records", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "server-edit-conversation-message",

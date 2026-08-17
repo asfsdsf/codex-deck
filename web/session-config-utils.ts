@@ -25,6 +25,27 @@ function findModel(
   return models.find((model) => model.id === normalizedModelId) ?? null;
 }
 
+export function mergeCodexModels(
+  currentModels: CodexModelOption[],
+  fetchedModels: CodexModelOption[],
+): CodexModelOption[] {
+  const merged = [...currentModels];
+  const knownIds = new Set(
+    currentModels.map((model) => model.id.trim()).filter(Boolean),
+  );
+
+  for (const model of fetchedModels) {
+    const id = model.id.trim();
+    if (!id || knownIds.has(id)) {
+      continue;
+    }
+    knownIds.add(id);
+    merged.push({ ...model, id });
+  }
+
+  return merged;
+}
+
 export function getModelDisplayName(
   models: CodexModelOption[],
   modelId: string | null | undefined,

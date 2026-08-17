@@ -4076,6 +4076,36 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  app.post("/api/codex/models/fetch", async (c) => {
+    try {
+      const requestText = await c.req.text();
+      const body = requestText
+        ? (JSON.parse(requestText) as { cwd?: unknown })
+        : {};
+      const cwd = parseOptionalString(body?.cwd);
+      if (body?.cwd !== undefined && cwd === undefined) {
+        return c.json({ error: "cwd must be a string" }, 400);
+      }
+
+      const fetchProviderModels = getCodexAppServerClient().fetchProviderModels;
+      if (!fetchProviderModels) {
+        return c.json(
+          { error: "Provider model discovery is unavailable" },
+          503,
+        );
+      }
+      const models = await fetchProviderModels(cwd);
+      return c.json({ models });
+    } catch (error) {
+      return c.json(
+        {
+          error: toErrorMessage(error),
+        },
+        responseStatusForError(error),
+      );
+    }
+  });
+
   app.get("/api/codex/collaboration-modes", async (c) => {
     try {
       const modes = await getCodexAppServerClient().listCollaborationModes();

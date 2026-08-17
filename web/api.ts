@@ -919,6 +919,22 @@ export async function listCodexModels(): Promise<CodexModelOption[]> {
   });
 }
 
+export async function fetchCodexModels(
+  cwd?: string | null,
+): Promise<CodexModelOption[]> {
+  const payload = await requestJson<CodexModelsResponse>(
+    "/api/codex/models/fetch",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ cwd: cwd?.trim() || null }),
+    },
+  );
+  return Array.isArray(payload.models) ? payload.models : [];
+}
+
 export async function listCodexCollaborationModes(): Promise<
   CodexCollaborationModeOption[]
 > {
