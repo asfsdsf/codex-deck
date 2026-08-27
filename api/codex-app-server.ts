@@ -1916,6 +1916,11 @@ class CodexAppServerClient {
     }
     await this.reloadProviderIfChanged(activeConfig);
 
+    // Provider-switching tools commonly write config.toml before auth.json.
+    // Re-check after reading the new provider config so a credential update
+    // that raced with the first check is loaded before the turn starts.
+    await this.reloadAuthIfChanged();
+
     try {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
@@ -2664,6 +2669,10 @@ class CodexAppServerClient {
     }
 
     const spawnSpec = createCodexAppServerSpawnSpec(this.executablePath);
+    // Capture the auth snapshot before spawning. If auth.json changes while
+    // the child is starting, the next pre-turn check must see the difference
+    // instead of incorrectly treating the new file as already loaded.
+    const authFileFingerprint = this.readAuthFileFingerprint();
     const child = spawn(spawnSpec.command, spawnSpec.args, {
       cwd: this.cwd,
       env: {
@@ -2675,7 +2684,7 @@ class CodexAppServerClient {
       shell: spawnSpec.shell,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    this.rebaselineAuthFileFingerprint();
+    this.authFileFingerprint = authFileFingerprint;
 
     child.on("exit", (code, signal) => {
       if (this.process !== child) {

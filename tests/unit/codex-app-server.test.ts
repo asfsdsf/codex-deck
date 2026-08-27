@@ -1444,6 +1444,80 @@ test("app-server client restarts before send when provider has changed", async (
   }
 });
 
+test("app-server client rechecks auth after reading updated provider config", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  let closeCount = 0;
+  let fingerprintReadCount = 0;
+  const internals = client as unknown as {
+    process: unknown;
+    close: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    lastKnownProviderId: string | null;
+    authFileFingerprint: string | null;
+    readAuthFileFingerprint: () => string;
+  };
+  internals.process = { stub: true };
+  internals.lastKnownProviderId = "openai";
+  internals.authFileFingerprint = "old-auth";
+  internals.readAuthFileFingerprint = () => {
+    fingerprintReadCount += 1;
+    return fingerprintReadCount === 1 ? "old-auth" : "new-auth";
+  };
+  internals.close = async () => {
+    closeCount += 1;
+    internals.process = null;
+  };
+  internals.request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === "config/read") {
+      return {
+        config: {
+          model: "gpt-5.5",
+          model_provider: "openai",
+          model_reasoning_effort: "high",
+        },
+      };
+    }
+    if (method === "thread/loaded/list") {
+      return { data: [] };
+    }
+    if (method === "thread/settings/update") {
+      return {};
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn-1" } };
+    }
+    throw new Error(`unexpected method: ${method}`);
+  };
+
+  try {
+    const result = await client.sendMessage({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello" }],
+    });
+
+    assert.deepEqual(result, { turnId: "turn-1" });
+    assert.equal(closeCount, 1);
+    assert.equal(fingerprintReadCount, 2);
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      [
+        "config/read",
+        "thread/loaded/list",
+        "thread/settings/update",
+        "turn/start",
+      ],
+    );
+  } finally {
+    await client.close();
+  }
+});
+
 test("app-server client does not fail send when thread resume sees an unmaterialized rollout", async () => {
   // After provider restart, the fresh app-server has no loaded thread.
   // turn/start fails with "thread not found", triggering a resume retry.
