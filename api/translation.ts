@@ -121,6 +121,12 @@ interface ProcessResult {
   stderr: string;
 }
 
+interface MacOSTranslationBackend {
+  binaryExists: (path: string) => boolean;
+  compileBinary: () => Promise<string>;
+  runProcess: typeof runProcess;
+}
+
 function runProcess(
   file: string,
   args: string[],
@@ -141,7 +147,9 @@ function runProcess(
       reject(error);
     };
     const timer = setTimeout(() => {
-      fail(new Error(`process timed out after ${options.timeoutMs}ms: ${file}`));
+      fail(
+        new Error(`process timed out after ${options.timeoutMs}ms: ${file}`),
+      );
     }, options.timeoutMs);
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
@@ -254,14 +262,56 @@ struct CodexDeckTranslateCLI {
 `;
 
 let macOSBinaryPromise: Promise<string> | null = null;
+let macOSTranslationBackend: MacOSTranslationBackend = {
+  binaryExists: existsSync,
+  compileBinary: compileMacOSTranslateBinary,
+  runProcess,
+};
 
-function getMacOSTranslateBinary(): Promise<string> {
-  macOSBinaryPromise ??= compileMacOSTranslateBinary().catch((error) => {
-    // Allow a later request to retry the compile.
-    macOSBinaryPromise = null;
-    throw error;
-  });
-  return macOSBinaryPromise;
+export function setMacOSTranslationBackendForTests(
+  backend: MacOSTranslationBackend | null,
+): void {
+  macOSTranslationBackend = backend ?? {
+    binaryExists: existsSync,
+    compileBinary: compileMacOSTranslateBinary,
+    runProcess,
+  };
+  macOSBinaryPromise = null;
+}
+
+async function getMacOSTranslateBinary(): Promise<string> {
+  while (true) {
+    const binaryPromise =
+      macOSBinaryPromise ?? macOSTranslationBackend.compileBinary();
+    macOSBinaryPromise = binaryPromise;
+
+    try {
+      const binaryPath = await binaryPromise;
+      if (macOSTranslationBackend.binaryExists(binaryPath)) {
+        return binaryPath;
+      }
+    } catch (error) {
+      if (macOSBinaryPromise === binaryPromise) {
+        // Allow a later request to retry the compile.
+        macOSBinaryPromise = null;
+      }
+      throw error;
+    }
+
+    // macOS can clean its temporary directory while a long-running daemon is
+    // still using it. Drop the stale resolved promise and rebuild the helper.
+    if (macOSBinaryPromise === binaryPromise) {
+      macOSBinaryPromise = null;
+    }
+  }
+}
+
+function isMissingExecutableError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 async function compileMacOSTranslateBinary(): Promise<string> {
@@ -300,14 +350,32 @@ async function translateWithMacOSBuiltIn(
   inputLang: string,
   outputLang: string,
 ): Promise<string> {
-  const binaryPath = await getMacOSTranslateBinary();
-  const { stdout } = await runProcess(binaryPath, [inputLang, outputLang], {
-    input: text,
-    timeoutMs: MACOS_RUN_TIMEOUT_MS,
-  });
-  const translated = stdout.replace(/\n+$/, "");
-  if (!translated) {
-    throw new Error("macOS built-in translation produced no output");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const binaryPath = await getMacOSTranslateBinary();
+    try {
+      const { stdout } = await macOSTranslationBackend.runProcess(
+        binaryPath,
+        [inputLang, outputLang],
+        {
+          input: text,
+          timeoutMs: MACOS_RUN_TIMEOUT_MS,
+        },
+      );
+      const translated = stdout.replace(/\n+$/, "");
+      if (!translated) {
+        throw new Error("macOS built-in translation produced no output");
+      }
+      return translated;
+    } catch (error) {
+      if (attempt === 0 && isMissingExecutableError(error)) {
+        // The temp file can disappear after getMacOSTranslateBinary checks it
+        // but before spawn opens it. Invalidate the cache and retry once.
+        macOSBinaryPromise = null;
+        continue;
+      }
+      throw error;
+    }
   }
-  return translated;
+
+  throw new Error("macOS built-in translation helper is unavailable");
 }

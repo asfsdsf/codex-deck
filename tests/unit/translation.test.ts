@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   expandTranslationCommand,
+  setMacOSTranslationBackendForTests,
   translateText,
   TranslationUnavailableError,
 } from "../../api/translation";
@@ -108,4 +109,64 @@ test("translateText is unavailable without a command on non-macOS platforms", as
       return true;
     },
   );
+});
+
+test("macOS translation rebuilds a cached helper removed from the temp directory", async (t) => {
+  let binaryExists = false;
+  let compileCount = 0;
+  setMacOSTranslationBackendForTests({
+    binaryExists: () => binaryExists,
+    compileBinary: async () => {
+      compileCount += 1;
+      binaryExists = true;
+      return "/tmp/codex-deck-translate-test";
+    },
+    runProcess: async () => ({ stdout: "translated", stderr: "" }),
+  });
+  t.after(() => setMacOSTranslationBackendForTests(null));
+
+  const options = {
+    text: "hello",
+    inputLang: "en",
+    outputLang: "zh",
+    platform: "darwin" as const,
+  };
+  assert.equal(await translateText(options), "translated");
+  binaryExists = false;
+  assert.equal(await translateText(options), "translated");
+  assert.equal(compileCount, 2);
+});
+
+test("macOS translation retries when the helper disappears before spawn", async (t) => {
+  let compileCount = 0;
+  let runCount = 0;
+  setMacOSTranslationBackendForTests({
+    binaryExists: () => true,
+    compileBinary: async () => {
+      compileCount += 1;
+      return "/tmp/codex-deck-translate-test";
+    },
+    runProcess: async () => {
+      runCount += 1;
+      if (runCount === 1) {
+        const error = new Error("spawn helper ENOENT") as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        throw error;
+      }
+      return { stdout: "translated", stderr: "" };
+    },
+  });
+  t.after(() => setMacOSTranslationBackendForTests(null));
+
+  assert.equal(
+    await translateText({
+      text: "hello",
+      inputLang: "en",
+      outputLang: "zh",
+      platform: "darwin",
+    }),
+    "translated",
+  );
+  assert.equal(compileCount, 2);
+  assert.equal(runCount, 2);
 });
