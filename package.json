@@ -28,6 +28,11 @@
     "test:integration": "playwright test",
     "prestart": "pnpm build:server",
     "start": "node dist/index.js",
+    "daemon:install": "./scripts/install-daemon.sh install",
+    "daemon:start": "./scripts/install-daemon.sh start",
+    "daemon:stop": "./scripts/install-daemon.sh stop",
+    "daemon:restart": "./scripts/install-daemon.sh restart",
+    "daemon:status": "./scripts/install-daemon.sh status",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {

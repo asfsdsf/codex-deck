@@ -174,6 +174,53 @@ cd ..
 rm -rf codex-deck
 ```
 
+### Run as a user daemon
+
+From a source checkout, install a native user service for the built local
+server:
+
+```bash
+./scripts/install-daemon.sh install
+codex-deck-daemon start
+```
+
+The installer builds the app, then installs a macOS `launchd` agent or a Linux
+user `systemd` service. The service runs the built server with `--no-open`, so
+it does not try to open a browser in the background. Installation leaves the
+service stopped; start it explicitly with `codex-deck-daemon start`. If
+`~/.local/bin` is not on `PATH`, use the full path printed by the installer or
+add it to `PATH`.
+
+Manage the service with:
+
+```bash
+codex-deck-daemon status
+codex-deck-daemon stop
+codex-deck-daemon restart
+```
+
+After changing the source, rebuild and restart it:
+
+```bash
+pnpm build
+codex-deck-daemon restart
+```
+
+The status output includes the main Codex home's
+`codex-deck/config.toml` path. The server log is written to
+`~/.local/state/codex-deck/server.log`. To provide service-only environment
+variables such as `CODEX_HOME` or remote connection settings, pass a shell
+environment file during installation:
+
+```bash
+./scripts/install-daemon.sh install --env-file ~/.config/codex-deck/server.env
+```
+
+The equivalent package commands are `pnpm daemon:install`,
+`pnpm daemon:start`, `pnpm daemon:stop`, `pnpm daemon:restart`, and
+`pnpm daemon:status`. Remove the service with
+`codex-deck-daemon uninstall`.
+
 ### Option 3: Use a release package
 
 Download `codex-deck-vX.X.X-[arch]` from the [GitHub Releases page](https://github.com/asfsdsf/codex-deck/releases), extract it, and run the `codex-deck` executable from that directory.

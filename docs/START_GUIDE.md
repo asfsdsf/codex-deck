@@ -8,6 +8,23 @@ pnpm build
 pnpm start
 ```
 
+To run the built local server under the operating system’s user service manager
+instead, install the daemon and use its lifecycle command:
+
+```bash
+./scripts/install-daemon.sh install
+codex-deck-daemon start
+codex-deck-daemon status
+```
+
+The installer uses macOS `launchd` or Linux user `systemd`, and the service
+always starts the built server with `--no-open`. Installation leaves the
+service stopped; start it explicitly with `codex-deck-daemon start`. Use `stop`
+or `restart` for lifecycle control; after source changes, run `pnpm build`
+before `restart`. Status shows the main Codex home's
+`codex-deck/config.toml` path. Logs are stored at
+`~/.local/state/codex-deck/server.log`.
+
 Or use watch mode:
 
 ```bash
