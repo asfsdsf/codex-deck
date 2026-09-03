@@ -101,6 +101,27 @@ test("config routes save the main home file and apply runtime settings", async (
     };
     assert.deepEqual(restartResult.appliedKeys, []);
     assert.deepEqual(restartResult.restartRequiredKeys, ["port"]);
+
+    const updateStatusResponse = await server.app.request(
+      "/api/codex-deck/update?codexHome=work",
+    );
+    assert.equal(updateStatusResponse.status, 200);
+    const updateStatus = (await updateStatusResponse.json()) as {
+      daemonManaged: boolean;
+      restartSupported: boolean;
+    };
+    assert.equal(updateStatus.daemonManaged, false);
+    assert.equal(updateStatus.restartSupported, false);
+
+    const unmanagedUpdateResponse = await server.app.request(
+      "/api/codex-deck/update",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method: "source", sourceRoot: root }),
+      },
+    );
+    assert.equal(unmanagedUpdateResponse.status, 503);
   } finally {
     server.stop();
     await rm(root, { recursive: true, force: true });

@@ -182,6 +182,11 @@ import {
 } from "../codex-home-registry";
 import type { CodexDeckConfig } from "../config";
 import { registerConfigRoutes } from "./config-routes";
+import { registerDaemonUpdateRoutes } from "./daemon-update-routes";
+import {
+  createDaemonUpdaterOptionsFromEnvironment,
+  DaemonUpdater,
+} from "../daemon-updater";
 import {
   getTerminalBindingsByTerminalIds,
   onTerminalBindingChange,
@@ -1868,6 +1873,7 @@ async function buildLastTurnDiffResponse(
 
 export interface ServerOptions {
   port: number;
+  appVersion?: string;
   codexDir?: string;
   hostname?: string;
   runtimeEntryPath?: string;
@@ -1883,6 +1889,7 @@ export interface ServerOptions {
   remotePinnedOpaqueServerPublicKey?: string;
   remoteProxyAccessToken?: string;
   translationCommand?: string;
+  daemonUpdater?: DaemonUpdater;
 }
 
 interface SessionSkillsChangedEvent {
@@ -1943,6 +1950,7 @@ function getChangedConfigKeys(
 export function createServer(options: ServerOptions) {
   const {
     port,
+    appVersion = "0.0.0",
     codexDir,
     hostname = "0.0.0.0",
     runtimeEntryPath,
@@ -1958,6 +1966,7 @@ export function createServer(options: ServerOptions) {
     remotePinnedOpaqueServerPublicKey,
     remoteProxyAccessToken,
     translationCommand,
+    daemonUpdater: configuredDaemonUpdater,
   } = options;
 
   initStorage(codexDir);
@@ -1979,6 +1988,9 @@ export function createServer(options: ServerOptions) {
     ? new CodexHomeRuntimeManager(additionalCodexHomes, runtimeEntryPath)
     : null;
   let runtimeTranslationCommand = translationCommand;
+  const daemonUpdater =
+    configuredDaemonUpdater ??
+    new DaemonUpdater(createDaemonUpdaterOptionsFromEnvironment(appVersion));
 
   const app = new Hono();
   const internalRemoteProxyAccessToken = remoteServerUrl
@@ -2013,7 +2025,10 @@ export function createServer(options: ServerOptions) {
   );
 
   app.use("/api/*", async (c, next) => {
-    if (c.req.path === "/api/codex-deck/config") {
+    if (
+      c.req.path === "/api/codex-deck/config" ||
+      c.req.path.startsWith("/api/codex-deck/update")
+    ) {
       await next();
       return;
     }
@@ -2474,6 +2489,7 @@ export function createServer(options: ServerOptions) {
       };
     },
   });
+  registerDaemonUpdateRoutes(app, daemonUpdater);
   registerSettingsRoutes(app);
   registerTerminalRoutes(app);
   registerTranslationRoutes(app, {

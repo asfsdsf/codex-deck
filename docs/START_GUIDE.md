@@ -25,6 +25,13 @@ before `restart`. Status shows the main Codex home's
 `codex-deck/config.toml` path. Logs are stored at
 `~/.local/state/codex-deck/server.log`.
 
+After installing the current daemon definition, **Settings → Updates** can do
+the build/restart work from the Web UI. The npm option checks and installs the
+latest npm release into daemon-managed storage. The source option does not
+check versions or pull Git changes; it installs and builds the selected source
+tree as it exists on disk, activates it, and restarts. Its default project root
+is the directory from which the last `codex-deck-daemon start` was invoked.
+
 Or use watch mode:
 
 ```bash

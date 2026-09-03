@@ -1196,6 +1196,352 @@ test("editConversationMessage updates paired JSONL records, history, and thread 
   }
 });
 
+test("editConversationMessage invalidates only the edited thread's paginated history projection", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-edit-invalidates-thread-history",
+  );
+  const originalText = "Short prompt";
+  const editedText =
+    "A substantially longer edited prompt that changes every later byte offset";
+
+  try {
+    const records = [
+      JSON.parse(sessionMetaLine(SESSION_A, "/repo/project-a", Date.now())),
+      {
+        timestamp: "2026-09-03T08:50:23.400Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" },
+      },
+      {
+        timestamp: "2026-09-03T08:50:23.434Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          id: "user-item-1",
+          role: "user",
+          content: [{ type: "input_text", text: originalText }],
+          internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+        },
+      },
+      {
+        timestamp: "2026-09-03T08:50:23.435Z",
+        type: "event_msg",
+        payload: { type: "user_message", message: originalText },
+      },
+      ...Array.from({ length: 7 }, (_, index) => ({
+        timestamp: `2026-09-03T08:50:${24 + index}.000Z`,
+        type: "event_msg",
+        payload: { type: "token_count", info: { total_token_usage: index } },
+      })),
+      {
+        timestamp: "2026-09-03T08:50:31.000Z",
+        type: "event_msg",
+        payload: { type: "task_complete", turn_id: "turn-1" },
+      },
+    ].map((record, ordinal) => JSON.stringify({ ...record, ordinal }));
+    const sessionFilePath = await writeSessionFile(
+      sessionsDir,
+      `${SESSION_A}.jsonl`,
+      records,
+    );
+    const originalFileSize = Buffer.byteLength(
+      await readFile(sessionFilePath, "utf-8"),
+      "utf-8",
+    );
+
+    const threadHistoryDbPath = join(rootDir, "thread_history_7.sqlite");
+    const sqliteSetup = spawnSync(
+      "sqlite3",
+      [
+        threadHistoryDbPath,
+        `CREATE TABLE thread_history_projection_state (
+           thread_id TEXT PRIMARY KEY,
+           next_rollout_byte_offset INTEGER NOT NULL,
+           next_rollout_ordinal INTEGER NOT NULL
+         );
+         CREATE TABLE thread_turns (
+           thread_id TEXT NOT NULL,
+           turn_id TEXT NOT NULL,
+           rollout_ordinal INTEGER NOT NULL
+         );
+         CREATE TABLE thread_items (
+           thread_id TEXT NOT NULL,
+           turn_id TEXT NOT NULL,
+           item_id TEXT NOT NULL,
+           rollout_ordinal INTEGER NOT NULL,
+           item_json TEXT NOT NULL
+         );
+         CREATE TABLE thread_realtime_items (
+           thread_id TEXT NOT NULL,
+           item_id TEXT NOT NULL,
+           rollout_ordinal INTEGER NOT NULL,
+           item_json TEXT NOT NULL
+         );
+         INSERT INTO thread_history_projection_state VALUES ('${SESSION_A}', ${originalFileSize}, 12);
+         INSERT INTO thread_history_projection_state VALUES ('${SESSION_B}', 900, 9);
+         INSERT INTO thread_turns VALUES ('${SESSION_A}', 'turn-1', 1);
+         INSERT INTO thread_turns VALUES ('${SESSION_B}', 'turn-2', 1);
+         INSERT INTO thread_items VALUES ('${SESSION_A}', 'turn-1', 'item-1', 2, '{"text":"${originalText}"}');
+         INSERT INTO thread_items VALUES ('${SESSION_B}', 'turn-2', 'item-2', 2, '{"text":"keep"}');
+         INSERT INTO thread_realtime_items VALUES ('${SESSION_A}', 'realtime-1', 3, '{"text":"${originalText}"}');
+         INSERT INTO thread_realtime_items VALUES ('${SESSION_B}', 'realtime-2', 3, '{"text":"keep"}');`,
+      ],
+      { encoding: "utf-8" },
+    );
+    assert.equal(sqliteSetup.status, 0, sqliteSetup.stderr);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const result = await editConversationMessage(SESSION_A, {
+      editId: "item:user-item-1",
+      expectedText: originalText,
+      text: editedText,
+    });
+
+    assert.equal(result.sessionRecordsUpdated, 2);
+    assert.equal(result.sqlite.threadHistory.dbPath, threadHistoryDbPath);
+    assert.equal(result.sqlite.threadHistory.projectionRowsDeleted, 1);
+    assert.equal(result.sqlite.threadHistory.turnRowsDeleted, 1);
+    assert.equal(result.sqlite.threadHistory.itemRowsDeleted, 1);
+    assert.equal(result.sqlite.threadHistory.realtimeRowsDeleted, 1);
+    assert.equal(result.sqlite.threadHistory.skippedReason, null);
+    assert.deepEqual(result.sqlite.threadHistory.warnings, []);
+
+    const affectedRows = spawnSync(
+      "sqlite3",
+      [
+        threadHistoryDbPath,
+        `SELECT
+           (SELECT count(*) FROM thread_history_projection_state WHERE thread_id='${SESSION_A}') || '|' ||
+           (SELECT count(*) FROM thread_turns WHERE thread_id='${SESSION_A}') || '|' ||
+           (SELECT count(*) FROM thread_items WHERE thread_id='${SESSION_A}') || '|' ||
+           (SELECT count(*) FROM thread_realtime_items WHERE thread_id='${SESSION_A}');`,
+      ],
+      { encoding: "utf-8" },
+    );
+    assert.equal(affectedRows.status, 0, affectedRows.stderr);
+    assert.equal(affectedRows.stdout.trim(), "0|0|0|0");
+
+    const unrelatedRows = spawnSync(
+      "sqlite3",
+      [
+        threadHistoryDbPath,
+        `SELECT
+           (SELECT count(*) FROM thread_history_projection_state WHERE thread_id='${SESSION_B}') || '|' ||
+           (SELECT count(*) FROM thread_turns WHERE thread_id='${SESSION_B}') || '|' ||
+           (SELECT count(*) FROM thread_items WHERE thread_id='${SESSION_B}') || '|' ||
+           (SELECT count(*) FROM thread_realtime_items WHERE thread_id='${SESSION_B}');`,
+      ],
+      { encoding: "utf-8" },
+    );
+    assert.equal(unrelatedRows.status, 0, unrelatedRows.stderr);
+    assert.equal(unrelatedRows.stdout.trim(), "1|1|1|1");
+
+    const editedFileSize = Buffer.byteLength(
+      await readFile(sessionFilePath, "utf-8"),
+      "utf-8",
+    );
+    assert.ok(editedFileSize > originalFileSize);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("editConversationMessage preserves the JSONL edit when the projection schema is unavailable", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-edit-missing-thread-history-schema",
+  );
+  const originalText = "Original prompt";
+  const editedText = "Edited prompt survives a stale projection schema";
+
+  try {
+    const sessionFilePath = await writeSessionFile(
+      sessionsDir,
+      `${SESSION_A}.jsonl`,
+      [
+        sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+        JSON.stringify({
+          timestamp: "2026-09-03T08:50:23.434Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "user-item-1",
+            role: "user",
+            content: [{ type: "input_text", text: originalText }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-09-03T08:50:23.435Z",
+          type: "event_msg",
+          payload: { type: "user_message", message: originalText },
+        }),
+      ],
+    );
+    const threadHistoryDbPath = join(rootDir, "thread_history_1.sqlite");
+    const sqliteSetup = spawnSync(
+      "sqlite3",
+      [threadHistoryDbPath, "CREATE TABLE unrelated_cache (id TEXT);"],
+      { encoding: "utf-8" },
+    );
+    assert.equal(sqliteSetup.status, 0, sqliteSetup.stderr);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const result = await editConversationMessage(SESSION_A, {
+      editId: "item:user-item-1",
+      expectedText: originalText,
+      text: editedText,
+    });
+
+    assert.equal(result.sessionRecordsUpdated, 2);
+    assert.equal(result.sqlite.threadHistory.dbPath, threadHistoryDbPath);
+    assert.equal(
+      result.sqlite.threadHistory.skippedReason,
+      "thread history projection tables not found",
+    );
+    assert.equal(result.sqlite.threadHistory.warnings.length, 1);
+    const content = await readFile(sessionFilePath, "utf-8");
+    assert.equal(content.includes(originalText), false);
+    assert.equal(content.match(new RegExp(editedText, "g"))?.length, 2);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("editConversationMessage updates new item_completed message pairs", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-edit-item-completed-message",
+  );
+  const originalUserText = "Original new-format user prompt";
+  const editedUserText = "Edited new-format user prompt";
+  const originalAssistantText = "Original new-format assistant reply";
+  const editedAssistantText = "Edited new-format assistant reply";
+
+  try {
+    const sessionFilePath = await writeSessionFile(
+      sessionsDir,
+      `${SESSION_A}.jsonl`,
+      [
+        sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+        JSON.stringify({
+          timestamp: "2026-09-03T08:50:23.434Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "new-user-response-item",
+            role: "user",
+            content: [
+              { type: "input_text", text: originalUserText },
+              { type: "input_image", image_url: "data:image/png;base64,abc" },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-09-03T08:50:23.434Z",
+          type: "event_msg",
+          payload: {
+            type: "item_completed",
+            item: {
+              type: "UserMessage",
+              id: "different-user-event-item",
+              content: [
+                { type: "text", text: originalUserText },
+                { type: "image", image_url: "data:image/png;base64,abc" },
+              ],
+            },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-09-03T08:50:38.638Z",
+          type: "event_msg",
+          payload: {
+            type: "item_completed",
+            item: {
+              type: "AgentMessage",
+              id: "new-assistant-response-item",
+              content: [
+                { type: "Text", text: originalAssistantText },
+                { type: "metadata", value: "preserve-me" },
+              ],
+            },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-09-03T08:50:38.643Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "new-assistant-response-item",
+            role: "assistant",
+            content: [{ type: "output_text", text: originalAssistantText }],
+          },
+        }),
+      ],
+    );
+    await writeHistoryFile(rootDir, [
+      JSON.stringify({
+        session_id: SESSION_A,
+        ts: 1700000000,
+        text: originalUserText,
+      }),
+    ]);
+
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    const before = await getConversation(SESSION_A);
+    assert.equal(
+      before.find((message) => message.editText === originalUserText)?.editable,
+      true,
+    );
+    assert.equal(
+      before.find((message) => message.editText === originalAssistantText)
+        ?.editable,
+      true,
+    );
+
+    const userResult = await editConversationMessage(SESSION_A, {
+      editId: "item:new-user-response-item",
+      expectedText: originalUserText,
+      text: editedUserText,
+    });
+    assert.equal(userResult.sessionRecordsUpdated, 2);
+
+    const assistantResult = await editConversationMessage(SESSION_A, {
+      editId: "item:new-assistant-response-item",
+      expectedText: originalAssistantText,
+      text: editedAssistantText,
+    });
+    assert.equal(assistantResult.sessionRecordsUpdated, 2);
+
+    const sessionRecords = (await readFile(sessionFilePath, "utf-8"))
+      .trim()
+      .split("\n")
+      .map((record) => JSON.parse(record));
+    assert.equal(
+      sessionRecords.filter((record) =>
+        JSON.stringify(record).includes(editedUserText),
+      ).length,
+      2,
+    );
+    assert.equal(
+      sessionRecords.filter((record) =>
+        JSON.stringify(record).includes(editedAssistantText),
+      ).length,
+      2,
+    );
+    assert.equal(
+      JSON.stringify(sessionRecords).includes("data:image/png;base64,abc"),
+      true,
+    );
+    assert.equal(JSON.stringify(sessionRecords).includes("preserve-me"), true);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("getConversationStream returns incremental updates from offsets", async () => {
   const { rootDir, sessionsDir, cleanup } =
     await createTempCodexDir("storage-stream");

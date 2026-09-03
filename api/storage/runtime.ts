@@ -16,6 +16,7 @@ import { parseConversationTextChunk } from "../conversation-parser";
 import {
   collectEditableMessagePairs,
   getEditableResponseItem,
+  replaceEditableEventMessageText,
 } from "../conversation-edit-records";
 import { splitPathSegments } from "../path-utils";
 
@@ -542,6 +543,41 @@ export interface CodexDeckConfigWriteResponse extends CodexDeckConfigFileRespons
   mainHomeId: string;
 }
 
+export type CodexDeckUpdateMethod = "npm" | "source";
+
+export interface CodexDeckUpdateStatusResponse {
+  daemonManaged: boolean;
+  restartSupported: boolean;
+  unavailableReason: string | null;
+  currentVersion: string;
+  updateMethod: CodexDeckUpdateMethod;
+  sourceRoot: string;
+  defaultSourceRoot: string;
+  daemonStartedAt: string;
+  updateInProgress: boolean;
+  npm: {
+    checked: boolean;
+    latestVersion: string | null;
+    updateAvailable: boolean | null;
+    checkedAt: string | null;
+  };
+}
+
+export interface CodexDeckUpdateRequest {
+  method: CodexDeckUpdateMethod;
+  sourceRoot?: string;
+}
+
+export interface CodexDeckUpdateResponse {
+  ok: true;
+  method: CodexDeckUpdateMethod;
+  installedVersion: string;
+  sourceRoot: string | null;
+  restartScheduled: true;
+  daemonStartedAt: string;
+  message: string;
+}
+
 export interface CodexConfigDefaultsResponse {
   model: string | null;
   reasoningEffort: CodexReasoningEffort | null;
@@ -624,11 +660,22 @@ export interface EditConversationMessageRequest {
   text: string;
 }
 
+export interface EditConversationMessageThreadHistoryResult {
+  dbPath: string | null;
+  projectionRowsDeleted: number;
+  turnRowsDeleted: number;
+  itemRowsDeleted: number;
+  realtimeRowsDeleted: number;
+  skippedReason: string | null;
+  warnings: string[];
+}
+
 export interface EditConversationMessageSqliteResult {
   dbPath: string | null;
   threadsUpdated: number;
   skippedReason: string | null;
   warnings: string[];
+  threadHistory: EditConversationMessageThreadHistoryResult;
 }
 
 export interface EditConversationMessageResponse {
@@ -1530,8 +1577,16 @@ const SESSION_INDEX_FILENAME = "session_index.jsonl";
 const SQLITE_BUSY_TIMEOUT_MS = 5000;
 const STATE_DB_FILE_REGEX = /^state_(\d+)\.sqlite$/i;
 const LOGS_DB_FILE_REGEX = /^logs_(\d+)\.sqlite$/i;
+const THREAD_HISTORY_DB_FILE_REGEX = /^thread_history_(\d+)\.sqlite$/i;
 const LEGACY_STATE_DB_FILE = "state.sqlite";
 const LEGACY_LOGS_DB_FILE = "logs.sqlite";
+const LEGACY_THREAD_HISTORY_DB_FILE = "thread_history.sqlite";
+const THREAD_HISTORY_PROJECTION_TABLES = [
+  "thread_realtime_items",
+  "thread_items",
+  "thread_turns",
+  "thread_history_projection_state",
+] as const;
 const HISTORY_SESSION_ID_KEYS = ["session_id", "sessionId", "conversation_id"];
 const SESSION_INDEX_ID_KEYS = ["id", "thread_id", "threadId"];
 
@@ -3310,13 +3365,149 @@ function escapeSqliteText(value: string): string {
   return value.replaceAll("'", "''");
 }
 
+function emptyThreadHistoryInvalidationResult(
+  dbPath: string | null,
+  skippedReason: string,
+  warnings: string[] = [],
+): EditConversationMessageThreadHistoryResult {
+  return {
+    dbPath,
+    projectionRowsDeleted: 0,
+    turnRowsDeleted: 0,
+    itemRowsDeleted: 0,
+    realtimeRowsDeleted: 0,
+    skippedReason,
+    warnings,
+  };
+}
+
+async function invalidateEditedThreadHistoryProjection(
+  sessionId: string,
+): Promise<EditConversationMessageThreadHistoryResult> {
+  const sqliteHome = await resolveSqliteHome(codexDir);
+  const dbPath = await findVersionedDbPath(
+    sqliteHome,
+    THREAD_HISTORY_DB_FILE_REGEX,
+    LEGACY_THREAD_HISTORY_DB_FILE,
+  );
+  if (!dbPath) {
+    return emptyThreadHistoryInvalidationResult(
+      null,
+      "thread history db not found",
+    );
+  }
+
+  const sqliteVersion = spawnSync("sqlite3", ["-version"], {
+    encoding: "utf-8",
+  });
+  if (sqliteVersion.error || sqliteVersion.status !== 0) {
+    const message = sqliteVersion.error
+      ? sqliteVersion.error.message
+      : (sqliteVersion.stderr?.trim() ?? "sqlite3 command failed");
+    return emptyThreadHistoryInvalidationResult(
+      dbPath,
+      "sqlite3 is unavailable",
+      [message],
+    );
+  }
+
+  let tableNames: Set<string>;
+  try {
+    const output = runSqliteCommand(
+      dbPath,
+      `SELECT name FROM sqlite_master
+       WHERE type='table'
+         AND name IN ('${THREAD_HISTORY_PROJECTION_TABLES.join("','")}');`,
+    );
+    tableNames = new Set(
+      output
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) =>
+          THREAD_HISTORY_PROJECTION_TABLES.includes(
+            line as (typeof THREAD_HISTORY_PROJECTION_TABLES)[number],
+          ),
+        ),
+    );
+  } catch (error) {
+    return emptyThreadHistoryInvalidationResult(
+      dbPath,
+      "failed to inspect thread history projection database",
+      [error instanceof Error ? error.message : String(error)],
+    );
+  }
+
+  const availableTables = THREAD_HISTORY_PROJECTION_TABLES.filter((table) =>
+    tableNames.has(table),
+  );
+  if (availableTables.length === 0) {
+    return emptyThreadHistoryInvalidationResult(
+      dbPath,
+      "thread history projection tables not found",
+      [`thread history projection tables are missing from ${dbPath}`],
+    );
+  }
+
+  const warnings: string[] = [];
+  const missingTables = THREAD_HISTORY_PROJECTION_TABLES.filter(
+    (table) => !tableNames.has(table),
+  );
+  if (missingTables.length > 0) {
+    warnings.push(
+      `thread history projection database ${dbPath} is missing tables: ${missingTables.join(", ")}`,
+    );
+  }
+
+  const escapedSessionId = escapeSqliteText(sessionId);
+  const statements = availableTables.map(
+    (table) =>
+      `DELETE FROM ${table} WHERE thread_id='${escapedSessionId}'; SELECT '${table}|' || changes();`,
+  );
+
+  try {
+    const output = runSqliteCommand(
+      dbPath,
+      `BEGIN IMMEDIATE; ${statements.join(" ")} COMMIT;`,
+    );
+    const deletedRows = new Map<string, number>();
+    for (const line of output.split("\n")) {
+      const separatorIndex = line.indexOf("|");
+      if (separatorIndex < 0) {
+        continue;
+      }
+      const table = line.slice(0, separatorIndex).trim();
+      const count = Number.parseInt(line.slice(separatorIndex + 1).trim(), 10);
+      if (tableNames.has(table) && Number.isFinite(count)) {
+        deletedRows.set(table, count);
+      }
+    }
+
+    return {
+      dbPath,
+      projectionRowsDeleted:
+        deletedRows.get("thread_history_projection_state") ?? 0,
+      turnRowsDeleted: deletedRows.get("thread_turns") ?? 0,
+      itemRowsDeleted: deletedRows.get("thread_items") ?? 0,
+      realtimeRowsDeleted: deletedRows.get("thread_realtime_items") ?? 0,
+      skippedReason: null,
+      warnings,
+    };
+  } catch (error) {
+    return emptyThreadHistoryInvalidationResult(
+      dbPath,
+      "failed to invalidate thread history projection",
+      [...warnings, error instanceof Error ? error.message : String(error)],
+    );
+  }
+}
+
 async function updateEditedMessageInSqlite(
   sessionId: string,
   role: "user" | "assistant",
   oldText: string,
   newText: string,
   updateUserMetadata: boolean,
-): Promise<EditConversationMessageSqliteResult> {
+): Promise<Omit<EditConversationMessageSqliteResult, "threadHistory">> {
   const sqliteHome = await resolveSqliteHome(codexDir);
   const stateDbPath = await findVersionedDbPath(
     sqliteHome,
@@ -5190,6 +5381,10 @@ export async function editConversationMessage(
           threadsUpdated: 0,
           skippedReason: "message text is unchanged",
           warnings: [],
+          threadHistory: emptyThreadHistoryInvalidationResult(
+            null,
+            "message text is unchanged",
+          ),
         },
       };
     }
@@ -5213,15 +5408,7 @@ export async function editConversationMessage(
       const parsed = safeJsonParse(lines[eventIndex].line);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         const record = parsed as Record<string, unknown>;
-        const payload = record.payload;
-        if (
-          record.type === "event_msg" &&
-          payload &&
-          typeof payload === "object" &&
-          !Array.isArray(payload) &&
-          typeof (payload as Record<string, unknown>).message === "string"
-        ) {
-          (payload as Record<string, unknown>).message = text;
+        if (replaceEditableEventMessageText(record, text)) {
           rawLines[eventIndex] = JSON.stringify(record);
           sessionRecordsUpdated += 1;
         }
@@ -5237,6 +5424,8 @@ export async function editConversationMessage(
       throw new Error("session file changed before the edit was saved");
     }
     await writeFileAtomically(filePath, rawLines.join("\n"), fileStat.mode);
+    const threadHistory =
+      await invalidateEditedThreadHistoryProjection(normalizedSessionId);
 
     const updatesUserMetadata =
       target.role === "user" && target.index === firstEditableUserIndex;
@@ -5247,13 +5436,17 @@ export async function editConversationMessage(
           text,
         )
       : 0;
-    const sqlite = await updateEditedMessageInSqlite(
+    const threadMetadata = await updateEditedMessageInSqlite(
       normalizedSessionId,
       target.role,
       target.text,
       text,
       updatesUserMetadata,
     );
+    const sqlite: EditConversationMessageSqliteResult = {
+      ...threadMetadata,
+      threadHistory,
+    };
 
     clearSessionCaches(normalizedSessionId);
     await buildFileIndex();

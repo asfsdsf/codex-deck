@@ -307,6 +307,82 @@ test("parseConversationTextChunk renders persisted collaboration items in both w
   assert.equal(messages[1]?.turnId, "turn-camel");
 });
 
+test("parseConversationTextChunk marks item_completed message pairs editable", () => {
+  const userText = "Edit this new-format user message.";
+  const assistantText = "Edit this new-format assistant message.";
+  const text = [
+    line({
+      timestamp: "2026-09-03T08:50:23.434Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        id: "user-response-item",
+        role: "user",
+        content: [{ type: "input_text", text: userText }],
+      },
+    }),
+    line({
+      timestamp: "2026-09-03T08:50:23.434Z",
+      type: "event_msg",
+      payload: {
+        type: "item_completed",
+        item: {
+          type: "UserMessage",
+          id: "different-user-event-item",
+          content: [{ type: "text", text: userText }],
+        },
+      },
+    }),
+    line({
+      timestamp: "2026-09-03T08:50:38.638Z",
+      type: "event_msg",
+      payload: {
+        type: "itemCompleted",
+        item: {
+          type: "AgentMessage",
+          id: "assistant-response-item",
+          content: [{ type: "Text", text: assistantText }],
+        },
+      },
+    }),
+    line({
+      timestamp: "2026-09-03T08:50:38.643Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        id: "assistant-response-item",
+        role: "assistant",
+        content: [{ type: "output_text", text: assistantText }],
+      },
+    }),
+  ].join("\n");
+
+  const { messages } = parseConversationTextChunk(`${text}\n`, 0);
+  const editableMessages = messages.filter(
+    (message) => message.editable === true,
+  );
+
+  assert.deepEqual(
+    editableMessages.map((message) => ({
+      type: message.type,
+      editId: message.editId,
+      editText: message.editText,
+    })),
+    [
+      {
+        type: "user",
+        editId: "item:user-response-item",
+        editText: userText,
+      },
+      {
+        type: "assistant",
+        editId: "item:assistant-response-item",
+        editText: assistantText,
+      },
+    ],
+  );
+});
+
 test("parseConversationTextChunk skips newline-terminated malformed lines", () => {
   const validLine = line({
     timestamp: "2026-04-07T12:05:34.190Z",

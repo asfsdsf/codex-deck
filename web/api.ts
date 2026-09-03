@@ -31,6 +31,9 @@ import type {
   CodexDeckConfigFileResponse,
   CodexDeckConfigWriteRequest,
   CodexDeckConfigWriteResponse,
+  CodexDeckUpdateRequest,
+  CodexDeckUpdateResponse,
+  CodexDeckUpdateStatusResponse,
   CodexHomeDescriptor,
   CodexSessionContextResponse,
   DeleteTerminalResponse,
@@ -202,6 +205,29 @@ export async function applyCodexDeckConfig(
   input: CodexDeckConfigWriteRequest,
 ): Promise<CodexDeckConfigWriteResponse> {
   return requestJson<CodexDeckConfigWriteResponse>("/api/codex-deck/config", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getCodexDeckUpdateStatus(): Promise<CodexDeckUpdateStatusResponse> {
+  return requestJson<CodexDeckUpdateStatusResponse>("/api/codex-deck/update");
+}
+
+export async function checkCodexDeckNpmUpdate(): Promise<CodexDeckUpdateStatusResponse> {
+  return requestJson<CodexDeckUpdateStatusResponse>(
+    "/api/codex-deck/update/check",
+    { method: "POST" },
+  );
+}
+
+export async function updateCodexDeckDaemon(
+  input: CodexDeckUpdateRequest,
+): Promise<CodexDeckUpdateResponse> {
+  return requestJson<CodexDeckUpdateResponse>("/api/codex-deck/update", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

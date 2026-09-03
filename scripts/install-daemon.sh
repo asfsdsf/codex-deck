@@ -168,8 +168,15 @@ config_dir_from_file() {
 
 main_codex_home() {
   local default_home="${CODEX_HOME:-$USER_HOME/.codex}"
-  local configured_dir
-  configured_dir="$(config_dir_from_file "$PROJECT_ROOT/config.toml")"
+  local configured_dir configured_project_root runtime_project_root
+  runtime_project_root="$PROJECT_ROOT"
+  if [[ -f "$(active_project_root_path)" ]]; then
+    IFS= read -r configured_project_root < "$(active_project_root_path)" || true
+    if [[ "$configured_project_root" = /* && -f "$configured_project_root/dist/index.js" ]]; then
+      runtime_project_root="$configured_project_root"
+    fi
+  fi
+  configured_dir="$(config_dir_from_file "$runtime_project_root/config.toml")"
   if [[ -z "$configured_dir" ]]; then
     configured_dir="$(config_dir_from_file "$default_home/codex-deck/config.toml")"
   fi
@@ -177,7 +184,7 @@ main_codex_home() {
     if [[ "$configured_dir" = /* ]]; then
       printf '%s' "$configured_dir"
     else
-      printf '%s/%s' "$PROJECT_ROOT" "$configured_dir"
+      printf '%s/%s' "$runtime_project_root" "$configured_dir"
     fi
   elif [[ "$default_home" = "/" ]]; then
     printf '/'
@@ -198,6 +205,52 @@ main_codex_deck_config_path() {
 
 runner_path() {
   printf '%s/run-server.sh' "$STATE_DIR"
+}
+
+active_project_root_path() {
+  printf '%s/active-project-root' "$STATE_DIR"
+}
+
+start_directory_path() {
+  printf '%s/start-directory' "$STATE_DIR"
+}
+
+daemon_lifecycle_script_path() {
+  printf '%s/install-daemon.sh' "$STATE_DIR"
+}
+
+install_lifecycle_script() {
+  local source_path="$1"
+  local destination
+  destination="$(daemon_lifecycle_script_path)"
+  if [[ "$source_path" != "$destination" ]]; then
+    cp -f -- "$source_path" "$destination"
+  fi
+  chmod 700 "$destination"
+}
+
+refresh_lifecycle_script_from_active_project() {
+  local active_root candidate_script configured_project_root
+  active_root="$PROJECT_ROOT"
+  if [[ -f "$(active_project_root_path)" ]]; then
+    IFS= read -r configured_project_root < "$(active_project_root_path)" || true
+    if [[ "$configured_project_root" = /* ]]; then
+      active_root="$configured_project_root"
+    fi
+  fi
+  candidate_script="$active_root/scripts/install-daemon.sh"
+  if [[ -f "$candidate_script" ]]; then
+    install_lifecycle_script "$candidate_script"
+  fi
+}
+
+record_start_directory() {
+  local current_directory temporary_path
+  current_directory="$(pwd -P)"
+  temporary_path="$(start_directory_path).$$.tmp"
+  printf '%s\n' "$current_directory" > "$temporary_path"
+  chmod 600 "$temporary_path"
+  mv -f -- "$temporary_path" "$(start_directory_path)"
 }
 
 service_is_installed() {
@@ -263,8 +316,17 @@ launchd_stop() {
 }
 
 launchd_restart() {
-  launchd_stop
-  launchd_start
+  local domain
+  domain="$(launchd_domain)"
+  if launchd_loaded; then
+    # bootout may return before launchd has fully removed the job. A following
+    # start can then mistake the terminating job for a loaded one and leave the
+    # service unloaded once bootout completes. kickstart -k is launchd's atomic
+    # restart operation for an already loaded job.
+    launchctl kickstart -k "$domain/$LAUNCHD_LABEL"
+  else
+    launchd_start
+  fi
 }
 
 launchd_field() {
@@ -360,6 +422,7 @@ launchd_status() {
 
 service_start() {
   require_installed
+  record_start_directory
   case "$SERVICE_MANAGER" in
     systemd) systemd_start ;;
     launchd) launchd_start ;;
@@ -385,6 +448,26 @@ service_restart() {
   info "restarted"
 }
 
+service_restart_after_update() {
+  require_installed
+  refresh_lifecycle_script_from_active_project
+  write_runner
+  write_command_wrapper
+  case "$SERVICE_MANAGER" in
+    systemd)
+      systemd_restart
+      ;;
+    launchd)
+      if launchd_loaded; then
+        launchctl kickstart -k "$(launchd_domain)/$LAUNCHD_LABEL"
+      else
+        launchd_start
+      fi
+      ;;
+  esac
+  info "restarted after update"
+}
+
 service_status() {
   require_installed
   load_daemon_env_for_status
@@ -401,15 +484,33 @@ write_runner() {
     printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
     printf 'export NODE_ENV=production\n'
     printf 'export PATH=%s\n' "$(shell_quote "${PATH:-/usr/local/bin:/usr/bin:/bin}")"
+    printf 'export CODEX_DECK_DAEMON_MANAGED=1\n'
+    printf 'export CODEX_DECK_DAEMON_PROJECT_ROOT=%s\n' "$(shell_quote "$PROJECT_ROOT")"
+    printf 'export CODEX_DECK_DAEMON_STATE_DIR=%s\n' "$(shell_quote "$STATE_DIR")"
+    printf 'export CODEX_DECK_DAEMON_COMMAND_PATH=%s\n' "$(shell_quote "$BIN_DIR/$COMMAND_NAME")"
+    printf 'ACTIVE_PROJECT_ROOT=%s\n' "$(shell_quote "$PROJECT_ROOT")"
+    printf 'if [[ -f %s ]]; then\n' "$(shell_quote "$(active_project_root_path)")"
+    printf '  IFS= read -r CONFIGURED_PROJECT_ROOT < %s || true\n' "$(shell_quote "$(active_project_root_path)")"
+    printf '  if [[ "$CONFIGURED_PROJECT_ROOT" = /* && -f "$CONFIGURED_PROJECT_ROOT/dist/index.js" ]]; then\n'
+    printf '    ACTIVE_PROJECT_ROOT="$CONFIGURED_PROJECT_ROOT"\n'
+    printf '  fi\n'
+    printf 'fi\n'
+    printf 'export CODEX_DECK_DAEMON_ACTIVE_PROJECT_ROOT="$ACTIVE_PROJECT_ROOT"\n'
+    printf 'export CODEX_DECK_DAEMON_START_DIRECTORY=%s\n' "$(shell_quote "$PROJECT_ROOT")"
+    printf 'if [[ -f %s ]]; then\n' "$(shell_quote "$(start_directory_path)")"
+    printf '  IFS= read -r CONFIGURED_START_DIRECTORY < %s || true\n' "$(shell_quote "$(start_directory_path)")"
+    printf '  if [[ "$CONFIGURED_START_DIRECTORY" = /* && -d "$CONFIGURED_START_DIRECTORY" ]]; then\n'
+    printf '    export CODEX_DECK_DAEMON_START_DIRECTORY="$CONFIGURED_START_DIRECTORY"\n'
+    printf '  fi\n'
+    printf 'fi\n'
     if [[ -n "$ENV_FILE" ]]; then
       printf 'if [[ -f %s ]]; then\n' "$(shell_quote "$ENV_FILE")"
       printf '  set -a\n  # shellcheck disable=SC1090\n  . %s\n  set +a\n' "$(shell_quote "$ENV_FILE")"
       printf 'fi\n'
     fi
-    printf 'cd %s\n' "$(shell_quote "$PROJECT_ROOT")"
-    printf 'exec %s %s --no-open\n' \
-      "$(shell_quote "$NODE_BIN")" \
-      "$(shell_quote "$PROJECT_ROOT/dist/index.js")"
+    printf 'cd "$ACTIVE_PROJECT_ROOT"\n'
+    printf 'exec %s "$ACTIVE_PROJECT_ROOT/dist/index.js" --no-open\n' \
+      "$(shell_quote "$NODE_BIN")"
   } > "$runner"
   chmod 700 "$runner"
 }
@@ -468,7 +569,7 @@ write_command_wrapper() {
     printf 'export CODEX_DECK_DAEMON_NODE_BIN=%s\n' "$(shell_quote "$NODE_BIN")"
     printf 'export CODEX_DECK_DAEMON_SERVICE_MANAGER=%s\n' "$(shell_quote "$SERVICE_MANAGER")"
     printf 'export CODEX_DECK_DAEMON_ENV_FILE=%s\n' "$(shell_quote "$ENV_FILE")"
-    printf 'exec %s "$@"\n' "$(shell_quote "$SCRIPT_DIR/install-daemon.sh")"
+    printf 'exec %s "$@"\n' "$(shell_quote "$(daemon_lifecycle_script_path)")"
   } > "$wrapper"
   chmod 755 "$wrapper"
 }
@@ -513,6 +614,9 @@ install_daemon() {
 
   mkdir -p "$STATE_DIR" "$BIN_DIR"
   chmod 700 "$STATE_DIR"
+  install_lifecycle_script "$SCRIPT_DIR/install-daemon.sh"
+  printf '%s\n' "$PROJECT_ROOT" > "$(active_project_root_path)"
+  chmod 600 "$(active_project_root_path)"
   write_runner
   case "$SERVICE_MANAGER" in
     systemd) write_systemd_unit ;;
@@ -541,7 +645,7 @@ uninstall_daemon() {
       rm -f -- "$(plist_path)"
       ;;
   esac
-  rm -f -- "$BIN_DIR/$COMMAND_NAME" "$(runner_path)"
+  rm -f -- "$BIN_DIR/$COMMAND_NAME" "$(runner_path)" "$(daemon_lifecycle_script_path)"
   info "uninstalled service definitions and command"
   info "logs remain at $(service_log_path)"
 }
@@ -608,6 +712,10 @@ case "$ACTION" in
   restart)
     SERVICE_MANAGER="$(detect_service_manager)"
     service_restart
+    ;;
+  restart-after-update)
+    SERVICE_MANAGER="$(detect_service_manager)"
+    service_restart_after_update
     ;;
   status)
     SERVICE_MANAGER="$(detect_service_manager)"

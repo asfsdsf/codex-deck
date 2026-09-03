@@ -28,6 +28,98 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function normalizeType(value: unknown): string {
+  return typeof value === "string"
+    ? value.replace(/[\s_-]/g, "").toLowerCase()
+    : "";
+}
+
+function getItemCompletedMessage(payload: Record<string, unknown>): {
+  item: Record<string, unknown>;
+  role: EditableConversationRole;
+} | null {
+  if (normalizeType(payload.type) !== "itemcompleted") {
+    return null;
+  }
+  const item = asRecord(payload.item);
+  const itemType = normalizeType(item?.type);
+  const role: EditableConversationRole | null =
+    itemType === "usermessage"
+      ? "user"
+      : itemType === "agentmessage"
+        ? "assistant"
+        : null;
+  return item && role ? { item, role } : null;
+}
+
+function getItemCompletedMessageText(
+  item: Record<string, unknown>,
+): string | null {
+  const content = item.content;
+  if (typeof content === "string") {
+    return content.trim() ? content.trim() : null;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  for (const value of content) {
+    const block = asRecord(value);
+    if (
+      !block ||
+      (normalizeType(block.type) !== "text" &&
+        normalizeType(block.type) !== "inputtext" &&
+        normalizeType(block.type) !== "outputtext") ||
+      typeof block.text !== "string"
+    ) {
+      continue;
+    }
+    const text = block.text.trim();
+    if (text) {
+      parts.push(text);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+function getEditableEventRecord(
+  record: Record<string, unknown>,
+  offset: number,
+): EditableEventRecord | null {
+  const payload = asRecord(record.payload);
+  const timestamp = record.timestamp;
+  if (
+    record.type !== "event_msg" ||
+    !payload ||
+    typeof timestamp !== "string"
+  ) {
+    return null;
+  }
+
+  const legacyRole: EditableConversationRole | null =
+    payload.type === "user_message"
+      ? "user"
+      : payload.type === "agent_message"
+        ? "assistant"
+        : null;
+  const itemCompletedMessage = getItemCompletedMessage(payload);
+  const role = legacyRole ?? itemCompletedMessage?.role ?? null;
+  const text = legacyRole
+    ? typeof payload.message === "string"
+      ? payload.message.trim()
+      : ""
+    : itemCompletedMessage
+      ? (getItemCompletedMessageText(itemCompletedMessage.item) ?? "")
+      : "";
+  const timestampMs = Date.parse(timestamp);
+  if (!role || !text || !Number.isFinite(timestampMs)) {
+    return null;
+  }
+
+  return { offset, role, text, timestampMs };
+}
+
 function readTurnId(payload: Record<string, unknown>): string | null {
   const metadata = asRecord(payload.internal_chat_message_metadata_passthrough);
   const turnId = metadata?.turn_id;
@@ -89,38 +181,10 @@ export function collectEditableMessagePairs(
       continue;
     }
 
-    const payload = asRecord(record?.payload);
-    if (record?.type !== "event_msg" || !payload) {
-      continue;
+    const event = getEditableEventRecord(record, offset);
+    if (event) {
+      events.push(event);
     }
-
-    const role: EditableConversationRole | null =
-      payload.type === "user_message"
-        ? "user"
-        : payload.type === "agent_message"
-          ? "assistant"
-          : null;
-    const timestamp = record.timestamp;
-    const text = payload.message;
-    if (
-      !role ||
-      typeof timestamp !== "string" ||
-      typeof text !== "string" ||
-      !text.trim()
-    ) {
-      continue;
-    }
-
-    const timestampMs = Date.parse(timestamp);
-    if (!Number.isFinite(timestampMs)) {
-      continue;
-    }
-    events.push({
-      offset,
-      role,
-      text: text.trim(),
-      timestampMs,
-    });
   }
 
   const pairs = new Map<number, number>();
@@ -165,6 +229,59 @@ export function collectEditableMessagePairs(
   }
 
   return pairs;
+}
+
+export function replaceEditableEventMessageText(
+  record: Record<string, unknown>,
+  text: string,
+): boolean {
+  const payload = asRecord(record.payload);
+  if (record.type !== "event_msg" || !payload) {
+    return false;
+  }
+
+  if (
+    (payload.type === "user_message" || payload.type === "agent_message") &&
+    typeof payload.message === "string"
+  ) {
+    payload.message = text;
+    return true;
+  }
+
+  const itemCompletedMessage = getItemCompletedMessage(payload);
+  if (!itemCompletedMessage) {
+    return false;
+  }
+  const content = itemCompletedMessage.item.content;
+  if (typeof content === "string") {
+    itemCompletedMessage.item.content = text;
+    return true;
+  }
+  if (!Array.isArray(content)) {
+    return false;
+  }
+
+  let replaced = false;
+  itemCompletedMessage.item.content = content.filter((value) => {
+    const block = asRecord(value);
+    const blockType = normalizeType(block?.type);
+    const isTextBlock =
+      block &&
+      (blockType === "text" ||
+        blockType === "inputtext" ||
+        blockType === "outputtext") &&
+      typeof block.text === "string";
+    if (!isTextBlock) {
+      return true;
+    }
+    if (replaced) {
+      return false;
+    }
+    block.text = text;
+    replaced = true;
+    return true;
+  });
+  return replaced;
 }
 
 export function getEditableResponseItem(

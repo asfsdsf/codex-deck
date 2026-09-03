@@ -1,22 +1,38 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { CodexDeckConfigWriteResponse } from "@codex-deck/api";
+import type {
+  CodexDeckConfigWriteResponse,
+  CodexDeckUpdateMethod,
+  CodexDeckUpdateResponse,
+  CodexDeckUpdateStatusResponse,
+} from "@codex-deck/api";
 import {
+  AlertTriangle,
   CheckCircle2,
   Code2,
+  Download,
   Eye,
   EyeOff,
   FolderCog,
+  GitBranch,
   Languages,
   Loader2,
   Network,
+  Package,
   Plus,
+  RefreshCw,
   RotateCcw,
   Save,
   ServerCog,
   Trash2,
   X,
 } from "lucide-react";
-import { applyCodexDeckConfig, getCodexDeckConfig } from "../api";
+import {
+  applyCodexDeckConfig,
+  checkCodexDeckNpmUpdate,
+  getCodexDeckConfig,
+  getCodexDeckUpdateStatus,
+  updateCodexDeckDaemon,
+} from "../api";
 import {
   createEmptyCodexDeckConfig,
   parseCodexDeckConfigContent,
@@ -36,6 +52,7 @@ type ConfigSection =
   | "translation"
   | "homes"
   | "remote"
+  | "updates"
   | "advanced";
 
 interface ConfigValidation {
@@ -56,6 +73,7 @@ const SECTIONS: Array<{
   { id: "translation", label: "Translation", icon: Languages },
   { id: "homes", label: "Codex homes", icon: FolderCog },
   { id: "remote", label: "Remote", icon: Network },
+  { id: "updates", label: "Updates", icon: Download },
   { id: "advanced", label: "Advanced", icon: Code2 },
 ];
 
@@ -282,12 +300,23 @@ export default function ConfigModal(props: ConfigModalProps) {
   const [result, setResult] = useState<CodexDeckConfigWriteResponse | null>(
     null,
   );
+  const [updateStatus, setUpdateStatus] =
+    useState<CodexDeckUpdateStatusResponse | null>(null);
+  const [updateMethod, setUpdateMethod] =
+    useState<CodexDeckUpdateMethod>("source");
+  const [sourceRoot, setSourceRoot] = useState("");
+  const [loadingUpdateStatus, setLoadingUpdateStatus] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [applyingUpdate, setApplyingUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateResult, setUpdateResult] = useState<string | null>(null);
 
   const validation = useMemo(() => validateConfig(config), [config]);
-  const disabled = loading || saving;
+  const disabled = loading || saving || applyingUpdate;
   const isDirty = content !== loadedContent;
   const hasBlockingValidation =
     activeSection !== "advanced" && validation.count > 0;
+  const updateBusy = loadingUpdateStatus || checkingUpdate || disabled;
 
   const loadConfig = async () => {
     setLoading(true);
@@ -314,15 +343,51 @@ export default function ConfigModal(props: ConfigModalProps) {
       return;
     }
     setActiveSection("general");
+    setUpdateStatus(null);
+    setUpdateError(null);
+    setUpdateResult(null);
     void loadConfig();
   }, [open]);
+
+  useEffect(() => {
+    if (!open || activeSection !== "updates" || updateStatus) {
+      return;
+    }
+    let cancelled = false;
+    setLoadingUpdateStatus(true);
+    setUpdateError(null);
+    void getCodexDeckUpdateStatus()
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setUpdateStatus(response);
+        setUpdateMethod(response.updateMethod);
+        setSourceRoot(response.sourceRoot || response.defaultSourceRoot);
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setUpdateError(
+            loadError instanceof Error ? loadError.message : String(loadError),
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingUpdateStatus(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, open, updateStatus]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || saving) {
+      if (event.key !== "Escape" || saving || applyingUpdate) {
         return;
       }
       event.preventDefault();
@@ -330,7 +395,7 @@ export default function ConfigModal(props: ConfigModalProps) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open, saving]);
+  }, [applyingUpdate, onClose, open, saving]);
 
   const updateStructuredConfig = (nextConfig: EditableCodexDeckConfig) => {
     setConfig(nextConfig);
@@ -374,6 +439,82 @@ export default function ConfigModal(props: ConfigModalProps) {
     }
   };
 
+  const handleCheckNpmUpdate = async () => {
+    if (checkingUpdate || applyingUpdate) {
+      return;
+    }
+    setCheckingUpdate(true);
+    setUpdateError(null);
+    setUpdateResult(null);
+    try {
+      setUpdateStatus(await checkCodexDeckNpmUpdate());
+    } catch (checkError) {
+      setUpdateError(
+        checkError instanceof Error ? checkError.message : String(checkError),
+      );
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const waitForDaemonRestart = async (
+    response: CodexDeckUpdateResponse,
+  ): Promise<void> => {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+      try {
+        const nextStatus = await getCodexDeckUpdateStatus();
+        setUpdateStatus(nextStatus);
+        if (nextStatus.daemonStartedAt !== response.daemonStartedAt) {
+          setUpdateMethod(nextStatus.updateMethod);
+          setSourceRoot(nextStatus.sourceRoot || nextStatus.defaultSourceRoot);
+          setUpdateResult(
+            `${response.message} The restarted daemon is online. Reload the page to use its updated web assets.`,
+          );
+          return;
+        }
+      } catch {
+        // A connection failure is expected while the service manager restarts.
+      }
+    }
+    setUpdateResult(
+      `${response.message} Restart was scheduled, but the Web UI could not confirm that the daemon came back online.`,
+    );
+  };
+
+  const handleDaemonUpdate = async () => {
+    if (
+      applyingUpdate ||
+      !updateStatus?.restartSupported ||
+      (updateMethod === "source" && !sourceRoot.trim())
+    ) {
+      return;
+    }
+    setApplyingUpdate(true);
+    setUpdateError(null);
+    setUpdateResult(null);
+    try {
+      const response = await updateCodexDeckDaemon({
+        method: updateMethod,
+        sourceRoot: updateMethod === "source" ? sourceRoot.trim() : undefined,
+      });
+      setUpdateResult(`${response.message} Restarting the daemon.`);
+      await waitForDaemonRestart(response);
+    } catch (applyError) {
+      setUpdateError(
+        applyError instanceof Error ? applyError.message : String(applyError),
+      );
+    } finally {
+      setApplyingUpdate(false);
+    }
+  };
+
+  const npmActionAvailable = Boolean(
+    updateStatus?.npm.checked &&
+    (updateStatus.npm.updateAvailable || updateStatus.updateMethod !== "npm"),
+  );
+
   if (!open) {
     return null;
   }
@@ -382,7 +523,11 @@ export default function ConfigModal(props: ConfigModalProps) {
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 sm:items-center sm:p-4"
       onClick={(event) => {
-        if (event.target === event.currentTarget && !saving) {
+        if (
+          event.target === event.currentTarget &&
+          !saving &&
+          !applyingUpdate
+        ) {
           onClose();
         }
       }}
@@ -423,7 +568,7 @@ export default function ConfigModal(props: ConfigModalProps) {
             <button
               type="button"
               onClick={onClose}
-              disabled={saving}
+              disabled={saving || applyingUpdate}
               className="h-8 w-8 rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
               title="Close settings"
               aria-label="Close settings"
@@ -840,6 +985,229 @@ export default function ConfigModal(props: ConfigModalProps) {
                   </div>
                 ) : null}
 
+                {activeSection === "updates" ? (
+                  <div>
+                    <SectionHeader
+                      title="Daemon updates"
+                      badge={
+                        <StatusBadge tone="live">Live restart</StatusBadge>
+                      }
+                      action={
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUpdateStatus(null);
+                            setUpdateError(null);
+                            setUpdateResult(null);
+                          }}
+                          disabled={updateBusy}
+                          className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-700 bg-zinc-900 px-2.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          Refresh
+                        </button>
+                      }
+                    />
+
+                    {loadingUpdateStatus ? (
+                      <div className="flex min-h-64 items-center justify-center text-sm text-zinc-500">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Loading daemon update status
+                      </div>
+                    ) : updateStatus ? (
+                      <div className="space-y-4 py-5">
+                        {!updateStatus.daemonManaged ? (
+                          <div className="flex gap-2 rounded border border-amber-500/35 bg-amber-500/10 p-3 text-xs leading-5 text-amber-200">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                            <span>{updateStatus.unavailableReason}</span>
+                          </div>
+                        ) : null}
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <button
+                            type="button"
+                            onClick={() => setUpdateMethod("npm")}
+                            disabled={updateBusy}
+                            aria-pressed={updateMethod === "npm"}
+                            className={`rounded-md border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                              updateMethod === "npm"
+                                ? "border-cyan-500/55 bg-cyan-500/10 ring-1 ring-inset ring-cyan-500/20"
+                                : "border-zinc-800 bg-zinc-900/45 hover:border-zinc-700"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+                              <Package className="h-4 w-4 text-cyan-300" />
+                              npm release
+                            </span>
+                            <span className="mt-2 block text-xs leading-5 text-zinc-500">
+                              Check the npm latest tag, install that release in
+                              the daemon state directory, then restart.
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setUpdateMethod("source")}
+                            disabled={updateBusy}
+                            aria-pressed={updateMethod === "source"}
+                            className={`rounded-md border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                              updateMethod === "source"
+                                ? "border-cyan-500/55 bg-cyan-500/10 ring-1 ring-inset ring-cyan-500/20"
+                                : "border-zinc-800 bg-zinc-900/45 hover:border-zinc-700"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+                              <GitBranch className="h-4 w-4 text-cyan-300" />
+                              Source project
+                            </span>
+                            <span className="mt-2 block text-xs leading-5 text-zinc-500">
+                              Build the source currently on disk and restart; no
+                              version check is required.
+                            </span>
+                          </button>
+                        </div>
+
+                        {updateMethod === "npm" ? (
+                          <div className="rounded-md border border-zinc-800 bg-zinc-900/35 p-4">
+                            <div className="grid gap-3 text-xs sm:grid-cols-2">
+                              <div>
+                                <div className="text-zinc-500">
+                                  Running version
+                                </div>
+                                <div className="mt-1 font-mono text-zinc-200">
+                                  {updateStatus.currentVersion}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-zinc-500">
+                                  Latest npm version
+                                </div>
+                                <div className="mt-1 font-mono text-zinc-200">
+                                  {updateStatus.npm.latestVersion ??
+                                    "Not checked"}
+                                </div>
+                              </div>
+                            </div>
+                            {updateStatus.npm.checked ? (
+                              <div className="mt-3 text-xs text-zinc-400">
+                                {updateStatus.npm.updateAvailable
+                                  ? "A newer npm release is available."
+                                  : updateStatus.updateMethod === "npm"
+                                    ? "This daemon is using the latest npm release."
+                                    : "The npm release is current; you can still switch this source-managed daemon to it."}
+                              </div>
+                            ) : null}
+                            <div className="mt-4 flex flex-wrap justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleCheckNpmUpdate()}
+                                disabled={updateBusy}
+                                className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-700 bg-zinc-900 px-3 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {checkingUpdate ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                )}
+                                {checkingUpdate
+                                  ? "Checking"
+                                  : "Check for updates"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDaemonUpdate()}
+                                disabled={
+                                  updateBusy ||
+                                  !updateStatus.restartSupported ||
+                                  !npmActionAvailable
+                                }
+                                className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-600/70 bg-cyan-600/25 px-3 text-xs font-medium text-cyan-100 transition-colors hover:bg-cyan-600/35 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {applyingUpdate ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Download className="h-3.5 w-3.5" />
+                                )}
+                                {applyingUpdate
+                                  ? "Updating and restarting"
+                                  : updateStatus.updateMethod === "npm"
+                                    ? "Update and restart"
+                                    : "Switch to npm and restart"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="rounded-md border border-zinc-800 bg-zinc-900/35 p-4">
+                            <Field label="Source project root">
+                              <input
+                                type="text"
+                                value={sourceRoot}
+                                onChange={(event) => {
+                                  setSourceRoot(event.target.value);
+                                  setUpdateError(null);
+                                  setUpdateResult(null);
+                                }}
+                                disabled={updateBusy}
+                                placeholder={updateStatus.defaultSourceRoot}
+                                spellCheck={false}
+                                className={`${INPUT_CLASS} font-mono text-xs`}
+                              />
+                            </Field>
+                            <div className="mt-2 text-[11px] leading-4 text-zinc-500">
+                              Defaulted from the directory where
+                              <code className="mx-1 text-zinc-400">
+                                codex-deck-daemon start
+                              </code>
+                              was run. The update runs a frozen pnpm install and
+                              the project build before switching the daemon to
+                              this root.
+                            </div>
+                            <div className="mt-4 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => void handleDaemonUpdate()}
+                                disabled={
+                                  updateBusy ||
+                                  !updateStatus.restartSupported ||
+                                  !sourceRoot.trim()
+                                }
+                                className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-600/70 bg-cyan-600/25 px-3 text-xs font-medium text-cyan-100 transition-colors hover:bg-cyan-600/35 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {applyingUpdate ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <GitBranch className="h-3.5 w-3.5" />
+                                )}
+                                {applyingUpdate
+                                  ? "Building and restarting"
+                                  : "Build source and restart"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {updateError ? (
+                          <div
+                            className="rounded border border-red-500/35 bg-red-500/10 px-3 py-2.5 text-xs text-red-300"
+                            role="alert"
+                          >
+                            {updateError}
+                          </div>
+                        ) : null}
+                        {updateResult ? (
+                          <div className="flex gap-2 rounded border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5 text-xs leading-5 text-emerald-300">
+                            {applyingUpdate ? (
+                              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                            )}
+                            <span>{updateResult}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {activeSection === "advanced" ? (
                   <div>
                     <SectionHeader title="TOML" />
@@ -907,7 +1275,7 @@ export default function ConfigModal(props: ConfigModalProps) {
             <button
               type="button"
               onClick={onClose}
-              disabled={saving}
+              disabled={saving || applyingUpdate}
               className="h-8 rounded border border-zinc-700 bg-zinc-900 px-3 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel

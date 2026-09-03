@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -79,14 +80,25 @@ test("generates a launchd service and lifecycle command without starting it", as
       "com.codex-deck.server.plist",
     );
     const commandPath = join(binDir, "codex-deck-daemon");
+    const lifecyclePath = join(
+      home,
+      ".local",
+      "state",
+      "codex-deck",
+      "install-daemon.sh",
+    );
     const runner = await readFile(runnerPath, "utf8");
     const plist = await readFile(plistPath, "utf8");
 
-    assert.match(runner, /dist\/index\.js' --no-open/);
+    assert.match(runner, /ACTIVE_PROJECT_ROOT\/dist\/index\.js/);
+    assert.match(runner, /CODEX_DECK_DAEMON_MANAGED=1/);
+    assert.match(runner, /CODEX_DECK_DAEMON_START_DIRECTORY/);
     assert.match(plist, /com\.codex-deck\.server/);
     assert.match(plist, /run-server\.sh/);
     await execFileAsync("bash", ["-n", runnerPath]);
     await execFileAsync("bash", ["-n", commandPath]);
+    await execFileAsync("bash", ["-n", lifecyclePath]);
+    assert.match(await readFile(commandPath, "utf8"), /install-daemon\.sh/);
 
     const status = await execFileAsync(commandPath, ["status"], {
       env: {
@@ -155,6 +167,79 @@ test("reinstalling a loaded launchd service stops it without starting it again",
     const calls = await readFile(callsPath, "utf8");
     assert.match(calls, /bootout gui\/\d+\/com\.codex-deck\.server/);
     assert.doesNotMatch(calls, /bootstrap|kickstart/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("start records its invocation directory and update restart keeps it", async () => {
+  const home = await mkdtemp(join(tmpdir(), "codex-deck-daemon-test-"));
+  const fakeBin = join(home, "fake-bin");
+  const startDirectory = join(home, "source-project");
+  const callsPath = join(home, "launchctl-calls.log");
+  const loadedPath = join(home, "launchctl-loaded");
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await mkdir(startDirectory, { recursive: true });
+    const fakeLaunchctl = join(fakeBin, "launchctl");
+    await writeFile(
+      fakeLaunchctl,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$*" >> '${callsPath}'`,
+        `if [ "$1" = print ]; then [ -f '${loadedPath}' ]; exit $?; fi`,
+        `if [ "$1" = bootstrap ]; then touch '${loadedPath}'; fi`,
+        "exit 0",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(fakeLaunchctl, 0o755);
+    const testPath = `${fakeBin}:${process.env.PATH ?? ""}`;
+    const binDir = join(home, "bin");
+    await runInstaller(
+      home,
+      [
+        "install",
+        "--service-manager",
+        "launchd",
+        "--bin-dir",
+        binDir,
+        "--no-build",
+      ],
+      { PATH: testPath },
+    );
+    const commandPath = join(binDir, "codex-deck-daemon");
+    await execFileAsync(commandPath, ["start"], {
+      cwd: startDirectory,
+      env: { ...process.env, HOME: home, PATH: testPath },
+    });
+    assert.equal(
+      await readFile(
+        join(home, ".local", "state", "codex-deck", "start-directory"),
+        "utf8",
+      ),
+      `${await realpath(startDirectory)}\n`,
+    );
+
+    await writeFile(callsPath, "", "utf8");
+    await execFileAsync(commandPath, ["restart"], {
+      env: { ...process.env, HOME: home, PATH: testPath },
+    });
+    const restartCalls = await readFile(callsPath, "utf8");
+    assert.match(
+      restartCalls,
+      /kickstart -k gui\/\d+\/com\.codex-deck\.server/,
+    );
+    assert.doesNotMatch(restartCalls, /bootout|bootstrap/);
+
+    await writeFile(callsPath, "", "utf8");
+    await execFileAsync(commandPath, ["restart-after-update"], {
+      env: { ...process.env, HOME: home, PATH: testPath },
+    });
+    const calls = await readFile(callsPath, "utf8");
+    assert.match(calls, /kickstart -k gui\/\d+\/com\.codex-deck\.server/);
+    assert.doesNotMatch(calls, /bootout/);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

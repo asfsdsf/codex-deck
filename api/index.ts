@@ -178,6 +178,7 @@ for (const home of additionalCodexHomes) {
 
 const server = createServer({
   port: opts.port,
+  appVersion: getVersion(),
   codexDir: opts.dir,
   hostname: "0.0.0.0",
   runtimeEntryPath: isRuntimeChild ? undefined : __filename,

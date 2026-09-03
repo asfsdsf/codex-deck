@@ -206,6 +206,23 @@ pnpm build
 codex-deck-daemon restart
 ```
 
+The Web UI also provides **Settings → Updates** for an update-and-restart flow:
+
+- **npm release** checks the `latest` npm version, installs the release into a
+  versioned directory under the daemon state directory, switches the daemon to
+  that validated release, and restarts it.
+- **Source project** runs a frozen `pnpm install` and `pnpm build` against the
+  selected codex-deck project root, switches the daemon to that build, and
+  restarts it. It intentionally uses the source already on disk and does not
+  run `git pull` or require a version check.
+
+The initial source-project field is the directory from which the most recent
+`codex-deck-daemon start` command was run. Choose another project root in the
+Updates tab when that directory is not the desired codex-deck checkout. A
+daemon installed by an older version at the standard state and command paths
+upgrades its runner on the first Web UI update. Reinstall a daemon that uses
+custom state or command paths so it can expose those paths to the updater.
+
 The status output includes the main Codex home's
 `codex-deck/config.toml` path. The server log is written to
 `~/.local/state/codex-deck/server.log`. To provide service-only environment
@@ -285,7 +302,7 @@ All keys are optional. The `[remote]` keys mirror the `--remote-*` flags and `CO
 
 Additional Codex homes are declared only by the main config with named `[codex_homes.<id>]` tables. Each available home appears in the selector at the top of the left pane. Missing directories, duplicate paths, reserved IDs, and other invalid entries remain visible but disabled.
 
-The web app's Settings button at the bottom of the left pane opens a structured editor for server startup, translation, additional Codex homes, and remote connection settings. An Advanced section remains available for direct TOML editing. Applying changes writes `<main-codex-home>/codex-deck/config.toml`, updates `translation_command` and the additional Codex home catalog immediately, and preserves unrelated TOML when structured controls are used. Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) are saved but require restarting codex-deck; the UI lists the affected keys after applying.
+The web app's Settings button at the bottom of the left pane opens a structured editor for server startup, translation, additional Codex homes, remote connection settings, and daemon updates. The Updates tab can check npm for a newer release or rebuild a selected source checkout, then activate the result and restart the daemon. An Advanced section remains available for direct TOML editing. Applying changes writes `<main-codex-home>/codex-deck/config.toml`, updates `translation_command` and the additional Codex home catalog immediately, and preserves unrelated TOML when structured controls are used. Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) are saved but require restarting codex-deck; the UI lists the affected keys after applying.
 
 Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Only the main codex-deck process opens a network port; additional homes communicate with it over internal process IPC. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
 

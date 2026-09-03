@@ -19,6 +19,7 @@ import {
   clearCodexThreadGoal,
   compactCodexThread,
   archiveCodexThread,
+  checkCodexDeckNpmUpdate,
   createCodexThread,
   createTerminal,
   createWorkflow,
@@ -31,6 +32,7 @@ import {
   forkCodexThread,
   getCodexConfigDefaults,
   getCodexDeckConfig,
+  getCodexDeckUpdateStatus,
   getCodexAgentWaitConfig,
   getSystemContext,
   getCodexThreadState,
@@ -93,6 +95,7 @@ import {
   subscribeWorkflowDetailStream,
   subscribeWorkflowsStream,
   triggerWorkflow,
+  updateCodexDeckDaemon,
   validateWorkflow,
 } from "../../web/api";
 import { RemoteClient } from "../../web/remote-client";
@@ -874,6 +877,46 @@ test("Codex Deck config endpoints load and apply the main home file", async () =
   assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), {
     content: 'translation_command = "cmd"\n',
     revision: "revision-2",
+  });
+});
+
+test("Codex Deck daemon update helpers use the management endpoints", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith("/check")) {
+      return jsonResponse({ npm: { latestVersion: "0.3.0" } });
+    }
+    if (init?.method === "POST") {
+      return jsonResponse({
+        ok: true,
+        method: "source",
+        restartScheduled: true,
+      });
+    }
+    return jsonResponse({
+      daemonManaged: true,
+      currentVersion: "0.2.1",
+    });
+  };
+
+  await getCodexDeckUpdateStatus();
+  await checkCodexDeckNpmUpdate();
+  await updateCodexDeckDaemon({ method: "source", sourceRoot: "/repo" });
+
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    [
+      "/api/codex-deck/update",
+      "/api/codex-deck/update/check",
+      "/api/codex-deck/update",
+    ],
+  );
+  assert.equal(calls[1]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), {
+    method: "source",
+    sourceRoot: "/repo",
   });
 });
 
