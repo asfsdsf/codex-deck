@@ -482,6 +482,7 @@ interface ActiveCodexConfig {
 interface ProviderRequestConfig {
   baseUrl: string | null;
   envKey: string | null;
+  experimentalBearerToken: string | null;
   headers: Record<string, string>;
   envHeaders: Record<string, string>;
   queryParams: Record<string, string>;
@@ -944,15 +945,6 @@ class CodexAppServerClient {
     );
     const authFileStatus = this.readCodexAuthFileStatus();
     const effectiveAuthMode = authStatus.authMode ?? authFileStatus.authMode;
-    if (
-      effectiveAuthMode === "chatgpt" ||
-      effectiveAuthMode === "chatgptAuthTokens" ||
-      effectiveAuthMode === "agentIdentity"
-    ) {
-      throw new Error(
-        "Model discovery requires Codex API key authentication and is unavailable in login mode",
-      );
-    }
     const baseUrl = normalizeProviderBaseUrl(
       providerId,
       providerConfig.baseUrl,
@@ -979,12 +971,29 @@ class CodexAppServerClient {
       }
     }
 
-    const apiKey =
+    const configuredProviderApiKey =
       readNonEmptyRuntimeEnvVar(providerConfig.envKey, this.env) ??
+      providerConfig.experimentalBearerToken;
+    const apiKey =
+      configuredProviderApiKey ??
       authStatus.authToken ??
       authFileStatus.apiKey ??
       readNonEmptyRuntimeEnvVar("CODEX_API_KEY", this.env) ??
       readNonEmptyRuntimeEnvVar("OPENAI_API_KEY", this.env);
+    const isLoginAuth =
+      effectiveAuthMode === "chatgpt" ||
+      effectiveAuthMode === "chatgptAuthTokens" ||
+      effectiveAuthMode === "agentIdentity";
+    if (
+      isLoginAuth &&
+      !configuredProviderApiKey &&
+      !headers.has("authorization") &&
+      !headers.has("x-api-key")
+    ) {
+      throw new Error(
+        "Model discovery requires Codex API key authentication and is unavailable in login mode",
+      );
+    }
     if (apiKey && !headers.has("authorization") && !headers.has("x-api-key")) {
       headers.set("Authorization", `Bearer ${apiKey}`);
     }
@@ -3846,6 +3855,7 @@ function extractProviderRequestConfig(
     return {
       baseUrl: null,
       envKey: null,
+      experimentalBearerToken: null,
       headers: {},
       envHeaders: {},
       queryParams: {},
@@ -3860,6 +3870,11 @@ function extractProviderRequestConfig(
   return {
     baseUrl: asTrimmedString(providerConfig?.base_url) ?? null,
     envKey: asTrimmedString(providerConfig?.env_key) ?? null,
+    experimentalBearerToken:
+      asTrimmedString(
+        providerConfig?.experimental_bearer_token ??
+          providerConfig?.experimentalBearerToken,
+      ) ?? null,
     headers: extractStringRecord(providerConfig?.http_headers),
     envHeaders: extractStringRecord(providerConfig?.env_http_headers),
     queryParams: extractStringRecord(providerConfig?.query_params),

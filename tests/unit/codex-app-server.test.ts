@@ -216,6 +216,53 @@ test("provider model fetching rejects Codex login mode before making a request",
   }
 });
 
+test("provider model fetching uses the configured experimental bearer token", async () => {
+  const originalFetch = globalThis.fetch;
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  (
+    client as unknown as {
+      request: (
+        method: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+    }
+  ).request = async (method) => {
+    if (method === "config/read") {
+      return {
+        config: {
+          model_provider: "custom",
+          model_providers: {
+            custom: {
+              base_url: "https://provider.example/v1",
+              experimental_bearer_token: "config-file-key",
+            },
+          },
+        },
+      };
+    }
+    return {
+      authMethod: "chatgpt",
+      authToken: null,
+      requiresOpenaiAuth: true,
+    };
+  };
+  globalThis.fetch = async (_input, init) => {
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Authorization"), "Bearer config-file-key");
+    return new Response(JSON.stringify({ data: [{ id: "provider-model" }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    assert.equal((await client.fetchProviderModels())[0]?.id, "provider-model");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await client.close();
+  }
+});
+
 test("provider model fetching reads API-key auth from the Codex auth file", async () => {
   const originalFetch = globalThis.fetch;
   const codexHome = mkdtempSync(join(tmpdir(), "codex-model-auth-"));
