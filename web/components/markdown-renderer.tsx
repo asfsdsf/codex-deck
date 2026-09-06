@@ -1,12 +1,129 @@
 import { memo, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { CopyButton } from "./tool-renderers";
 
 interface MarkdownRendererProps {
   content: string;
   className?: string;
   onFilePathLinkClick?: (href: string) => boolean;
+}
+
+function protectCodeRegions(content: string): {
+  masked: string;
+  restore: (content: string) => string;
+} {
+  const protectedValues: string[] = [];
+  let masked = "";
+  let position = 0;
+
+  const mask = (value: string): string => {
+    const index = protectedValues.length;
+    protectedValues.push(value);
+    return `\u0000${index}\u0000`;
+  };
+
+  while (position < content.length) {
+    const lineEnd = content.indexOf("\n", position);
+    const isFinalLine = lineEnd === -1;
+    const lineEndAt = isFinalLine ? content.length : lineEnd;
+    const line = content.slice(position, lineEndAt);
+    const trailingNewline = isFinalLine ? "" : "\n";
+    const fence = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+
+    if (fence) {
+      const fenceMarker = fence[1][0];
+      let block = line;
+      let nextPosition = lineEndAt + 1;
+      let closed = false;
+
+      while (nextPosition <= content.length) {
+        const nextLineEnd = content.indexOf("\n", nextPosition);
+        const isFinalBlockLine = nextLineEnd === -1;
+        const nextLineEndAt = isFinalBlockLine
+          ? content.length
+          : nextLineEnd;
+        const nextLine = content.slice(nextPosition, nextLineEndAt);
+        block += `\n${nextLine}`;
+
+        if (
+          new RegExp(`^\\s{0,3}${fenceMarker}{3,}\\s*$`).test(nextLine)
+        ) {
+          position = isFinalBlockLine ? content.length : nextLineEndAt;
+          closed = true;
+          break;
+        }
+
+        if (isFinalBlockLine) {
+          position = content.length;
+          break;
+        }
+        nextPosition = nextLineEndAt + 1;
+      }
+
+      if (!closed) {
+        position = content.length;
+      }
+      masked += mask(block);
+      continue;
+    }
+
+    let maskedLine = "";
+    let linePosition = 0;
+
+    while (linePosition < line.length) {
+      const openIndex = line.indexOf("`", linePosition);
+      if (openIndex === -1) {
+        maskedLine += line.slice(linePosition);
+        break;
+      }
+
+      maskedLine += line.slice(linePosition, openIndex);
+      let openLength = 1;
+      while (line[openIndex + openLength] === "`") {
+        openLength++;
+      }
+
+      const openingRun = "`".repeat(openLength);
+      const closeIndex = line.indexOf(openingRun, openIndex + openLength);
+      if (closeIndex === -1) {
+        maskedLine += line.slice(openIndex);
+        break;
+      }
+
+      const codeSpanEnd = closeIndex + openLength;
+      maskedLine += mask(line.slice(openIndex, codeSpanEnd));
+      linePosition = codeSpanEnd;
+    }
+
+    masked += maskedLine + trailingNewline;
+    position = lineEndAt + 1;
+  }
+
+  return {
+    masked,
+    restore: (value) => {
+      let restored = value;
+      protectedValues.forEach((protectedValue, index) => {
+        restored = restored.replaceAll(
+          `\u0000${index}\u0000`,
+          protectedValue,
+        );
+      });
+      return restored;
+    },
+  };
+}
+
+function normalizeLatexMath(content: string): string {
+  const { masked, restore } = protectCodeRegions(content);
+  const normalized = masked
+    .replace(/\\\[([\s\S]*?)\\\]/g, "$$$$$1$$$$")
+    .replace(/\\\(([\s\S]*?)\\\)/g, "$$$1$$");
+  return restore(normalized);
 }
 
 function getFencedCodeBlock(content: string, language: string): string {
@@ -89,11 +206,13 @@ export const MarkdownRenderer = memo(function MarkdownRenderer(
   props: MarkdownRendererProps,
 ) {
   const { content, className = "", onFilePathLinkClick } = props;
+  const markdown = normalizeLatexMath(content);
 
   return (
     <div className={`break-words ${className}`}>
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           h1: (props) => {
             const { children } = props;
@@ -294,7 +413,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer(
           },
         }}
       >
-        {content}
+        {markdown}
       </Markdown>
     </div>
   );
