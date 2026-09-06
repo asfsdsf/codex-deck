@@ -586,6 +586,8 @@ install_daemon() {
   [[ -f "$PROJECT_ROOT/package.json" ]] || die "package.json not found in $PROJECT_ROOT"
   if [[ "$BUILD_BEFORE_INSTALL" -eq 1 ]]; then
     command -v pnpm >/dev/null 2>&1 || die "pnpm is required to build the server"
+    info "installing dependencies in $PROJECT_ROOT"
+    pnpm --dir "$PROJECT_ROOT" install
     info "building $PROJECT_ROOT"
     pnpm --dir "$PROJECT_ROOT" build
   fi
