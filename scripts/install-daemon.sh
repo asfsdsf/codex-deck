@@ -525,12 +525,12 @@ write_systemd_unit() {
       'After=default.target' \
       '' '[Service]' \
       'Type=simple'
-    printf 'WorkingDirectory=%s\n' "$(systemd_quote "$PROJECT_ROOT")"
-    printf 'ExecStart=%s\n' "$(systemd_quote "$(runner_path)")"
+    printf 'WorkingDirectory=%s\n' "$PROJECT_ROOT"
+    printf 'ExecStart=%s\n' "$(runner_path)"
     printf 'Environment=%s\n' "$(systemd_quote 'NODE_ENV=production')"
     printf 'Restart=on-failure\nRestartSec=3\n'
-    printf 'StandardOutput=append:%s\n' "$(systemd_quote "$(service_log_path)")"
-    printf 'StandardError=append:%s\n' "$(systemd_quote "$(service_log_path)")"
+    printf 'StandardOutput=append:%s\n' "$(service_log_path)"
+    printf 'StandardError=append:%s\n' "$(service_log_path)"
     printf '%s\n' '' '[Install]' 'WantedBy=default.target'
   } > "$unit"
   chmod 600 "$unit"
