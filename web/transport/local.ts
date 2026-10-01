@@ -12,6 +12,7 @@ import {
   requestLocalJson,
 } from "./shared";
 import type {
+  CodexDeckUpdateOutputStreamHandlers,
   ConversationStreamHandlers,
   ConversationStreamSubscriptionOptions,
   SessionsStreamHandlers,
@@ -366,6 +367,20 @@ export function createLocalTransport(): WebTransport {
         workflowsStreamSubscribers.delete(workflowSubscriber);
         stopSharedRealtimeStreamIfIdle();
       };
+    },
+
+    subscribeCodexDeckUpdateOutput(
+      handlers: CodexDeckUpdateOutputStreamHandlers,
+    ): () => void {
+      return createReconnectingEventSource({
+        createUrl: () => "/api/codex-deck/update/stream",
+        configure: (eventSource) => {
+          eventSource.addEventListener("updateOutput", (event) => {
+            handlers.onOutput(JSON.parse(event.data));
+          });
+        },
+        onDisconnect: handlers.onError,
+      });
     },
 
     subscribeWorkflowDaemonStatusStream(

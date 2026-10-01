@@ -1,4 +1,5 @@
 import type {
+  CodexDeckUpdateOutputResponse,
   ConversationMessage,
   Session,
   CodexAppServerEvent,
@@ -15,6 +16,11 @@ export interface SessionsStreamHandlers {
   onSessionsRemoved: (sessionIds: string[]) => void;
   onSkillsChanged?: (payload: { sessionId: string }) => void;
   onCodexAppServerEvent?: (event: CodexAppServerEvent) => void;
+  onError?: () => void;
+}
+
+export interface CodexDeckUpdateOutputStreamHandlers {
+  onOutput: (response: CodexDeckUpdateOutputResponse) => void;
   onError?: () => void;
 }
 
@@ -81,6 +87,9 @@ export interface TerminalStreamSubscriptionOptions {
 
 export interface WebTransport {
   requestJson: <T>(url: string, init?: RequestInit) => Promise<T>;
+  subscribeCodexDeckUpdateOutput: (
+    handlers: CodexDeckUpdateOutputStreamHandlers,
+  ) => () => void;
   subscribeSessionsStream: (handlers: SessionsStreamHandlers) => () => void;
   subscribeTerminalsStream: (handlers: TerminalsStreamHandlers) => () => void;
   subscribeWorkflowsStream: (handlers: WorkflowsStreamHandlers) => () => void;

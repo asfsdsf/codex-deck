@@ -12,20 +12,26 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import type {
   CodexDeckUpdateMethod,
+  CodexDeckUpdateOutputResponse,
   CodexDeckUpdateRequest,
   CodexDeckUpdateResponse,
   CodexDeckUpdateStatusResponse,
 } from "./storage";
 
-const execFileAsync = promisify(execFile);
 const NPM_PACKAGE_NAME = "codex-deck";
 const UPDATE_SETTINGS_FILE = "update-settings.json";
 const ACTIVE_PROJECT_ROOT_FILE = "active-project-root";
 const DEFAULT_COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 const NPM_CHECK_TIMEOUT_MS = 30 * 1000;
+const MAX_UPDATE_OUTPUT_LENGTH = 1024 * 1024;
+
+interface DaemonUpdateCommandOptions {
+  cwd?: string;
+  timeoutMs: number;
+  onOutput?: (output: string) => void;
+}
 
 interface DaemonUpdateSettings {
   method: CodexDeckUpdateMethod;
@@ -40,7 +46,7 @@ export interface DaemonUpdateCommandResult {
 export type RunDaemonUpdateCommand = (
   command: string,
   args: string[],
-  options: { cwd?: string; timeoutMs: number },
+  options: DaemonUpdateCommandOptions,
 ) => Promise<DaemonUpdateCommandResult>;
 
 export interface DaemonUpdaterOptions {
@@ -144,31 +150,37 @@ export function isVersionNewer(candidate: string, current: string): boolean {
 async function defaultRunCommand(
   command: string,
   args: string[],
-  options: { cwd?: string; timeoutMs: number },
+  options: DaemonUpdateCommandOptions,
 ): Promise<DaemonUpdateCommandResult> {
-  try {
-    const result = await execFileAsync(command, args, {
-      cwd: options.cwd,
-      env: process.env,
-      timeout: options.timeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-    };
-  } catch (error) {
-    const commandError = error as Error & {
-      stdout?: string;
-      stderr?: string;
-    };
-    const detail = (commandError.stderr || commandError.stdout || "").trim();
-    throw new Error(
-      detail
-        ? `${command} failed: ${detail}`
-        : `${command} failed: ${commandError.message}`,
+  return await new Promise((resolve, reject) => {
+    const child = execFile(
+      command,
+      args,
+      {
+        cwd: options.cwd,
+        env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+        timeout: options.timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
+        encoding: "utf-8",
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const detail = (stderr || stdout).trim();
+          reject(
+            new Error(
+              detail
+                ? `${command} failed: ${detail}`
+                : `${command} failed: ${error.message}`,
+            ),
+          );
+          return;
+        }
+        resolve({ stdout, stderr });
+      },
     );
-  }
+    child.stdout?.on("data", (output: string) => options.onOutput?.(output));
+    child.stderr?.on("data", (output: string) => options.onOutput?.(output));
+  });
 }
 
 function parseNpmVersionOutput(output: string): string {
@@ -283,6 +295,10 @@ export class DaemonUpdater {
   private updateInProgress = false;
   private latestNpmVersion: string | null = null;
   private npmCheckedAt: string | null = null;
+  private updateId: string | null = null;
+  private updateOutput = "";
+  private outputTruncated = false;
+  private readonly outputListeners = new Set<() => void>();
 
   constructor(options: DaemonUpdaterOptions) {
     this.currentVersion = normalizeVersion(options.currentVersion || "0.0.0");
@@ -300,13 +316,31 @@ export class DaemonUpdater {
       options.scheduleRestart ??
       (() => {
         const timer = setTimeout(() => {
+          this.appendOutput(`\n$ ${this.commandPath} restart-after-update\n`);
           const child = spawn(this.commandPath, ["restart-after-update"], {
             cwd: this.defaultSourceRoot,
             env: process.env,
             detached: true,
-            stdio: "ignore",
+            stdio: ["ignore", "pipe", "pipe"],
           });
-          child.on("error", () => {});
+          child.stdout?.setEncoding("utf-8");
+          child.stderr?.setEncoding("utf-8");
+          child.stdout?.on("data", (output: string) =>
+            this.appendOutput(output),
+          );
+          child.stderr?.on("data", (output: string) =>
+            this.appendOutput(output),
+          );
+          child.on("error", (error) => {
+            this.appendOutput(`Restart failed: ${error.message}\n`);
+          });
+          child.on("exit", (code, signal) => {
+            if (code !== null && code !== 0) {
+              this.appendOutput(`Restart command exited with code ${code}.\n`);
+            } else if (signal) {
+              this.appendOutput(`Restart command stopped by ${signal}.\n`);
+            }
+          });
           child.unref();
         }, 1_000);
         timer.unref?.();
@@ -321,6 +355,53 @@ export class DaemonUpdater {
       return "The daemon update environment is incomplete. Reinstall the daemon from this codex-deck version.";
     }
     return null;
+  }
+
+  getOutput(): CodexDeckUpdateOutputResponse {
+    return {
+      updateId: this.updateId,
+      output: this.updateOutput,
+      truncated: this.outputTruncated,
+      updateInProgress: this.updateInProgress,
+    };
+  }
+
+  subscribeOutput(listener: () => void): () => void {
+    this.outputListeners.add(listener);
+    return () => {
+      this.outputListeners.delete(listener);
+    };
+  }
+
+  private appendOutput(output: string): void {
+    this.updateOutput += output;
+    if (this.updateOutput.length > MAX_UPDATE_OUTPUT_LENGTH) {
+      this.updateOutput = this.updateOutput.slice(-MAX_UPDATE_OUTPUT_LENGTH);
+      this.outputTruncated = true;
+    }
+    for (const listener of this.outputListeners) {
+      listener();
+    }
+  }
+
+  private async runUpdateCommand(
+    command: string,
+    args: string[],
+    options: DaemonUpdateCommandOptions,
+  ): Promise<DaemonUpdateCommandResult> {
+    this.appendOutput(`\n$ ${[command, ...args].join(" ")}\n`);
+    let streamed = false;
+    const result = await this.runCommand(command, args, {
+      ...options,
+      onOutput: (output) => {
+        streamed = true;
+        this.appendOutput(output);
+      },
+    });
+    if (!streamed) {
+      this.appendOutput(result.stdout + result.stderr);
+    }
+    return result;
   }
 
   private async readSettings(): Promise<DaemonUpdateSettings> {
@@ -398,8 +479,13 @@ export class DaemonUpdater {
     };
   }
 
-  async checkNpm(): Promise<CodexDeckUpdateStatusResponse> {
-    const result = await this.runCommand(
+  async checkNpm(
+    captureOutput = false,
+  ): Promise<CodexDeckUpdateStatusResponse> {
+    const runCommand = captureOutput
+      ? this.runUpdateCommand.bind(this)
+      : this.runCommand;
+    const result = await runCommand(
       this.npmExecutable,
       ["view", `${NPM_PACKAGE_NAME}@latest`, "version", "--json"],
       { timeoutMs: NPM_CHECK_TIMEOUT_MS },
@@ -422,7 +508,7 @@ export class DaemonUpdater {
   private async updateFromNpm(
     settings: DaemonUpdateSettings,
   ): Promise<{ installedVersion: string; sourceRoot: null }> {
-    const checked = await this.checkNpm();
+    const checked = await this.checkNpm(true);
     const latestVersion = checked.npm.latestVersion;
     if (!latestVersion) {
       throw new Error("npm did not return a codex-deck version");
@@ -437,7 +523,7 @@ export class DaemonUpdater {
     );
     await mkdir(releaseRoot, { recursive: true, mode: 0o700 });
     try {
-      await this.runCommand(
+      await this.runUpdateCommand(
         this.npmExecutable,
         [
           "install",
@@ -511,15 +597,20 @@ export class DaemonUpdater {
       );
     }
 
-    await this.runCommand(
+    this.appendOutput(`Source project: ${sourceRoot}\n`);
+    await this.runUpdateCommand(
       this.pnpmExecutable,
       ["--dir", sourceRoot, "install", "--frozen-lockfile"],
       { cwd: sourceRoot, timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS },
     );
-    await this.runCommand(this.pnpmExecutable, ["--dir", sourceRoot, "build"], {
-      cwd: sourceRoot,
-      timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
-    });
+    await this.runUpdateCommand(
+      this.pnpmExecutable,
+      ["--dir", sourceRoot, "build"],
+      {
+        cwd: sourceRoot,
+        timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+      },
+    );
     const previousSettings = await this.readSettings();
     await this.writeSettings({ method: "source", sourceRoot });
     try {
@@ -539,6 +630,14 @@ export class DaemonUpdater {
   ): Promise<CodexDeckUpdateResponse> {
     this.assertCanUpdate();
     this.updateInProgress = true;
+    this.updateId = randomUUID();
+    this.updateOutput = "";
+    this.outputTruncated = false;
+    this.appendOutput(
+      request.method === "source"
+        ? "Starting source build and restart.\n"
+        : "Starting npm update and restart.\n",
+    );
     try {
       const settings = await this.readSettings();
       const result =
@@ -546,6 +645,7 @@ export class DaemonUpdater {
           ? await this.updateFromNpm(settings)
           : await this.updateFromSource(request.sourceRoot);
       this.scheduleRestart();
+      this.appendOutput("\nUpdate completed. Daemon restart scheduled.\n");
       return {
         ok: true,
         method: request.method,
@@ -558,8 +658,14 @@ export class DaemonUpdater {
             ? `Installed codex-deck ${result.installedVersion} from npm.`
             : `Built codex-deck from ${result.sourceRoot}.`,
       };
+    } catch (error) {
+      this.appendOutput(
+        `\nUpdate failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      throw error;
     } finally {
       this.updateInProgress = false;
+      this.appendOutput("");
     }
   }
 }

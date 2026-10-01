@@ -32,6 +32,7 @@ import type {
   CodexDeckConfigWriteRequest,
   CodexDeckConfigWriteResponse,
   CodexDeckUpdateRequest,
+  CodexDeckUpdateOutputResponse,
   CodexDeckUpdateResponse,
   CodexDeckUpdateStatusResponse,
   CodexHomeDescriptor,
@@ -104,6 +105,7 @@ import type {
   RemoteServerTrustPins,
 } from "./remote-client";
 export type { RemoteServerTrustPins };
+export { subscribeCodexDeckUpdateOutput } from "./transport";
 import {
   isRemoteLatencyLoggingEnabled as isRemoteLatencyLoggingEnabledTransport,
   notifyConversationMutation,
@@ -215,6 +217,12 @@ export async function applyCodexDeckConfig(
 
 export async function getCodexDeckUpdateStatus(): Promise<CodexDeckUpdateStatusResponse> {
   return requestJson<CodexDeckUpdateStatusResponse>("/api/codex-deck/update");
+}
+
+export async function getCodexDeckUpdateOutput(): Promise<CodexDeckUpdateOutputResponse> {
+  return requestJson<CodexDeckUpdateOutputResponse>(
+    "/api/codex-deck/update/output",
+  );
 }
 
 export async function checkCodexDeckNpmUpdate(): Promise<CodexDeckUpdateStatusResponse> {

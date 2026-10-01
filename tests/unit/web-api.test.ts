@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
   CodexAppServerEvent,
+  CodexDeckUpdateOutputResponse,
   ConversationMessage,
   Session,
   WorkflowDaemonStatusResponse,
@@ -32,6 +33,7 @@ import {
   forkCodexThread,
   getCodexConfigDefaults,
   getCodexDeckConfig,
+  getCodexDeckUpdateOutput,
   getCodexDeckUpdateStatus,
   getCodexAgentWaitConfig,
   getSystemContext,
@@ -89,6 +91,7 @@ import {
   stopWorkflowProcesses,
   stopWorkflowDaemon,
   subscribeConversationStream,
+  subscribeCodexDeckUpdateOutput,
   subscribeSessionsStream,
   subscribeTerminalStream,
   subscribeWorkflowDaemonStatusStream,
@@ -770,6 +773,7 @@ test("Codex Deck daemon update helpers use the management endpoints", async () =
   await getCodexDeckUpdateStatus();
   await checkCodexDeckNpmUpdate();
   await updateCodexDeckDaemon({ method: "source", sourceRoot: "/repo" });
+  await getCodexDeckUpdateOutput();
 
   assert.deepEqual(
     calls.map((call) => call.url),
@@ -777,6 +781,7 @@ test("Codex Deck daemon update helpers use the management endpoints", async () =
       "/api/codex-deck/update",
       "/api/codex-deck/update/check",
       "/api/codex-deck/update",
+      "/api/codex-deck/update/output",
     ],
   );
   assert.equal(calls[1]?.init?.method, "POST");
@@ -784,6 +789,74 @@ test("Codex Deck daemon update helpers use the management endpoints", async () =
     method: "source",
     sourceRoot: "/repo",
   });
+});
+
+test("daemon update output uses local SSE and closes on unsubscribe", () => {
+  const restore = installMockEventSource();
+  try {
+    const received: CodexDeckUpdateOutputResponse[] = [];
+    const unsubscribe = subscribeCodexDeckUpdateOutput({
+      onOutput: (output) => received.push(output),
+    });
+    const source = MockEventSource.instances[0]!;
+    assert.equal(source.url, "/api/codex-deck/update/stream");
+    const output: CodexDeckUpdateOutputResponse = {
+      updateId: "update-1",
+      output: "Build error from stderr\n",
+      updateInProgress: true,
+      truncated: false,
+    };
+    source.emit("updateOutput", output);
+    assert.deepEqual(received, [output]);
+    unsubscribe();
+    assert.equal(source.closed, true);
+  } finally {
+    restore();
+  }
+});
+
+test("daemon update output polls remotely, deduplicates output, and cancels", async () => {
+  const originalIsConnected = RemoteClient.prototype.isConnected;
+  const originalRequestJson = RemoteClient.prototype.requestJson;
+  const timers = new ManualTimerController();
+  const restoreTimers = timers.install();
+  let response: CodexDeckUpdateOutputResponse = {
+    updateId: "remote-update",
+    output: "Installing dependencies\n",
+    updateInProgress: true,
+    truncated: false,
+  };
+  RemoteClient.prototype.isConnected = () => true;
+  RemoteClient.prototype.requestJson = async function <T>(path: string) {
+    assert.equal(path, "/api/codex-deck/update/output");
+    return response as T;
+  };
+  const received: CodexDeckUpdateOutputResponse[] = [];
+  const unsubscribe = subscribeCodexDeckUpdateOutput({
+    onOutput: (output) => received.push(output),
+  });
+  try {
+    await flushAsyncWork();
+    assert.deepEqual(received, [response]);
+    assert.equal(timers.minPendingDelay(), 1_000);
+    await timers.runNext();
+    assert.equal(received.length, 1);
+    response = {
+      ...response,
+      output: "Build failed\n",
+      updateInProgress: false,
+    };
+    await timers.runNext();
+    assert.equal(received.length, 2);
+    assert.deepEqual(received[1], response);
+    unsubscribe();
+    assert.equal(timers.pendingCount(), 0);
+  } finally {
+    unsubscribe();
+    RemoteClient.prototype.isConnected = originalIsConnected;
+    RemoteClient.prototype.requestJson = originalRequestJson;
+    restoreTimers();
+  }
 });
 
 test("codex config endpoints reuse cached responses within a page", async () => {

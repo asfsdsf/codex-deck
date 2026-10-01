@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -16,6 +17,8 @@ import {
   isVersionNewer,
   type RunDaemonUpdateCommand,
 } from "../../api/daemon-updater";
+import { Hono } from "hono";
+import { registerDaemonUpdateRoutes } from "../../api/server/daemon-update-routes";
 
 test("compares stable and prerelease npm versions", () => {
   assert.equal(isVersionNewer("0.2.2", "0.2.1"), true);
@@ -164,6 +167,161 @@ test("refuses live updates outside a managed daemon", async () => {
     updater.update({ method: "source", sourceRoot: process.cwd() }),
     /available only when codex-deck is running through codex-deck-daemon/,
   );
+});
+
+test("streams command stdout and stderr before a failed build finishes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-update-output-"));
+  const commandPath = join(root, "fake-pnpm.cjs");
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ name: "codex-deck", scripts: { build: "build" } }),
+  );
+  await writeFile(
+    commandPath,
+    `#!/usr/bin/env node
+if (process.argv.at(-1) === "build") {
+  process.stdout.write("Compiling source…\\n");
+  process.stderr.write("TypeScript error: build failed\\n");
+  setTimeout(() => process.exit(1), 200);
+} else {
+  process.stdout.write("Dependencies installed\\n");
+}
+`,
+  );
+  await chmod(commandPath, 0o700);
+  let restarted = false;
+  const updater = new DaemonUpdater({
+    currentVersion: "0.2.1",
+    managed: true,
+    stateDir: join(root, "state"),
+    commandPath: join(root, "daemon"),
+    pnpmExecutable: commandPath,
+    scheduleRestart: () => {
+      restarted = true;
+    },
+  });
+  let liveOutputSeen!: () => void;
+  const liveOutput = new Promise<void>((resolve) => {
+    liveOutputSeen = resolve;
+  });
+  const unsubscribe = updater.subscribeOutput(() => {
+    if (updater.getOutput().output.includes("TypeScript error")) {
+      liveOutputSeen();
+    }
+  });
+  try {
+    const update = updater.update({ method: "source", sourceRoot: root });
+    const failed = assert.rejects(update, /build failed/);
+    await liveOutput;
+    assert.equal(updater.getOutput().updateInProgress, true);
+    await assert.rejects(
+      updater.update({ method: "source", sourceRoot: root }),
+      /already in progress/,
+    );
+    await failed;
+    const output = updater.getOutput();
+    assert.equal(output.updateInProgress, false);
+    assert.equal(output.truncated, false);
+    assert.match(output.output, /Dependencies installed/);
+    assert.match(output.output, /Compiling source…/);
+    assert.match(output.output, /TypeScript error: build failed/);
+    assert.match(output.output, /Update failed:/);
+    assert.equal(restarted, false);
+    await assert.rejects(readFile(join(root, "state", "active-project-root")));
+  } finally {
+    unsubscribe();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("broadcasts update output to all SSE clients and replays it on reconnect", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-update-stream-"));
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ name: "codex-deck", scripts: { build: "build" } }),
+  );
+  let finishBuild!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finishBuild = resolve;
+  });
+  const updater = new DaemonUpdater({
+    currentVersion: "0.2.1",
+    managed: true,
+    stateDir: join(root, "state"),
+    commandPath: join(root, "daemon"),
+    runCommand: async (_command, _args, options) => {
+      options.onOutput?.("Build progress from stdout\n");
+      options.onOutput?.("Build diagnostic from stderr\n");
+      await gate;
+      throw new Error("Build failed");
+    },
+    scheduleRestart: () => assert.fail("A failed build must not restart"),
+  });
+  const app = new Hono();
+  registerDaemonUpdateRoutes(app, updater);
+  const controllers: AbortController[] = [];
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  const connect = async () => {
+    const controller = new AbortController();
+    controllers.push(controller);
+    const response = await app.request(
+      new Request("http://localhost/api/codex-deck/update/stream", {
+        signal: controller.signal,
+      }),
+    );
+    const reader = response.body!.getReader();
+    readers.push(reader);
+    return reader;
+  };
+  const readOutput = async (
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+  ) => {
+    let data = "";
+    while (!data.includes("\n\n")) {
+      const chunk = await reader.read();
+      assert.equal(chunk.done, false);
+      data += new TextDecoder().decode(chunk.value);
+    }
+    const payload = data.split("\n").find((line) => line.startsWith("data: "))!;
+    return JSON.parse(payload.slice(6)) as ReturnType<
+      DaemonUpdater["getOutput"]
+    >;
+  };
+
+  try {
+    const first = await connect();
+    const second = await connect();
+    assert.equal((await readOutput(first)).updateId, null);
+    assert.equal((await readOutput(second)).updateId, null);
+    const update = app.request("/api/codex-deck/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "source", sourceRoot: root }),
+    });
+    const [firstOutput, secondOutput] = await Promise.all([
+      readOutput(first),
+      readOutput(second),
+    ]);
+    assert.deepEqual(firstOutput, secondOutput);
+    assert.equal(firstOutput.updateInProgress, true);
+    assert.match(firstOutput.output, /stdout/);
+    assert.match(firstOutput.output, /stderr/);
+    const reconnected = await connect();
+    assert.deepEqual(await readOutput(reconnected), firstOutput);
+    finishBuild();
+    assert.equal((await update).status, 500);
+    const response = await app.request("/api/codex-deck/update/output");
+    const finalOutput = await response.json();
+    assert.equal(finalOutput.updateInProgress, false);
+    assert.match(finalOutput.output, /Update failed: Build failed/);
+    assert.deepEqual(await readOutput(first), finalOutput);
+    assert.deepEqual(await readOutput(second), finalOutput);
+  } finally {
+    finishBuild();
+    controllers.forEach((controller) => controller.abort());
+    await Promise.all(readers.map((reader) => reader.cancel()));
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("detects an older daemon runner at the standard XDG paths", async () => {

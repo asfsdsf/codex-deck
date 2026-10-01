@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   CodexDeckConfigWriteResponse,
   CodexDeckUpdateMethod,
+  CodexDeckUpdateOutputResponse,
   CodexDeckUpdateResponse,
   CodexDeckUpdateStatusResponse,
 } from "@codex-deck/api";
@@ -30,7 +31,9 @@ import {
   applyCodexDeckConfig,
   checkCodexDeckNpmUpdate,
   getCodexDeckConfig,
+  getCodexDeckUpdateOutput,
   getCodexDeckUpdateStatus,
+  subscribeCodexDeckUpdateOutput,
   updateCodexDeckDaemon,
 } from "../api";
 import {
@@ -40,6 +43,7 @@ import {
   type EditableCodexDeckConfig,
   type EditableRemoteConfig,
 } from "../codex-deck-config";
+import { usePageVisibility } from "../hooks/use-page-visibility";
 
 interface ConfigModalProps {
   open: boolean;
@@ -310,13 +314,78 @@ export default function ConfigModal(props: ConfigModalProps) {
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateResult, setUpdateResult] = useState<string | null>(null);
+  const [updateOutput, setUpdateOutput] =
+    useState<CodexDeckUpdateOutputResponse | null>(null);
+  const [updateRestartOutput, setUpdateRestartOutput] = useState("");
+  const updateOutputRef = useRef<HTMLTextAreaElement>(null);
+  const followUpdateOutputRef = useRef(true);
+  const ignoredUpdateIdRef = useRef<string | null>(null);
+  const receivedUpdateIdRef = useRef<string | null>(null);
+  const isPageVisible = usePageVisibility();
 
   const validation = useMemo(() => validateConfig(config), [config]);
   const disabled = loading || saving || applyingUpdate;
   const isDirty = content !== loadedContent;
   const hasBlockingValidation =
     activeSection !== "advanced" && validation.count > 0;
-  const updateBusy = loadingUpdateStatus || checkingUpdate || disabled;
+  const updateBusy = Boolean(
+    loadingUpdateStatus ||
+    checkingUpdate ||
+    disabled ||
+    updateStatus?.updateInProgress ||
+    updateOutput?.updateInProgress,
+  );
+
+  const receiveUpdateOutput = (response: CodexDeckUpdateOutputResponse) => {
+    // A freshly restarted daemon has no build output. Keep the completed log.
+    if (!response.updateId) {
+      setUpdateOutput((output) =>
+        output?.updateInProgress
+          ? { ...output, updateInProgress: false }
+          : output,
+      );
+      setUpdateStatus((status) =>
+        status?.updateInProgress
+          ? { ...status, updateInProgress: false }
+          : status,
+      );
+      return;
+    }
+    if (response.updateId === ignoredUpdateIdRef.current) {
+      return;
+    }
+    if (response.updateId !== receivedUpdateIdRef.current) {
+      receivedUpdateIdRef.current = response.updateId;
+      setUpdateRestartOutput("");
+      followUpdateOutputRef.current = true;
+    }
+    setUpdateOutput(response);
+    setUpdateStatus((status) =>
+      status
+        ? { ...status, updateInProgress: response.updateInProgress }
+        : status,
+    );
+  };
+
+  useEffect(() => {
+    if (!open || activeSection !== "updates" || !isPageVisible) {
+      return;
+    }
+    return subscribeCodexDeckUpdateOutput({ onOutput: receiveUpdateOutput });
+  }, [activeSection, isPageVisible, open]);
+
+  useEffect(() => {
+    const textarea = updateOutputRef.current;
+    if (textarea && followUpdateOutputRef.current) {
+      textarea.scrollTop = textarea.scrollHeight;
+    }
+  }, [activeSection, updateOutput, updateRestartOutput]);
+
+  useEffect(() => {
+    if (applyingUpdate) {
+      updateOutputRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [applyingUpdate]);
 
   const loadConfig = async () => {
     setLoading(true);
@@ -472,6 +541,7 @@ export default function ConfigModal(props: ConfigModalProps) {
           setUpdateResult(
             `${response.message} The restarted daemon is online. Reload the page to use its updated web assets.`,
           );
+          setUpdateRestartOutput("The restarted daemon is online.\n");
           return;
         }
       } catch {
@@ -481,11 +551,14 @@ export default function ConfigModal(props: ConfigModalProps) {
     setUpdateResult(
       `${response.message} Restart was scheduled, but the Web UI could not confirm that the daemon came back online.`,
     );
+    setUpdateRestartOutput(
+      "Restart was scheduled, but the Web UI could not confirm that the daemon came back online within 60 seconds.\n",
+    );
   };
 
   const handleDaemonUpdate = async () => {
     if (
-      applyingUpdate ||
+      updateBusy ||
       !updateStatus?.restartSupported ||
       (updateMethod === "source" && !sourceRoot.trim())
     ) {
@@ -494,16 +567,33 @@ export default function ConfigModal(props: ConfigModalProps) {
     setApplyingUpdate(true);
     setUpdateError(null);
     setUpdateResult(null);
+    ignoredUpdateIdRef.current = updateOutput?.updateId ?? null;
+    setUpdateOutput(null);
+    setUpdateRestartOutput("");
+    followUpdateOutputRef.current = true;
     try {
       const response = await updateCodexDeckDaemon({
         method: updateMethod,
         sourceRoot: updateMethod === "source" ? sourceRoot.trim() : undefined,
       });
+      await getCodexDeckUpdateOutput()
+        .then(receiveUpdateOutput)
+        .catch(() => {});
       setUpdateResult(`${response.message} Restarting the daemon.`);
+      setUpdateRestartOutput("Waiting for the daemon to restart…\n");
       await waitForDaemonRestart(response);
     } catch (applyError) {
-      setUpdateError(
-        applyError instanceof Error ? applyError.message : String(applyError),
+      const message =
+        applyError instanceof Error ? applyError.message : String(applyError);
+      const output = await getCodexDeckUpdateOutput().catch(() => null);
+      if (output) {
+        receiveUpdateOutput(output);
+      }
+      setUpdateError(message);
+      setUpdateRestartOutput(
+        output?.updateId && output.updateId !== ignoredUpdateIdRef.current
+          ? ""
+          : `Update failed: ${message}\n`,
       );
     } finally {
       setApplyingUpdate(false);
@@ -1184,6 +1274,35 @@ export default function ConfigModal(props: ConfigModalProps) {
                             </div>
                           </div>
                         )}
+
+                        {applyingUpdate ||
+                        updateOutput ||
+                        updateRestartOutput ? (
+                          <Field label="Build and restart output">
+                            <textarea
+                              ref={updateOutputRef}
+                              readOnly
+                              value={
+                                (updateOutput
+                                  ? `${updateOutput.truncated ? "[Earlier output omitted]\n" : ""}${updateOutput.output}`
+                                  : applyingUpdate
+                                    ? "Starting update…\n"
+                                    : "") + updateRestartOutput
+                              }
+                              aria-label="Build and restart output"
+                              spellCheck={false}
+                              onScroll={(event) => {
+                                const textarea = event.currentTarget;
+                                followUpdateOutputRef.current =
+                                  textarea.scrollHeight -
+                                    textarea.scrollTop -
+                                    textarea.clientHeight <
+                                  32;
+                              }}
+                              className="h-64 min-h-40 w-full resize-y rounded border border-zinc-700 bg-zinc-900/35 px-3 py-2.5 font-mono text-xs leading-5 text-zinc-200 outline-none focus:border-cyan-500"
+                            />
+                          </Field>
+                        ) : null}
 
                         {updateError ? (
                           <div

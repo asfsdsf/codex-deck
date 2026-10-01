@@ -31,6 +31,9 @@ latest npm release into daemon-managed storage. The source option does not
 check versions or pull Git changes; it installs and builds the selected source
 tree as it exists on disk, activates it, and restarts. Its default project root
 is the directory from which the last `codex-deck-daemon start` was invoked.
+The Updates tab shows live build/install output, including error messages, in
+a read-only text area. The output stays visible while the daemon restarts and
+after the operation finishes, until the page is reloaded.
 
 Or use watch mode:
 

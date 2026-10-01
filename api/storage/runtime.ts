@@ -559,6 +559,13 @@ export interface CodexDeckConfigWriteResponse extends CodexDeckConfigFileRespons
 
 export type CodexDeckUpdateMethod = "npm" | "source";
 
+export interface CodexDeckUpdateOutputResponse {
+  updateId: string | null;
+  output: string;
+  truncated: boolean;
+  updateInProgress: boolean;
+}
+
 export interface CodexDeckUpdateStatusResponse {
   daemonManaged: boolean;
   restartSupported: boolean;

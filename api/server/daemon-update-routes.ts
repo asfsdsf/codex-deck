@@ -1,7 +1,8 @@
 import type { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import type { CodexDeckUpdateMethod, CodexDeckUpdateRequest } from "../storage";
 import type { DaemonUpdater } from "../daemon-updater";
-import { toErrorMessage } from "./utils";
+import { toErrorMessage, waitForAbortableTimeout } from "./utils";
 
 function isUpdateMethod(value: unknown): value is CodexDeckUpdateMethod {
   return value === "npm" || value === "source";
@@ -35,6 +36,63 @@ export function registerDaemonUpdateRoutes(
 ): void {
   app.get("/api/codex-deck/update", async (c) => {
     return c.json(await updater.getStatus());
+  });
+
+  app.get("/api/codex-deck/update/output", (c) => {
+    return c.json(updater.getOutput());
+  });
+
+  app.get("/api/codex-deck/update/stream", (c) => {
+    return streamSSE(c, async (stream) => {
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let writes = Promise.resolve();
+      const sendOutput = () => {
+        writes = writes
+          .then(async () => {
+            if (!controller.signal.aborted) {
+              await stream.writeSSE({
+                event: "updateOutput",
+                data: JSON.stringify(updater.getOutput()),
+              });
+            }
+          })
+          .catch(cleanup);
+      };
+      const unsubscribe = updater.subscribeOutput(() => {
+        if (timer || controller.signal.aborted) {
+          return;
+        }
+        timer = setTimeout(() => {
+          timer = null;
+          sendOutput();
+        }, 100);
+      });
+      const cleanup = () => {
+        controller.abort();
+        unsubscribe();
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        c.req.raw.signal.removeEventListener("abort", cleanup);
+      };
+      stream.onAbort(cleanup);
+      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
+
+      try {
+        sendOutput();
+        while (!controller.signal.aborted) {
+          await waitForAbortableTimeout(15_000, controller.signal);
+          if (!controller.signal.aborted) {
+            await stream.writeSSE({ event: "heartbeat", data: "" });
+          }
+        }
+      } finally {
+        cleanup();
+        await writes;
+      }
+    });
   });
 
   app.post("/api/codex-deck/update/check", async (c) => {

@@ -2,6 +2,7 @@ import { RemoteClient } from "../remote-client";
 import { createLocalTransport } from "./local";
 import { createRemoteTransport } from "./remote";
 import type {
+  CodexDeckUpdateOutputStreamHandlers,
   ConversationStreamHandlers,
   ConversationStreamSubscriptionOptions,
   SessionsStreamHandlers,
@@ -15,6 +16,7 @@ import type {
 
 export { createPollingSubscription } from "./shared";
 export type {
+  CodexDeckUpdateOutputStreamHandlers,
   ConversationStreamBatch,
   ConversationStreamHandlers,
   ConversationStreamPhase,
@@ -40,6 +42,12 @@ function getTransport() {
 
 export function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return getTransport().requestJson<T>(url, init);
+}
+
+export function subscribeCodexDeckUpdateOutput(
+  handlers: CodexDeckUpdateOutputStreamHandlers,
+): () => void {
+  return getTransport().subscribeCodexDeckUpdateOutput(handlers);
 }
 
 export function subscribeSessionsStream(

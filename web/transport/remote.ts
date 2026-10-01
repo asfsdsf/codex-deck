@@ -1,5 +1,6 @@
 import type {
   CodexAppServerEvent,
+  CodexDeckUpdateOutputResponse,
   ConversationMessage,
   ConversationMessageWindow,
   StreamResult,
@@ -16,6 +17,7 @@ import {
   createPollingSubscription,
 } from "./shared";
 import type {
+  CodexDeckUpdateOutputStreamHandlers,
   ConversationStreamHandlers,
   ConversationStreamSubscriptionOptions,
   SessionsStreamHandlers,
@@ -531,6 +533,34 @@ export function createRemoteTransport(
       return () => {
         unregisterWake();
         subscription.unsubscribe();
+      };
+    },
+
+    subscribeCodexDeckUpdateOutput(
+      handlers: CodexDeckUpdateOutputStreamHandlers,
+    ): () => void {
+      let cancelled = false;
+      let previousPayload = "";
+      const unsubscribe = createPollingSubscription(async () => {
+        try {
+          const response =
+            await remoteClient.requestJson<CodexDeckUpdateOutputResponse>(
+              "/api/codex-deck/update/output",
+            );
+          const payload = JSON.stringify(response);
+          if (!cancelled && payload !== previousPayload) {
+            previousPayload = payload;
+            handlers.onOutput(response);
+          }
+        } catch {
+          if (!cancelled) {
+            handlers.onError?.();
+          }
+        }
+      }, 1_000);
+      return () => {
+        cancelled = true;
+        unsubscribe();
       };
     },
 
