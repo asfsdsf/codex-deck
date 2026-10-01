@@ -12,6 +12,13 @@ import { basename, isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import {
+  clearConversationIndexes,
+  applyConversationLiveEvent,
+  readConversationMessageWindow,
+  readConversationMessageUpdates,
+  readConversationMessageSnapshot,
+} from "../conversation-index";
 import { parseConversationTextChunk } from "../conversation-parser";
 import {
   collectEditableMessagePairs,
@@ -208,6 +215,13 @@ export interface CodexCollabAgentState {
 }
 
 export type CodexAppServerEvent =
+  | {
+      type: "item_completed";
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      item: Record<string, unknown>;
+    }
   | {
       type: "error";
       threadId: string;
@@ -1415,6 +1429,14 @@ export interface ConversationMessage {
     | "thread_goal"
     | "task_started"
     | "task_complete";
+  /** Stable, 1-based logical order within one file generation. */
+  sequence?: number;
+  itemId?: string;
+  streaming?: boolean;
+  /** Monotonic version of the latest update, used to ignore stale window responses. */
+  revision?: number;
+  /** Stable, 1-based visible position; pages contain 100 visible messages. */
+  messageNumber?: number;
   uuid?: string;
   parentUuid?: string;
   turnId?: string;
@@ -1485,10 +1507,18 @@ export interface StreamResult {
   nextOffset: number;
   done: boolean;
   fileId?: string;
+  totalMessages?: number;
+}
+
+/** Numbered endpoints use nextOffset as a monotonic revision cursor, not a file byte offset. */
+export interface ConversationMessageWindow extends StreamResult {
+  /** First logical sequence in this window, or 0 when no older history remains. */
+  historyStartSequence: number;
 }
 
 export interface ConversationStreamOptions {
   maxPayloadBytes?: number;
+  skipToolNameBootstrap?: boolean;
 }
 
 export interface ConversationRawChunkResponse {
@@ -1613,6 +1643,7 @@ const sessionStreamLastReasoningMessage = new Map<
 >();
 
 export function initStorage(dir?: string): void {
+  clearConversationIndexes();
   codexDir = dir ?? join(homedir(), ".codex");
   codexHistoryPath = join(codexDir, "history.jsonl");
   codexSessionsDir = join(codexDir, "sessions");
@@ -1649,6 +1680,8 @@ export function addToFileIndex(sessionId: string, filePath: string): void {
 }
 
 function clearSessionCaches(sessionId: string): void {
+  const indexedPath = fileIndex.get(sessionId);
+  if (indexedPath) clearConversationIndexes(indexedPath);
   fileIndex.delete(sessionId);
   sessionMetaIndex.delete(sessionId);
   sessionDisplayCache.delete(sessionId);
@@ -5474,16 +5507,48 @@ export async function getConversation(
     }
 
     try {
-      const content = await readFile(filePath, "utf-8");
-      const result = parseConversationTextChunk(content, 0);
-      sessionToolNameIndex.set(sessionId, result.toolNames);
-      rememberStreamReasoningMessages(sessionId, result.messages);
-      return result.messages;
+      const messages = await readConversationMessageSnapshot(filePath);
+      rememberStreamReasoningMessages(sessionId, messages);
+      return messages;
     } catch (err) {
       console.error("Error reading conversation:", err);
       return [];
     }
   });
+}
+
+export async function ingestConversationLiveEvent(
+  event: CodexAppServerEvent,
+): Promise<void> {
+  const filePath = await findSessionFile(event.threadId);
+  if (filePath) await applyConversationLiveEvent(filePath, event);
+}
+
+export async function getConversationMessageWindow(
+  sessionId: string,
+  beforeSequence?: number,
+): Promise<ConversationMessageWindow> {
+  const filePath = await findSessionFile(sessionId);
+  return filePath
+    ? readConversationMessageWindow(filePath, beforeSequence)
+    : {
+        messages: [],
+        historyStartSequence: 0,
+        nextOffset: 0,
+        done: true,
+        totalMessages: 0,
+      };
+}
+
+export async function getConversationMessageUpdates(
+  sessionId: string,
+  fromOffset = 0,
+  maxPayloadBytes?: number,
+): Promise<StreamResult> {
+  const filePath = await findSessionFile(sessionId);
+  return filePath
+    ? readConversationMessageUpdates(filePath, fromOffset, maxPayloadBytes)
+    : { messages: [], nextOffset: 0, done: true, totalMessages: 0 };
 }
 
 export async function getConversationRawChunk(
@@ -5594,7 +5659,28 @@ export async function getConversationRawWindow(
       };
     }
 
-    const start = Math.max(0, normalizedBefore - normalizedMaxBytes);
+    let start = Math.max(0, normalizedBefore - normalizedMaxBytes);
+    fileHandle = await open(filePath, "r");
+    // Align backwards to the start of a complete JSONL record. A tool result
+    // can be larger than the requested window, including multibyte UTF-8.
+    let searchEnd = start;
+    while (searchEnd > 0) {
+      const searchStart = Math.max(0, searchEnd - 64 * 1024);
+      const prefix = Buffer.allocUnsafe(searchEnd - searchStart);
+      const { bytesRead } = await fileHandle.read(
+        prefix,
+        0,
+        prefix.length,
+        searchStart,
+      );
+      const newline = prefix.subarray(0, bytesRead).lastIndexOf(0x0a);
+      if (newline >= 0) {
+        start = searchStart + newline + 1;
+        break;
+      }
+      start = searchStart;
+      searchEnd = searchStart;
+    }
     const byteCount = normalizedBefore - start;
     if (byteCount <= 0) {
       return {
@@ -5608,17 +5694,9 @@ export async function getConversationRawWindow(
     }
 
     const buffer = Buffer.allocUnsafe(byteCount);
-    fileHandle = await open(filePath, "r");
     const { bytesRead } = await fileHandle.read(buffer, 0, byteCount, start);
-    let sliceStart = 0;
+    const sliceStart = 0;
     let sliceEnd = bytesRead;
-
-    if (start > 0) {
-      const firstNewline = buffer.indexOf(0x0a, 0);
-      if (firstNewline >= 0 && firstNewline + 1 < sliceEnd) {
-        sliceStart = firstNewline + 1;
-      }
-    }
 
     if (normalizedBefore < fileSize) {
       const lastNewline = buffer.lastIndexOf(0x0a, sliceEnd - 1);
@@ -5635,6 +5713,18 @@ export async function getConversationRawWindow(
     const endOffset = start + sliceEnd;
     const normalizedStartOffset =
       endOffset > startOffset ? startOffset : Math.max(0, start);
+
+    if (beforeOffset === undefined) {
+      // Seed incremental SSE state from the recent window, without reading
+      // the entire session just to recover tool names or reasoning usage.
+      const parsed = parseConversationTextChunk(
+        buffer.subarray(sliceStart, sliceEnd).toString("utf-8"),
+        startOffset,
+        sessionToolNameIndex.get(sessionId),
+      );
+      sessionToolNameIndex.set(sessionId, parsed.toolNames);
+      rememberStreamReasoningMessages(sessionId, parsed.messages);
+    }
 
     return {
       chunkBase64: buffer.subarray(sliceStart, sliceEnd).toString("base64"),
@@ -5981,10 +6071,6 @@ export async function getConversationStream(
 
   let fileHandle;
   try {
-    if (fromOffset > 0 && !sessionToolNameIndex.has(sessionId)) {
-      await getConversation(sessionId);
-    }
-
     const fileStat = await stat(filePath);
     const fileSize = fileStat.size;
     const fileId = `${fileStat.dev}:${fileStat.ino}`;
@@ -6000,6 +6086,14 @@ export async function getConversationStream(
       return { messages: [], nextOffset: fromOffset, done: true, fileId };
     }
 
+    if (
+      fromOffset > 0 &&
+      !sessionToolNameIndex.has(sessionId) &&
+      !options.skipToolNameBootstrap
+    ) {
+      await getConversation(sessionId);
+    }
+
     fileHandle = await open(filePath, "r");
     const stream = fileHandle.createReadStream({
       start: fromOffset,
@@ -6013,6 +6107,86 @@ export async function getConversationStream(
         ? new Map<string, string>()
         : (sessionToolNameIndex.get(sessionId) ?? new Map<string, string>());
     let stopReading = false;
+    let nextPayloadProbeLineCount = 1;
+
+    // Probe geometrically rather than reparsing every growing prefix. If a
+    // probe exceeds the budget, choose a smaller prefix without splitting
+    // the paired event/response records needed for message editing.
+    const fitPayload = (candidateEndOffset: number): boolean => {
+      if (maxPayloadBytes === null) {
+        return true;
+      }
+      const payloadFits = (
+        prefixLength: number,
+        endOffset: number,
+      ): boolean => {
+        const candidateMessages = parseCodexConversation(
+          parsedLines.slice(0, prefixLength),
+          new Map(existingToolNames),
+        );
+        return (
+          Buffer.byteLength(
+            JSON.stringify({
+              messages: candidateMessages,
+              nextOffset: Math.min(endOffset, fileSize),
+              done: endOffset >= fileSize,
+            }),
+            "utf-8",
+          ) <= maxPayloadBytes
+        );
+      };
+
+      if (
+        payloadFits(parsedLines.length, candidateEndOffset) ||
+        parsedLines.length === 1
+      ) {
+        nextPayloadProbeLineCount = parsedLines.length * 2;
+        return true;
+      }
+
+      const pairs = collectEditableMessagePairs(parsedLines);
+      const indexesByOffset = new Map(
+        parsedLines.map((entry, index) => [entry.offset, index]),
+      );
+      const boundaryChanges = new Int32Array(parsedLines.length + 1);
+      for (const [responseOffset, eventOffset] of pairs) {
+        const responseIndex = indexesByOffset.get(responseOffset)!;
+        const eventIndex = indexesByOffset.get(eventOffset)!;
+        boundaryChanges[Math.min(responseIndex, eventIndex) + 1] += 1;
+        boundaryChanges[Math.max(responseIndex, eventIndex) + 1] -= 1;
+      }
+      const safePrefixLengths: number[] = [];
+      let openPairs = 0;
+      for (let index = 1; index <= parsedLines.length; index += 1) {
+        openPairs += boundaryChanges[index];
+        if (openPairs === 0) {
+          safePrefixLengths.push(index);
+        }
+      }
+
+      let bestIndex = 0;
+      let low = 0;
+      let high = safePrefixLengths.length - 2;
+      while (low <= high) {
+        const index = Math.floor((low + high) / 2);
+        const prefixLength = safePrefixLengths[index];
+        if (payloadFits(prefixLength, parsedLines[prefixLength].offset)) {
+          bestIndex = index;
+          low = index + 1;
+        } else {
+          high = index - 1;
+        }
+      }
+      // One indivisible record/pair may exceed the budget. Always make
+      // progress, as with a single oversized JSONL record.
+      const prefixLength = safePrefixLengths[bestIndex];
+      if (prefixLength < parsedLines.length) {
+        candidateEndOffset = parsedLines[prefixLength].offset;
+        parsedLines.length = prefixLength;
+      }
+      bytesConsumed = candidateEndOffset - fromOffset;
+      return false;
+    };
 
     const tryConsumeLine = (
       line: string,
@@ -6037,39 +6211,8 @@ export async function getConversationStream(
           offset: lineOffset,
         });
 
-        if (maxPayloadBytes !== null) {
-          const probeToolNames = new Map(existingToolNames);
-          const candidateMessages = parseCodexConversation(
-            parsedLines,
-            probeToolNames,
-          );
-          const candidateOffset = fromOffset + bytesConsumed + lineBytes;
-          const candidateNextOffset =
-            candidateOffset > fileSize ? fileSize : candidateOffset;
-          const candidatePayloadSize = Buffer.byteLength(
-            JSON.stringify({
-              messages: candidateMessages,
-              nextOffset: candidateNextOffset,
-              done: candidateNextOffset >= fileSize,
-            }),
-            "utf-8",
-          );
-
-          if (
-            candidatePayloadSize > maxPayloadBytes &&
-            parsedLines.length > 1
-          ) {
-            const lastLineOffset = parsedLines[parsedLines.length - 1].offset;
-            const candidateEditablePairs =
-              collectEditableMessagePairs(parsedLines);
-            const completesEditablePair =
-              candidateEditablePairs.has(lastLineOffset) ||
-              [...candidateEditablePairs.values()].includes(lastLineOffset);
-            if (!completesEditablePair) {
-              parsedLines.pop();
-              shouldIncludeLine = false;
-            }
-          }
+        if (parsedLines.length >= nextPayloadProbeLineCount) {
+          shouldIncludeLine = fitPayload(lineOffset + lineBytes);
         }
       }
 
@@ -6108,6 +6251,11 @@ export async function getConversationStream(
 
     if (!stopReading && pendingText && bytesConsumed + fromOffset >= fileSize) {
       tryConsumeLine(pendingText, false);
+    }
+
+    // EOF or malformed trailing input can arrive between geometric probes.
+    if (parsedLines.length > 0) {
+      fitPayload(fromOffset + bytesConsumed);
     }
 
     const actualOffset = fromOffset + bytesConsumed;

@@ -88,6 +88,17 @@ test("merges tool_result-only updates into existing pending tool messages", () =
   assert.equal((merged[0].message?.content as unknown[]).length, 2);
 });
 
+test("backfilled tool calls absorb results from the recent history window", () => {
+  const latest = [createToolResultOnlyMessage("call_1", "result_1")];
+  const older = [createPendingToolMessage("call_1", "pending_1")];
+  const merged = mergeDisplayConversationMessages(latest, older, "prepend");
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.uuid, "result_1");
+  assert.equal((merged[0]?.message?.content as unknown[]).length, 2);
+  assert.equal((latest[0]?.message?.content as unknown[]).length, 1);
+  assert.equal((older[0]?.message?.content as unknown[]).length, 1);
+});
+
 test("replaces pending tool message when a paired tool message arrives", () => {
   const previousMessages = [createPendingToolMessage("call_1", "pending_1")];
   const incomingMessages = [createPairedToolMessage("call_1", "paired_1")];
@@ -494,4 +505,76 @@ test("replacing a live message does not mutate the previous array", () => {
   assert.notEqual(merged, previousMessages);
   assert.equal(previousMessages[0], liveMessage);
   assert.equal(merged[0], updatedLiveMessage);
+});
+
+test("numbered snapshots converge regardless of arrival order and never revive completed streams", () => {
+  const snapshots: ConversationMessage[] = [
+    {
+      type: "assistant",
+      sequence: 101,
+      messageNumber: 101,
+      revision: 101,
+      streaming: true,
+      message: { role: "assistant", content: "partial" },
+    },
+    {
+      type: "assistant",
+      sequence: 101,
+      messageNumber: 101,
+      revision: 103,
+      streaming: false,
+      message: { role: "assistant", content: "final" },
+    },
+    {
+      type: "assistant",
+      sequence: 102,
+      messageNumber: 102,
+      revision: 102,
+      streaming: true,
+      message: { role: "assistant", content: "next partial" },
+    },
+    {
+      type: "assistant",
+      sequence: 102,
+      messageNumber: 102,
+      revision: 104,
+      streaming: false,
+      message: { role: "assistant", content: "next final" },
+    },
+    {
+      type: "user",
+      sequence: 1,
+      messageNumber: 1,
+      revision: 1,
+      message: { role: "user", content: "older history" },
+    },
+  ];
+  function permutations<T>(entries: T[]): T[][] {
+    return entries.length
+      ? entries.flatMap((entry, i) =>
+          permutations(entries.filter((_, j) => i !== j)).map((rest) => [
+            entry,
+            ...rest,
+          ]),
+        )
+      : [[]];
+  }
+  for (const order of permutations(snapshots)) {
+    let messages: ConversationMessage[] = [];
+    for (const message of order)
+      messages = mergeDisplayConversationMessages(messages, [message]);
+    assert.deepEqual(
+      messages.map((message) => [message.sequence, message.message?.content]),
+      [
+        [1, "older history"],
+        [101, "final"],
+        [102, "next final"],
+      ],
+    );
+    assert.ok(messages.every((message) => !message.streaming));
+    assert.equal(
+      mergeDisplayConversationMessages(messages, [snapshots[0]]),
+      messages,
+    );
+  }
 });

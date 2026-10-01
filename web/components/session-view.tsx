@@ -28,12 +28,10 @@ import {
   subscribeConversationStream,
   type ConversationStreamPhase,
 } from "../api";
-import { LiveCodexDeltaAccumulator } from "../live-codex-deltas";
 import { usePageVisibility } from "../hooks/use-page-visibility";
 import {
   clampPage,
   formatLocalTimestamp,
-  getPageSliceBounds,
   getTotalPages,
   parseResolvedUserInputAnswers,
   sanitizeText,
@@ -52,7 +50,7 @@ import { mergeDisplayConversationMessages } from "../conversation-message-merge"
 import { computeRailScrollDelta } from "../rail-scroll-utils";
 import { shouldToggleCollapsedSegmentFromContentClick } from "../segment-toggle-click";
 import { findConversationSearchMatches } from "../conversation-search";
-import { shouldShowTokenLimitNotice } from "../token-limit-notices";
+import { isVisibleConversationMessage } from "../../api/conversation-pagination";
 import {
   deriveAiTerminalStepStatesByMessageKey,
   extractConversationMessageText,
@@ -123,6 +121,9 @@ function getConversationEntryKey(
   visibleIndex: number,
 ): string {
   return (
+    (message.sequence === undefined
+      ? undefined
+      : `message:${message.sequence}`) ??
     message.uuid ??
     `${visibleIndex}:${message.type}:${message.turnId ?? ""}:${message.timestamp ?? ""}`
   );
@@ -650,20 +651,6 @@ export function shouldAutoForceBlockModeForMessages(
   );
 }
 
-function isVisibleConversationMessage(message: ConversationMessage): boolean {
-  return (
-    message.type === "user" ||
-    message.type === "assistant" ||
-    message.type === "reasoning" ||
-    message.type === "agent_reasoning" ||
-    message.type === "system_error" ||
-    (message.type === "token_limit_notice" &&
-      shouldShowTokenLimitNotice(message)) ||
-    message.type === "turn_aborted" ||
-    message.type === "thread_goal"
-  );
-}
-
 export function getConversationActivityDetails(
   newMessages: ConversationMessage[],
   phase: ConversationStreamPhase,
@@ -798,6 +785,12 @@ const SessionView = memo(
       const containerRef = useRef<HTMLDivElement>(null);
       const contentRef = useRef<HTMLDivElement>(null);
       const offsetRef = useRef(0);
+      const historyStartSequenceRef = useRef<number | undefined>(undefined);
+      const conversationFileIdRef = useRef<string | undefined>(undefined);
+      const [serverMessageCount, setServerMessageCount] = useState<
+        number | undefined
+      >(undefined);
+      const serverMessageCountRef = useRef<number | undefined>(undefined);
       const isScrollingProgrammaticallyRef = useRef(false);
       const streamCleanupRef = useRef<(() => void) | null>(null);
       const lastEventAtRef = useRef(0);
@@ -810,7 +803,6 @@ const SessionView = memo(
       const totalPagesRef = useRef(1);
       const autoScrollRef = useRef(autoScroll);
       const remoteBootstrapInProgressRef = useRef(false);
-      const liveDeltaAccumulatorRef = useRef(new LiveCodexDeltaAccumulator());
       const lastReportedHistoryKeyRef = useRef("");
       const userInputPollInFlightRef = useRef(false);
       const userInputPollRerunRequestedRef = useRef(false);
@@ -861,6 +853,7 @@ const SessionView = memo(
             phase?: ConversationStreamPhase;
             done?: boolean;
             insertion?: "append" | "prepend";
+            totalMessages?: number;
           },
         ) => {
           const phase = options?.phase ?? "incremental";
@@ -877,9 +870,28 @@ const SessionView = memo(
             setMessages(nextMessages);
           }
 
+          if (options?.totalMessages !== undefined) {
+            const previousCount = serverMessageCountRef.current;
+            const nextCount = Math.max(
+              options.totalMessages,
+              previousCount ?? 0,
+            );
+            serverMessageCountRef.current = nextCount;
+            setServerMessageCount(nextCount);
+            const previousPages = getTotalPages(
+              previousCount ?? 0,
+              MESSAGES_PER_PAGE,
+            );
+            const nextPages = getTotalPages(nextCount, MESSAGES_PER_PAGE);
+            // Select the final page in the same render as its first messages.
+            setCurrentPage((page) =>
+              phase === "bootstrap" || page >= previousPages ? nextPages : page,
+            );
+          }
+
           if (phase === "bootstrap" && options?.done) {
             remoteBootstrapInProgressRef.current = false;
-            if (autoScrollRef.current) {
+            if (autoScrollRef.current && options?.totalMessages === undefined) {
               const nextVisibleCount = nextMessages.filter(
                 isVisibleConversationMessage,
               ).length;
@@ -922,6 +934,12 @@ const SessionView = memo(
               if (batch && Number.isFinite(batch.nextOffset)) {
                 offsetRef.current = batch.nextOffset;
               }
+              if (batch?.historyStartSequence !== undefined) {
+                historyStartSequenceRef.current = batch.historyStartSequence;
+              }
+              if (batch?.fileId) {
+                conversationFileIdRef.current = batch.fileId;
+              }
 
               onConversationActivityRef.current?.(sessionId, {
                 ...getConversationActivityDetails(
@@ -942,6 +960,7 @@ const SessionView = memo(
                 phase,
                 done: batch?.done,
                 insertion: batch?.insertion,
+                totalMessages: batch?.totalMessages,
               });
             },
             onHeartbeat: () => {
@@ -950,7 +969,11 @@ const SessionView = memo(
             },
             onReset: () => {
               offsetRef.current = 0;
-              liveDeltaAccumulatorRef.current.clear();
+              historyStartSequenceRef.current = undefined;
+              conversationFileIdRef.current = undefined;
+              serverMessageCountRef.current = undefined;
+              setServerMessageCount(undefined);
+
               messagesRef.current = [];
               setMessages([]);
               setLoading(true);
@@ -963,22 +986,8 @@ const SessionView = memo(
           },
           {
             initialOffset: offsetRef.current,
-            onCodexAppServerEvent: (event) => {
-              if (event.threadId !== sessionId) {
-                return;
-              }
-              const liveMessage = liveDeltaAccumulatorRef.current.apply(event);
-              if (!liveMessage) {
-                return;
-              }
-              lastEventAtRef.current = Date.now();
-              setLoading(false);
-              appendDisplayMessages([liveMessage], {
-                phase: "incremental",
-                done: false,
-                insertion: "append",
-              });
-            },
+            initialHistoryStartSequence: historyStartSequenceRef.current,
+            initialFileId: conversationFileIdRef.current,
           },
         );
       }, [appendDisplayMessages, sessionId]);
@@ -1004,7 +1013,11 @@ const SessionView = memo(
           streamCleanupRef.current?.();
           streamCleanupRef.current = null;
           offsetRef.current = 0;
-          liveDeltaAccumulatorRef.current.clear();
+          historyStartSequenceRef.current = undefined;
+          conversationFileIdRef.current = undefined;
+          serverMessageCountRef.current = undefined;
+          setServerMessageCount(undefined);
+
           messagesRef.current = [];
           setMessages([]);
           setLoading(true);
@@ -1019,7 +1032,7 @@ const SessionView = memo(
         setLoading(true);
         setAutoScroll(true);
         autoScrollRef.current = true;
-        liveDeltaAccumulatorRef.current.clear();
+
         messagesRef.current = [];
         setMessages([]);
         setPendingUserInputRequests([]);
@@ -1032,6 +1045,10 @@ const SessionView = memo(
         setActiveSearchMatchIndex(null);
         submittingRequestIdsRef.current.clear();
         offsetRef.current = 0;
+        historyStartSequenceRef.current = undefined;
+        conversationFileIdRef.current = undefined;
+        serverMessageCountRef.current = undefined;
+        setServerMessageCount(undefined);
         totalPagesRef.current = 1;
         remoteBootstrapInProgressRef.current = false;
         lastReportedHistoryKeyRef.current = "";
@@ -1701,15 +1718,27 @@ const SessionView = memo(
         () => mergePendingConversationMessages(messages, pendingUserMessages),
         [messages, pendingUserMessages],
       );
-      const visibleConversationMessages = displayConversationMessages.filter(
-        (entry) => isVisibleConversationMessage(entry.message),
+      const visibleConversationMessages = useMemo(
+        () =>
+          displayConversationMessages.filter((entry) =>
+            isVisibleConversationMessage(entry.message),
+          ),
+        [displayConversationMessages],
       );
-      const visibleMessages = visibleConversationMessages.map(
-        (entry) => entry.message,
+      const visibleMessages = useMemo(
+        () => visibleConversationMessages.map((entry) => entry.message),
+        [visibleConversationMessages],
       );
       const visibleMessageEntries = useMemo<PagedMessageEntry[]>(() => {
+        let transientCount = 0;
         return visibleConversationMessages.map((displayEntry, visibleIndex) => {
           const { message, pendingUserMessage } = displayEntry;
+          if (message.sequence === undefined) transientCount += 1;
+          const messageNumber =
+            message.messageNumber ??
+            (serverMessageCount === undefined
+              ? visibleIndex + 1
+              : serverMessageCount + transientCount);
           const usesUserInputState = messageUsesUserInputState(message);
           const isLastVisibleMessage =
             visibleIndex === visibleConversationMessages.length - 1;
@@ -1728,8 +1757,8 @@ const SessionView = memo(
 
           return {
             entryKey: getConversationEntryKey(message, visibleIndex),
-            page: Math.floor(visibleIndex / MESSAGES_PER_PAGE) + 1,
-            visibleIndex,
+            page: Math.floor((messageNumber - 1) / MESSAGES_PER_PAGE) + 1,
+            visibleIndex: messageNumber - 1,
             message,
             usesUserInputState,
             timestampText,
@@ -1738,7 +1767,7 @@ const SessionView = memo(
             pendingUserMessage,
           };
         });
-      }, [visibleConversationMessages]);
+      }, [visibleConversationMessages, serverMessageCount]);
       const latestAiTerminalPlanEntryKey = useMemo(() => {
         for (
           let index = visibleMessageEntries.length - 1;
@@ -1764,23 +1793,35 @@ const SessionView = memo(
           }),
         [visibleMessageEntries],
       );
-      const chatMessages = visibleMessages.filter(
-        (m) => m.type === "user" || m.type === "assistant",
+      const chatMessages = useMemo(
+        () =>
+          visibleMessages.filter(
+            (m) => m.type === "user" || m.type === "assistant",
+          ),
+        [visibleMessages],
       );
       const totalPages = getTotalPages(
-        visibleMessages.length,
+        serverMessageCount === undefined
+          ? visibleMessages.length
+          : serverMessageCount +
+              visibleMessages.filter(
+                (message) => message.sequence === undefined,
+              ).length,
         MESSAGES_PER_PAGE,
       );
-      const safeCurrentPage = clampPage(currentPage, totalPages);
+      // Follow page growth synchronously; effects run after a stale page could paint.
+      const followingLatest = currentPage >= totalPagesRef.current;
+      const safeCurrentPage = clampPage(
+        followingLatest ? totalPages : currentPage,
+        totalPages,
+      );
       const isLatestPage = safeCurrentPage === totalPages;
-      const { start: pageStart, end: pageEnd } = getPageSliceBounds(
-        safeCurrentPage,
-        MESSAGES_PER_PAGE,
-        visibleMessages.length,
-      );
-      const pagedMessageEntries = visibleMessageEntries.slice(
-        pageStart,
-        pageEnd,
+      const pagedMessageEntries = useMemo(
+        () =>
+          visibleMessageEntries.filter(
+            (entry) => entry.page === safeCurrentPage,
+          ),
+        [visibleMessageEntries, safeCurrentPage],
       );
       const pagedMessageChunks = useMemo<MessageViewportChunk[]>(() => {
         const chunks: MessageViewportChunk[] = [];

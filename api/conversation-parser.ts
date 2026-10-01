@@ -1,3 +1,4 @@
+import { isVisibleConversationMessage } from "./conversation-pagination";
 import type {
   CodexCollabAgentState,
   CodexCollabAgentStatus,
@@ -12,6 +13,7 @@ import type {
 import {
   collectEditableMessagePairs,
   getEditableResponseItem,
+  getEditableEventRecord,
 } from "./conversation-edit-records";
 
 interface LineWithOffset {
@@ -31,6 +33,240 @@ export interface ConversationTextParseResult {
   messages: ConversationMessage[];
   consumedBytes: number;
   toolNames: Map<string, string>;
+}
+
+const parserStates = new WeakMap<
+  ConversationMessage[],
+  ConversationParserState
+>();
+
+/** Append-only parser state. Array writes capture both additions and replacements. */
+export class ConversationParserState {
+  readonly messages: ConversationMessage[];
+  readonly toolNames = new Map<string, string>();
+  readonly pendingToolCalls = new Map<string, PendingToolUse>();
+  readonly pendingToolMessageIndexes = new Map<string, number>();
+  version = 0;
+  currentTurnId: string | undefined;
+  sourceItemId: string | undefined;
+  private sourceStreaming = false;
+  // Older Codex logs omit item IDs. Their per-turn, per-kind ordinal links
+  // persisted completions to slots already reserved by app-server notifications.
+  private readonly slots = new Map<string, number>();
+  private readonly itemSlots = new Map<string, number>();
+  private readonly persistedCounts = new Map<string, number>();
+  private readonly streamingCounts = new Map<string, number>();
+  private readonly completedItems = new Set<string>();
+  readonly changedIndexes = new Set<number>();
+  readonly pendingEditableLines = new Map<string, LineWithOffset[]>();
+  readonly responseMessageIndexes = new Map<number, number>();
+  visibleCount = 0;
+  sourceOffset = 0;
+
+  constructor() {
+    this.messages = new Proxy<ConversationMessage[]>([], {
+      set: (target, property, value) => {
+        if (typeof property === "string" && /^\d+$/.test(property)) {
+          const index = Number(property);
+          const previous = target[index];
+          const input = value as ConversationMessage;
+          const message = {
+            ...input,
+            turnId: input.turnId ?? this.currentTurnId,
+            itemId: input.itemId ?? this.sourceItemId,
+          };
+          target[index] = {
+            ...message,
+            uuid: previous?.uuid ?? message.uuid,
+            sequence: index + 1,
+            revision: ++this.version,
+            messageNumber:
+              previous?.messageNumber ??
+              (isVisibleConversationMessage(message)
+                ? ++this.visibleCount
+                : undefined),
+          };
+          if (!previous && !this.sourceStreaming) this.registerPersisted(index);
+          if (message.itemId && message.turnId)
+            this.itemSlots.set(
+              this.itemKey(message.turnId, message.itemId, message.type),
+              index,
+            );
+          this.changedIndexes.add(index);
+          const offset = target[index].uuid?.match(/^(\d+):message:/)?.[1];
+          if (offset) this.responseMessageIndexes.set(Number(offset), index);
+          return true;
+        }
+        return Reflect.set(target, property, value);
+      },
+    });
+    parserStates.set(this.messages, this);
+  }
+
+  private kindKey(turnId: string, type: string): string {
+    return JSON.stringify([turnId, type]);
+  }
+  private itemKey(turnId: string, itemId: string, type: string): string {
+    return JSON.stringify([turnId, itemId, type]);
+  }
+  private isTextMessage(message: ConversationMessage): boolean {
+    return (
+      message.type === "reasoning" ||
+      message.type === "agent_reasoning" ||
+      (message.type === "assistant" &&
+        Array.isArray(message.message?.content) &&
+        message.message.content.every((block) => block.type === "text"))
+    );
+  }
+  private registerPersisted(index: number): void {
+    const message = this.messages[index];
+    if (!message.turnId || !this.isTextMessage(message)) return;
+    const key = this.kindKey(message.turnId, message.type);
+    const ordinal = this.persistedCounts.get(key) ?? 0;
+    this.persistedCounts.set(key, ordinal + 1);
+    this.slots.set(`${key}:${ordinal}`, index);
+  }
+
+  reconcilePersisted(message: ConversationMessage): boolean {
+    const turnId = message.turnId ?? this.currentTurnId;
+    if (!turnId || !this.isTextMessage(message)) return false;
+    const key = this.kindKey(turnId, message.type);
+    const ordinal = this.persistedCounts.get(key) ?? 0;
+    const itemId = message.itemId ?? this.sourceItemId;
+    const index =
+      (itemId
+        ? this.itemSlots.get(this.itemKey(turnId, itemId, message.type))
+        : undefined) ?? this.slots.get(`${key}:${ordinal}`);
+    if (index === undefined) return false;
+    this.persistedCounts.set(key, ordinal + 1);
+    this.slots.set(`${key}:${ordinal}`, index);
+    this.messages[index] = {
+      ...message,
+      turnId,
+      itemId: itemId ?? this.messages[index].itemId,
+      streaming: false,
+    };
+    if (message.type === "assistant")
+      this.responseMessageIndexes.set(this.sourceOffset, index);
+    return true;
+  }
+
+  applyStreamText(
+    turnId: string,
+    itemId: string,
+    type: "assistant" | "reasoning" | "agent_reasoning",
+    delta: string,
+  ): void {
+    const itemKey = this.itemKey(turnId, itemId, type);
+    if (this.completedItems.has(JSON.stringify([turnId, itemId]))) return;
+    let index = this.itemSlots.get(itemKey);
+    if (index === undefined) {
+      const kind = this.kindKey(turnId, type);
+      const ordinal = this.streamingCounts.get(kind) ?? 0;
+      this.streamingCounts.set(kind, ordinal + 1);
+      index = this.slots.get(`${kind}:${ordinal}`);
+      if (index !== undefined && !this.messages[index].streaming) {
+        this.itemSlots.set(itemKey, index);
+        return;
+      }
+      if (index === undefined) {
+        index = this.messages.length;
+        this.sourceStreaming = true;
+        this.messages.push({
+          type,
+          turnId,
+          itemId,
+          streaming: true,
+          uuid: `stream:${turnId}:${itemId}:${type}`,
+          timestamp: new Date().toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: type === "assistant" ? "text" : type, text: "" }],
+          },
+        });
+        this.sourceStreaming = false;
+        this.slots.set(`${kind}:${ordinal}`, index);
+      }
+      this.itemSlots.set(itemKey, index);
+    }
+    const previous = this.messages[index];
+    if (!previous.streaming) return;
+    const content = previous.message!.content as ContentBlock[];
+    this.messages[index] = {
+      ...previous,
+      message: {
+        ...previous.message!,
+        content: content.map((block) => ({
+          ...block,
+          text: (block.text ?? "") + delta,
+        })),
+      },
+    };
+  }
+
+  completeStreamItem(
+    turnId: string,
+    itemId: string,
+    item?: Record<string, unknown>,
+  ): void {
+    this.completedItems.add(JSON.stringify([turnId, itemId]));
+    const itemType =
+      typeof item?.type === "string"
+        ? item.type.toLowerCase().replace(/_/g, "")
+        : "";
+    const kinds =
+      itemType === "agentmessage" || itemType === "plan"
+        ? ["assistant"]
+        : itemType === "reasoning"
+          ? ["reasoning", "agent_reasoning"]
+          : [];
+    for (const type of kinds) {
+      const key = this.itemKey(turnId, itemId, type);
+      if (this.itemSlots.has(key)) continue;
+      const kind = this.kindKey(turnId, type);
+      const ordinal = this.streamingCounts.get(kind) ?? 0;
+      const index = this.slots.get(`${kind}:${ordinal}`);
+      if (index !== undefined) {
+        this.itemSlots.set(key, index);
+        this.streamingCounts.set(kind, ordinal + 1);
+      }
+    }
+    for (const type of ["assistant", "reasoning", "agent_reasoning"] as const) {
+      const index = this.itemSlots.get(this.itemKey(turnId, itemId, type));
+      if (index === undefined || !this.messages[index].streaming) continue;
+      const previous = this.messages[index];
+      const finalText =
+        type === "assistant" && typeof item?.text === "string"
+          ? item.text
+          : type === "reasoning" && Array.isArray(item?.summary)
+            ? item.summary.filter((part) => typeof part === "string").join("\n")
+            : undefined;
+      this.messages[index] = {
+        ...previous,
+        streaming: false,
+        ...(finalText
+          ? {
+              message: {
+                ...previous.message!,
+                content: [
+                  {
+                    type: type === "assistant" ? "text" : type,
+                    text: finalText,
+                  },
+                ],
+              },
+            }
+          : {}),
+      };
+    }
+  }
+
+  completeStreamTurn(turnId: string): void {
+    for (const message of this.messages) {
+      if (message.turnId === turnId && message.streaming && message.itemId)
+        this.completeStreamItem(turnId, message.itemId);
+    }
+  }
 }
 
 const TOOL_RESULT_MAX_LENGTH = 200_000;
@@ -555,6 +791,7 @@ function pushConversationMessage(
   messages: ConversationMessage[],
   message: ConversationMessage,
 ): void {
+  if (parserStates.get(messages)?.reconcilePersisted(message)) return;
   if (message.type === "reasoning" || message.type === "agent_reasoning") {
     const text = getReasoningTextFromMessage(message);
     const lastMessage = messages[messages.length - 1];
@@ -766,7 +1003,15 @@ function attachTokenUsageToLatestReasoning(
     if (!block || block.token_usage) {
       return;
     }
-    block.token_usage = usage;
+    messages[index] = {
+      ...message,
+      message: {
+        ...message.message,
+        content: message.message.content.map((item) =>
+          item === block ? { ...item, token_usage: usage } : item,
+        ),
+      },
+    };
     return;
   }
 }
@@ -1092,14 +1337,19 @@ function parseToolResultFromPayload(payload: Record<string, unknown>): {
 function parseCodexConversation(
   lines: LineWithOffset[],
   knownToolNames?: Map<string, string>,
+  state?: ConversationParserState,
 ): ConversationMessage[] {
-  const messages: ConversationMessage[] = [];
-  const pendingToolCalls = new Map<string, PendingToolUse>();
-  const pendingToolMessageIndexes = new Map<string, number>();
-  const toolNames = knownToolNames ?? new Map<string, string>();
+  const messages = state?.messages ?? [];
+  const pendingToolCalls =
+    state?.pendingToolCalls ?? new Map<string, PendingToolUse>();
+  const pendingToolMessageIndexes =
+    state?.pendingToolMessageIndexes ?? new Map<string, number>();
+  const toolNames =
+    state?.toolNames ?? knownToolNames ?? new Map<string, string>();
   const editableMessagePairs = collectEditableMessagePairs(lines);
 
   for (const { line, offset } of lines) {
+    if (state) state.sourceOffset = offset;
     const parsed = safeJsonParse(line);
     if (!parsed || typeof parsed !== "object") {
       continue;
@@ -1122,6 +1372,14 @@ function parseCodexConversation(
     const normalizedPayloadType = payloadType
       .replace(/[\s_-]/g, "")
       .toLowerCase();
+    if (state) {
+      const turnId = asTrimmedString(payload.turn_id ?? payload.turnId);
+      if (turnId) state.currentTurnId = turnId;
+      state.sourceItemId =
+        record.type === "response_item"
+          ? (asTrimmedString(payload.id) ?? undefined)
+          : undefined;
+    }
 
     if (record.type === "event_msg") {
       if (normalizedPayloadType === "itemcompleted") {
@@ -1541,15 +1799,62 @@ export function parseConversationTextChunk(
   text: string,
   startOffset: number = 0,
   knownToolNames?: Map<string, string>,
+  state?: ConversationParserState,
 ): ConversationTextParseResult {
   const { lines, consumedBytes } = collectCompleteConversationLines(
     text,
     startOffset,
   );
-  const toolNames = knownToolNames ?? new Map<string, string>();
+  const toolNames =
+    state?.toolNames ?? knownToolNames ?? new Map<string, string>();
+  state?.changedIndexes.clear();
+  const messages = parseCodexConversation(lines, toolNames, state);
+  if (state) {
+    // Pair edit records across appended chunks, indexed by role and exact text.
+    for (const entry of lines) {
+      const record = safeJsonParse(entry.line) as Record<string, unknown>;
+      const editable =
+        getEditableResponseItem(record, entry.offset) ??
+        getEditableEventRecord(record, entry.offset);
+      if (!editable) continue;
+      const key = JSON.stringify([editable.role, editable.text]);
+      const candidates = state.pendingEditableLines.get(key) ?? [];
+      candidates.push(entry);
+      const pairs = collectEditableMessagePairs(candidates);
+      const matched = new Set<number>();
+      for (const [responseOffset, eventOffset] of pairs) {
+        matched.add(responseOffset);
+        matched.add(eventOffset);
+        const index = state.responseMessageIndexes.get(responseOffset);
+        if (index === undefined) continue;
+        const response = candidates.find(
+          (line) => line.offset === responseOffset,
+        )!;
+        const metadata = getEditableResponseItem(
+          JSON.parse(response.line),
+          responseOffset,
+        )!;
+        state.sourceOffset = Math.max(responseOffset, eventOffset);
+        state.messages[index] = {
+          ...state.messages[index],
+          editable: true,
+          editId: metadata.editId,
+          editText: metadata.text,
+        };
+        state.responseMessageIndexes.delete(responseOffset);
+      }
+      const remaining = candidates.filter((line) => !matched.has(line.offset));
+      if (remaining.length) state.pendingEditableLines.set(key, remaining);
+      else state.pendingEditableLines.delete(key);
+    }
+  }
 
   return {
-    messages: parseCodexConversation(lines, toolNames),
+    messages: state
+      ? [...state.changedIndexes]
+          .sort((a, b) => a - b)
+          .map((index) => messages[index])
+      : messages,
     consumedBytes,
     toolNames,
   };

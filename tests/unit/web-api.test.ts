@@ -250,117 +250,58 @@ function installMockEventSource(): () => void {
   };
 }
 
-const REMOTE_CONVERSATION_CHUNK_MAX_BYTES = 512 * 1024;
-const REMOTE_CONVERSATION_WINDOW_MAX_BYTES = 512 * 1024;
-const REMOTE_CONVERSATION_BOOTSTRAP_WINDOW_MAX_BYTES = 128 * 1024;
-
 function mockRemoteConversationRequests(
   responses: Array<{
     messages: ConversationMessage[];
     nextOffset: number;
     done: boolean;
+    historyStartSequence?: number;
   }>,
 ): () => void {
   const originalIsConnected = RemoteClient.prototype.isConnected;
   const originalRequestJson = RemoteClient.prototype.requestJson;
   let requestIndex = 0;
-
   RemoteClient.prototype.isConnected = (() =>
     true) as typeof RemoteClient.prototype.isConnected;
   RemoteClient.prototype.requestJson = async function <T>(
     path: string,
   ): Promise<T> {
+    assert.ok(
+      path.startsWith("/api/conversation/remote-session/messages") ||
+        path.startsWith("/api/conversation/remote-session/updates?"),
+    );
     const response = responses[
-      Math.min(requestIndex, responses.length - 1)
-    ] ?? {
-      messages: [],
-      nextOffset: 0,
-      done: true,
-    };
-    requestIndex += 1;
-
-    const rawLines = response.messages
-      .filter(
-        (
-          message,
-        ): message is ConversationMessage & { type: "user" | "assistant" } =>
-          message.type === "user" || message.type === "assistant",
-      )
-      .map((message) =>
-        responseItemMessageLine(
-          message.type,
-          message.uuid ?? message.timestamp ?? message.type,
-          message.timestamp,
-        ),
-      )
-      .join("\n");
-
-    const bytes = rawLines
-      ? new TextEncoder().encode(`${rawLines}\n`)
-      : new Uint8Array(0);
-    const chunkBase64 = bytes.length > 0 ? encodeBase64(bytes) : "";
+      Math.min(requestIndex++, responses.length - 1)
+    ] ?? { messages: [], nextOffset: 0, done: true };
     const url = new URL(path, "http://codex-deck.test");
-    if (path.startsWith("/api/conversation/remote-session/raw-chunk?")) {
-      assert.equal(
-        Number.parseInt(url.searchParams.get("maxBytes") ?? "NaN", 10),
-        REMOTE_CONVERSATION_CHUNK_MAX_BYTES,
-      );
-      const requestedOffset = Number.parseInt(
-        url.searchParams.get("offset") ?? "0",
-        10,
-      );
-      const safeRequestedOffset =
-        Number.isFinite(requestedOffset) && requestedOffset >= 0
-          ? requestedOffset
-          : 0;
-
-      return {
-        chunkBase64,
-        nextOffset: safeRequestedOffset + bytes.length,
-        done: response.done,
-      } as T;
-    }
-
-    assert.equal(
-      path.startsWith("/api/conversation/remote-session/window?"),
-      true,
-    );
-    const requestedMaxBytes = Number.parseInt(
-      url.searchParams.get("maxBytes") ?? "NaN",
-      10,
-    );
-    const requestedBefore = Number.parseInt(
-      url.searchParams.get("beforeOffset") ?? "NaN",
-      10,
-    );
-    if (Number.isFinite(requestedBefore) && requestedBefore >= 0) {
-      assert.equal(requestedMaxBytes, REMOTE_CONVERSATION_WINDOW_MAX_BYTES);
-    } else {
-      assert.ok(
-        requestedMaxBytes === REMOTE_CONVERSATION_BOOTSTRAP_WINDOW_MAX_BYTES ||
-          requestedMaxBytes === REMOTE_CONVERSATION_WINDOW_MAX_BYTES,
-      );
-    }
-    const defaultEndOffset = Math.max(
-      response.nextOffset ?? 0,
-      bytes.length,
-      1,
-    );
-    const endOffset =
-      Number.isFinite(requestedBefore) && requestedBefore >= 0
-        ? requestedBefore
-        : defaultEndOffset;
-    const startOffset = Math.max(0, endOffset - bytes.length);
-
+    const isWindow = url.pathname.endsWith("/messages");
+    const messages = response.messages.map((message, index) => ({
+      ...message,
+      sequence:
+        message.sequence ??
+        Number(message.uuid?.match(/(\d+)$/)?.[1] ?? index + 1),
+      messageNumber:
+        message.messageNumber ??
+        Number(message.uuid?.match(/(\d+)$/)?.[1] ?? index + 1),
+      revision: response.nextOffset,
+    }));
     return {
-      chunkBase64,
-      startOffset,
-      endOffset,
-      fileSize: Math.max(endOffset, response.nextOffset ?? endOffset),
-      done: response.done || startOffset <= 0,
+      ...response,
+      messages: isWindow
+        ? messages
+        : messages.filter(
+            (message) =>
+              message.revision > Number(url.searchParams.get("offset")),
+          ),
+      done: isWindow ? true : response.done,
+      historyStartSequence: response.historyStartSequence ?? 0,
+      fileId: "remote-session-file",
+      totalMessages: Math.max(
+        0,
+        ...messages.map((message) => message.messageNumber),
+      ),
     } as T;
   } as typeof RemoteClient.prototype.requestJson;
-
   return () => {
     RemoteClient.prototype.isConnected = originalIsConnected;
     RemoteClient.prototype.requestJson = originalRequestJson;
@@ -478,7 +419,7 @@ function mockRemoteSessionsDeltaRequests(
   ): Promise<T> {
     if (
       conversationChunk &&
-      path.startsWith("/api/conversation/remote-session/raw-chunk?")
+      path.startsWith("/api/conversation/remote-session/updates?")
     ) {
       const url = new URL(path, "http://codex-deck.test");
       const requestedOffset = Number.parseInt(
@@ -486,7 +427,9 @@ function mockRemoteSessionsDeltaRequests(
         10,
       );
       return {
-        chunkBase64: "",
+        messages: [],
+        totalMessages: 0,
+        historyStartSequence: 0,
         nextOffset: Number.isFinite(requestedOffset) ? requestedOffset : 0,
         done: true,
         fileId: "remote-session-file",
@@ -517,100 +460,23 @@ function mockRemoteSessionsDeltaRequests(
 }
 
 function mockRemoteConversationAndSendRequests(
-  rawChunkResponses: Array<{
-    messages: ConversationMessage[];
-    done: boolean;
-  }>,
+  responses: Array<{ messages: ConversationMessage[]; done: boolean }>,
 ): () => void {
-  const originalIsConnected = RemoteClient.prototype.isConnected;
-  const originalRequestJson = RemoteClient.prototype.requestJson;
-  let rawChunkIndex = 0;
-
-  RemoteClient.prototype.isConnected = (() =>
-    true) as typeof RemoteClient.prototype.isConnected;
+  const restore = mockRemoteConversationRequests(
+    responses.map((response, index) => ({
+      ...response,
+      nextOffset: index + 1,
+    })),
+  );
+  const requestConversation = RemoteClient.prototype.requestJson;
   RemoteClient.prototype.requestJson = async function <T>(
     path: string,
   ): Promise<T> {
-    if (
-      path === "/api/codex/threads/remote-session/messages" ||
-      path.startsWith("/api/codex/threads/remote-session/messages?")
-    ) {
+    if (path.startsWith("/api/codex/threads/remote-session/messages"))
       return { ok: true, turnId: "turn_123" } as T;
-    }
-
-    const response = rawChunkResponses[
-      Math.min(rawChunkIndex, rawChunkResponses.length - 1)
-    ] ?? {
-      messages: [],
-      done: true,
-    };
-    rawChunkIndex += 1;
-
-    const rawLines = response.messages
-      .filter(
-        (
-          message,
-        ): message is ConversationMessage & { type: "user" | "assistant" } =>
-          message.type === "user" || message.type === "assistant",
-      )
-      .map((message) =>
-        responseItemMessageLine(
-          message.type,
-          message.uuid ?? message.timestamp ?? message.type,
-          message.timestamp,
-        ),
-      )
-      .join("\n");
-    const bytes = rawLines
-      ? new TextEncoder().encode(`${rawLines}\n`)
-      : new Uint8Array(0);
-    const chunkBase64 = bytes.length > 0 ? encodeBase64(bytes) : "";
-    const url = new URL(path, "http://codex-deck.test");
-    if (path.startsWith("/api/conversation/remote-session/raw-chunk?")) {
-      const requestedOffset = Number.parseInt(
-        url.searchParams.get("offset") ?? "0",
-        10,
-      );
-      const safeRequestedOffset =
-        Number.isFinite(requestedOffset) && requestedOffset >= 0
-          ? requestedOffset
-          : 0;
-
-      return {
-        chunkBase64,
-        nextOffset: safeRequestedOffset + bytes.length,
-        done: response.done,
-      } as T;
-    }
-
-    assert.equal(
-      path.startsWith("/api/conversation/remote-session/window?"),
-      true,
-    );
-    const requestedBefore = Number.parseInt(
-      url.searchParams.get("beforeOffset") ?? "NaN",
-      10,
-    );
-    const defaultEndOffset = Math.max(bytes.length, 1);
-    const endOffset =
-      Number.isFinite(requestedBefore) && requestedBefore >= 0
-        ? requestedBefore
-        : defaultEndOffset;
-    const startOffset = Math.max(0, endOffset - bytes.length);
-
-    return {
-      chunkBase64,
-      startOffset,
-      endOffset,
-      fileSize: endOffset,
-      done: response.done || startOffset <= 0,
-    } as T;
+    return requestConversation.call(this, path) as Promise<T>;
   } as typeof RemoteClient.prototype.requestJson;
-
-  return () => {
-    RemoteClient.prototype.isConnected = originalIsConnected;
-    RemoteClient.prototype.requestJson = originalRequestJson;
-  };
+  return restore;
 }
 
 function mockRemoteWorkflowRequests(options: {
@@ -2432,153 +2298,129 @@ test("local workflow list updates wake the selected workflow detail subscription
   }
 });
 
-test("subscribeConversationStream synthesizes bootstrap metadata for local SSE", async () => {
+test("subscribeConversationStream bootstraps local windows and reloads them after a reset", async () => {
   const restoreEventSource = installMockEventSource();
-  const batches: Array<{
-    uuids: string[];
-    phase: string | undefined;
-    nextOffset: number | undefined;
-    done: boolean | undefined;
-  }> = [];
-  let heartbeatCount = 0;
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
   let resetCount = 0;
-
-  try {
-    const unsubscribe = subscribeConversationStream("local-session", {
-      onMessages: (messages, batch) => {
-        batches.push({
-          uuids: messages.map((message) => message.uuid ?? ""),
-          phase: batch?.phase,
-          nextOffset: batch?.nextOffset,
-          done: batch?.done,
-        });
-      },
-      onHeartbeat: () => {
-        heartbeatCount += 1;
-      },
-      onReset: () => {
-        resetCount += 1;
-      },
-    });
-
-    const eventSource = MockEventSource.instances[0];
-    assert.ok(eventSource);
-    assert.equal(
-      eventSource.url,
-      "/api/conversation/local-session/stream?offset=0",
-    );
-
-    eventSource.emit("messages", {
+  let heartbeatCount = 0;
+  const batches: Array<{ texts: string[]; phase?: string; done?: boolean }> =
+    [];
+  globalThis.fetch = async () => {
+    const text = `${responseItemMessageLine("user", requestCount++ === 0 ? "Original message" : "Edited message")}\n`;
+    return jsonResponse({
       messages: [
         {
           type: "user",
-          uuid: "local-msg-1",
-          timestamp: "2026-03-16T00:00:00.000Z",
+          sequence: 1,
+          messageNumber: 1,
+          revision: 1,
+          message: {
+            role: "user",
+            content: requestCount === 1 ? "Original message" : "Edited message",
+          },
         },
       ],
-      nextOffset: 10,
-    });
-    eventSource.emit("heartbeat", { timestamp: 1 });
-    eventSource.emit("reset", { sessionId: "local-session" });
-    eventSource.emit("messages", {
-      messages: [
-        {
-          type: "user",
-          uuid: "local-msg-edited",
-          timestamp: "2026-03-16T00:00:00.000Z",
-        },
-      ],
-      nextOffset: 5,
+      historyStartSequence: 0,
+      nextOffset: 1,
       done: true,
+      totalMessages: 1,
+      fileId: `file-${requestCount}`,
     });
-
+  };
+  const unsubscribe = subscribeConversationStream("local-session", {
+    onMessages: (messages, batch) =>
+      batches.push({
+        texts: messages.map(getMessageIdentifier),
+        phase: batch?.phase,
+        done: batch?.done,
+      }),
+    onReset: () => {
+      resetCount += 1;
+    },
+    onHeartbeat: () => {
+      heartbeatCount += 1;
+    },
+  });
+  try {
+    await flushAsyncWork();
+    const stream = MockEventSource.instances[0]!;
+    assert.ok(stream.url.includes("fileId=file-1"));
+    stream.emit("heartbeat", {});
+    stream.emit("reset", {});
+    await flushAsyncWork();
     assert.deepEqual(batches, [
-      {
-        uuids: ["local-msg-1"],
-        phase: "bootstrap",
-        nextOffset: 10,
-        done: true,
-      },
-      {
-        uuids: ["local-msg-edited"],
-        phase: "bootstrap",
-        nextOffset: 5,
-        done: true,
-      },
+      { texts: ["Original message"], phase: "bootstrap", done: true },
+      { texts: ["Edited message"], phase: "bootstrap", done: true },
     ]);
-    assert.equal(heartbeatCount, 1);
     assert.equal(resetCount, 1);
-
-    unsubscribe();
+    assert.equal(heartbeatCount, 1);
+    assert.equal(stream.closed, true);
   } finally {
+    unsubscribe();
+    globalThis.fetch = originalFetch;
     restoreEventSource();
   }
 });
 
-test("subscribeConversationStream keeps local bootstrap phase until done", async () => {
+test("subscribeConversationStream tags local SSE batches as incremental after window bootstrap", async () => {
   const restoreEventSource = installMockEventSource();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    jsonResponse({
+      messages: [],
+      historyStartSequence: 0,
+      nextOffset: 0,
+      done: true,
+      totalMessages: 0,
+      fileId: "file-1",
+    });
   const batches: Array<{
     uuids: string[];
-    phase: string | undefined;
-    nextOffset: number | undefined;
-    done: boolean | undefined;
+    phase?: string;
+    done?: boolean;
+    nextOffset?: number;
   }> = [];
-
+  const unsubscribe = subscribeConversationStream("local-session", {
+    onMessages: (messages, batch) =>
+      batches.push({
+        uuids: messages.map((message) => message.uuid ?? ""),
+        phase: batch?.phase,
+        done: batch?.done,
+        nextOffset: batch?.nextOffset,
+      }),
+  });
   try {
-    const unsubscribe = subscribeConversationStream("local-session", {
-      onMessages: (messages, batch) => {
-        batches.push({
-          uuids: messages.map((message) => message.uuid ?? ""),
-          phase: batch?.phase,
-          nextOffset: batch?.nextOffset,
-          done: batch?.done,
-        });
-      },
-    });
-
-    const eventSource = MockEventSource.instances[0];
-    assert.ok(eventSource);
-
-    eventSource.emit("messages", {
-      messages: [
-        {
-          type: "user",
-          uuid: "local-msg-1",
-          timestamp: "2026-03-16T00:00:00.000Z",
-        },
-      ],
+    await flushAsyncWork();
+    const stream = MockEventSource.instances[0]!;
+    stream.emit("messages", {
+      messages: [{ type: "user", uuid: "local-msg-1" }],
       nextOffset: 10,
       done: false,
     });
-    eventSource.emit("messages", {
-      messages: [
-        {
-          type: "assistant",
-          uuid: "local-msg-2",
-          timestamp: "2026-03-16T00:00:01.000Z",
-        },
-      ],
+    stream.emit("messages", {
+      messages: [{ type: "assistant", uuid: "local-msg-2" }],
       nextOffset: 20,
       done: true,
     });
-
     assert.deepEqual(batches, [
+      { uuids: [], phase: "bootstrap", done: true, nextOffset: 0 },
       {
         uuids: ["local-msg-1"],
-        phase: "bootstrap",
-        nextOffset: 10,
+        phase: "incremental",
         done: false,
+        nextOffset: 10,
       },
       {
         uuids: ["local-msg-2"],
-        phase: "bootstrap",
-        nextOffset: 20,
+        phase: "incremental",
         done: true,
+        nextOffset: 20,
       },
     ]);
-
-    unsubscribe();
   } finally {
+    unsubscribe();
+    globalThis.fetch = originalFetch;
     restoreEventSource();
   }
 });
@@ -2656,6 +2498,7 @@ test("subscribeConversationStream emits remote bootstrap immediately and backfil
         } as ConversationMessage,
       ],
       nextOffset: 4096,
+      historyStartSequence: 2,
       done: false,
     },
     {
@@ -3155,6 +2998,7 @@ test("getConversation aggregates multiple remote chunks", async () => {
         } as ConversationMessage,
       ],
       nextOffset: 4096,
+      historyStartSequence: 2,
       done: false,
     },
     {

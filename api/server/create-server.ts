@@ -19,6 +19,9 @@ import {
   getConversation,
   getConversationRawChunk,
   getConversationRawWindow,
+  getConversationMessageWindow,
+  getConversationMessageUpdates,
+  ingestConversationLiveEvent,
   getConversationStream,
   editConversationMessage,
   deleteSession,
@@ -2309,7 +2312,24 @@ export function createServer(options: ServerOptions) {
     }
   };
 
+  const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
+    const previous =
+      conversationEventQueues.get(event.threadId) ?? Promise.resolve();
+    const work = previous
+      .then(async () => {
+        await ingestConversationLiveEvent(event);
+        for (const listener of conversationWakeListeners)
+          listener(event.threadId);
+      })
+      .catch((error) =>
+        console.error("Conversation live update failed:", error),
+      );
+    conversationEventQueues.set(event.threadId, work);
+    void work.finally(() => {
+      if (conversationEventQueues.get(event.threadId) === work)
+        conversationEventQueues.delete(event.threadId);
+    });
     if (
       event.type === "thread_status" ||
       event.type === "subagent_activity" ||
@@ -2320,9 +2340,6 @@ export function createServer(options: ServerOptions) {
     }
     for (const listener of appServerEventListeners) {
       listener(event);
-    }
-    for (const listener of conversationWakeListeners) {
-      listener(event.threadId);
     }
   };
 
@@ -3904,6 +3921,28 @@ export function createServer(options: ServerOptions) {
     return c.json(chunk satisfies ConversationRawChunkResponse);
   });
 
+  app.get("/api/conversation/:id/messages", async (c) => {
+    ensureAppServerEventSourceSubscribed();
+    const before = Number(c.req.query("beforeSequence"));
+    return c.json(
+      await getConversationMessageWindow(
+        c.req.param("id"),
+        Number.isFinite(before) && before > 0 ? before : undefined,
+      ),
+    );
+  });
+
+  app.get("/api/conversation/:id/updates", async (c) => {
+    ensureAppServerEventSourceSubscribed();
+    const offset = Number(c.req.query("offset"));
+    return c.json(
+      await getConversationMessageUpdates(
+        c.req.param("id"),
+        Number.isFinite(offset) && offset > 0 ? offset : 0,
+      ),
+    );
+  });
+
   app.get("/api/conversation/:id/window", async (c) => {
     const sessionId = c.req.param("id");
     const beforeOffsetParam = c.req.query("beforeOffset");
@@ -3941,7 +3980,7 @@ export function createServer(options: ServerOptions) {
 
     return streamSSE(c, async (stream) => {
       let isConnected = true;
-      let fileId: string | null = null;
+      let fileId: string | null = c.req.query("fileId") || null;
       let writeInFlight: Promise<void> | null = null;
       let writeRequested = false;
       let emitWhenEmptyRequested = false;
@@ -3960,9 +3999,18 @@ export function createServer(options: ServerOptions) {
             nextOffset: batchNextOffset,
             done,
             fileId: batchFileId,
-          } = await getConversationStream(sessionId, offset, {
-            maxPayloadBytes: DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES,
-          });
+            totalMessages,
+          } = await (c.req.query("numbered") === "true"
+            ? getConversationMessageUpdates(
+                sessionId,
+                offset,
+                DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES,
+              )
+            : getConversationStream(sessionId, offset, {
+                maxPayloadBytes: DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES,
+                skipToolNameBootstrap:
+                  c.req.query("skipToolNameBootstrap") === "true",
+              }));
           if (fileId && batchFileId && batchFileId !== fileId) {
             offset = 0;
             fileId = batchFileId;
@@ -3989,6 +4037,8 @@ export function createServer(options: ServerOptions) {
                 messages: batchMessages,
                 nextOffset: batchNextOffset,
                 done,
+                fileId: batchFileId,
+                totalMessages,
               }),
             });
           }
@@ -4054,6 +4104,7 @@ export function createServer(options: ServerOptions) {
 
       onSessionChange(handleSessionChange);
       conversationWakeListeners.add(handleSessionChange);
+      ensureAppServerEventSourceSubscribed();
       reconcileTimer = setInterval(() => {
         void handleSessionChange(sessionId);
       }, CONVERSATION_RECONCILE_INTERVAL_MS);

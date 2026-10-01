@@ -1,6 +1,8 @@
 import type {
   CodexAppServerEvent,
   ConversationMessage,
+  ConversationMessageWindow,
+  StreamResult,
   SessionsDeltaResponse,
   TerminalListResponse,
   TerminalEventsResponse,
@@ -8,8 +10,6 @@ import type {
   WorkflowDetailResponse,
   WorkflowSummary,
 } from "@codex-deck/api";
-import { decodeBase64 } from "@zuoyehaoduoa/wire";
-import { parseConversationTextChunk } from "../../api/conversation-parser";
 import type { RemoteClient } from "../remote-client";
 import {
   createWakeablePollingSubscription,
@@ -28,9 +28,6 @@ import type {
   WebTransport,
 } from "./types";
 
-const REMOTE_CONVERSATION_CHUNK_MAX_BYTES = 512 * 1024;
-const REMOTE_CONVERSATION_WINDOW_MAX_BYTES = 512 * 1024;
-const REMOTE_CONVERSATION_BOOTSTRAP_WINDOW_MAX_BYTES = 128 * 1024;
 // Keep remote polling requests short-lived so they do not block
 // latency-sensitive requests (like conversation loads) through the
 // relay path when only one RPC request can make progress at a time.
@@ -42,43 +39,10 @@ const REMOTE_WORKFLOWS_POLL_INTERVAL_MS = 5_000;
 const REMOTE_WORKFLOW_DETAIL_POLL_INTERVAL_MS = 3_000;
 const REMOTE_WORKFLOW_DAEMON_STATUS_POLL_INTERVAL_MS = 5_000;
 
-interface ConversationRawChunkResponse {
-  chunkBase64: string;
-  nextOffset: number;
-  done: boolean;
-  fileId?: string;
-}
-
-interface ConversationRawWindowResponse {
-  chunkBase64: string;
-  startOffset: number;
-  endOffset: number;
-  fileSize: number;
-  done: boolean;
-  fileId?: string;
-}
-
-function concatByteChunks(chunks: Uint8Array[]): Uint8Array {
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
-}
-
-function getConversationSeenKey(message: ConversationMessage): string {
-  const content =
-    message.message && typeof message.message === "object"
-      ? JSON.stringify(message.message.content ?? null)
-      : "";
-  return `${message.timestamp ?? ""}|${message.type}|${message.turnId ?? ""}|${content}`;
-}
-
 function getCodexAppServerEventKey(event: CodexAppServerEvent): string {
   switch (event.type) {
+    case "item_completed":
+      return [event.type, event.threadId, event.turnId, event.itemId].join("|");
     case "error":
       return [
         event.type,
@@ -179,115 +143,31 @@ function collectChangedWorkflowKeys(
   return Array.from(changedKeys);
 }
 
-async function getConversationRawChunk(
-  remoteClient: RemoteClient,
-  sessionId: string,
-  offset: number,
-): Promise<ConversationRawChunkResponse> {
-  const params = new URLSearchParams({
-    offset: String(offset),
-    maxBytes: String(REMOTE_CONVERSATION_CHUNK_MAX_BYTES),
-  });
-  return remoteClient.requestJson<ConversationRawChunkResponse>(
-    `/api/conversation/${encodeURIComponent(sessionId)}/raw-chunk?${params.toString()}`,
-  );
-}
-
-async function getConversationRawWindow(
-  remoteClient: RemoteClient,
-  sessionId: string,
-  beforeOffset?: number,
-  maxBytes: number = REMOTE_CONVERSATION_WINDOW_MAX_BYTES,
-): Promise<ConversationRawWindowResponse> {
-  const params = new URLSearchParams({
-    maxBytes: String(maxBytes),
-  });
-  if (typeof beforeOffset === "number" && Number.isFinite(beforeOffset)) {
-    params.set("beforeOffset", String(Math.max(0, Math.floor(beforeOffset))));
-  }
-  return remoteClient.requestJson<ConversationRawWindowResponse>(
-    `/api/conversation/${encodeURIComponent(sessionId)}/window?${params.toString()}`,
-  );
-}
-
-async function readRemoteConversationBatch(
-  remoteClient: RemoteClient,
-  sessionId: string,
-  offset: number,
-  knownToolNames?: Map<string, string>,
-): Promise<{
-  messages: ConversationMessage[];
-  nextOffset: number;
-  fileId?: string;
-}> {
-  let fetchOffset = offset;
-  let fileId: string | undefined;
-  const aggregatedChunks: Uint8Array[] = [];
-
-  while (true) {
-    const previousFetchOffset = fetchOffset;
-    const chunk = await getConversationRawChunk(
-      remoteClient,
-      sessionId,
-      fetchOffset,
-    );
-    fetchOffset = chunk.nextOffset;
-    fileId = chunk.fileId ?? fileId;
-
-    if (chunk.chunkBase64) {
-      aggregatedChunks.push(decodeBase64(chunk.chunkBase64));
-    }
-
-    if (chunk.done || fetchOffset <= previousFetchOffset) {
-      break;
-    }
-  }
-
-  const aggregatedText = new TextDecoder().decode(
-    concatByteChunks(aggregatedChunks),
-  );
-  const result = parseConversationTextChunk(
-    aggregatedText,
-    offset,
-    knownToolNames,
-  );
-  return {
-    messages: result.messages,
-    nextOffset: offset + result.consumedBytes,
-    fileId,
-  };
-}
-
 export async function readRemoteConversationSnapshot(
   remoteClient: RemoteClient,
   sessionId: string,
 ): Promise<ConversationMessage[]> {
-  const toolNames = new Map<string, string>();
-  let beforeOffset: number | undefined;
-  const aggregated: ConversationMessage[] = [];
-
-  while (true) {
-    const window = await getConversationRawWindow(
-      remoteClient,
-      sessionId,
-      beforeOffset,
+  const messages = new Map<number, ConversationMessage>();
+  let beforeSequence: number | undefined;
+  let fileId: string | undefined;
+  do {
+    const batch = await remoteClient.requestJson<ConversationMessageWindow>(
+      `/api/conversation/${encodeURIComponent(sessionId)}/messages${beforeSequence ? `?beforeSequence=${beforeSequence}` : ""}`,
     );
-    const text = new TextDecoder().decode(decodeBase64(window.chunkBase64));
-    const parsed = parseConversationTextChunk(
-      text,
-      window.startOffset,
-      toolNames,
-    );
-    if (parsed.messages.length > 0) {
-      aggregated.unshift(...parsed.messages);
+    if (fileId && batch.fileId !== fileId) {
+      messages.clear();
+      beforeSequence = undefined;
+      fileId = undefined;
+      continue;
     }
-    if (window.startOffset <= 0 || window.done) {
-      break;
-    }
-    beforeOffset = window.startOffset;
-  }
-
-  return aggregated;
+    fileId = batch.fileId;
+    for (const message of batch.messages)
+      messages.set(message.sequence!, message);
+    if (beforeSequence && batch.historyStartSequence >= beforeSequence)
+      throw new Error("Conversation history window did not advance");
+    beforeSequence = batch.historyStartSequence;
+  } while (beforeSequence);
+  return [...messages.values()].sort((a, b) => a.sequence! - b.sequence!);
 }
 
 export function createRemoteTransport(
@@ -495,145 +375,92 @@ export function createRemoteTransport(
       handlers: ConversationStreamHandlers,
       options: ConversationStreamSubscriptionOptions = {},
     ): () => void {
-      let seen = new Set<string>();
-      const toolNames = new Map<string, string>();
-      let offset =
-        typeof options.initialOffset === "number" &&
-        Number.isFinite(options.initialOffset) &&
-        options.initialOffset > 0
-          ? Math.floor(options.initialOffset)
-          : 0;
+      const path = `/api/conversation/${encodeURIComponent(sessionId)}`;
+      let offset = options.initialOffset ?? 0;
       let initialized = offset > 0;
-      let backfillBeforeOffset: number | null = null;
-      let fileId: string | null = null;
+      let beforeSequence = options.initialHistoryStartSequence ?? 0;
+      let fileId = options.initialFileId;
+      let cancelled = false;
       const unregisterAppServerSubscriber = options.onCodexAppServerEvent
         ? registerConversationAppServerSubscriber(
             sessionId,
             options.onCodexAppServerEvent,
           )
         : null;
-
+      const acceptIdentity = (batch: StreamResult) => {
+        if (fileId && batch.fileId && fileId !== batch.fileId) {
+          offset = 0;
+          initialized = false;
+          beforeSequence = 0;
+          fileId = batch.fileId;
+          handlers.onReset?.();
+          return false;
+        }
+        fileId = batch.fileId ?? fileId;
+        return true;
+      };
       const subscription = createWakeablePollingSubscription(async () => {
         try {
           if (!initialized) {
-            const tailWindow = await getConversationRawWindow(
-              remoteClient,
-              sessionId,
-              undefined,
-              REMOTE_CONVERSATION_BOOTSTRAP_WINDOW_MAX_BYTES,
-            );
-            const tailText = new TextDecoder().decode(
-              decodeBase64(tailWindow.chunkBase64),
-            );
-            const tailParsed = parseConversationTextChunk(
-              tailText,
-              tailWindow.startOffset,
-              toolNames,
-            );
-            const batch = {
-              messages: tailParsed.messages,
-              nextOffset: tailWindow.endOffset,
-            };
-            fileId = tailWindow.fileId ?? fileId;
+            const batch =
+              await remoteClient.requestJson<ConversationMessageWindow>(
+                `${path}/messages`,
+              );
+            if (cancelled) return;
+            if (!acceptIdentity(batch)) return;
             offset = batch.nextOffset;
-            backfillBeforeOffset =
-              tailWindow.startOffset > 0 ? tailWindow.startOffset : null;
-
-            for (const message of batch.messages) {
-              seen.add(getConversationSeenKey(message));
-            }
-
-            handlers.onMessages(batch.messages, {
-              messages: batch.messages,
-              phase: "bootstrap",
-              nextOffset: offset,
-              done: true,
-              insertion: "append",
-            });
-
+            beforeSequence = batch.historyStartSequence;
             initialized = true;
-            handlers.onHeartbeat?.();
-            return;
-          }
-
-          if (backfillBeforeOffset !== null && backfillBeforeOffset > 0) {
-            for (let backfillPass = 0; backfillPass < 3; backfillPass += 1) {
-              if (backfillBeforeOffset === null || backfillBeforeOffset <= 0) {
-                break;
-              }
-
-              const window = await getConversationRawWindow(
-                remoteClient,
-                sessionId,
-                backfillBeforeOffset,
-              );
-              backfillBeforeOffset =
-                window.startOffset > 0 ? window.startOffset : null;
-
-              const windowText = new TextDecoder().decode(
-                decodeBase64(window.chunkBase64),
-              );
-              const parsed = parseConversationTextChunk(
-                windowText,
-                window.startOffset,
-                toolNames,
-              );
-              const olderMessages = parsed.messages.filter(
-                (message) => !seen.has(getConversationSeenKey(message)),
-              );
-              for (const message of parsed.messages) {
-                seen.add(getConversationSeenKey(message));
-              }
-
-              if (olderMessages.length > 0) {
-                handlers.onMessages(olderMessages, {
-                  messages: olderMessages,
-                  phase: "incremental",
-                  nextOffset: offset,
-                  done: true,
-                  insertion: "prepend",
-                });
-              }
-            }
-          }
-
-          const batch = await readRemoteConversationBatch(
-            remoteClient,
-            sessionId,
-            offset,
-            toolNames,
-          );
-          if (fileId && batch.fileId && batch.fileId !== fileId) {
-            seen = new Set<string>();
-            toolNames.clear();
-            offset = 0;
-            initialized = false;
-            backfillBeforeOffset = null;
-            fileId = batch.fileId;
-            handlers.onReset?.();
-            handlers.onHeartbeat?.();
-            return;
-          }
-          fileId = batch.fileId ?? fileId;
-          const newMessages = batch.messages.filter(
-            (message) => !seen.has(getConversationSeenKey(message)),
-          );
-          for (const message of batch.messages) {
-            seen.add(getConversationSeenKey(message));
-          }
-          offset = batch.nextOffset;
-          if (newMessages.length > 0) {
-            handlers.onMessages(newMessages, {
-              messages: newMessages,
-              phase: "incremental",
-              nextOffset: offset,
-              done: true,
+            handlers.onMessages(batch.messages, {
+              ...batch,
+              phase: "bootstrap",
               insertion: "append",
             });
+            handlers.onHeartbeat?.();
+            return;
           }
-
+          if (beforeSequence > 0) {
+            const batch =
+              await remoteClient.requestJson<ConversationMessageWindow>(
+                `${path}/messages?beforeSequence=${beforeSequence}`,
+              );
+            if (cancelled) return;
+            if (!acceptIdentity(batch)) return;
+            if (batch.historyStartSequence >= beforeSequence)
+              throw new Error("Conversation history window did not advance");
+            beforeSequence = batch.historyStartSequence;
+            handlers.onMessages(batch.messages, {
+              ...batch,
+              nextOffset: offset,
+              phase: "incremental",
+              insertion: "prepend",
+            });
+          }
+          const messages: ConversationMessage[] = [];
+          let latest: StreamResult;
+          do {
+            const previousOffset = offset;
+            latest = await remoteClient.requestJson<StreamResult>(
+              `${path}/updates?offset=${offset}`,
+            );
+            if (cancelled) return;
+            if (!acceptIdentity(latest)) return;
+            offset = latest.nextOffset;
+            messages.push(...latest.messages);
+            if (latest.done || offset <= previousOffset) break;
+          } while (!cancelled);
+          if (messages.length > 0)
+            handlers.onMessages(messages, {
+              ...latest!,
+              messages,
+              nextOffset: offset,
+              historyStartSequence: beforeSequence,
+              phase: "incremental",
+              insertion: "append",
+            });
           handlers.onHeartbeat?.();
         } catch (error) {
+          if (cancelled) return;
           console.error(error);
           handlers.onError?.();
         }
@@ -645,6 +472,7 @@ export function createRemoteTransport(
       );
 
       return () => {
+        cancelled = true;
         unregisterAppServerSubscriber?.();
         unregisterWake();
         subscription.unsubscribe();

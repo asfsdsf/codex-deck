@@ -3177,6 +3177,24 @@ class CodexAppServerClient {
       return;
     }
 
+    const turnId = asTrimmedString(notification.turnId ?? notification.turn_id);
+    const itemId = asTrimmedString(item.id);
+    const completedType = asTrimmedString(item.type)
+      ?.toLowerCase()
+      .replace(/_/g, "");
+    if (
+      turnId &&
+      itemId &&
+      ["agentmessage", "reasoning", "plan"].includes(completedType ?? "")
+    )
+      this.emitAppServerEvent({
+        type: "item_completed",
+        threadId,
+        turnId,
+        itemId,
+        item,
+      });
+
     this.emitCollabAgentItemEvent(
       threadId,
       asTrimmedString(notification.turnId ?? notification.turn_id),

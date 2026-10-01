@@ -1,7 +1,109 @@
 import { test, expect } from "./helpers/codex-deck-fixture";
 import { CodexDeckPage } from "./pages/codex-deck-page";
+import { appendFile } from "node:fs/promises";
+import { join } from "node:path";
+import { responseItemMessageLine } from "../unit/test-utils";
 
 test.describe("codex-deck integration", () => {
+  test("shows the latest page before older conversation history finishes loading", async ({
+    page,
+    app,
+  }) => {
+    const lines = Array.from({ length: 600 }, (_, index) =>
+      responseItemMessageLine(
+        "assistant",
+        `History message ${index}: ${"sample text ".repeat(30)}`,
+      ),
+    );
+    const latestMessage = "Latest answer before history backfill";
+    lines.push(responseItemMessageLine("assistant", latestMessage));
+    await appendFile(
+      join(app.rootDir, "sessions", `${app.sessions.alpha}.jsonl`),
+      `${lines.join("\n")}\n`,
+    );
+    let releaseBackfill!: () => void;
+    const backfillGate = new Promise<void>((resolve) => {
+      releaseBackfill = resolve;
+    });
+    let backfillRequested = false;
+    await page.route("**/api/conversation/*/messages?*", async (route) => {
+      if (route.request().url().includes("beforeSequence=")) {
+        backfillRequested = true;
+        await backfillGate;
+      }
+      await route.continue();
+    });
+    try {
+      const codexDeckPage = new CodexDeckPage(page);
+      await codexDeckPage.goto(app.baseURL);
+      await codexDeckPage.selectSession("Review the launch checklist");
+      await expect(
+        page.getByText(latestMessage, { exact: true }),
+      ).toBeVisible();
+      await expect.poll(() => backfillRequested).toBe(true);
+      await page.evaluate(() => {
+        const entries = Array.from(
+          document.querySelectorAll("[data-search-entry]"),
+        );
+        const keys = entries.map((entry) =>
+          entry.getAttribute("data-search-entry"),
+        );
+        const state = window as typeof window & {
+          paginationFaults: string[];
+          paginationObserver: MutationObserver;
+        };
+        state.paginationFaults = [];
+        state.paginationObserver = new MutationObserver(() => {
+          if (entries.some((entry) => !entry.isConnected))
+            state.paginationFaults.push("message block remounted");
+          const current = Array.from(
+            document.querySelectorAll("[data-search-entry]"),
+          ).map((entry) => entry.getAttribute("data-search-entry"));
+          if (JSON.stringify(current) !== JSON.stringify(keys))
+            state.paginationFaults.push("page membership changed");
+        });
+        state.paginationObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+      });
+      const currentPage = page.getByRole("textbox", { name: "Current page" });
+      await expect(currentPage).toHaveValue("7");
+      const backfillFinished = page.waitForResponse((response) =>
+        response.url().includes("beforeSequence=101"),
+      );
+      releaseBackfill();
+      await (await backfillFinished).finished();
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      const faults = await page.evaluate(() => {
+        const state = window as typeof window & {
+          paginationFaults: string[];
+          paginationObserver: MutationObserver;
+        };
+        state.paginationObserver.disconnect();
+        return state.paginationFaults;
+      });
+      expect(faults).toEqual([]);
+      await expect(
+        page.getByText(latestMessage, { exact: true }),
+      ).toBeVisible();
+      await currentPage.fill("1");
+      await currentPage.press("Enter");
+      await expect(
+        page.getByText("Search launch references before shipping.", {
+          exact: true,
+        }),
+      ).toBeVisible();
+    } finally {
+      releaseBackfill();
+    }
+  });
+
   test("loads sessions and filters them by project and search text", async ({
     page,
     app,

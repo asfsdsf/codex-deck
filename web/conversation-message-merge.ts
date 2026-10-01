@@ -211,6 +211,9 @@ function shouldReplaceDuplicateMessage(
   previousMessage: ConversationMessage,
   incomingMessage: ConversationMessage,
 ): boolean {
+  if (incomingMessage.editable && !previousMessage.editable) {
+    return true;
+  }
   const incomingBlock = getReasoningBlock(incomingMessage);
   if (!incomingBlock?.token_usage) {
     return false;
@@ -376,53 +379,39 @@ function insertUserBeforeLiveTurn(
   return true;
 }
 
-function mergePrependedTokenLimitBoundary(
-  previousMessages: ConversationMessage[],
-  incomingMessages: ConversationMessage[],
-): ConversationMessage[] | null {
-  if (incomingMessages.length === 0 || previousMessages.length === 0) {
-    return null;
-  }
-
-  const lastIncoming = incomingMessages[incomingMessages.length - 1];
-  const firstPrevious = previousMessages[0];
-  if (
-    lastIncoming.type !== "token_limit_notice" ||
-    firstPrevious.type !== "token_limit_notice"
-  ) {
-    return null;
-  }
-
-  const incomingKey = getTokenLimitNoticeKey(lastIncoming);
-  const previousKey = getTokenLimitNoticeKey(firstPrevious);
-  if (!incomingKey || incomingKey !== previousKey) {
-    return null;
-  }
-
-  const mergedBoundaryMessage: ConversationMessage = {
-    ...lastIncoming,
-    ...firstPrevious,
-    uuid: firstPrevious.uuid ?? lastIncoming.uuid,
-    timestamp: firstPrevious.timestamp ?? lastIncoming.timestamp,
-    repeatCount:
-      (lastIncoming.repeatCount ?? 1) + (firstPrevious.repeatCount ?? 1),
-    repeatCountMax: firstPrevious.repeatCountMax ?? lastIncoming.repeatCountMax,
-    rateLimitId: firstPrevious.rateLimitId ?? lastIncoming.rateLimitId ?? null,
-  };
-
-  return [
-    ...incomingMessages.slice(0, -1),
-    mergedBoundaryMessage,
-    ...previousMessages.slice(1),
-  ];
-}
-
 export function mergeDisplayConversationMessages(
   previousMessages: ConversationMessage[],
   incomingMessages: ConversationMessage[],
   insertion: ConversationInsertion = "append",
 ): ConversationMessage[] {
-  let nextPreviousMessages = removeLiveMessagesForIncoming(
+  let nextPreviousMessages = previousMessages;
+  if (
+    incomingMessages.length > 0 &&
+    incomingMessages.every((message) => message.sequence !== undefined)
+  ) {
+    const numbered = new Map<number, ConversationMessage>();
+    const transient = nextPreviousMessages.filter(
+      (message) => message.sequence === undefined,
+    );
+    for (const message of nextPreviousMessages) {
+      if (message.sequence !== undefined)
+        numbered.set(message.sequence, message);
+    }
+    let changed = nextPreviousMessages !== previousMessages;
+    for (const message of incomingMessages) {
+      const previous = numbered.get(message.sequence!);
+      if (!previous || (message.revision ?? 0) > (previous.revision ?? -1)) {
+        numbered.set(message.sequence!, message);
+        changed = true;
+      }
+    }
+    return changed
+      ? [...numbered.values()]
+          .sort((a, b) => a.sequence! - b.sequence!)
+          .concat(transient)
+      : previousMessages;
+  }
+  nextPreviousMessages = removeLiveMessagesForIncoming(
     previousMessages,
     incomingMessages,
   );
@@ -459,11 +448,12 @@ export function mergeDisplayConversationMessages(
   }
 
   if (insertion === "prepend") {
-    const mergedBoundary = mergePrependedTokenLimitBoundary(
-      nextPreviousMessages,
+    // Merge in chronological order so an older tool call can absorb a result
+    // already displayed from the recent window, and notices join at the seam.
+    return mergeDisplayConversationMessages(
       uniqueIncoming,
+      nextPreviousMessages,
     );
-    return mergedBoundary ?? [...uniqueIncoming, ...nextPreviousMessages];
   }
 
   const nextMessages = [...nextPreviousMessages];

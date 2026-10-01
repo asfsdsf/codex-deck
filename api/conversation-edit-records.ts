@@ -83,7 +83,7 @@ function getItemCompletedMessageText(
   return parts.length > 0 ? parts.join("\n\n") : null;
 }
 
-function getEditableEventRecord(
+export function getEditableEventRecord(
   record: Record<string, unknown>,
   offset: number,
 ): EditableEventRecord | null {
@@ -161,7 +161,10 @@ export function collectEditableMessagePairs(
 ): Map<number, number> {
   const responseItems: Array<EditableConversationRecord & { offset: number }> =
     [];
-  const events: EditableEventRecord[] = [];
+  const eventsByRole = new Map<
+    EditableConversationRole,
+    Map<string, EditableEventRecord[]>
+  >();
 
   for (const { line, offset } of lines) {
     let parsed: unknown;
@@ -183,7 +186,14 @@ export function collectEditableMessagePairs(
 
     const event = getEditableEventRecord(record, offset);
     if (event) {
-      events.push(event);
+      let eventsByText = eventsByRole.get(event.role);
+      if (!eventsByText) {
+        eventsByText = new Map();
+        eventsByRole.set(event.role, eventsByText);
+      }
+      const matchingEvents = eventsByText.get(event.text) ?? [];
+      matchingEvents.push(event);
+      eventsByText.set(event.text, matchingEvents);
     }
   }
 
@@ -198,7 +208,9 @@ export function collectEditableMessagePairs(
     let bestEvent: EditableEventRecord | null = null;
     let bestTimestampDelta = Number.POSITIVE_INFINITY;
     let bestOffsetDelta = Number.POSITIVE_INFINITY;
-    for (const event of events) {
+    for (const event of eventsByRole
+      .get(responseItem.role)
+      ?.get(responseItem.text) ?? []) {
       if (
         matchedEventOffsets.has(event.offset) ||
         event.role !== responseItem.role ||

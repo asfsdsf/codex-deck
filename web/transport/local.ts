@@ -1,6 +1,5 @@
 import type {
   CodexAppServerEvent,
-  ConversationMessage,
   TerminalSummary,
   TerminalStreamEvent,
   WorkflowDaemonStatusResponse,
@@ -26,14 +25,10 @@ import type {
 } from "./types";
 import { addCodexHomeToApiUrl } from "../codex-home-scope";
 
+import { subscribeLocalConversation } from "./local-conversation";
+
 const WORKFLOW_DETAIL_POLL_INTERVAL_MS = 3_000;
 const WORKFLOW_DAEMON_STATUS_POLL_INTERVAL_MS = 5_000;
-
-interface ConversationStreamPayload {
-  messages: unknown;
-  nextOffset?: number;
-  done?: boolean;
-}
 
 function registerWakeListener(
   listeners: Set<() => void>,
@@ -440,13 +435,6 @@ export function createLocalTransport(): WebTransport {
       handlers: ConversationStreamHandlers,
       options: ConversationStreamSubscriptionOptions = {},
     ): () => void {
-      let offset =
-        typeof options.initialOffset === "number" &&
-        Number.isFinite(options.initialOffset) &&
-        options.initialOffset > 0
-          ? Math.floor(options.initialOffset)
-          : 0;
-      let bootstrapComplete = offset > 0;
       let unregisterAppServerListener: (() => void) | null = null;
 
       if (options.onCodexAppServerEvent) {
@@ -464,58 +452,11 @@ export function createLocalTransport(): WebTransport {
         };
       }
 
-      const unsubscribeConversationStream = createReconnectingEventSource({
-        createUrl: () =>
-          addCodexHomeToApiUrl(
-            `/api/conversation/${encodeURIComponent(sessionId)}/stream?offset=${offset}`,
-          ),
-        configure: (eventSource) => {
-          eventSource.addEventListener("messages", (event) => {
-            const payload = JSON.parse(event.data) as
-              | ConversationStreamPayload
-              | unknown[];
-            const messages = (
-              Array.isArray(payload)
-                ? payload
-                : Array.isArray(payload.messages)
-                  ? payload.messages
-                  : []
-            ) as ConversationMessage[];
-            if (
-              !Array.isArray(payload) &&
-              Number.isFinite(payload.nextOffset) &&
-              typeof payload.nextOffset === "number"
-            ) {
-              offset = Math.max(offset, Math.floor(payload.nextOffset));
-            }
-
-            const done =
-              Array.isArray(payload) || typeof payload.done !== "boolean"
-                ? true
-                : payload.done;
-            const phase = bootstrapComplete ? "incremental" : "bootstrap";
-            if (done) {
-              bootstrapComplete = true;
-            }
-            handlers.onMessages(messages, {
-              messages,
-              phase,
-              nextOffset: offset,
-              done,
-              insertion: "append",
-            });
-          });
-          eventSource.addEventListener("reset", () => {
-            offset = 0;
-            bootstrapComplete = false;
-            handlers.onReset?.();
-          });
-          eventSource.addEventListener("heartbeat", () => {
-            handlers.onHeartbeat?.();
-          });
-        },
-        onDisconnect: handlers.onError,
-      });
+      const unsubscribeConversationStream = subscribeLocalConversation(
+        sessionId,
+        handlers,
+        options,
+      );
 
       return () => {
         unregisterAppServerListener?.();

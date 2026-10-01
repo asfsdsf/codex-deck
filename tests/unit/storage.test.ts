@@ -13,6 +13,7 @@ import {
   getCodexDir,
   getConversation,
   getConversationStream,
+  getConversationRawWindow,
   getProjects,
   getSessionTerminalRunOutput,
   getSessionTerminalRuns,
@@ -1824,6 +1825,96 @@ test("getConversationStream supports payload-bounded chunking with monotonic off
 
     assert.equal(done, true);
     assert.equal(iterations > 1, true);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("bounded conversation batches retain every message and respect the payload limit", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-stream-prefixes",
+  );
+  try {
+    const texts = Array.from(
+      { length: 75 },
+      (_, index) => `${index}: ${"内容 ".repeat(10)}`,
+    );
+    const lines = texts.flatMap((text) => [
+      JSON.stringify({
+        type: "turn_context",
+        payload: { instructions: "x".repeat(1000) },
+      }),
+      responseItemMessageLine("assistant", text),
+    ]);
+    await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, lines);
+    setStorageDir(rootDir);
+    await loadStorage();
+    let offset = 0;
+    const seen: string[] = [];
+    while (true) {
+      const chunk = await getConversationStream(SESSION_A, offset, {
+        maxPayloadBytes: 1500,
+      });
+      assert.ok(chunk.nextOffset > offset);
+      assert.ok(
+        Buffer.byteLength(
+          JSON.stringify({
+            messages: chunk.messages,
+            nextOffset: chunk.nextOffset,
+            done: chunk.done,
+          }),
+        ) <= 1500,
+      );
+      for (const message of chunk.messages) {
+        const blocks = message.message?.content;
+        if (Array.isArray(blocks))
+          seen.push(...blocks.map((block) => block.text ?? ""));
+      }
+      offset = chunk.nextOffset;
+      if (chunk.done) break;
+    }
+    assert.deepEqual(seen, texts);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("raw history windows retain oversized UTF-8 records and cover the file without gaps", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-window-records",
+  );
+  try {
+    const lines = [
+      sessionMetaLine(SESSION_A, "/repo", Date.now()),
+      responseItemMessageLine("assistant", "工具输出🙂".repeat(20000)),
+      responseItemMessageLine("assistant", "latest"),
+    ];
+    const path = await writeSessionFile(
+      sessionsDir,
+      `${SESSION_A}.jsonl`,
+      lines,
+    );
+    setStorageDir(rootDir);
+    await loadStorage();
+    let beforeOffset: number | undefined;
+    const chunks: Buffer[] = [];
+    while (true) {
+      const window = await getConversationRawWindow(
+        SESSION_A,
+        beforeOffset,
+        128,
+      );
+      const bytes = Buffer.from(window.chunkBase64, "base64");
+      if (beforeOffset !== undefined)
+        assert.equal(window.endOffset, beforeOffset);
+      assert.ok(window.endOffset > window.startOffset);
+      for (const line of bytes.toString("utf-8").trim().split("\n"))
+        assert.doesNotThrow(() => JSON.parse(line));
+      chunks.unshift(bytes);
+      beforeOffset = window.startOffset;
+      if (window.done) break;
+    }
+    assert.deepEqual(Buffer.concat(chunks), await readFile(path));
   } finally {
     await cleanup();
   }

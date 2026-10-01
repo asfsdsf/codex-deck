@@ -590,6 +590,27 @@ test("conversation stream emits bounded bootstrap batches", async () => {
   }
 });
 
+test("conversation SSE resets when a tail bootstrap refers to a replaced file", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-conversation-tail-reset",
+  );
+  const server = createServer({ port: 13001, codexDir: rootDir, open: false });
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      responseItemMessageLine("user", "New history"),
+    ]);
+    await loadStorage();
+    const response = await server.app.request(
+      `/api/conversation/${SESSION_ID}/stream?offset=9999&fileId=old-file`,
+    );
+    const events = await readSseEvents(response, ["reset"]);
+    assert.equal(events[0]?.event, "reset");
+  } finally {
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("sessions stream carries sessions, terminals, and workflows snapshots", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "server-global-stream",
@@ -7467,6 +7488,102 @@ test("approval requests route returns empty list on backend client failure", asy
       [],
     );
   } finally {
+    setCodexAppServerClientForTests(null);
+    server.stop();
+    await cleanup();
+  }
+});
+
+test("numbered conversation SSE fans out streaming and completion under the same sequence", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-numbered-live",
+  );
+  const server = createServer({ port: 13027, codexDir: rootDir, open: false });
+  let emit: ((event: unknown) => void) | undefined;
+  setCodexAppServerClientForTests({
+    subscribeAppServerEvents: (listener: (event: unknown) => void) => {
+      emit = listener;
+      return () => {};
+    },
+  } as CodexAppServerClientFacade);
+  const controllers = [new AbortController(), new AbortController()];
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      eventMsgLine({ type: "task_started", turn_id: "turn-1" }),
+    ]);
+    await loadStorage();
+    const initial = await requestJson(
+      server,
+      `/api/conversation/${SESSION_ID}/messages`,
+    );
+    assert.ok(
+      emit,
+      "remote message polling must register app-server events without a local SSE client",
+    );
+    const cursor = (initial.body as { nextOffset: number }).nextOffset;
+    const nextMessages = await Promise.all(
+      controllers.map(async (controller) => {
+        const response = await server.app.request(
+          `/api/conversation/${SESSION_ID}/stream?numbered=true&offset=${cursor}`,
+          { signal: controller.signal },
+        );
+        const reader = response.body!.getReader();
+        readers.push(reader);
+        let buffer = "";
+        const decoder = new TextDecoder();
+        return async () => {
+          while (true) {
+            let end = buffer.indexOf("\n\n");
+            while (end >= 0) {
+              const event = buffer.slice(0, end);
+              buffer = buffer.slice(end + 2);
+              if (event.startsWith("event: messages")) {
+                const payload = JSON.parse(event.split("\ndata: ")[1]);
+                if (payload.messages.length) return payload;
+              }
+              end = buffer.indexOf("\n\n");
+            }
+            const result = await reader.read();
+            assert.equal(result.done, false);
+            buffer += decoder.decode(result.value, { stream: true });
+          }
+        };
+      }),
+    );
+    assert.ok(emit);
+    emit({
+      type: "assistant_delta",
+      threadId: SESSION_ID,
+      turnId: "turn-1",
+      itemId: "answer-1",
+      delta: "streamed answer",
+    });
+    const partial = await Promise.all(nextMessages.map((next) => next()));
+    assert.deepEqual(partial[0], partial[1]);
+    assert.equal(partial[0].messages[0].streaming, true);
+    emit({
+      type: "item_completed",
+      threadId: SESSION_ID,
+      turnId: "turn-1",
+      itemId: "answer-1",
+      item: { type: "agentMessage", text: "final answer" },
+    });
+    const final = await Promise.all(nextMessages.map((next) => next()));
+    assert.deepEqual(final[0], final[1]);
+    assert.equal(
+      final[0].messages[0].sequence,
+      partial[0].messages[0].sequence,
+    );
+    assert.equal(final[0].messages[0].streaming, false);
+    const remote = await requestJson(
+      server,
+      `/api/conversation/${SESSION_ID}/updates?offset=${partial[0].nextOffset}`,
+    );
+    assert.deepEqual(remote.body, final[0]);
+  } finally {
+    controllers.forEach((controller) => controller.abort());
+    await Promise.all(readers.map((reader) => reader.cancel().catch(() => {})));
     setCodexAppServerClientForTests(null);
     server.stop();
     await cleanup();

@@ -26,6 +26,9 @@ export interface ConversationStreamBatch {
   nextOffset: number;
   done: boolean;
   insertion?: "append" | "prepend";
+  historyStartSequence?: number;
+  fileId?: string;
+  totalMessages?: number;
 }
 
 export interface ConversationStreamHandlers {
@@ -40,6 +43,8 @@ export interface ConversationStreamHandlers {
 
 export interface ConversationStreamSubscriptionOptions {
   initialOffset?: number;
+  initialHistoryStartSequence?: number;
+  initialFileId?: string;
   onCodexAppServerEvent?: (event: CodexAppServerEvent) => void;
 }
 
