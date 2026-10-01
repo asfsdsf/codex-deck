@@ -42,8 +42,12 @@ test.describe("codex-deck integration", () => {
       ).toBeVisible();
       await expect.poll(() => backfillRequested).toBe(true);
       await page.evaluate(() => {
+        // Neighbor pages can fill during backfill; the latest page must stay stable.
+        const latestPage = document.querySelector(
+          '[data-conversation-page="7"]',
+        )!;
         const entries = Array.from(
-          document.querySelectorAll("[data-search-entry]"),
+          latestPage.querySelectorAll("[data-search-entry]"),
         );
         const keys = entries.map((entry) =>
           entry.getAttribute("data-search-entry"),
@@ -57,7 +61,7 @@ test.describe("codex-deck integration", () => {
           if (entries.some((entry) => !entry.isConnected))
             state.paginationFaults.push("message block remounted");
           const current = Array.from(
-            document.querySelectorAll("[data-search-entry]"),
+            latestPage.querySelectorAll("[data-search-entry]"),
           ).map((entry) => entry.getAttribute("data-search-entry"));
           if (JSON.stringify(current) !== JSON.stringify(keys))
             state.paginationFaults.push("page membership changed");
@@ -67,8 +71,10 @@ test.describe("codex-deck integration", () => {
           subtree: true,
         });
       });
-      const currentPage = page.getByRole("textbox", { name: "Current page" });
-      await expect(currentPage).toHaveValue("7");
+      const currentPage = page.getByRole("textbox", {
+        name: "Page number",
+      });
+      await expect(page.locator("[data-total-messages]")).toHaveText("604");
       const backfillFinished = page.waitForResponse((response) =>
         response.url().includes("beforeSequence=101"),
       );
@@ -92,8 +98,22 @@ test.describe("codex-deck integration", () => {
       await expect(
         page.getByText(latestMessage, { exact: true }),
       ).toBeVisible();
-      await currentPage.fill("1");
+      await currentPage.fill("0");
       await currentPage.press("Enter");
+      await expect
+        .poll(async () =>
+          Number(
+            await page
+              .locator("[data-conversation-position]")
+              .getAttribute("data-current-message"),
+          ),
+        )
+        .toBeLessThan(100);
+      if (
+        await page.getByRole("button", { name: "Previous page" }).isEnabled()
+      ) {
+        await page.getByRole("button", { name: "Previous page" }).click();
+      }
       await expect(
         page.getByText("Search launch references before shipping.", {
           exact: true,

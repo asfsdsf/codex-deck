@@ -10,6 +10,7 @@ import {
   forwardRef,
 } from "react";
 import type { MouseEvent } from "react";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import type {
   ConversationMessage,
   CodexApprovalRequest,
@@ -19,6 +20,8 @@ import type {
 } from "@codex-deck/api";
 import MessageBlock from "./message-block";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
+import ConversationPager from "./conversation-pager";
+import ConversationMessageHover from "./conversation-message-hover";
 import {
   editConversationMessage as editConversationHistoryMessage,
   listCodexApprovalRequests,
@@ -771,7 +774,10 @@ const SessionView = memo(
       const [loading, setLoading] = useState(true);
       const [autoScroll, setAutoScroll] = useState(true);
       const [currentPage, setCurrentPage] = useState(1);
-      const [pageInputValue, setPageInputValue] = useState("1");
+      const [messageJumpTarget, setMessageJumpTarget] = useState<number | null>(
+        null,
+      );
+      const [scrollEndPadding, setScrollEndPadding] = useState(0);
       const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState<
         number | null
       >(null);
@@ -784,6 +790,12 @@ const SessionView = memo(
       const isPageVisible = usePageVisibility();
       const containerRef = useRef<HTMLDivElement>(null);
       const contentRef = useRef<HTMLDivElement>(null);
+      const pagesRef = useRef<HTMLDivElement>(null);
+      const pageVirtualizerRef = useRef<Virtualizer<
+        HTMLDivElement,
+        HTMLDivElement
+      > | null>(null);
+      const [pagesScrollMargin, setPagesScrollMargin] = useState(0);
       const offsetRef = useRef(0);
       const historyStartSequenceRef = useRef<number | undefined>(undefined);
       const conversationFileIdRef = useRef<string | undefined>(undefined);
@@ -885,7 +897,10 @@ const SessionView = memo(
             const nextPages = getTotalPages(nextCount, MESSAGES_PER_PAGE);
             // Select the final page in the same render as its first messages.
             setCurrentPage((page) =>
-              phase === "bootstrap" || page >= previousPages ? nextPages : page,
+              autoScrollRef.current &&
+              (phase === "bootstrap" || page >= previousPages)
+                ? nextPages
+                : page,
             );
           }
 
@@ -1042,6 +1057,8 @@ const SessionView = memo(
         setSubmittingApprovalRequestIds([]);
         setCollapsedDefaultSegmentKeys({});
         setCurrentPage(1);
+        setMessageJumpTarget(null);
+        setScrollEndPadding(0);
         setActiveSearchMatchIndex(null);
         submittingRequestIdsRef.current.clear();
         offsetRef.current = 0;
@@ -1062,7 +1079,7 @@ const SessionView = memo(
         isScrollingProgrammaticallyRef.current = false;
         searchMatchGroupsRef.current = [];
         if (containerRef.current) {
-          containerRef.current.style.overflowAnchor = "";
+          containerRef.current.style.overflowAnchor = "none";
         }
 
         connect();
@@ -1461,7 +1478,13 @@ const SessionView = memo(
           return;
         }
         isScrollingProgrammaticallyRef.current = true;
-        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        pageVirtualizerRef.current?.scrollToOffset(
+          Math.max(
+            0,
+            containerRef.current.scrollHeight -
+              containerRef.current.clientHeight,
+          ),
+        );
         requestAnimationFrame(() => {
           isScrollingProgrammaticallyRef.current = false;
         });
@@ -1469,6 +1492,7 @@ const SessionView = memo(
 
       const navigateConversationSearchMatch = useCallback(
         (direction: SearchDirection) => {
+          setMessageJumpTarget(null);
           setAutoScroll(false);
           shouldFollowActiveSearchMatchRef.current = true;
           setActiveSearchMatchIndex((currentIndex) => {
@@ -1508,6 +1532,8 @@ const SessionView = memo(
         shouldFollowActiveSearchMatchRef.current = false;
         collapsedDefaultSegmentKeysRef.current = {};
         setCollapsedDefaultSegmentKeys({});
+        setMessageJumpTarget(null);
+        setScrollEndPadding(0);
         setCurrentPage(totalPagesRef.current);
         setAutoScroll(true);
         requestAnimationFrame(() => {
@@ -1630,6 +1656,7 @@ const SessionView = memo(
 
         const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
         const isAtBottom =
+          scrollEndPadding === 0 &&
           scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX;
         setAutoScroll(isAtBottom);
       };
@@ -1800,28 +1827,62 @@ const SessionView = memo(
           ),
         [visibleMessages],
       );
-      const totalPages = getTotalPages(
+      const totalMessageCount =
         serverMessageCount === undefined
           ? visibleMessages.length
           : serverMessageCount +
-              visibleMessages.filter(
-                (message) => message.sequence === undefined,
-              ).length,
-        MESSAGES_PER_PAGE,
-      );
+            visibleMessages.filter((message) => message.sequence === undefined)
+              .length;
+      const totalPages = getTotalPages(totalMessageCount, MESSAGES_PER_PAGE);
       // Follow page growth synchronously; effects run after a stale page could paint.
-      const followingLatest = currentPage >= totalPagesRef.current;
+      const followingLatest =
+        autoScroll && currentPage >= totalPagesRef.current;
       const safeCurrentPage = clampPage(
         followingLatest ? totalPages : currentPage,
         totalPages,
       );
       const isLatestPage = safeCurrentPage === totalPages;
+      const getPageKey = useCallback(
+        (index: number) => `${sessionId}:${railCollapsedByDefault}:${index}`,
+        [sessionId, railCollapsedByDefault],
+      );
+      // Virtualize whole pages: every intersecting page plus one on either side.
+      // Only numeric height measurements survive after a page is unmounted.
+      const pageVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+        count: totalMessageCount > 0 ? totalPages : 0,
+        getScrollElement: () => containerRef.current,
+        getItemKey: getPageKey,
+        estimateSize: () =>
+          MESSAGES_PER_PAGE * (railCollapsedByDefault ? 24 : 120),
+        overscan: 1,
+        scrollMargin: pagesScrollMargin,
+        enabled: !loading,
+      });
+      useLayoutEffect(() => {
+        pageVirtualizerRef.current = pageVirtualizer;
+        return () => {
+          pageVirtualizerRef.current = null;
+        };
+      }, [pageVirtualizer]);
+      const virtualPages = pageVirtualizer.getVirtualItems();
+      const firstCachedPage =
+        (virtualPages[0]?.index ?? safeCurrentPage - 1) + 1;
+      const lastCachedPage =
+        (virtualPages[virtualPages.length - 1]?.index ?? safeCurrentPage - 1) +
+        1;
+      const firstVisiblePage =
+        (pageVirtualizer.range?.startIndex ?? safeCurrentPage - 1) + 1;
+      const pagesHeight = pageVirtualizer.getTotalSize();
+      useLayoutEffect(() => {
+        pageVirtualizer.measure();
+      }, [pageVirtualizer, sessionId, railCollapsedByDefault]);
       const pagedMessageEntries = useMemo(
         () =>
           visibleMessageEntries.filter(
-            (entry) => entry.page === safeCurrentPage,
+            (entry) =>
+              entry.page >= firstCachedPage && entry.page <= lastCachedPage,
           ),
-        [visibleMessageEntries, safeCurrentPage],
+        [visibleMessageEntries, firstCachedPage, lastCachedPage],
       );
       const pagedMessageChunks = useMemo<MessageViewportChunk[]>(() => {
         const chunks: MessageViewportChunk[] = [];
@@ -1842,6 +1903,9 @@ const SessionView = memo(
         };
 
         for (const entry of pagedMessageEntries) {
+          if (defaultRun.length > 0 && defaultRun[0].page !== entry.page) {
+            flushDefaultRun();
+          }
           if (entry.group === "default") {
             defaultRun.push(entry);
             continue;
@@ -1857,6 +1921,19 @@ const SessionView = memo(
         flushDefaultRun();
         return chunks;
       }, [pagedMessageEntries]);
+      const chunksByPage = useMemo(() => {
+        const pages = new Map<number, MessageViewportChunk[]>();
+        for (const chunk of pagedMessageChunks) {
+          const page =
+            chunk.kind === "important"
+              ? chunk.entry.page
+              : chunk.entries[0].page;
+          const chunks = pages.get(page) ?? [];
+          chunks.push(chunk);
+          pages.set(page, chunks);
+        }
+        return pages;
+      }, [pagedMessageChunks]);
       const pagedEntrySegmentKeys = useMemo(() => {
         const next = new Map<string, string>();
 
@@ -1872,39 +1949,33 @@ const SessionView = memo(
 
         return next;
       }, [pagedMessageChunks]);
-      const pageDigits = Math.max(String(totalPages).length, 2);
-      const handleChangePage = useCallback(
-        (nextPage: number) => {
+      const jumpToMessage = useCallback(
+        (messageNumber: number) => {
+          const target = Math.max(
+            1,
+            Math.min(totalMessageCount, messageNumber),
+          );
+          const page = Math.floor((target - 1) / MESSAGES_PER_PAGE) + 1;
           shouldFollowActiveSearchMatchRef.current = false;
-          const safeNextPage = clampPage(nextPage, totalPages);
-          setCurrentPage(safeNextPage);
-
-          if (safeNextPage === totalPages) {
-            setAutoScroll(true);
-            requestAnimationFrame(() => {
-              scrollToBottom();
-            });
-            return;
-          }
-
           setAutoScroll(false);
-          if (containerRef.current) {
-            containerRef.current.scrollTop = 0;
+          autoScrollRef.current = false;
+          setCurrentPage(page);
+          setMessageJumpTarget(target);
+          if (!chunksByPage.has(page)) {
+            pageVirtualizer.scrollToIndex(page - 1, { align: "start" });
           }
         },
-        [scrollToBottom, totalPages],
+        [chunksByPage, pageVirtualizer, totalMessageCount],
       );
-      const applyManualPageInput = useCallback(() => {
-        const parsed = Number.parseInt(pageInputValue.trim(), 10);
-        const nextPage = Number.isFinite(parsed)
-          ? clampPage(parsed, totalPages)
-          : safeCurrentPage;
-
-        setPageInputValue(String(nextPage));
-        if (nextPage !== safeCurrentPage) {
-          handleChangePage(nextPage);
-        }
-      }, [handleChangePage, pageInputValue, safeCurrentPage, totalPages]);
+      const jumpToLatest = useCallback(() => {
+        shouldFollowActiveSearchMatchRef.current = false;
+        setMessageJumpTarget(null);
+        setScrollEndPadding(0);
+        setCurrentPage(totalPages);
+        setAutoScroll(true);
+        autoScrollRef.current = true;
+        requestAnimationFrame(scrollToBottom);
+      }, [scrollToBottom, totalPages]);
       const agentsBootstrapMessage =
         chatMessages.length >= 2 &&
         chatMessages[0].type === "user" &&
@@ -2109,6 +2180,73 @@ const SessionView = memo(
         },
         [railCollapsedByDefault],
       );
+      useLayoutEffect(() => {
+        if (messageJumpTarget === null) return;
+        const container = containerRef.current;
+        if (!container) return;
+        const pageIndex = Math.floor(
+          (messageJumpTarget - 1) / MESSAGES_PER_PAGE,
+        );
+        const target = container.querySelector<HTMLElement>(
+          `[data-conversation-message="${messageJumpTarget}"]`,
+        );
+        if (!target) {
+          const entry = pagedMessageEntries.find(
+            (entry) => entry.visibleIndex + 1 === messageJumpTarget,
+          );
+          const segmentKey = entry && pagedEntrySegmentKeys.get(entry.entryKey);
+          if (segmentKey) expandDefaultSegmentForSearch(segmentKey);
+          return;
+        }
+
+        for (const page of container.querySelectorAll<HTMLDivElement>(
+          "[data-conversation-page]",
+        )) {
+          pageVirtualizer.measureElement(page);
+        }
+        const renderedPage = virtualPages.find(
+          (page) => page.index === pageIndex,
+        );
+        const measuredPage = pageVirtualizer
+          .getVirtualItems()
+          .find((page) => page.index === pageIndex);
+        if (
+          !renderedPage ||
+          !measuredPage ||
+          renderedPage.start !== measuredPage.start ||
+          renderedPage.size !== measuredPage.size
+        ) {
+          return;
+        }
+
+        const targetTop =
+          container.scrollTop +
+          target.getBoundingClientRect().top -
+          container.getBoundingClientRect().top -
+          container.clientTop;
+        const missingSpace =
+          targetTop - (container.scrollHeight - container.clientHeight);
+        if (missingSpace > 0.5) {
+          // Keep direct jumps exact even when fewer than a viewport of messages remain.
+          setScrollEndPadding((padding) => padding + Math.ceil(missingSpace));
+          return;
+        }
+        isScrollingProgrammaticallyRef.current = true;
+        pageVirtualizer.scrollToOffset(Math.max(0, targetTop));
+        setMessageJumpTarget(null);
+        requestAnimationFrame(() => {
+          isScrollingProgrammaticallyRef.current = false;
+        });
+      }, [
+        messageJumpTarget,
+        pagedMessageEntries,
+        pagedEntrySegmentKeys,
+        collapsedDefaultSegmentKeys,
+        expandDefaultSegmentForSearch,
+        pageVirtualizer,
+        virtualPages,
+        scrollEndPadding,
+      ]);
       const renderMessageEntry = useCallback(
         (entry: PagedMessageEntry) => {
           const {
@@ -2143,7 +2281,13 @@ const SessionView = memo(
           if (entry.pendingUserMessage) {
             const pendingMessage = entry.pendingUserMessage;
             return (
-              <div key={entry.entryKey} data-search-entry={entry.entryKey}>
+              <div
+                key={entry.entryKey}
+                data-search-entry={entry.entryKey}
+                data-conversation-message={entry.visibleIndex + 1}
+                data-message-hover
+                data-message-timestamp={message.timestamp}
+              >
                 <MessageBlock message={message} userTone="pending" />
                 {pendingMessage.status === "queued" &&
                 (onForceSendPendingUserMessage ||
@@ -2200,7 +2344,13 @@ const SessionView = memo(
           }
 
           return (
-            <div key={entry.entryKey} data-search-entry={entry.entryKey}>
+            <div
+              key={entry.entryKey}
+              data-search-entry={entry.entryKey}
+              data-conversation-message={entry.visibleIndex + 1}
+              data-message-hover
+              data-message-timestamp={message.timestamp}
+            >
               <MessageBlock
                 message={message}
                 aiTerminalContext={aiTerminalContext}
@@ -2354,8 +2504,10 @@ const SessionView = memo(
       }, [currentPage, safeCurrentPage]);
 
       useEffect(() => {
-        setPageInputValue(String(safeCurrentPage));
-      }, [safeCurrentPage]);
+        if (!autoScroll) {
+          setCurrentPage(firstVisiblePage);
+        }
+      }, [autoScroll, firstVisiblePage]);
 
       useEffect(() => {
         const history = extractUserInputHistory(messages);
@@ -2390,7 +2542,7 @@ const SessionView = memo(
           return;
         }
 
-        const wasOnLatestPage = currentPage >= previousTotalPages;
+        const wasOnLatestPage = autoScroll && currentPage >= previousTotalPages;
         if (totalPages > previousTotalPages && wasOnLatestPage) {
           setCurrentPage(totalPages);
           setAutoScroll(true);
@@ -2399,9 +2551,9 @@ const SessionView = memo(
         }
 
         totalPagesRef.current = totalPages;
-      }, [currentPage, totalPages]);
+      }, [autoScroll, currentPage, totalPages]);
 
-      useEffect(() => {
+      useLayoutEffect(() => {
         if (autoScroll && isLatestPage) {
           scrollToBottom();
         }
@@ -2410,6 +2562,8 @@ const SessionView = memo(
         pendingUserMessages,
         autoScroll,
         isLatestPage,
+        pagesHeight,
+        loading,
         scrollToBottom,
       ]);
 
@@ -2460,12 +2614,12 @@ const SessionView = memo(
           return;
         }
 
-        if (activeSearchMatch.page !== safeCurrentPage) {
+        if (!chunksByPage.has(activeSearchMatch.page)) {
           setAutoScroll(false);
           setCurrentPage(activeSearchMatch.page);
-          if (containerRef.current) {
-            containerRef.current.scrollTop = 0;
-          }
+          pageVirtualizer.scrollToIndex(activeSearchMatch.page - 1, {
+            align: "start",
+          });
           return;
         }
 
@@ -2478,8 +2632,9 @@ const SessionView = memo(
       }, [
         activeSearchMatch,
         expandDefaultSegmentForSearch,
+        chunksByPage,
+        pageVirtualizer,
         pagedEntrySegmentKeys,
-        safeCurrentPage,
       ]);
 
       useLayoutEffect(() => {
@@ -2515,7 +2670,7 @@ const SessionView = memo(
         messages,
         pendingUserMessages,
         pagedMessageChunks,
-        safeCurrentPage,
+        collapsedDefaultSegmentKeys,
         summary,
       ]);
 
@@ -2533,9 +2688,33 @@ const SessionView = memo(
           return;
         }
 
-        if (!activeSearchMatch || activeSearchMatch.page !== safeCurrentPage) {
+        if (!activeSearchMatch) {
           updateConversationSearchMatchFocus(matchGroups, null);
           return;
+        }
+
+        if (shouldFollowActiveSearchMatchRef.current) {
+          // A newly mounted neighbor can replace an estimated height. Wait for
+          // its measured offsets to paint before centering the search result.
+          for (const page of container.querySelectorAll<HTMLDivElement>(
+            "[data-conversation-page]",
+          )) {
+            pageVirtualizer.measureElement(page);
+          }
+          const renderedPage = virtualPages.find(
+            (page) => page.index === activeSearchMatch.page - 1,
+          );
+          const measuredPage = pageVirtualizer
+            .getVirtualItems()
+            .find((page) => page.index === activeSearchMatch.page - 1);
+          if (
+            !renderedPage ||
+            !measuredPage ||
+            renderedPage.start !== measuredPage.start ||
+            renderedPage.size !== measuredPage.size
+          ) {
+            return;
+          }
         }
 
         const contentNode = contentRef.current;
@@ -2601,15 +2780,40 @@ const SessionView = memo(
 
         setAutoScroll(false);
         isScrollingProgrammaticallyRef.current = true;
-        container.scrollTop = Math.max(targetScrollTop, 0);
+        // Replace the page jump's pending alignment with the match position.
+        pageVirtualizer.scrollToOffset(Math.max(targetScrollTop, 0));
         requestAnimationFrame(() => {
           isScrollingProgrammaticallyRef.current = false;
         });
         shouldFollowActiveSearchMatchRef.current = false;
-      }, [activeSearchMatch, safeCurrentPage]);
+      }, [
+        activeSearchMatch,
+        pagedMessageChunks,
+        collapsedDefaultSegmentKeys,
+        pageVirtualizer,
+        virtualPages,
+      ]);
 
       const hasSessionShortcut =
         workflowShortcut !== null || terminalShortcut !== null;
+
+      useLayoutEffect(() => {
+        const container = containerRef.current;
+        const pages = pagesRef.current;
+        if (!container || !pages) return;
+        const updateMargin = () => {
+          setPagesScrollMargin(
+            pages.getBoundingClientRect().top -
+              container.getBoundingClientRect().top +
+              container.scrollTop,
+          );
+        };
+        updateMargin();
+        const observer = new ResizeObserver(updateMargin);
+        observer.observe(container);
+        if (contentRef.current) observer.observe(contentRef.current);
+        return () => observer.disconnect();
+      }, [loading, hasSessionShortcut, summary]);
 
       if (loading) {
         return (
@@ -2624,6 +2828,8 @@ const SessionView = memo(
           <div
             ref={containerRef}
             onScroll={handleScroll}
+            data-conversation-scroll
+            style={{ overflowAnchor: "none" }}
             className="h-full overflow-y-auto bg-zinc-950"
           >
             {hasSessionShortcut ? (
@@ -2669,6 +2875,7 @@ const SessionView = memo(
               </div>
             ) : null}
             <div
+              style={{ paddingBottom: scrollEndPadding + 48 }}
               ref={contentRef}
               className={`mx-auto max-w-4xl px-4 pb-12 md:px-6 ${
                 hasSessionShortcut ? "pt-3" : "pt-5"
@@ -2685,264 +2892,246 @@ const SessionView = memo(
                 </div>
               )}
 
-              <div className="flex flex-col gap-3">
-                {pagedMessageChunks.map((chunk) => {
-                  if (chunk.kind === "important") {
-                    return renderMessageEntry(chunk.entry);
-                  }
-
-                  const autoForceBlockMode = shouldAutoForceBlockModeForEntries(
-                    chunk.entries,
-                  );
-                  const isCollapsedByPreference =
-                    Object.prototype.hasOwnProperty.call(
-                      collapsedDefaultSegmentKeys,
-                      chunk.segmentKey,
-                    )
-                      ? collapsedDefaultSegmentKeys[chunk.segmentKey] === true
-                      : railCollapsedByDefault;
-                  const isCollapsed = autoForceBlockMode
-                    ? false
-                    : isCollapsedByPreference;
-                  const collapsedEntries = chunk.entries.map((entry) => ({
-                    entry,
-                    line: getCollapsedViewportLine(entry.message, {
-                      projectPath,
-                      toolMapByCallId,
-                      toolInputMapByCallId,
-                    }),
-                  }));
-                  const collapsedLines = collapsedEntries.filter(
-                    (
-                      item,
-                    ): item is {
-                      entry: PagedMessageEntry;
-                      line: NonNullable<
-                        ReturnType<typeof getCollapsedViewportLine>
-                      >;
-                    } => item.line !== null,
-                  );
-                  const hiddenTimestampEntries = collapsedEntries
-                    .filter(
-                      (
-                        item,
-                      ): item is {
-                        entry: PagedMessageEntry & { timestampText: string };
-                        line: null;
-                      } =>
-                        item.line === null &&
-                        typeof item.entry.timestampText === "string",
-                    )
-                    .map((item) => item.entry);
-
-                  return (
-                    <div
-                      key={chunk.segmentKey}
-                      className="flex min-w-0 items-stretch gap-3"
-                    >
-                      <button
-                        type="button"
-                        ref={(node) =>
-                          registerRailButtonRef(chunk.segmentKey, node)
+              <div
+                ref={pagesRef}
+                className="relative"
+                style={{ height: pagesHeight }}
+              >
+                {virtualPages.map((virtualPage) => (
+                  <div
+                    key={virtualPage.key}
+                    ref={pageVirtualizer.measureElement}
+                    data-index={virtualPage.index}
+                    data-conversation-page={virtualPage.index + 1}
+                    className="absolute left-0 top-0 w-full flex flex-col gap-3 pb-3"
+                    style={{
+                      transform: `translateY(${virtualPage.start - pagesScrollMargin}px)`,
+                      minHeight: chunksByPage.has(virtualPage.index + 1)
+                        ? undefined
+                        : virtualPage.size,
+                    }}
+                  >
+                    {(chunksByPage.get(virtualPage.index + 1) ?? []).map(
+                      (chunk) => {
+                        if (chunk.kind === "important") {
+                          return renderMessageEntry(chunk.entry);
                         }
-                        onClick={(event: MouseEvent<HTMLButtonElement>) => {
-                          if (autoForceBlockMode) {
-                            return;
-                          }
-                          const pointerY =
-                            event.detail === 0 ? null : event.clientY;
-                          toggleDefaultSegment(chunk.segmentKey, pointerY);
-                        }}
-                        className={`relative w-4 shrink-0 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 ${
-                          autoForceBlockMode
-                            ? "cursor-not-allowed opacity-70"
-                            : ""
-                        }`}
-                        disabled={autoForceBlockMode}
-                        title={
-                          autoForceBlockMode
-                            ? "Block mode is temporarily forced while a permission approval is pending"
-                            : isCollapsed
-                              ? "Expand this default block group"
-                              : "Collapse this default block group"
-                        }
-                        aria-label={
-                          autoForceBlockMode
-                            ? "Block mode is temporarily forced while a permission approval is pending"
-                            : isCollapsed
-                              ? "Expand this default block group"
-                              : "Collapse this default block group"
-                        }
-                      >
-                        <span
-                          className={`absolute left-1/2 top-0 h-full w-[2px] -translate-x-1/2 rounded-full transition-colors ${
-                            isCollapsed
-                              ? "bg-sky-300/95"
-                              : "bg-zinc-600/95 hover:bg-zinc-400/95"
-                          }`}
-                        />
-                      </button>
 
-                      <div
-                        className="min-w-0 flex-1"
-                        onClick={(event: MouseEvent<HTMLDivElement>) => {
-                          if (autoForceBlockMode) {
-                            return;
-                          }
-                          if (
-                            !shouldToggleCollapsedSegmentFromContentClick({
-                              isCollapsed,
-                              target: event.target,
-                              currentTarget: event.currentTarget,
-                            })
-                          ) {
-                            return;
-                          }
-                          const pointerY =
-                            event.detail === 0 ? null : event.clientY;
-                          toggleDefaultSegment(chunk.segmentKey, pointerY);
-                        }}
-                      >
-                        {isCollapsed ? (
-                          <div className="flex flex-col gap-1.5">
-                            {collapsedLines.length > 0 ||
-                            hiddenTimestampEntries.length > 0 ? (
-                              <>
-                                {collapsedLines.map(({ entry, line }) => (
-                                  <div
-                                    key={entry.entryKey}
-                                    className={`flex min-w-0 items-center gap-2 text-[11px] leading-relaxed ${getCollapsedLineToneClasses(line.tone)}`}
-                                    title={line.text}
-                                  >
-                                    <CollapsedViewportSummary line={line} />
-                                    {entry.timestampText && (
-                                      <span className="shrink-0 text-[10px] font-mono text-zinc-400/90">
-                                        {entry.timestampText}
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                                {hiddenTimestampEntries.map((entry) => (
-                                  <div
-                                    key={`${entry.entryKey}:hidden-timestamp`}
-                                    className="flex min-w-0 items-center gap-2 text-[11px] leading-relaxed text-zinc-400/90"
-                                  >
-                                    <span className="min-w-0 flex-1 truncate text-zinc-500">
-                                      Hidden block
-                                    </span>
-                                    <span className="shrink-0 text-[10px] font-mono text-zinc-400/90">
-                                      {entry.timestampText}
-                                    </span>
-                                  </div>
-                                ))}
-                              </>
-                            ) : (
-                              <div className="text-[11px] leading-relaxed text-zinc-500">
-                                All blocks in this group are hidden in text
-                                mode.
-                              </div>
-                            )}
+                        const autoForceBlockMode =
+                          shouldAutoForceBlockModeForEntries(chunk.entries);
+                        const isCollapsedByPreference =
+                          Object.prototype.hasOwnProperty.call(
+                            collapsedDefaultSegmentKeys,
+                            chunk.segmentKey,
+                          )
+                            ? collapsedDefaultSegmentKeys[chunk.segmentKey] ===
+                              true
+                            : railCollapsedByDefault;
+                        const isCollapsed = autoForceBlockMode
+                          ? false
+                          : isCollapsedByPreference;
+                        const collapsedEntries = chunk.entries.map((entry) => ({
+                          entry,
+                          line: getCollapsedViewportLine(entry.message, {
+                            projectPath,
+                            toolMapByCallId,
+                            toolInputMapByCallId,
+                          }),
+                        }));
+                        const collapsedLines = collapsedEntries.filter(
+                          (
+                            item,
+                          ): item is {
+                            entry: PagedMessageEntry;
+                            line: NonNullable<
+                              ReturnType<typeof getCollapsedViewportLine>
+                            >;
+                          } => item.line !== null,
+                        );
+                        const hiddenTimestampEntries = collapsedEntries
+                          .filter(
+                            (
+                              item,
+                            ): item is {
+                              entry: PagedMessageEntry & {
+                                timestampText: string;
+                              };
+                              line: null;
+                            } =>
+                              item.line === null &&
+                              typeof item.entry.timestampText === "string",
+                          )
+                          .map((item) => item.entry);
+
+                        return (
+                          <div
+                            key={chunk.segmentKey}
+                            className="flex min-w-0 items-stretch gap-3"
+                          >
+                            <button
+                              type="button"
+                              ref={(node) =>
+                                registerRailButtonRef(chunk.segmentKey, node)
+                              }
+                              onClick={(
+                                event: MouseEvent<HTMLButtonElement>,
+                              ) => {
+                                if (autoForceBlockMode) {
+                                  return;
+                                }
+                                const pointerY =
+                                  event.detail === 0 ? null : event.clientY;
+                                toggleDefaultSegment(
+                                  chunk.segmentKey,
+                                  pointerY,
+                                );
+                              }}
+                              className={`relative w-4 shrink-0 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 ${
+                                autoForceBlockMode
+                                  ? "cursor-not-allowed opacity-70"
+                                  : ""
+                              }`}
+                              disabled={autoForceBlockMode}
+                              title={
+                                autoForceBlockMode
+                                  ? "Block mode is temporarily forced while a permission approval is pending"
+                                  : isCollapsed
+                                    ? "Expand this default block group"
+                                    : "Collapse this default block group"
+                              }
+                              aria-label={
+                                autoForceBlockMode
+                                  ? "Block mode is temporarily forced while a permission approval is pending"
+                                  : isCollapsed
+                                    ? "Expand this default block group"
+                                    : "Collapse this default block group"
+                              }
+                            >
+                              <span
+                                className={`absolute left-1/2 top-0 h-full w-[2px] -translate-x-1/2 rounded-full transition-colors ${
+                                  isCollapsed
+                                    ? "bg-sky-300/95"
+                                    : "bg-zinc-600/95 hover:bg-zinc-400/95"
+                                }`}
+                              />
+                            </button>
+
+                            <div
+                              className="min-w-0 flex-1"
+                              onClick={(event: MouseEvent<HTMLDivElement>) => {
+                                if (autoForceBlockMode) {
+                                  return;
+                                }
+                                if (
+                                  !shouldToggleCollapsedSegmentFromContentClick(
+                                    {
+                                      isCollapsed,
+                                      target: event.target,
+                                      currentTarget: event.currentTarget,
+                                    },
+                                  )
+                                ) {
+                                  return;
+                                }
+                                const pointerY =
+                                  event.detail === 0 ? null : event.clientY;
+                                toggleDefaultSegment(
+                                  chunk.segmentKey,
+                                  pointerY,
+                                );
+                              }}
+                            >
+                              {isCollapsed ? (
+                                <div className="flex flex-col gap-1.5">
+                                  {collapsedLines.length > 0 ||
+                                  hiddenTimestampEntries.length > 0 ? (
+                                    <>
+                                      {collapsedLines.map(({ entry, line }) => (
+                                        <div
+                                          key={entry.entryKey}
+                                          data-conversation-message={
+                                            entry.visibleIndex + 1
+                                          }
+                                          className={`flex min-w-0 items-center gap-2 text-[11px] leading-relaxed ${getCollapsedLineToneClasses(line.tone)}`}
+                                          title={line.text}
+                                        >
+                                          <CollapsedViewportSummary
+                                            line={line}
+                                          />
+                                          {entry.timestampText && (
+                                            <span className="shrink-0 text-[10px] font-mono text-zinc-400/90">
+                                              {entry.timestampText}
+                                            </span>
+                                          )}
+                                        </div>
+                                      ))}
+                                      {hiddenTimestampEntries.map((entry) => (
+                                        <div
+                                          key={`${entry.entryKey}:hidden-timestamp`}
+                                          data-conversation-message={
+                                            entry.visibleIndex + 1
+                                          }
+                                          className="flex min-w-0 items-center gap-2 text-[11px] leading-relaxed text-zinc-400/90"
+                                        >
+                                          <span className="min-w-0 flex-1 truncate text-zinc-500">
+                                            Hidden block
+                                          </span>
+                                          <span className="shrink-0 text-[10px] font-mono text-zinc-400/90">
+                                            {entry.timestampText}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </>
+                                  ) : (
+                                    <div
+                                      data-conversation-message={
+                                        chunk.entries[0].visibleIndex + 1
+                                      }
+                                      className="text-[11px] leading-relaxed text-zinc-500"
+                                    >
+                                      All blocks in this group are hidden in
+                                      text mode.
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-2">
+                                  {chunk.entries.map((entry) =>
+                                    renderMessageEntry(entry),
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        ) : (
-                          <div className="flex flex-col gap-2">
-                            {chunk.entries.map((entry) =>
-                              renderMessageEntry(entry),
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                        );
+                      },
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          {totalPages > 1 ? (
-            <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg px-2 py-1">
-              <div className="flex items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleChangePage(safeCurrentPage - 1)}
-                  disabled={safeCurrentPage <= 1}
-                  className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-zinc-50 hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-zinc-50 disabled:opacity-100 disabled:cursor-not-allowed"
-                  style={{
-                    WebkitTextFillColor: "var(--app-page-control-foreground)",
-                    color: "var(--app-page-control-foreground)",
-                  }}
-                  aria-label="Previous page"
-                >
-                  <span
-                    style={{
-                      color: "var(--app-page-control-foreground)",
-                      WebkitTextFillColor: "var(--app-page-control-foreground)",
-                      opacity: safeCurrentPage <= 1 ? 0.45 : 1,
-                    }}
-                  >
-                    &lt;
-                  </span>
-                </button>
-                <div
-                  className="h-7 px-3 inline-flex items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/60 text-[11px] font-mono font-bold text-zinc-50 tabular-nums"
-                  style={{ minWidth: `${pageDigits * 2 + 6}ch` }}
-                >
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={pageInputValue}
-                    onChange={(event) => {
-                      const digits = event.target.value.replace(/\D+/g, "");
-                      setPageInputValue(digits);
-                    }}
-                    onBlur={applyManualPageInput}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        applyManualPageInput();
-                      }
-                    }}
-                    className="border-0 bg-transparent p-0 text-right text-zinc-50 outline-none"
-                    style={{ width: `${pageDigits}ch` }}
-                    aria-label="Current page"
-                  />
-                  <span className="px-1 text-zinc-400">/</span>
-                  <span
-                    style={{ width: `${pageDigits}ch` }}
-                    className="text-left"
-                  >
-                    {totalPages}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleChangePage(safeCurrentPage + 1)}
-                  disabled={safeCurrentPage >= totalPages}
-                  className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-zinc-50 hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:text-zinc-50 disabled:opacity-100 disabled:cursor-not-allowed"
-                  style={{
-                    WebkitTextFillColor: "var(--app-page-control-foreground)",
-                    color: "var(--app-page-control-foreground)",
-                  }}
-                  aria-label="Next page"
-                >
-                  <span
-                    style={{
-                      color: "var(--app-page-control-foreground)",
-                      WebkitTextFillColor: "var(--app-page-control-foreground)",
-                      opacity: safeCurrentPage >= totalPages ? 0.45 : 1,
-                    }}
-                  >
-                    &gt;
-                  </span>
-                </button>
-              </div>
-            </div>
-          ) : null}
+          <ConversationMessageHover
+            key={`${sessionId}:${railCollapsedByDefault}`}
+            containerRef={containerRef}
+          />
+
+          {totalMessageCount > 0 && (
+            <ConversationPager
+              key={sessionId}
+              containerRef={containerRef}
+              totalMessages={totalMessageCount}
+              messagesPerPage={MESSAGES_PER_PAGE}
+              onJumpToMessage={jumpToMessage}
+            />
+          )}
 
           {(!isLatestPage || !autoScroll) && (
             <ScrollToBottomButton
               direction={isLatestPage ? "down" : "down-right"}
               bottomOffsetPx={latestButtonBottomOffsetPx}
-              onClick={() => handleChangePage(totalPages)}
+              onClick={jumpToLatest}
             />
           )}
         </div>
