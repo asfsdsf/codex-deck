@@ -214,6 +214,12 @@ function shouldReplaceDuplicateMessage(
   if (incomingMessage.editable && !previousMessage.editable) {
     return true;
   }
+  if (incomingMessage.message?.usage) {
+    return (
+      JSON.stringify(previousMessage.message?.usage) !==
+      JSON.stringify(incomingMessage.message.usage)
+    );
+  }
   const incomingBlock = getReasoningBlock(incomingMessage);
   if (!incomingBlock?.token_usage) {
     return false;

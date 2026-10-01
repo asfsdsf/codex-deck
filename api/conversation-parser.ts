@@ -1,4 +1,9 @@
 import { isVisibleConversationMessage } from "./conversation-pagination";
+import {
+  attachTokenUsageToModelOutputs,
+  isModelOutputMessage,
+  withModelOutputTokenUsage,
+} from "./conversation-token-usage";
 import type {
   CodexCollabAgentState,
   CodexCollabAgentStatus,
@@ -57,6 +62,7 @@ export class ConversationParserState {
   private readonly persistedCounts = new Map<string, number>();
   private readonly streamingCounts = new Map<string, number>();
   private readonly completedItems = new Set<string>();
+  private readonly pendingTokenUsageIndexes = new Set<number>();
   readonly changedIndexes = new Set<number>();
   readonly pendingEditableLines = new Map<string, LineWithOffset[]>();
   readonly responseMessageIndexes = new Map<number, number>();
@@ -120,6 +126,10 @@ export class ConversationParserState {
   }
   private registerPersisted(index: number): void {
     const message = this.messages[index];
+    if (message.type === "user" || message.type === "task_started") {
+      this.pendingTokenUsageIndexes.clear();
+    }
+    if (isModelOutputMessage(message)) this.pendingTokenUsageIndexes.add(index);
     if (!message.turnId || !this.isTextMessage(message)) return;
     const key = this.kindKey(message.turnId, message.type);
     const ordinal = this.persistedCounts.get(key) ?? 0;
@@ -146,9 +156,20 @@ export class ConversationParserState {
       itemId: itemId ?? this.messages[index].itemId,
       streaming: false,
     };
+    this.pendingTokenUsageIndexes.add(index);
     if (message.type === "assistant")
       this.responseMessageIndexes.set(this.sourceOffset, index);
     return true;
+  }
+
+  attachTokenUsage(usage: TokenUsage): void {
+    // Live notifications can reserve later slots ahead of persisted records.
+    // Only outputs encountered in the log belong to this usage event.
+    for (const index of this.pendingTokenUsageIndexes) {
+      const updated = withModelOutputTokenUsage(this.messages[index], usage);
+      if (updated) this.messages[index] = updated;
+    }
+    this.pendingTokenUsageIndexes.clear();
   }
 
   applyStreamText(
@@ -342,6 +363,7 @@ function createChatMessage(
   uuid: string,
   timestamp?: string,
   edit?: { editId: string; text: string },
+  usage?: TokenUsage,
 ): ConversationMessage {
   return {
     type: role,
@@ -350,6 +372,7 @@ function createChatMessage(
     message: {
       role,
       content,
+      ...(usage ? { usage } : {}),
     },
     ...(edit
       ? {
@@ -942,9 +965,9 @@ function parseLastTokenUsage(value: unknown): TokenUsage | undefined {
 
   const totalTokens = asFiniteNumber(record.total_tokens);
   const reasoningOutputTokens = asFiniteNumber(record.reasoning_output_tokens);
-  const cacheCreationInputTokens = asFiniteNumber(
-    record.cache_creation_input_tokens,
-  );
+  const cacheCreationInputTokens =
+    asFiniteNumber(record.cache_creation_input_tokens) ??
+    asFiniteNumber(record.cache_write_input_tokens);
   const cacheReadInputTokens =
     asFiniteNumber(record.cache_read_input_tokens) ??
     asFiniteNumber(record.cached_input_tokens);
@@ -980,40 +1003,6 @@ function parseLastTokenUsage(value: unknown): TokenUsage | undefined {
         }
       : {}),
   };
-}
-
-function attachTokenUsageToLatestReasoning(
-  messages: ConversationMessage[],
-  usage: TokenUsage,
-): void {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.type === "user") {
-      return;
-    }
-    if (message.type !== "reasoning" && message.type !== "agent_reasoning") {
-      continue;
-    }
-    if (!Array.isArray(message.message?.content)) {
-      continue;
-    }
-    const block = message.message.content.find(
-      (item) => item.type === message.type,
-    );
-    if (!block || block.token_usage) {
-      return;
-    }
-    messages[index] = {
-      ...message,
-      message: {
-        ...message.message,
-        content: message.message.content.map((item) =>
-          item === block ? { ...item, token_usage: usage } : item,
-        ),
-      },
-    };
-    return;
-  }
 }
 
 function goalStatusLabel(status: CodexThreadGoal["status"]): string {
@@ -1469,7 +1458,8 @@ function parseCodexConversation(
           (payload.info as Record<string, unknown>).last_token_usage,
         );
         if (usage) {
-          attachTokenUsageToLatestReasoning(messages, usage);
+          if (state) state.attachTokenUsage(usage);
+          else attachTokenUsageToModelOutputs(messages, usage);
         }
         continue;
       }
@@ -1618,6 +1608,7 @@ function parseCodexConversation(
                 text: editableRecord.text,
               }
             : undefined,
+          parseLastTokenUsage(payload.last_token_usage ?? payload.usage),
         ),
       );
       continue;

@@ -1582,6 +1582,96 @@ test("getConversationStream returns incremental updates from offsets", async () 
   }
 });
 
+test("getConversationStream links delayed reasoning and reply usage across batches for multiple readers", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-stream-reply-usage",
+  );
+  try {
+    const filePath = await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/project-a", Date.now()),
+      responseItemRawLine({
+        type: "reasoning",
+        summary: [],
+        encrypted_content: "encrypted",
+      }),
+    ]);
+    setStorageDir(rootDir);
+    await loadStorage();
+    const initial = await getConversationStream(SESSION_A, 0);
+    const usage = {
+      input_tokens: 100,
+      output_tokens: 20,
+      reasoning_output_tokens: 10,
+      cache_write_input_tokens: 30,
+    };
+    await appendFile(
+      filePath,
+      [
+        responseItemMessageLine("assistant", "Running a command"),
+        responseItemRawLine({
+          type: "function_call",
+          call_id: "call-usage",
+          name: "exec_command",
+          arguments: "{}",
+        }),
+        responseItemRawLine({
+          type: "function_call_output",
+          call_id: "call-usage",
+          output: "done",
+        }),
+        eventMsgLine({
+          type: "token_count",
+          info: { last_token_usage: usage },
+        }),
+        responseItemMessageLine("assistant", "Final answer"),
+        "",
+      ].join("\n"),
+    );
+    const a = await getConversationStream(SESSION_A, initial.nextOffset);
+    const b = await getConversationStream(SESSION_A, initial.nextOffset);
+    assert.deepEqual(a.messages, b.messages);
+    const reasoning = a.messages.find(
+      (message) => message.type === "reasoning",
+    )!;
+    const commentary = a.messages.find((message) => message.message?.usage)!;
+    const normalizedUsage = {
+      input_tokens: 100,
+      output_tokens: 20,
+      reasoning_output_tokens: 10,
+      cache_creation_input_tokens: 30,
+    };
+    assert.equal(reasoning.uuid, initial.messages[0].uuid);
+    assert.ok(Array.isArray(reasoning.message?.content));
+    assert.deepEqual(reasoning.message.content[0].token_usage, normalizedUsage);
+    assert.deepEqual(commentary.message?.usage, normalizedUsage);
+    const final = a.messages.find(
+      (message) =>
+        Array.isArray(message.message?.content) &&
+        message.message.content[0]?.text === "Final answer",
+    )!;
+    assert.equal(final.message?.usage, undefined);
+    const finalUsage = { input_tokens: 200, output_tokens: 5 };
+    await appendFile(
+      filePath,
+      `${eventMsgLine({ type: "token_count", info: { last_token_usage: finalUsage } })}\n`,
+    );
+    const last = await getConversationStream(SESSION_A, a.nextOffset);
+    assert.equal(last.messages.length, 1);
+    assert.equal(last.messages[0].uuid, final.uuid);
+    assert.deepEqual(last.messages[0].message?.usage, finalUsage);
+    await appendFile(
+      filePath,
+      `${eventMsgLine({ type: "token_count", info: { last_token_usage: usage } })}\n`,
+    );
+    assert.equal(
+      (await getConversationStream(SESSION_A, last.nextOffset)).messages.length,
+      0,
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
 test("getConversationStream emits reasoning token usage updates from later token_count events", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "storage-stream-reasoning-usage",

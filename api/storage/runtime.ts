@@ -21,6 +21,11 @@ import {
 } from "../conversation-index";
 import { parseConversationTextChunk } from "../conversation-parser";
 import {
+  attachTokenUsageToModelOutputs,
+  getModelOutputTokenUsage,
+  isModelOutputMessage,
+} from "../conversation-token-usage";
+import {
   collectEditableMessagePairs,
   getEditableResponseItem,
   replaceEditableEventMessageText,
@@ -1644,13 +1649,22 @@ let historyCache: Map<string, SessionHistory> | null = null;
 const pendingRequests = new Map<string, Promise<unknown>>();
 const sessionEditQueues = new Map<string, Promise<void>>();
 const sessionToolNameIndex = new Map<string, Map<string, string>>();
-const sessionStreamLastReasoningMessage = new Map<
+const sessionStreamPendingModelOutputs = new Map<
   string,
-  ConversationMessage
+  ConversationMessage[]
+>();
+const sessionStreamFileIds = new Map<string, string>();
+// Replay delayed metadata to independent byte-offset readers.
+const sessionStreamTokenUsageUpdates = new Map<
+  string,
+  Map<number, ConversationMessage[]>
 >();
 
 export function initStorage(dir?: string): void {
   clearConversationIndexes();
+  sessionStreamPendingModelOutputs.clear();
+  sessionStreamFileIds.clear();
+  sessionStreamTokenUsageUpdates.clear();
   codexDir = dir ?? join(homedir(), ".codex");
   codexHistoryPath = join(codexDir, "history.jsonl");
   codexSessionsDir = join(codexDir, "sessions");
@@ -1695,7 +1709,9 @@ function clearSessionCaches(sessionId: string): void {
   sessionWaitStateCache.delete(sessionId);
   sessionUserMessageTimestampCache.delete(sessionId);
   sessionToolNameIndex.delete(sessionId);
-  sessionStreamLastReasoningMessage.delete(sessionId);
+  sessionStreamPendingModelOutputs.delete(sessionId);
+  sessionStreamFileIds.delete(sessionId);
+  sessionStreamTokenUsageUpdates.delete(sessionId);
   if (historyCache) {
     historyCache.delete(sessionId);
   }
@@ -1986,9 +2002,9 @@ function parseLastTokenUsage(value: unknown): TokenUsage | undefined {
   const reasoningOutputTokens = parseFiniteNumber(
     record.reasoning_output_tokens,
   );
-  const cacheCreationInputTokens = parseFiniteNumber(
-    record.cache_creation_input_tokens,
-  );
+  const cacheCreationInputTokens =
+    parseFiniteNumber(record.cache_creation_input_tokens) ??
+    parseFiniteNumber(record.cache_write_input_tokens);
   const cacheReadInputTokens =
     parseFiniteNumber(record.cache_read_input_tokens) ??
     parseFiniteNumber(record.cached_input_tokens);
@@ -2026,147 +2042,20 @@ function parseLastTokenUsage(value: unknown): TokenUsage | undefined {
   };
 }
 
-function attachTokenUsageToLatestReasoning(
-  messages: ConversationMessage[],
-  usage: TokenUsage,
-): void {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.type === "user") {
-      return;
-    }
-    if (message.type !== "reasoning" && message.type !== "agent_reasoning") {
-      continue;
-    }
-    if (!Array.isArray(message.message?.content)) {
-      continue;
-    }
-    const block = message.message.content.find(
-      (item) => item.type === message.type,
-    );
-    if (!block || block.token_usage) {
-      return;
-    }
-    block.token_usage = usage;
-    return;
-  }
-}
-
-function cloneConversationMessage(
-  message: ConversationMessage,
-): ConversationMessage {
-  return JSON.parse(JSON.stringify(message)) as ConversationMessage;
-}
-
-function getReasoningBlock(message: ConversationMessage): ContentBlock | null {
-  if (message.type !== "reasoning" && message.type !== "agent_reasoning") {
-    return null;
-  }
-  if (!Array.isArray(message.message?.content)) {
-    return null;
-  }
-  return (
-    message.message.content.find((item) => item.type === message.type) ?? null
-  );
-}
-
-function rememberStreamReasoningMessages(
+function rememberStreamModelOutputs(
   sessionId: string,
   messages: ConversationMessage[],
 ): void {
+  let pending: ConversationMessage[] = [];
   for (const message of messages) {
-    if (message.type === "user") {
-      sessionStreamLastReasoningMessage.delete(sessionId);
-      continue;
-    }
-    if (getReasoningBlock(message)) {
-      sessionStreamLastReasoningMessage.set(
-        sessionId,
-        cloneConversationMessage(message),
-      );
+    if (message.type === "user" || message.type === "task_started") {
+      pending = [];
+    } else if (isModelOutputMessage(message)) {
+      if (getModelOutputTokenUsage(message)) pending = [];
+      else pending.push(message);
     }
   }
-}
-
-function applyStreamTokenUsageToLastReasoning(
-  sessionId: string,
-  usage: TokenUsage,
-): ConversationMessage | null {
-  const cached = sessionStreamLastReasoningMessage.get(sessionId);
-  const block = cached ? getReasoningBlock(cached) : null;
-  if (!cached || !block) {
-    return null;
-  }
-  if (block.token_usage) {
-    return null;
-  }
-
-  const updated = cloneConversationMessage(cached);
-  const updatedBlock = getReasoningBlock(updated);
-  if (!updatedBlock) {
-    return null;
-  }
-  updatedBlock.token_usage = usage;
-  sessionStreamLastReasoningMessage.set(
-    sessionId,
-    cloneConversationMessage(updated),
-  );
-  return updated;
-}
-
-function getStreamTokenUsageReasoningUpdate(
-  sessionId: string,
-  lines: LineWithOffset[],
-): ConversationMessage | null {
-  let canAttachToCachedReasoning = true;
-  let updatedReasoning: ConversationMessage | null = null;
-
-  for (const { line } of lines) {
-    const parsed = safeJsonParse(line);
-    if (!parsed || typeof parsed !== "object") {
-      continue;
-    }
-    const record = parsed as { type?: unknown; payload?: unknown };
-    if (!record.payload || typeof record.payload !== "object") {
-      continue;
-    }
-    const payload = record.payload as Record<string, unknown>;
-    const payloadType = typeof payload.type === "string" ? payload.type : "";
-
-    if (record.type === "response_item" && payloadType === "reasoning") {
-      canAttachToCachedReasoning = false;
-      continue;
-    }
-
-    if (
-      record.type === "response_item" &&
-      payloadType === "message" &&
-      payload.role === "user"
-    ) {
-      sessionStreamLastReasoningMessage.delete(sessionId);
-      canAttachToCachedReasoning = false;
-      continue;
-    }
-
-    if (
-      record.type === "event_msg" &&
-      payloadType === "token_count" &&
-      canAttachToCachedReasoning &&
-      payload.info &&
-      typeof payload.info === "object"
-    ) {
-      const usage = parseLastTokenUsage(
-        (payload.info as Record<string, unknown>).last_token_usage,
-      );
-      if (usage) {
-        updatedReasoning =
-          applyStreamTokenUsageToLastReasoning(sessionId, usage) ??
-          updatedReasoning;
-      }
-    }
-  }
-
-  return updatedReasoning;
+  sessionStreamPendingModelOutputs.set(sessionId, pending);
 }
 
 function parseRecordLine(line: string): {
@@ -3769,6 +3658,7 @@ function createChatMessage(
   uuid: string,
   timestamp?: string,
   edit?: { editId: string; text: string },
+  usage?: TokenUsage,
 ): ConversationMessage {
   return {
     type: role,
@@ -3777,6 +3667,7 @@ function createChatMessage(
     message: {
       role,
       content,
+      ...(usage ? { usage } : {}),
     },
     ...(edit
       ? {
@@ -4471,6 +4362,11 @@ function parseToolResultFromPayload(payload: Record<string, unknown>): {
 function parseCodexConversation(
   lines: LineWithOffset[],
   knownToolNames?: Map<string, string>,
+  previousModelOutputs: ConversationMessage[] = [],
+  onTokenUsageUpdates?: (
+    offset: number,
+    updates: ConversationMessage[],
+  ) => void,
 ): ConversationMessage[] {
   const messages: ConversationMessage[] = [];
   const pendingToolCalls = new Map<string, PendingToolUse>();
@@ -4569,7 +4465,19 @@ function parseCodexConversation(
           (payload.info as Record<string, unknown>).last_token_usage,
         );
         if (usage) {
-          attachTokenUsageToLatestReasoning(messages, usage);
+          const combined = [...previousModelOutputs, ...messages];
+          attachTokenUsageToModelOutputs(combined, usage);
+          const updates: ConversationMessage[] = [];
+          for (let index = 0; index < previousModelOutputs.length; index += 1) {
+            if (combined[index] !== previousModelOutputs[index]) {
+              previousModelOutputs[index] = combined[index];
+              updates.push(combined[index]);
+            }
+          }
+          for (let index = 0; index < messages.length; index += 1) {
+            messages[index] = combined[previousModelOutputs.length + index];
+          }
+          if (updates.length) onTokenUsageUpdates?.(offset, updates);
         }
         continue;
       }
@@ -4720,6 +4628,7 @@ function parseCodexConversation(
                 text: editableRecord.text,
               }
             : undefined,
+          parseLastTokenUsage(payload.last_token_usage ?? payload.usage),
         ),
       );
       continue;
@@ -5515,7 +5424,7 @@ export async function getConversation(
 
     try {
       const messages = await readConversationMessageSnapshot(filePath);
-      rememberStreamReasoningMessages(sessionId, messages);
+      rememberStreamModelOutputs(sessionId, messages);
       return messages;
     } catch (err) {
       console.error("Error reading conversation:", err);
@@ -5723,14 +5632,14 @@ export async function getConversationRawWindow(
 
     if (beforeOffset === undefined) {
       // Seed incremental SSE state from the recent window, without reading
-      // the entire session just to recover tool names or reasoning usage.
+      // the entire session just to recover tool names or model token usage.
       const parsed = parseConversationTextChunk(
         buffer.subarray(sliceStart, sliceEnd).toString("utf-8"),
         startOffset,
         sessionToolNameIndex.get(sessionId),
       );
       sessionToolNameIndex.set(sessionId, parsed.toolNames);
-      rememberStreamReasoningMessages(sessionId, parsed.messages);
+      rememberStreamModelOutputs(sessionId, parsed.messages);
     }
 
     return {
@@ -6081,6 +5990,12 @@ export async function getConversationStream(
     const fileStat = await stat(filePath);
     const fileSize = fileStat.size;
     const fileId = `${fileStat.dev}:${fileStat.ino}`;
+    const previousFileId = sessionStreamFileIds.get(sessionId);
+    if (previousFileId && previousFileId !== fileId) {
+      sessionStreamPendingModelOutputs.delete(sessionId);
+      sessionStreamTokenUsageUpdates.delete(sessionId);
+    }
+    sessionStreamFileIds.set(sessionId, fileId);
     const hasPayloadLimit =
       Number.isFinite(options.maxPayloadBytes) &&
       typeof options.maxPayloadBytes === "number" &&
@@ -6269,18 +6184,42 @@ export async function getConversationStream(
     const nextOffset = actualOffset > fileSize ? fileSize : actualOffset;
     const done = nextOffset >= fileSize;
     const toolNames = existingToolNames;
-    const messages = parseCodexConversation(parsedLines, toolNames);
-    const reasoningUpdate = getStreamTokenUsageReasoningUpdate(
-      sessionId,
+    const previousModelOutputs =
+      fromOffset === 0
+        ? []
+        : (sessionStreamPendingModelOutputs.get(sessionId) ?? []).filter(
+            (message) => Number(message.uuid?.split(":", 1)[0]) < fromOffset,
+          );
+    const originals = new Set(previousModelOutputs);
+    const replay = sessionStreamTokenUsageUpdates.get(sessionId) ?? new Map();
+    const messages = parseCodexConversation(
       parsedLines,
+      toolNames,
+      previousModelOutputs,
+      (offset, updates) => {
+        replay.set(offset, updates);
+        // Keep this legacy replay bounded; numbered updates retain revisions.
+        if (replay.size > 32) replay.delete(replay.keys().next().value!);
+      },
     );
-    if (
-      reasoningUpdate &&
-      !messages.some((message) => message.uuid === reasoningUpdate.uuid)
-    ) {
-      messages.push(reasoningUpdate);
+    rememberStreamModelOutputs(sessionId, [
+      ...previousModelOutputs,
+      ...messages,
+    ]);
+    const updates = previousModelOutputs.filter(
+      (message) => !originals.has(message),
+    );
+    for (const { offset } of parsedLines) {
+      updates.push(...(replay.get(offset) ?? []));
     }
-    rememberStreamReasoningMessages(sessionId, messages);
+    const messageIds = new Set(messages.map((message) => message.uuid));
+    for (const update of updates) {
+      if (!messageIds.has(update.uuid)) {
+        messages.push(update);
+        messageIds.add(update.uuid);
+      }
+    }
+    sessionStreamTokenUsageUpdates.set(sessionId, replay);
     sessionToolNameIndex.set(sessionId, toolNames);
 
     return {

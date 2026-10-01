@@ -7,19 +7,24 @@ import {
 } from "react";
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
-import { formatLocalTimestamp } from "../utils";
+import type { ConversationHoverMetadata } from "../conversation-hover-metadata";
 
 interface HoveredMessage {
   element: HTMLElement;
   number: string;
-  timestamp: string | undefined;
-  time: string | null;
+  blockIndex: number | null;
+  metadata: ConversationHoverMetadata;
 }
 
 export default function ConversationMessageHover({
   containerRef,
+  getMetadata,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
+  getMetadata: (
+    messageNumber: number,
+    blockIndex: number | null,
+  ) => ConversationHoverMetadata | null;
 }) {
   const [message, setMessage] = useState<HoveredMessage | null>(null);
   const messageRef = useRef<HoveredMessage | null>(null);
@@ -43,6 +48,19 @@ export default function ConversationMessageHover({
 
   useLayoutEffect(positionTooltip, [message, positionTooltip]);
 
+  // Refresh metadata as live blocks gain usage or completion details.
+  useLayoutEffect(() => {
+    const previous = messageRef.current;
+    if (!previous) return;
+    const metadata = getMetadata(Number(previous.number), previous.blockIndex);
+    const next =
+      previous.element.isConnected && metadata
+        ? { ...previous, metadata }
+        : null;
+    messageRef.current = next;
+    setMessage(next);
+  }, [getMetadata]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -61,18 +79,32 @@ export default function ConversationMessageHover({
       }
       const number = element.dataset.conversationMessage;
       if (!number) return;
-      const timestamp = element.dataset.messageTimestamp;
+      const target = event.target as Element;
+      const candidate = target.closest<HTMLElement>(
+        "[data-search-block-index]",
+      );
+      const blockElement =
+        candidate && element.contains(candidate) ? candidate : null;
+      const blockIndex = blockElement
+        ? Number(blockElement.dataset.searchBlockIndex)
+        : null;
+      const hoveredElement = blockElement ?? element;
       const previous = messageRef.current;
       if (
-        previous?.element !== element ||
+        previous?.element !== hoveredElement ||
         previous.number !== number ||
-        previous.timestamp !== timestamp
+        previous.blockIndex !== blockIndex
       ) {
+        const metadata = getMetadata(Number(number), blockIndex);
+        if (!metadata) {
+          hide();
+          return;
+        }
         const next = {
-          element,
+          element: hoveredElement,
           number,
-          timestamp,
-          time: formatLocalTimestamp(timestamp),
+          blockIndex,
+          metadata,
         };
         messageRef.current = next;
         setMessage(next);
@@ -100,29 +132,40 @@ export default function ConversationMessageHover({
       window.removeEventListener("resize", hide);
       window.removeEventListener("blur", hide);
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
     };
-  }, [containerRef, positionTooltip]);
+  }, [containerRef, getMetadata, positionTooltip]);
 
   if (!message) return null;
   return createPortal(
     <div
       ref={tooltipRef}
       role="tooltip"
-      className="pointer-events-none fixed z-50 flex max-w-[calc(100vw-16px)] flex-wrap items-center gap-x-2 rounded-md border border-zinc-700/70 bg-zinc-900 px-2.5 py-1.5 font-mono text-[10px] text-zinc-200 shadow-lg shadow-black/10"
+      className="pointer-events-none fixed z-50 max-w-[min(360px,calc(100vw-16px))] break-words bg-transparent px-2.5 py-1.5 font-mono text-[10px] text-zinc-200"
     >
-      <span className="font-semibold" data-hover-message-number>
-        #{message.number}
-      </span>
-      {message.time ? (
-        <time
-          dateTime={message.timestamp}
-          className="text-zinc-400"
-          data-hover-message-time
-        >
-          {message.time}
-        </time>
-      ) : (
-        <span className="text-zinc-400">Time unavailable</span>
+      <div className="flex flex-wrap items-center gap-x-2">
+        <span className="font-semibold" data-hover-message-number>
+          #{message.number}
+        </span>
+        {message.metadata.time && (
+          <time
+            dateTime={message.metadata.timestamp}
+            className="text-zinc-400"
+            data-hover-message-time
+          >
+            {message.metadata.time}
+          </time>
+        )}
+      </div>
+      {message.metadata.details.length > 0 && (
+        <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+          {message.metadata.details.map(({ label, value }, index) => (
+            <div key={`${label}:${index}`} className="contents">
+              <dt className="text-zinc-400">{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
       )}
     </div>,
     document.body,

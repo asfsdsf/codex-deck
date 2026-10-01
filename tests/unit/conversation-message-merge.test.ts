@@ -3,6 +3,23 @@ import test from "node:test";
 import type { ConversationMessage } from "@codex-deck/api";
 import { mergeDisplayConversationMessages } from "../../web/conversation-message-merge";
 
+test("merges delayed assistant token usage without duplicating or mutating the reply", () => {
+  const reply: ConversationMessage = {
+    type: "assistant",
+    uuid: "reply-1",
+    message: { role: "assistant", content: [{ type: "text", text: "Answer" }] },
+  };
+  const usage = { input_tokens: 100, output_tokens: 10 };
+  const merged = mergeDisplayConversationMessages(
+    [reply],
+    [{ ...reply, message: { ...reply.message!, usage } }],
+    "append",
+  );
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0].message?.usage, usage);
+  assert.equal(reply.message?.usage, undefined);
+});
+
 function createPendingToolMessage(
   callId: string,
   uuid: string,

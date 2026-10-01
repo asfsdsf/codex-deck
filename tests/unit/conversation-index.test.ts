@@ -21,6 +21,45 @@ import {
 
 const line = (value: string) => `${value}\n`;
 
+test("delayed reply token usage preserves numbering and reaches independent readers", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir("numbered-reply-usage");
+  const path = join(rootDir, "session.jsonl");
+  try {
+    await writeFile(path, line(responseItemMessageLine("assistant", "Answer")));
+    const first = await readConversationMessageWindow(path);
+    const usage = { input_tokens: 100, output_tokens: 10, total_tokens: 110 };
+    await appendFile(
+      path,
+      line(
+        eventMsgLine({
+          type: "token_count",
+          info: { last_token_usage: usage },
+        }),
+      ),
+    );
+    const [a, b] = await Promise.all([
+      readConversationMessageUpdates(path, first.nextOffset),
+      readConversationMessageUpdates(path, first.nextOffset),
+    ]);
+    assert.deepEqual(a.messages, b.messages);
+    assert.equal(a.messages.length, 1);
+    assert.deepEqual(a.messages[0].message?.usage, usage);
+    assert.equal(a.messages[0].uuid, first.messages[0].uuid);
+    assert.equal(a.messages[0].sequence, first.messages[0].sequence);
+    assert.equal(a.messages[0].messageNumber, first.messages[0].messageNumber);
+    assert.ok(a.messages[0].revision! > first.messages[0].revision!);
+    assert.equal(a.totalMessages, 1);
+    assert.equal(
+      (await readConversationMessageUpdates(path, a.nextOffset)).messages
+        .length,
+      0,
+    );
+  } finally {
+    clearConversationIndexes(path);
+    await cleanup();
+  }
+});
+
 test("numbered history pages are fixed before backfill and concurrent readers share one generation", async () => {
   const { rootDir, cleanup } = await createTempCodexDir("numbered-pages");
   const path = join(rootDir, "session.jsonl");

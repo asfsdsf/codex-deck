@@ -22,6 +22,7 @@ import MessageBlock from "./message-block";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
 import ConversationPager from "./conversation-pager";
 import ConversationMessageHover from "./conversation-message-hover";
+import { getConversationHoverMetadata } from "../conversation-hover-metadata";
 import {
   editConversationMessage as editConversationHistoryMessage,
   listCodexApprovalRequests,
@@ -2247,6 +2248,29 @@ const SessionView = memo(
         virtualPages,
         scrollEndPadding,
       ]);
+      const cachedMessagesByNumber = useMemo(
+        () =>
+          new Map(
+            pagedMessageEntries.map((entry) => [
+              entry.visibleIndex + 1,
+              entry.message,
+            ]),
+          ),
+        [pagedMessageEntries],
+      );
+      const getHoverMetadata = useCallback(
+        (messageNumber: number, blockIndex: number | null) => {
+          const message = cachedMessagesByNumber.get(messageNumber);
+          return message
+            ? getConversationHoverMetadata(
+                message,
+                blockIndex,
+                toolTimestampMapByCallId,
+              )
+            : null;
+        },
+        [cachedMessagesByNumber, toolTimestampMapByCallId],
+      );
       const renderMessageEntry = useCallback(
         (entry: PagedMessageEntry) => {
           const {
@@ -2286,7 +2310,6 @@ const SessionView = memo(
                 data-search-entry={entry.entryKey}
                 data-conversation-message={entry.visibleIndex + 1}
                 data-message-hover
-                data-message-timestamp={message.timestamp}
               >
                 <MessageBlock message={message} userTone="pending" />
                 {pendingMessage.status === "queued" &&
@@ -2349,7 +2372,6 @@ const SessionView = memo(
               data-search-entry={entry.entryKey}
               data-conversation-message={entry.visibleIndex + 1}
               data-message-hover
-              data-message-timestamp={message.timestamp}
             >
               <MessageBlock
                 message={message}
@@ -3115,6 +3137,7 @@ const SessionView = memo(
           <ConversationMessageHover
             key={`${sessionId}:${railCollapsedByDefault}`}
             containerRef={containerRef}
+            getMetadata={getHoverMetadata}
           />
 
           {totalMessageCount > 0 && (
