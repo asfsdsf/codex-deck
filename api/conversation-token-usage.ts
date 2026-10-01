@@ -1,5 +1,28 @@
 import type { ConversationMessage, TokenUsage } from "./storage";
 
+export type ConversationModelMetadata = Pick<
+  NonNullable<ConversationMessage["message"]>,
+  "model" | "reasoningEffort" | "serviceTier"
+>;
+
+export function parseConversationModelMetadata(
+  payload: Record<string, unknown>,
+): ConversationModelMetadata {
+  const metadata: ConversationModelMetadata = {};
+  const values = {
+    model: payload.model,
+    reasoningEffort: payload.reasoning_effort ?? payload.effort,
+    serviceTier: payload.service_tier,
+  };
+  for (const key of Object.keys(
+    values,
+  ) as (keyof ConversationModelMetadata)[]) {
+    const value = values[key];
+    if (typeof value === "string" && value.trim()) metadata[key] = value.trim();
+  }
+  return metadata;
+}
+
 export function isModelOutputMessage(message: ConversationMessage): boolean {
   if (message.type === "reasoning" || message.type === "agent_reasoning") {
     return true;

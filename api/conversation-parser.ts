@@ -1,6 +1,8 @@
 import { isVisibleConversationMessage } from "./conversation-pagination";
 import {
   attachTokenUsageToModelOutputs,
+  parseConversationModelMetadata,
+  type ConversationModelMetadata,
   isModelOutputMessage,
   withModelOutputTokenUsage,
 } from "./conversation-token-usage";
@@ -53,6 +55,7 @@ export class ConversationParserState {
   readonly pendingToolMessageIndexes = new Map<string, number>();
   version = 0;
   currentTurnId: string | undefined;
+  modelMetadata: ConversationModelMetadata = {};
   sourceItemId: string | undefined;
   private sourceStreaming = false;
   // Older Codex logs omit item IDs. Their per-turn, per-kind ordinal links
@@ -202,6 +205,7 @@ export class ConversationParserState {
           timestamp: new Date().toISOString(),
           message: {
             role: "assistant",
+            ...this.modelMetadata,
             content: [{ type: type === "assistant" ? "text" : type, text: "" }],
           },
         });
@@ -364,6 +368,7 @@ function createChatMessage(
   timestamp?: string,
   edit?: { editId: string; text: string },
   usage?: TokenUsage,
+  modelMetadata?: ConversationModelMetadata,
 ): ConversationMessage {
   return {
     type: role,
@@ -372,6 +377,7 @@ function createChatMessage(
     message: {
       role,
       content,
+      ...(role === "assistant" ? modelMetadata : {}),
       ...(usage ? { usage } : {}),
     },
     ...(edit
@@ -390,6 +396,7 @@ function createReasoningMessage(
   uuid: string,
   timestamp?: string,
   usage?: TokenUsage,
+  modelMetadata?: ConversationModelMetadata,
 ): ConversationMessage {
   return {
     type,
@@ -397,6 +404,7 @@ function createReasoningMessage(
     timestamp,
     message: {
       role: "assistant",
+      ...modelMetadata,
       content: [
         {
           type,
@@ -1336,6 +1344,7 @@ function parseCodexConversation(
   const toolNames =
     state?.toolNames ?? knownToolNames ?? new Map<string, string>();
   const editableMessagePairs = collectEditableMessagePairs(lines);
+  let modelMetadata: ConversationModelMetadata = state?.modelMetadata ?? {};
 
   for (const { line, offset } of lines) {
     if (state) state.sourceOffset = offset;
@@ -1368,6 +1377,12 @@ function parseCodexConversation(
         record.type === "response_item"
           ? (asTrimmedString(payload.id) ?? undefined)
           : undefined;
+    }
+
+    if (record.type === "turn_context") {
+      modelMetadata = parseConversationModelMetadata(payload);
+      if (state) state.modelMetadata = modelMetadata;
+      continue;
     }
 
     if (record.type === "event_msg") {
@@ -1454,9 +1469,12 @@ function parseCodexConversation(
         payload.info &&
         typeof payload.info === "object"
       ) {
-        const usage = parseLastTokenUsage(
-          (payload.info as Record<string, unknown>).last_token_usage,
-        );
+        const info = payload.info as Record<string, unknown>;
+        const usage = parseLastTokenUsage(info.last_token_usage);
+        const contextWindow = asFiniteNumber(info.model_context_window);
+        if (usage && contextWindow != null && contextWindow > 0) {
+          usage.model_context_window = Math.round(contextWindow);
+        }
         if (usage) {
           if (state) state.attachTokenUsage(usage);
           else attachTokenUsageToModelOutputs(messages, usage);
@@ -1549,6 +1567,8 @@ function parseCodexConversation(
           text,
           `${offset}:agent-reasoning:${messages.length}`,
           timestamp,
+          undefined,
+          modelMetadata,
         ),
       );
       continue;
@@ -1609,6 +1629,7 @@ function parseCodexConversation(
               }
             : undefined,
           parseLastTokenUsage(payload.last_token_usage ?? payload.usage),
+          { ...modelMetadata, ...parseConversationModelMetadata(payload) },
         ),
       );
       continue;
@@ -1634,6 +1655,7 @@ function parseCodexConversation(
           `${offset}:reasoning:${messages.length}`,
           timestamp,
           parseLastTokenUsage(payload.last_token_usage),
+          { ...modelMetadata, ...parseConversationModelMetadata(payload) },
         ),
       );
       continue;

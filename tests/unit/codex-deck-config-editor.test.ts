@@ -35,6 +35,7 @@ test("config editor parses every supported Codex Deck setting", () => {
     dev: true,
     open: false,
     translationCommand: "translate $PROMPT",
+    conversationHover: {},
     codexHomes: [{ id: "work", path: "/data/work", label: "Work" }],
     remote: {
       serverUrl: "https://deck.example.com",
@@ -46,6 +47,25 @@ test("config editor parses every supported Codex Deck setting", () => {
       pinnedOpaqueServerKey: "public-key",
     },
   });
+});
+
+test("floating tip controls round-trip false values and preserve unknown TOML", () => {
+  const original =
+    '# keep\n[conversation_hover]\nenabled = true\nmodel = false\nfuture_field = true\n\n[remote]\nusername = "alice"\n';
+  const config = parseCodexDeckConfigContent(original);
+  config.conversationHover = { enabled: false, model: true, timestamp: false };
+  const updated = updateCodexDeckConfigContent(original, config);
+  assert.deepEqual(
+    parseCodexDeckConfigContent(updated).conversationHover,
+    config.conversationHover,
+  );
+  assert.match(updated, /future_field = true/);
+  assert.match(updated, /username = "alice"/);
+  config.conversationHover = {};
+  const reset = updateCodexDeckConfigContent(updated, config);
+  assert.deepEqual(parseCodexDeckConfigContent(reset).conversationHover, {});
+  assert.doesNotMatch(reset, /(?:enabled|model|timestamp) =/);
+  assert.match(reset, /future_field = true/);
 });
 
 test("structured config edits preserve comments and unrelated tables", () => {

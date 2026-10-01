@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { resolveConversationHoverSettings } from "../conversation-hover-settings";
 import {
   loadCodexDeckConfig,
   MAX_CODEX_DECK_CONFIG_BYTES,
@@ -56,7 +57,13 @@ export function registerConfigRoutes(
   app.get("/api/codex-deck/config", async (c) => {
     try {
       const file = await readCodexDeckHomeConfigFile(options.codexHome);
-      const response: CodexDeckConfigFileResponse = file;
+      const response: CodexDeckConfigFileResponse = {
+        ...file,
+        hoverSettings: resolveConversationHoverSettings(
+          loadCodexDeckConfig(process.cwd(), options.codexHome).config
+            .conversationHover,
+        ),
+      };
       return c.json(response);
     } catch (error) {
       return c.json(
@@ -118,6 +125,9 @@ export function registerConfigRoutes(
           ok: true,
           ...file,
           ...applied,
+          hoverSettings: resolveConversationHoverSettings(
+            nextConfig.conversationHover,
+          ),
         } satisfies CodexDeckConfigWriteResponse;
       });
 

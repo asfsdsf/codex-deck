@@ -9,6 +9,12 @@ import type {
   WorkflowDetailResponse,
   WorkflowSummary,
 } from "@codex-deck/api";
+import type { ConversationHoverSettings } from "../../api/conversation-hover-settings";
+
+export interface ConversationHoverSettingsHandlers {
+  onSettings: (settings: ConversationHoverSettings) => void;
+  onError?: () => void;
+}
 
 export interface SessionsStreamHandlers {
   onSessions: (sessions: Session[]) => void;
@@ -86,6 +92,9 @@ export interface TerminalStreamSubscriptionOptions {
 }
 
 export interface WebTransport {
+  subscribeConversationHoverSettings: (
+    handlers: ConversationHoverSettingsHandlers,
+  ) => () => void;
   requestJson: <T>(url: string, init?: RequestInit) => Promise<T>;
   subscribeCodexDeckUpdateOutput: (
     handlers: CodexDeckUpdateOutputStreamHandlers,

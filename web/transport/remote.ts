@@ -12,6 +12,7 @@ import type {
   WorkflowSummary,
 } from "@codex-deck/api";
 import type { RemoteClient } from "../remote-client";
+import type { ConversationHoverSettings } from "../../api/conversation-hover-settings";
 import {
   createWakeablePollingSubscription,
   createPollingSubscription,
@@ -288,6 +289,24 @@ export function createRemoteTransport(
   };
 
   return {
+    subscribeConversationHoverSettings: (handlers) => {
+      let previous = "";
+      return createPollingSubscription(async () => {
+        try {
+          const settings =
+            await remoteClient.requestJson<ConversationHoverSettings>(
+              "/api/codex-deck/hover-settings",
+            );
+          const payload = JSON.stringify(settings);
+          if (payload !== previous) {
+            previous = payload;
+            handlers.onSettings(settings);
+          }
+        } catch {
+          handlers.onError?.();
+        }
+      }, 5_000);
+    },
     requestJson<T>(url: string, init?: RequestInit): Promise<T> {
       return remoteClient.requestJson<T>(url, init);
     },

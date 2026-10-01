@@ -29,6 +29,32 @@
 # Linux it is required for translation to work.
 # translation_command = "translate_cmd $PROMPT $INPUT_LANG $OUTPUT_LANG"
 
+# Floating message tip. Each switch is independent; unavailable values are
+# omitted. These settings apply live to all tabs/devices, including direct
+# file edits (within 5 seconds). Only model fields are off by default.
+# [conversation_hover]
+# enabled = true
+# message_number = true
+# timestamp = true
+# input_tokens = true
+# output_tokens = true
+# total_tokens = true
+# reasoning_tokens = true
+# cache_read_tokens = true
+# cache_creation_tokens = true
+# cache_hit_rate = true
+# context_usage = true
+# model = false
+# reasoning_effort = false
+# service_tier = false
+# duration = true
+# exit_code = true
+# tool_output_tokens = true
+# output_truncated = true
+# goal_tokens = true
+# goal_budget = true
+# goal_elapsed = true
+
 # Remote mode: attach this CLI to a remote codex-deck server.
 # These mirror the --remote-* flags and CODEXDECK_REMOTE_* env vars.
 # server_url, username, password, and setup_token are all required

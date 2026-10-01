@@ -3,6 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveDefaultCodexHome } from "./codex-home";
+import {
+  isConversationHoverSetting,
+  type ConversationHoverConfig,
+} from "./conversation-hover-settings";
 
 export interface CodexDeckRemoteConfig {
   serverUrl?: string;
@@ -25,6 +29,7 @@ export interface CodexDeckConfig {
   dev?: boolean;
   open?: boolean;
   translationCommand?: string;
+  conversationHover?: ConversationHoverConfig;
   codexHomes?: Record<string, CodexDeckHomeConfig>;
   remote?: CodexDeckRemoteConfig;
 }
@@ -80,7 +85,7 @@ const REMOTE_KEY_MAP: Record<string, keyof CodexDeckRemoteConfig> = {
 
 /**
  * Parses the small TOML subset supported by codex-deck config files:
- * comments, `[remote]` and `[codex_homes.<id>]` tables, double-quoted strings,
+ * comments, `[remote]`, `[conversation_hover]` and `[codex_homes.<id>]` tables, double-quoted strings,
  * integers, booleans.
  * Unknown keys, unknown tables, and malformed lines are ignored.
  */
@@ -105,6 +110,12 @@ export function parseConfigToml(content: string): CodexDeckConfig {
     const rawValue = kvMatch[2] ?? "";
     if (table === "") {
       assignTopLevel(config, key, rawValue);
+    } else if (
+      table === "conversation_hover" &&
+      isConversationHoverSetting(key)
+    ) {
+      const value = parseTomlBoolean(rawValue);
+      if (value !== undefined) (config.conversationHover ??= {})[key] = value;
     } else if (table === "remote") {
       const mapped = REMOTE_KEY_MAP[key];
       if (!mapped) {
@@ -215,7 +226,7 @@ function parseTomlInteger(rawValue: string): number | undefined {
 }
 
 function parseTomlBoolean(rawValue: string): boolean | undefined {
-  const trimmed = rawValue.trim();
+  const trimmed = rawValue.trim().split(/\s+#/, 1)[0]?.trim();
   if (trimmed === "true") {
     return true;
   }
@@ -270,6 +281,12 @@ export function mergeCodexDeckConfigs(
   const translationCommand = high.translationCommand ?? low.translationCommand;
   if (translationCommand !== undefined) {
     merged.translationCommand = translationCommand;
+  }
+  if (high.conversationHover || low.conversationHover) {
+    merged.conversationHover = {
+      ...low.conversationHover,
+      ...high.conversationHover,
+    };
   }
   if (high.codexHomes || low.codexHomes) {
     const codexHomes: Record<string, CodexDeckHomeConfig> = {};

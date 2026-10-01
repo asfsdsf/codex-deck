@@ -23,6 +23,51 @@ const usage = {
 const tokenCount = (value = usage) =>
   eventMsgLine({ type: "token_count", info: { last_token_usage: value } });
 
+test("model metadata and context capacity stay attached to their own historical calls", () => {
+  const state = new ConversationParserState();
+  const records = [
+    JSON.stringify({
+      type: "turn_context",
+      payload: { model: "model-a", effort: "high", service_tier: "fast" },
+    }),
+    reasoning,
+    responseItemMessageLine("assistant", "First answer"),
+    eventMsgLine({
+      type: "token_count",
+      info: { last_token_usage: usage, model_context_window: 10000 },
+    }),
+    JSON.stringify({
+      type: "turn_context",
+      payload: { model: "model-b", effort: "low" },
+    }),
+    responseItemMessageLine("assistant", "Second answer"),
+    tokenCount(),
+  ];
+  let offset = 0;
+  for (const record of records)
+    offset += parseConversationTextChunk(
+      `${record}\n`,
+      offset,
+      undefined,
+      state,
+    ).consumedBytes;
+  const first = state.messages[1].message!;
+  assert.equal(first.model, "model-a");
+  assert.equal(first.reasoningEffort, "high");
+  assert.equal(first.serviceTier, "fast");
+  assert.equal(first.usage?.model_context_window, 10000);
+  assert.equal(state.messages[0].message?.model, "model-a");
+  assert.equal(
+    getModelOutputTokenUsage(state.messages[0])?.model_context_window,
+    10000,
+  );
+  const second = state.messages[2].message!;
+  assert.equal(second.model, "model-b");
+  assert.equal(second.reasoningEffort, "low");
+  assert.equal(second.serviceTier, undefined);
+  assert.equal(second.usage?.model_context_window, undefined);
+});
+
 for (const incremental of [false, true]) {
   const mode = incremental ? "incremental" : "static";
   const parse = (records: string[]) => {

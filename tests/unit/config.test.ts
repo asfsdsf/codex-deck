@@ -83,6 +83,25 @@ test("parseConfigToml ignores unknown keys, tables, and malformed lines", () => 
   assert.equal(config.remote, undefined);
 });
 
+test("floating tip TOML supports partial per-field preferences and local precedence", () => {
+  const home = parseConfigToml(
+    '[conversation_hover]\nenabled = false # hide it\nmodel = true\ntimestamp = false\ninput_tokens = "false"\nunknown = true\n',
+  );
+  assert.deepEqual(home.conversationHover, {
+    enabled: false,
+    model: true,
+    timestamp: false,
+  });
+  const local = parseConfigToml(
+    "[conversation_hover]\nenabled = true\nmodel = false\n",
+  );
+  assert.deepEqual(mergeCodexDeckConfigs(local, home).conversationHover, {
+    enabled: true,
+    model: false,
+    timestamp: false,
+  });
+});
+
 test("parseConfigToml rejects out-of-range and non-integer ports", () => {
   assert.equal(parseConfigToml("port = 0").port, undefined);
   assert.equal(parseConfigToml("port = 70000").port, undefined);

@@ -245,6 +245,16 @@ export function createLocalTransport(): WebTransport {
 
   return {
     requestJson: requestLocalJson,
+    subscribeConversationHoverSettings: (handlers) =>
+      createReconnectingEventSource({
+        createUrl: () => "/api/codex-deck/hover-settings/stream",
+        configure: (source) => {
+          source.addEventListener("hoverSettings", (event) =>
+            handlers.onSettings(JSON.parse(event.data)),
+          );
+        },
+        onDisconnect: handlers.onError,
+      }),
     notifyConversationMutation: () => {},
     notifyWorkflowMutation: (workflowKey?: string | null) => {
       for (const wake of workflowWakeListeners) {

@@ -23,6 +23,7 @@ import ScrollToBottomButton from "./scroll-to-bottom-button";
 import ConversationPager from "./conversation-pager";
 import ConversationMessageHover from "./conversation-message-hover";
 import { getConversationHoverMetadata } from "../conversation-hover-metadata";
+import { useConversationHoverSettings } from "../hooks/use-conversation-hover-settings";
 import {
   editConversationMessage as editConversationHistoryMessage,
   listCodexApprovalRequests,
@@ -790,6 +791,7 @@ const SessionView = memo(
       );
       const isPageVisible = usePageVisibility();
       const containerRef = useRef<HTMLDivElement>(null);
+      const hoverSettings = useConversationHoverSettings();
       const contentRef = useRef<HTMLDivElement>(null);
       const pagesRef = useRef<HTMLDivElement>(null);
       const pageVirtualizerRef = useRef<Virtualizer<
@@ -2260,16 +2262,18 @@ const SessionView = memo(
       );
       const getHoverMetadata = useCallback(
         (messageNumber: number, blockIndex: number | null) => {
+          if (!hoverSettings.enabled) return null;
           const message = cachedMessagesByNumber.get(messageNumber);
           return message
             ? getConversationHoverMetadata(
                 message,
                 blockIndex,
                 toolTimestampMapByCallId,
+                hoverSettings,
               )
             : null;
         },
-        [cachedMessagesByNumber, toolTimestampMapByCallId],
+        [cachedMessagesByNumber, toolTimestampMapByCallId, hoverSettings],
       );
       const renderMessageEntry = useCallback(
         (entry: PagedMessageEntry) => {

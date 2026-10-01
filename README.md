@@ -302,7 +302,25 @@ All keys are optional. The `[remote]` keys mirror the `--remote-*` flags and `CO
 
 Additional Codex homes are declared only by the main config with named `[codex_homes.<id>]` tables. Each available home appears in the selector at the top of the left pane. Missing directories, duplicate paths, reserved IDs, and other invalid entries remain visible but disabled.
 
-The web app's Settings button at the bottom of the left pane opens a structured editor for server startup, translation, additional Codex homes, remote connection settings, and daemon updates. The Updates tab can check npm for a newer release or rebuild a selected source checkout, then activate the result and restart the daemon. An Advanced section remains available for direct TOML editing. Applying changes writes `<main-codex-home>/codex-deck/config.toml`, updates `translation_command` and the additional Codex home catalog immediately, and preserves unrelated TOML when structured controls are used. Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) are saved but require restarting codex-deck; the UI lists the affected keys after applying.
+The web app's Settings button at the bottom of the left pane opens a structured editor for server startup, the floating message tip, translation, additional Codex homes, remote connection settings, and daemon updates. The Updates tab can check npm for a newer release or rebuild a selected source checkout, then activate the result and restart the daemon. An Advanced section remains available for direct TOML editing. Applying changes writes `<main-codex-home>/codex-deck/config.toml`, updates `[conversation_hover]`, `translation_command` and the additional Codex home catalog immediately, and preserves unrelated TOML when structured controls are used. Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) are saved but require restarting codex-deck; the UI lists the affected keys after applying.
+
+**Settings → Floating tip** controls each hover field independently and can disable the tip entirely. Available details include numbering, local time, token counts, cache reuse percentage, context usage, model, reasoning effort, service tier, tool duration, command exit code, original tool output tokens, output truncation, and goal usage. Model, reasoning effort, and service tier are off by default; other fields are on. Missing values stay hidden, and collapsed text-mode rows do not show the tip. Context usage uses that call's recorded token count and context capacity; model settings come from the historical turn rather than the current composer selection. Tool measurements come from recorded tool envelopes, with timestamps used as a fallback for duration.
+
+The same switches are available in TOML. All are optional, and `./config.toml` overrides the main home's file per field. For example:
+
+```toml
+[conversation_hover]
+enabled = true
+model = true
+reasoning_effort = true
+service_tier = true
+cache_hit_rate = true
+context_usage = true
+cache_creation_tokens = false
+timestamp = false
+```
+
+See [config.toml.example](config.toml.example) for every field name. These display settings belong to the main config and apply across Codex homes. UI changes reach local clients over SSE and remote clients through encrypted polling; direct file edits are picked up within five seconds in local mode and on the next remote settings poll. No restart is needed.
 
 Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Only the main codex-deck process opens a network port; additional homes communicate with it over internal process IPC. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
 

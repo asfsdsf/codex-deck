@@ -44,6 +44,10 @@ import {
   type EditableRemoteConfig,
 } from "../codex-deck-config";
 import { usePageVisibility } from "../hooks/use-page-visibility";
+import {
+  CONVERSATION_HOVER_FIELDS,
+  DEFAULT_CONVERSATION_HOVER_SETTINGS,
+} from "../../api/conversation-hover-settings";
 
 interface ConfigModalProps {
   open: boolean;
@@ -53,6 +57,7 @@ interface ConfigModalProps {
 
 type ConfigSection =
   | "general"
+  | "hover"
   | "translation"
   | "homes"
   | "remote"
@@ -74,6 +79,7 @@ const SECTIONS: Array<{
   icon: typeof ServerCog;
 }> = [
   { id: "general", label: "General", icon: ServerCog },
+  { id: "hover", label: "Floating tip", icon: Eye },
   { id: "translation", label: "Translation", icon: Languages },
   { id: "homes", label: "Codex homes", icon: FolderCog },
   { id: "remote", label: "Remote", icon: Network },
@@ -299,6 +305,9 @@ export default function ConfigModal(props: ConfigModalProps) {
     createEmptyCodexDeckConfig(),
   );
   const [loading, setLoading] = useState(false);
+  const [effectiveHoverSettings, setEffectiveHoverSettings] = useState(
+    DEFAULT_CONVERSATION_HOVER_SETTINGS,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CodexDeckConfigWriteResponse | null>(
@@ -398,6 +407,9 @@ export default function ConfigModal(props: ConfigModalProps) {
       setLoadedContent(response.content);
       setRevision(response.revision);
       setConfig(parseCodexDeckConfigContent(response.content));
+      setEffectiveHoverSettings(
+        response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
+      );
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : String(loadError),
@@ -497,6 +509,9 @@ export default function ConfigModal(props: ConfigModalProps) {
       setLoadedContent(response.content);
       setRevision(response.revision);
       setConfig(parseCodexDeckConfigContent(response.content));
+      setEffectiveHoverSettings(
+        response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
+      );
       setResult(response);
       onApplied(response);
     } catch (saveError) {
@@ -793,6 +808,108 @@ export default function ConfigModal(props: ConfigModalProps) {
                         />
                       </div>
                     </div>
+                  </div>
+                ) : null}
+
+                {activeSection === "hover" ? (
+                  <div>
+                    <SectionHeader
+                      title="Floating tip"
+                      badge={<StatusBadge tone="live">Applies now</StatusBadge>}
+                      action={
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() =>
+                            updateStructuredConfig({
+                              ...config,
+                              conversationHover: {
+                                ...DEFAULT_CONVERSATION_HOVER_SETTINGS,
+                              },
+                            })
+                          }
+                          className="text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
+                        >
+                          Reset defaults
+                        </button>
+                      }
+                    />
+                    <p className="py-4 text-xs leading-5 text-zinc-500">
+                      Choose the details shown when hovering over a message.
+                      Only available values appear. Changes apply to all
+                      connected tabs and devices.
+                    </p>
+                    <label className="flex items-center gap-3 border-b border-zinc-800 pb-4 text-sm text-zinc-200">
+                      <input
+                        type="checkbox"
+                        checked={
+                          config.conversationHover.enabled ??
+                          effectiveHoverSettings.enabled
+                        }
+                        disabled={disabled}
+                        onChange={(event) =>
+                          updateStructuredConfig({
+                            ...config,
+                            conversationHover: {
+                              ...config.conversationHover,
+                              enabled: event.target.checked,
+                            },
+                          })
+                        }
+                        className="h-4 w-4 accent-cyan-600"
+                      />
+                      Show floating tip
+                    </label>
+                    {[
+                      ...new Set(
+                        CONVERSATION_HOVER_FIELDS.map((field) => field.group),
+                      ),
+                    ].map((group) => (
+                      <fieldset
+                        key={group}
+                        className="py-4"
+                        disabled={
+                          disabled ||
+                          !(
+                            config.conversationHover.enabled ??
+                            effectiveHoverSettings.enabled
+                          )
+                        }
+                      >
+                        <legend className="pt-4 text-xs font-semibold text-zinc-300">
+                          {group}
+                        </legend>
+                        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                          {CONVERSATION_HOVER_FIELDS.filter(
+                            (field) => field.group === group,
+                          ).map((field) => (
+                            <label
+                              key={field.key}
+                              className="flex items-center gap-3 text-xs text-zinc-300 has-disabled:opacity-50"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={
+                                  config.conversationHover[field.key] ??
+                                  effectiveHoverSettings[field.key]
+                                }
+                                onChange={(event) =>
+                                  updateStructuredConfig({
+                                    ...config,
+                                    conversationHover: {
+                                      ...config.conversationHover,
+                                      [field.key]: event.target.checked,
+                                    },
+                                  })
+                                }
+                                className="h-4 w-4 shrink-0 accent-cyan-600"
+                              />
+                              {field.label}
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                    ))}
                   </div>
                 ) : null}
 

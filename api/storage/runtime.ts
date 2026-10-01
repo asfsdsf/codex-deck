@@ -19,9 +19,14 @@ import {
   readConversationMessageUpdates,
   readConversationMessageSnapshot,
 } from "../conversation-index";
-import { parseConversationTextChunk } from "../conversation-parser";
+import {
+  ConversationParserState,
+  parseConversationTextChunk,
+} from "../conversation-parser";
 import {
   attachTokenUsageToModelOutputs,
+  parseConversationModelMetadata,
+  type ConversationModelMetadata,
   getModelOutputTokenUsage,
   isModelOutputMessage,
 } from "../conversation-token-usage";
@@ -31,6 +36,7 @@ import {
   replaceEditableEventMessageText,
 } from "../conversation-edit-records";
 import { splitPathSegments } from "../path-utils";
+import type { ConversationHoverSettings } from "../conversation-hover-settings";
 
 export interface HistoryEntry {
   sessionId: string;
@@ -547,6 +553,7 @@ export interface CodexDeckConfigFileResponse {
   path: string;
   content: string;
   revision: string;
+  hoverSettings?: ConversationHoverSettings;
 }
 
 export interface CodexDeckConfigWriteRequest {
@@ -1458,6 +1465,8 @@ export interface ConversationMessage {
     role: string;
     content: string | ContentBlock[];
     model?: string;
+    reasoningEffort?: CodexReasoningEffort;
+    serviceTier?: string;
     usage?: TokenUsage;
   };
   summary?: string;
@@ -1512,6 +1521,8 @@ export interface TokenUsage {
   reasoning_output_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  /** Context capacity recorded for this model call, rather than the latest session state. */
+  model_context_window?: number;
 }
 
 export interface StreamResult {
@@ -1653,6 +1664,7 @@ const sessionStreamPendingModelOutputs = new Map<
   string,
   ConversationMessage[]
 >();
+const sessionStreamModelMetadata = new Map<string, ConversationModelMetadata>();
 const sessionStreamFileIds = new Map<string, string>();
 // Replay delayed metadata to independent byte-offset readers.
 const sessionStreamTokenUsageUpdates = new Map<
@@ -1663,6 +1675,7 @@ const sessionStreamTokenUsageUpdates = new Map<
 export function initStorage(dir?: string): void {
   clearConversationIndexes();
   sessionStreamPendingModelOutputs.clear();
+  sessionStreamModelMetadata.clear();
   sessionStreamFileIds.clear();
   sessionStreamTokenUsageUpdates.clear();
   codexDir = dir ?? join(homedir(), ".codex");
@@ -1710,6 +1723,7 @@ function clearSessionCaches(sessionId: string): void {
   sessionUserMessageTimestampCache.delete(sessionId);
   sessionToolNameIndex.delete(sessionId);
   sessionStreamPendingModelOutputs.delete(sessionId);
+  sessionStreamModelMetadata.delete(sessionId);
   sessionStreamFileIds.delete(sessionId);
   sessionStreamTokenUsageUpdates.delete(sessionId);
   if (historyCache) {
@@ -3659,6 +3673,7 @@ function createChatMessage(
   timestamp?: string,
   edit?: { editId: string; text: string },
   usage?: TokenUsage,
+  modelMetadata?: ConversationModelMetadata,
 ): ConversationMessage {
   return {
     type: role,
@@ -3667,6 +3682,7 @@ function createChatMessage(
     message: {
       role,
       content,
+      ...(role === "assistant" ? modelMetadata : {}),
       ...(usage ? { usage } : {}),
     },
     ...(edit
@@ -3685,6 +3701,7 @@ function createReasoningMessage(
   uuid: string,
   timestamp?: string,
   usage?: TokenUsage,
+  modelMetadata?: ConversationModelMetadata,
 ): ConversationMessage {
   return {
     type,
@@ -3692,6 +3709,7 @@ function createReasoningMessage(
     timestamp,
     message: {
       role: "assistant",
+      ...modelMetadata,
       content: [
         {
           type,
@@ -4367,12 +4385,15 @@ function parseCodexConversation(
     offset: number,
     updates: ConversationMessage[],
   ) => void,
+  modelMetadataState?: { metadata: ConversationModelMetadata },
 ): ConversationMessage[] {
   const messages: ConversationMessage[] = [];
   const pendingToolCalls = new Map<string, PendingToolUse>();
   const pendingToolMessageIndexes = new Map<string, number>();
   const toolNames = knownToolNames ?? new Map<string, string>();
   const editableMessagePairs = collectEditableMessagePairs(lines);
+  let modelMetadata: ConversationModelMetadata =
+    modelMetadataState?.metadata ?? {};
 
   for (const { line, offset } of lines) {
     const parsed = safeJsonParse(line);
@@ -4394,6 +4415,12 @@ function parseCodexConversation(
 
     const payload = record.payload as Record<string, unknown>;
     const payloadType = typeof payload.type === "string" ? payload.type : "";
+
+    if (record.type === "turn_context") {
+      modelMetadata = parseConversationModelMetadata(payload);
+      if (modelMetadataState) modelMetadataState.metadata = modelMetadata;
+      continue;
+    }
 
     if (record.type === "event_msg") {
       if (payloadType === "thread_goal_updated") {
@@ -4461,9 +4488,12 @@ function parseCodexConversation(
         payload.info &&
         typeof payload.info === "object"
       ) {
-        const usage = parseLastTokenUsage(
-          (payload.info as Record<string, unknown>).last_token_usage,
-        );
+        const info = payload.info as Record<string, unknown>;
+        const usage = parseLastTokenUsage(info.last_token_usage);
+        const contextWindow = parseFiniteNumber(info.model_context_window);
+        if (usage && contextWindow != null && contextWindow > 0) {
+          usage.model_context_window = Math.round(contextWindow);
+        }
         if (usage) {
           const combined = [...previousModelOutputs, ...messages];
           attachTokenUsageToModelOutputs(combined, usage);
@@ -4569,6 +4599,8 @@ function parseCodexConversation(
           text,
           `${offset}:agent-reasoning:${messages.length}`,
           timestamp,
+          undefined,
+          modelMetadata,
         ),
       );
       continue;
@@ -4629,6 +4661,7 @@ function parseCodexConversation(
               }
             : undefined,
           parseLastTokenUsage(payload.last_token_usage ?? payload.usage),
+          { ...modelMetadata, ...parseConversationModelMetadata(payload) },
         ),
       );
       continue;
@@ -4654,6 +4687,7 @@ function parseCodexConversation(
           `${offset}:reasoning:${messages.length}`,
           timestamp,
           parseLastTokenUsage(payload.last_token_usage),
+          { ...modelMetadata, ...parseConversationModelMetadata(payload) },
         ),
       );
       continue;
@@ -5633,11 +5667,17 @@ export async function getConversationRawWindow(
     if (beforeOffset === undefined) {
       // Seed incremental SSE state from the recent window, without reading
       // the entire session just to recover tool names or model token usage.
+      const parserState = new ConversationParserState();
+      for (const [callId, name] of sessionToolNameIndex.get(sessionId) ?? []) {
+        parserState.toolNames.set(callId, name);
+      }
       const parsed = parseConversationTextChunk(
         buffer.subarray(sliceStart, sliceEnd).toString("utf-8"),
         startOffset,
         sessionToolNameIndex.get(sessionId),
+        parserState,
       );
+      sessionStreamModelMetadata.set(sessionId, parserState.modelMetadata);
       sessionToolNameIndex.set(sessionId, parsed.toolNames);
       rememberStreamModelOutputs(sessionId, parsed.messages);
     }
@@ -5993,6 +6033,7 @@ export async function getConversationStream(
     const previousFileId = sessionStreamFileIds.get(sessionId);
     if (previousFileId && previousFileId !== fileId) {
       sessionStreamPendingModelOutputs.delete(sessionId);
+      sessionStreamModelMetadata.delete(sessionId);
       sessionStreamTokenUsageUpdates.delete(sessionId);
     }
     sessionStreamFileIds.set(sessionId, fileId);
@@ -6192,6 +6233,12 @@ export async function getConversationStream(
           );
     const originals = new Set(previousModelOutputs);
     const replay = sessionStreamTokenUsageUpdates.get(sessionId) ?? new Map();
+    const modelMetadataState = {
+      metadata:
+        fromOffset === 0
+          ? {}
+          : (sessionStreamModelMetadata.get(sessionId) ?? {}),
+    };
     const messages = parseCodexConversation(
       parsedLines,
       toolNames,
@@ -6201,7 +6248,9 @@ export async function getConversationStream(
         // Keep this legacy replay bounded; numbered updates retain revisions.
         if (replay.size > 32) replay.delete(replay.keys().next().value!);
       },
+      modelMetadataState,
     );
+    sessionStreamModelMetadata.set(sessionId, modelMetadataState.metadata);
     rememberStreamModelOutputs(sessionId, [
       ...previousModelOutputs,
       ...messages,

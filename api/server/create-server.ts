@@ -185,6 +185,7 @@ import {
 } from "../codex-home-registry";
 import type { CodexDeckConfig } from "../config";
 import { registerConfigRoutes } from "./config-routes";
+import { registerConversationHoverSettingsRoutes } from "./conversation-hover-settings-routes";
 import { registerDaemonUpdateRoutes } from "./daemon-update-routes";
 import {
   createDaemonUpdaterOptionsFromEnvironment,
@@ -1937,6 +1938,12 @@ function getChangedConfigKeys(
     changed.push("translation_command");
   }
   if (
+    JSON.stringify(previous.conversationHover ?? {}) !==
+    JSON.stringify(next.conversationHover ?? {})
+  ) {
+    changed.push("conversation_hover");
+  }
+  if (
     JSON.stringify(previous.codexHomes ?? {}) !==
     JSON.stringify(next.codexHomes ?? {})
   ) {
@@ -2030,6 +2037,7 @@ export function createServer(options: ServerOptions) {
   app.use("/api/*", async (c, next) => {
     if (
       c.req.path === "/api/codex-deck/config" ||
+      c.req.path.startsWith("/api/codex-deck/hover-settings") ||
       c.req.path.startsWith("/api/codex-deck/update")
     ) {
       await next();
@@ -2469,11 +2477,20 @@ export function createServer(options: ServerOptions) {
   });
   registerWorkflowRoutes(app, { workflowRouteUnavailable });
   registerSystemRoutes(app);
+  const hoverSettingsRoutes = registerConversationHoverSettingsRoutes(
+    app,
+    getCodexDir(),
+  );
   registerConfigRoutes(app, {
     codexHome: getCodexDir(),
     applyConfig: async (previousConfig, nextConfig) => {
       const changedKeys = getChangedConfigKeys(previousConfig, nextConfig);
       const appliedKeys: string[] = [];
+
+      if (changedKeys.includes("conversation_hover")) {
+        hoverSettingsRoutes.refresh();
+        appliedKeys.push("conversation_hover");
+      }
 
       if (changedKeys.includes("translation_command")) {
         runtimeTranslationCommand = nextConfig.translationCommand;
@@ -5400,6 +5417,7 @@ export function createServer(options: ServerOptions) {
       return httpServer;
     },
     stop: () => {
+      hoverSettingsRoutes.stop();
       offHistoryChange(handleHistoryChange);
       offSessionChange(handleSessionChange);
       if (unsubscribeAppServerEventSource) {

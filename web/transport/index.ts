@@ -2,6 +2,7 @@ import { RemoteClient } from "../remote-client";
 import { createLocalTransport } from "./local";
 import { createRemoteTransport } from "./remote";
 import type {
+  ConversationHoverSettingsHandlers,
   CodexDeckUpdateOutputStreamHandlers,
   ConversationStreamHandlers,
   ConversationStreamSubscriptionOptions,
@@ -42,6 +43,12 @@ function getTransport() {
 
 export function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return getTransport().requestJson<T>(url, init);
+}
+
+export function subscribeConversationHoverSettings(
+  handlers: ConversationHoverSettingsHandlers,
+): () => void {
+  return getTransport().subscribeConversationHoverSettings(handlers);
 }
 
 export function subscribeCodexDeckUpdateOutput(

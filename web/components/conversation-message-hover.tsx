@@ -136,27 +136,37 @@ export default function ConversationMessageHover({
     };
   }, [containerRef, getMetadata, positionTooltip]);
 
-  if (!message) return null;
+  if (
+    !message ||
+    (!message.metadata.showNumber &&
+      !message.metadata.time &&
+      !message.metadata.details.length)
+  )
+    return null;
   return createPortal(
     <div
       ref={tooltipRef}
       role="tooltip"
       className="pointer-events-none fixed z-50 max-w-[min(360px,calc(100vw-16px))] break-words bg-transparent px-2.5 py-1.5 font-mono text-[10px] text-zinc-200"
     >
-      <div className="flex flex-wrap items-center gap-x-2">
-        <span className="font-semibold" data-hover-message-number>
-          #{message.number}
-        </span>
-        {message.metadata.time && (
-          <time
-            dateTime={message.metadata.timestamp}
-            className="text-zinc-400"
-            data-hover-message-time
-          >
-            {message.metadata.time}
-          </time>
-        )}
-      </div>
+      {(message.metadata.showNumber || message.metadata.time) && (
+        <div className="flex flex-wrap items-center gap-x-2">
+          {message.metadata.showNumber && (
+            <span className="font-semibold" data-hover-message-number>
+              #{message.number}
+            </span>
+          )}
+          {message.metadata.time && (
+            <time
+              dateTime={message.metadata.timestamp}
+              className="text-zinc-400"
+              data-hover-message-time
+            >
+              {message.metadata.time}
+            </time>
+          )}
+        </div>
+      )}
       {message.metadata.details.length > 0 && (
         <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
           {message.metadata.details.map(({ label, value }, index) => (

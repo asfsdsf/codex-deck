@@ -1,3 +1,9 @@
+import {
+  CONVERSATION_HOVER_FIELDS,
+  isConversationHoverSetting,
+  type ConversationHoverConfig,
+} from "../api/conversation-hover-settings";
+
 export interface EditableCodexHome {
   id: string;
   label: string;
@@ -20,6 +26,7 @@ export interface EditableCodexDeckConfig {
   dev: boolean | null;
   open: boolean | null;
   translationCommand: string;
+  conversationHover: ConversationHoverConfig;
   codexHomes: EditableCodexHome[];
   remote: EditableRemoteConfig;
 }
@@ -58,6 +65,7 @@ export function createEmptyCodexDeckConfig(): EditableCodexDeckConfig {
     dev: null,
     open: null,
     translationCommand: "",
+    conversationHover: {},
     codexHomes: [],
     remote: emptyRemoteConfig(),
   };
@@ -147,6 +155,13 @@ export function parseCodexDeckConfigContent(
         config.translationCommand =
           parseTomlString(rawValue) ?? config.translationCommand;
       }
+      continue;
+    }
+
+    if (tableName === "conversation_hover") {
+      const value = parseTomlBoolean(rawValue);
+      if (isConversationHoverSetting(key) && value !== undefined)
+        config.conversationHover[key] = value;
       continue;
     }
 
@@ -277,6 +292,46 @@ export function updateCodexDeckConfigContent(
     open: config.open === null ? undefined : String(config.open),
     translation_command: optionalString(config.translationCommand),
   });
+
+  const hoverValues: Record<string, string | undefined> = {};
+  for (const key of [
+    "enabled",
+    ...CONVERSATION_HOVER_FIELDS.map((field) => field.key),
+  ]) {
+    if (isConversationHoverSetting(key)) {
+      const value = config.conversationHover[key];
+      hoverValues[key] = value === undefined ? undefined : String(value);
+    }
+  }
+  let hoverSection = sections.find(
+    (section) => section.tableName === "conversation_hover",
+  );
+  if (
+    !hoverSection &&
+    Object.values(hoverValues).some((value) => value !== undefined)
+  ) {
+    hoverSection = {
+      tableName: "conversation_hover",
+      lines: ["[conversation_hover]"],
+    };
+    sections.push(hoverSection);
+  }
+  if (hoverSection) {
+    updateSectionKeys(hoverSection, hoverValues);
+    for (const section of sections) {
+      if (
+        section !== hoverSection &&
+        section.tableName === "conversation_hover"
+      ) {
+        updateSectionKeys(
+          section,
+          Object.fromEntries(
+            Object.keys(hoverValues).map((key) => [key, undefined]),
+          ),
+        );
+      }
+    }
+  }
 
   let remoteSection = sections.find(
     (section) => section.tableName === "remote",
