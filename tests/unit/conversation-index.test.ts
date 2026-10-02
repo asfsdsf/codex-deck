@@ -6,6 +6,7 @@ import {
   applyConversationLiveEvent,
   readConversationMessageWindow,
   readConversationMessageUpdates,
+  readConversationMessageSnapshot,
   clearConversationIndexes,
 } from "../../api/conversation-index";
 import {
@@ -260,6 +261,88 @@ test("stream snapshots and persisted completions share one number, including log
     await cleanup();
   }
 });
+
+for (const notification of ["assistant_delta", "item_completed"] as const) {
+  test(`${notification} after cached history keeps a new item at the end of its turn`, async () => {
+    const { rootDir, cleanup } = await createTempCodexDir(
+      "numbered-live-identity",
+    );
+    const path = join(rootDir, "session.jsonl");
+    const reply = (id: string, text: string) =>
+      line(
+        responseItemRawLine({
+          type: "message",
+          id,
+          role: "assistant",
+          content: [{ type: "output_text", text }],
+        }),
+      );
+    try {
+      await writeFile(
+        path,
+        line(eventMsgLine({ type: "task_started", turn_id: "turn-1" })) +
+          reply("old-item", "Earlier reply") +
+          line(
+            responseItemRawLine({
+              type: "function_call",
+              call_id: "call-1",
+              name: "exec_command",
+              arguments: "{}",
+            }),
+          ),
+      );
+      const initial = await readConversationMessageWindow(path);
+      const identity = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "new-item",
+      };
+      await applyConversationLiveEvent(
+        path,
+        notification === "assistant_delta"
+          ? { ...identity, type: notification, delta: "Final reply" }
+          : {
+              ...identity,
+              type: notification,
+              item: { type: "agentMessage", text: "Final reply" },
+            },
+      );
+      await appendFile(path, reply("new-item", "Final reply"));
+      const [first, second] = await Promise.all([
+        readConversationMessageUpdates(path, initial.nextOffset),
+        readConversationMessageUpdates(path, initial.nextOffset),
+      ]);
+      assert.deepEqual(first.messages, second.messages);
+      assert.equal(first.totalMessages, 3);
+      assert.equal(first.messages.at(-1)?.messageNumber, 3);
+      const cached = await readConversationMessageSnapshot(path);
+      const summarize = (messages: typeof cached) =>
+        messages.map(({ type, sequence, messageNumber, message }) => ({
+          type,
+          sequence,
+          messageNumber,
+          content: message?.content,
+        }));
+      assert.deepEqual(cached[1].message?.content, [
+        { type: "text", text: "Earlier reply" },
+      ]);
+      assert.equal(cached.at(-1)?.itemId, "new-item");
+      assert.equal(cached.at(-1)?.messageNumber, 3);
+      assert.deepEqual(
+        (await readConversationMessageWindow(path)).messages,
+        cached,
+      );
+      clearConversationIndexes(path);
+      assert.deepEqual(
+        summarize(await readConversationMessageSnapshot(path)),
+        summarize(cached),
+      );
+    } finally {
+      clearConversationIndexes(path);
+      await cleanup();
+    }
+  });
+}
 
 test("replacement and truncation reset the numbered generation", async () => {
   const { rootDir, cleanup } = await createTempCodexDir("numbered-reset");

@@ -118,6 +118,21 @@ export class ConversationParserState {
   private itemKey(turnId: string, itemId: string, type: string): string {
     return JSON.stringify([turnId, itemId, type]);
   }
+  private hasCompatibleItemId(index: number, itemId?: string): boolean {
+    const previousItemId = this.messages[index].itemId;
+    return !itemId || !previousItemId || previousItemId === itemId;
+  }
+  private findStreamSlot(kind: string, itemId: string) {
+    let ordinal = this.streamingCounts.get(kind) ?? 0;
+    let index = this.slots.get(`${kind}:${ordinal}`);
+    // A subscription may start midway through a turn. Known item IDs must
+    // never alias earlier persisted items merely because their ordinals match.
+    while (index !== undefined && !this.hasCompatibleItemId(index, itemId)) {
+      ordinal += 1;
+      index = this.slots.get(`${kind}:${ordinal}`);
+    }
+    return { ordinal, index };
+  }
   private isTextMessage(message: ConversationMessage): boolean {
     return (
       message.type === "reasoning" ||
@@ -146,10 +161,15 @@ export class ConversationParserState {
     const key = this.kindKey(turnId, message.type);
     const ordinal = this.persistedCounts.get(key) ?? 0;
     const itemId = message.itemId ?? this.sourceItemId;
+    const ordinalIndex = this.slots.get(`${key}:${ordinal}`);
     const index =
       (itemId
         ? this.itemSlots.get(this.itemKey(turnId, itemId, message.type))
-        : undefined) ?? this.slots.get(`${key}:${ordinal}`);
+        : undefined) ??
+      (ordinalIndex !== undefined &&
+      this.hasCompatibleItemId(ordinalIndex, itemId)
+        ? ordinalIndex
+        : undefined);
     if (index === undefined) return false;
     this.persistedCounts.set(key, ordinal + 1);
     this.slots.set(`${key}:${ordinal}`, index);
@@ -186,9 +206,10 @@ export class ConversationParserState {
     let index = this.itemSlots.get(itemKey);
     if (index === undefined) {
       const kind = this.kindKey(turnId, type);
-      const ordinal = this.streamingCounts.get(kind) ?? 0;
+      const slot = this.findStreamSlot(kind, itemId);
+      const ordinal = slot.ordinal;
       this.streamingCounts.set(kind, ordinal + 1);
-      index = this.slots.get(`${kind}:${ordinal}`);
+      index = slot.index;
       if (index !== undefined && !this.messages[index].streaming) {
         this.itemSlots.set(itemKey, index);
         return;
@@ -249,8 +270,7 @@ export class ConversationParserState {
       const key = this.itemKey(turnId, itemId, type);
       if (this.itemSlots.has(key)) continue;
       const kind = this.kindKey(turnId, type);
-      const ordinal = this.streamingCounts.get(kind) ?? 0;
-      const index = this.slots.get(`${kind}:${ordinal}`);
+      const { ordinal, index } = this.findStreamSlot(kind, itemId);
       if (index !== undefined) {
         this.itemSlots.set(key, index);
         this.streamingCounts.set(kind, ordinal + 1);
