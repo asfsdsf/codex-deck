@@ -2,7 +2,11 @@ import { mkdir, writeFile, appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test, expect } from "./helpers/codex-deck-fixture";
 import { CodexDeckPage } from "./pages/codex-deck-page";
-import { eventMsgLine, responseItemMessageLine } from "../unit/test-utils";
+import {
+  eventMsgLine,
+  responseItemMessageLine,
+  sessionMetaLine,
+} from "../unit/test-utils";
 
 test("floating tip settings persist in TOML and update another browser without reloading", async ({
   page,
@@ -53,7 +57,9 @@ test("floating tip settings persist in TOML and update another browser without r
   await expect(tooltip.getByText("50.0%", { exact: true })).toBeVisible();
   await expect(tooltip.getByText("recorded-model")).toHaveCount(0);
 
-  const loadingConfig = page.waitForResponse((response) => response.url().includes("/api/codex-deck/config"));
+  const loadingConfig = page.waitForResponse((response) =>
+    response.url().includes("/api/codex-deck/config"),
+  );
   await page
     .getByRole("button", { name: "Codex Deck settings", exact: true })
     .click();
@@ -200,4 +206,56 @@ test("direct config edits select fields and work on a mobile layout in both them
       .getByRole("button", { name: "Collapse left pane", exact: true })
       .click();
   }
+});
+
+test("additional Codex homes receive global floating tip preferences on their shared stream", async ({
+  page,
+  app,
+}) => {
+  const workHome = join(app.rootDir, "work-home");
+  await mkdir(join(workHome, "sessions"), { recursive: true });
+  await mkdir(join(workHome, "codex-deck"), { recursive: true });
+  await writeFile(
+    join(workHome, "codex-deck", "config.toml"),
+    "[conversation_hover]\nenabled = false\n",
+  );
+  await writeFile(
+    join(workHome, "sessions", "work-session.jsonl"),
+    [
+      sessionMetaLine("work-session", app.projects.alpha, Date.now()),
+      responseItemMessageLine("user", "Work home conversation"),
+      responseItemMessageLine("assistant", "Work home reply"),
+      "",
+    ].join("\n"),
+  );
+  const currentConfig = await (
+    await page.request.get(`${app.baseURL}/api/codex-deck/config`)
+  ).json();
+  const content = `[codex_homes.work]\npath = ${JSON.stringify(workHome)}\nlabel = "Work"\n\n[conversation_hover]\nmessage_number = false\ntimestamp = true\n`;
+  const saved = await page.request.post(
+    `${app.baseURL}/api/codex-deck/config`,
+    {
+      data: { revision: currentConfig.revision, content },
+    },
+  );
+  expect(saved.ok()).toBe(true);
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  await page
+    .getByRole("combobox", { name: "Codex home", exact: true })
+    .selectOption("work");
+  await ui.selectSession("Work home conversation");
+  const reply = page.locator('[data-conversation-message="2"]');
+  await reply.hover();
+  const tooltip = page.getByRole("tooltip");
+  await expect(tooltip.locator("time")).toHaveCount(1);
+  await expect(tooltip.locator("[data-hover-message-number]")).toHaveCount(0);
+  await writeFile(
+    join(app.rootDir, "codex-deck", "config.toml"),
+    content
+      .replace("message_number = false", "message_number = true")
+      .replace("timestamp = true", "timestamp = false"),
+  );
+  await expect(tooltip.locator("[data-hover-message-number]")).toHaveText("#2");
+  await expect(tooltip.locator("time")).toHaveCount(0);
 });

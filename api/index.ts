@@ -14,6 +14,7 @@ import {
 } from "./config";
 import {
   CODEX_HOME_RUNTIME_CHILD_ENV,
+  CODEX_HOME_RUNTIME_MAIN_HOME_ENV,
   CODEX_HOME_RUNTIME_TRANSLATION_ENV,
 } from "./codex-home-runtime-manager";
 import { startCodexHomeRuntimeWorker } from "./codex-home-runtime-worker";
@@ -180,6 +181,9 @@ const server = createServer({
   port: opts.port,
   appVersion: getVersion(),
   codexDir: opts.dir,
+  conversationHoverCodexHome: isRuntimeChild
+    ? process.env[CODEX_HOME_RUNTIME_MAIN_HOME_ENV]?.trim() || undefined
+    : undefined,
   hostname: "0.0.0.0",
   runtimeEntryPath: isRuntimeChild ? undefined : __filename,
   additionalCodexHomes,

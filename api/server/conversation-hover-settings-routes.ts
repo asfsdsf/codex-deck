@@ -26,11 +26,31 @@ export function registerConversationHoverSettingsRoutes(
     }
     return current;
   };
+  const subscribe = (
+    listener: (settings: ConversationHoverSettings) => void,
+  ) => {
+    refresh();
+    listeners.add(listener);
+    listener(current);
+    if (!timer) {
+      // Pick up direct TOML edits as well as settings saved through the UI.
+      timer = setInterval(refresh, 5_000);
+      timer.unref();
+    }
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size && timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+  };
 
   app.get("/api/codex-deck/hover-settings", (c) => c.json(refresh()));
   app.get("/api/codex-deck/hover-settings/stream", (c) =>
     streamSSE(c, async (stream) => {
       let release = () => {};
+      let unsubscribe = () => {};
       const disconnected = new Promise<void>((resolve) => {
         release = resolve;
       });
@@ -46,23 +66,12 @@ export function registerConversationHoverSettingsRoutes(
       const cleanup = () => {
         clearInterval(heartbeat);
         disconnectors.delete(cleanup);
-        listeners.delete(write);
-        if (!listeners.size && timer) {
-          clearInterval(timer);
-          timer = null;
-        }
+        unsubscribe();
         release();
       };
       stream.onAbort(cleanup);
       disconnectors.add(cleanup);
-      refresh();
-      listeners.add(write);
-      write(current);
-      if (!timer) {
-        // Pick up direct TOML edits as well as settings saved through the UI.
-        timer = setInterval(refresh, 5_000);
-        timer.unref();
-      }
+      unsubscribe = subscribe(write);
       try {
         await disconnected;
       } finally {
@@ -73,10 +82,12 @@ export function registerConversationHoverSettingsRoutes(
 
   return {
     refresh,
+    subscribe,
     stop: () => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const disconnect of disconnectors) disconnect();
+      listeners.clear();
     },
   };
 }

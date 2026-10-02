@@ -15,6 +15,7 @@ import type {
   CodexDeckUpdateOutputStreamHandlers,
   ConversationStreamHandlers,
   ConversationStreamSubscriptionOptions,
+  ConversationHoverSettingsHandlers,
   SessionsStreamHandlers,
   TerminalsStreamHandlers,
   TerminalStreamHandlers,
@@ -27,6 +28,7 @@ import type {
 import { addCodexHomeToApiUrl } from "../codex-home-scope";
 
 import { subscribeLocalConversation } from "./local-conversation";
+import type { ConversationHoverSettings } from "../../api/conversation-hover-settings";
 
 const WORKFLOW_DETAIL_POLL_INTERVAL_MS = 3_000;
 const WORKFLOW_DAEMON_STATUS_POLL_INTERVAL_MS = 5_000;
@@ -120,6 +122,8 @@ export function createLocalTransport(): WebTransport {
   const workflowDaemonStatusWakeListeners = new Set<() => void>();
   const workflowDetailWakeListeners = new Map<string, Set<() => void>>();
   const sessionsStreamSubscribers = new Set<SessionsStreamHandlers>();
+  const hoverSettingsSubscribers = new Set<ConversationHoverSettingsHandlers>();
+  let lastHoverSettings: ConversationHoverSettings | null = null;
   const terminalsStreamSubscribers = new Set<TerminalsStreamHandlers>();
   const conversationAppServerSubscribers = new Map<
     string,
@@ -132,11 +136,13 @@ export function createLocalTransport(): WebTransport {
     onError?: () => void;
   }>();
   let unsubscribeSharedRealtimeStream: (() => void) | null = null;
+  let sharedRealtimeUrl: string | null = null;
 
   const stopSharedRealtimeStreamIfIdle = () => {
     if (
       !unsubscribeSharedRealtimeStream ||
       sessionsStreamSubscribers.size > 0 ||
+      hoverSettingsSubscribers.size > 0 ||
       terminalsStreamSubscribers.size > 0 ||
       conversationAppServerSubscribers.size > 0 ||
       workflowsStreamSubscribers.size > 0
@@ -146,22 +152,34 @@ export function createLocalTransport(): WebTransport {
 
     unsubscribeSharedRealtimeStream();
     unsubscribeSharedRealtimeStream = null;
+    sharedRealtimeUrl = null;
   };
 
   const ensureSharedRealtimeStream = () => {
-    if (unsubscribeSharedRealtimeStream) {
+    const url = addCodexHomeToApiUrl("/api/sessions/stream");
+    if (unsubscribeSharedRealtimeStream && sharedRealtimeUrl === url) {
       return;
     }
+    unsubscribeSharedRealtimeStream?.();
+    sharedRealtimeUrl = url;
 
     // Keep a single local EventSource for global realtime state so two visible
     // pages do not exhaust the browser's per-origin connection budget.
     unsubscribeSharedRealtimeStream = createReconnectingEventSource({
-      createUrl: () => addCodexHomeToApiUrl("/api/sessions/stream"),
+      createUrl: () => url,
       configure: (eventSource) => {
         eventSource.addEventListener("sessions", (event) => {
           const sessions = JSON.parse(event.data);
           for (const subscriber of sessionsStreamSubscribers) {
             subscriber.onSessions(sessions);
+          }
+        });
+        eventSource.addEventListener("hoverSettings", (event) => {
+          lastHoverSettings = JSON.parse(
+            event.data,
+          ) as ConversationHoverSettings;
+          for (const subscriber of hoverSettingsSubscribers) {
+            subscriber.onSettings(lastHoverSettings);
           }
         });
         eventSource.addEventListener("sessionsUpdate", (event) => {
@@ -233,6 +251,9 @@ export function createLocalTransport(): WebTransport {
         for (const subscriber of sessionsStreamSubscribers) {
           subscriber.onError?.();
         }
+        for (const subscriber of hoverSettingsSubscribers) {
+          subscriber.onError?.();
+        }
         for (const subscriber of terminalsStreamSubscribers) {
           subscriber.onError?.();
         }
@@ -245,16 +266,15 @@ export function createLocalTransport(): WebTransport {
 
   return {
     requestJson: requestLocalJson,
-    subscribeConversationHoverSettings: (handlers) =>
-      createReconnectingEventSource({
-        createUrl: () => "/api/codex-deck/hover-settings/stream",
-        configure: (source) => {
-          source.addEventListener("hoverSettings", (event) =>
-            handlers.onSettings(JSON.parse(event.data)),
-          );
-        },
-        onDisconnect: handlers.onError,
-      }),
+    subscribeConversationHoverSettings: (handlers) => {
+      hoverSettingsSubscribers.add(handlers);
+      if (lastHoverSettings) handlers.onSettings(lastHoverSettings);
+      ensureSharedRealtimeStream();
+      return () => {
+        hoverSettingsSubscribers.delete(handlers);
+        stopSharedRealtimeStreamIfIdle();
+      };
+    },
     notifyConversationMutation: () => {},
     notifyWorkflowMutation: (workflowKey?: string | null) => {
       for (const wake of workflowWakeListeners) {

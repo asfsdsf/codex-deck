@@ -78,6 +78,7 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
       '        ? Buffer.from(message.bodyBase64, "base64").toString("utf8")',
       '        : "",',
       "      codexHome: process.env.CODEX_HOME,",
+      "      mainCodexHome: process.env.CODEXDECK_RUNTIME_MAIN_CODEX_HOME,",
       "      translationCommand: process.env.CODEXDECK_RUNTIME_TRANSLATION_COMMAND,",
       '      transport: "ipc",',
       "  });",
@@ -113,7 +114,8 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
     unavailableReason: null,
     translationCommand: "translate-work",
   };
-  const manager = new CodexHomeRuntimeManager([home], entryPath);
+  const mainCodexHome = join(root, "main-home");
+  const manager = new CodexHomeRuntimeManager([home], entryPath, mainCodexHome);
 
   try {
     const response = await manager.fetch(
@@ -129,6 +131,7 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
       method: "POST",
       body: "payload",
       codexHome: home.path,
+      mainCodexHome,
       translationCommand: "translate-work",
       transport: "ipc",
     });
@@ -149,6 +152,7 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
       method: "GET",
       body: "",
       codexHome: home.path,
+      mainCodexHome,
       translationCommand: "translate-updated",
       transport: "ipc",
     });

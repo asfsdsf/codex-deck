@@ -1879,6 +1879,8 @@ export interface ServerOptions {
   port: number;
   appVersion?: string;
   codexDir?: string;
+  /** Main home's shared preferences when serving an additional-home runtime. */
+  conversationHoverCodexHome?: string;
   hostname?: string;
   runtimeEntryPath?: string;
   additionalCodexHomes?: ResolvedCodexHome[];
@@ -1995,7 +1997,11 @@ export function createServer(options: ServerOptions) {
     ...additionalCodexHomes,
   ];
   const homeRuntimeManager = runtimeEntryPath
-    ? new CodexHomeRuntimeManager(additionalCodexHomes, runtimeEntryPath)
+    ? new CodexHomeRuntimeManager(
+        additionalCodexHomes,
+        runtimeEntryPath,
+        getCodexDir(),
+      )
     : null;
   let runtimeTranslationCommand = translationCommand;
   const daemonUpdater =
@@ -2479,7 +2485,7 @@ export function createServer(options: ServerOptions) {
   registerSystemRoutes(app);
   const hoverSettingsRoutes = registerConversationHoverSettingsRoutes(
     app,
-    getCodexDir(),
+    options.conversationHoverCodexHome ?? getCodexDir(),
   );
   registerConfigRoutes(app, {
     codexHome: getCodexDir(),
@@ -2545,6 +2551,7 @@ export function createServer(options: ServerOptions) {
       let previousWorkflowsPayload = "";
       let unsubscribeTerminals: (() => void) | null = null;
       let unsubscribeTerminalBindings: (() => void) | null = null;
+      let unsubscribeHoverSettings: (() => void) | null = null;
 
       const cleanup = () => {
         if (!isConnected) {
@@ -2565,6 +2572,10 @@ export function createServer(options: ServerOptions) {
         if (unsubscribeTerminalBindings) {
           unsubscribeTerminalBindings();
           unsubscribeTerminalBindings = null;
+        }
+        if (unsubscribeHoverSettings) {
+          unsubscribeHoverSettings();
+          unsubscribeHoverSettings = null;
         }
       };
 
@@ -2746,6 +2757,15 @@ export function createServer(options: ServerOptions) {
         await stream.writeSSE({
           event: "sessions",
           data: JSON.stringify(sessions),
+        });
+        if (!isConnected) return;
+        unsubscribeHoverSettings = hoverSettingsRoutes.subscribe((settings) => {
+          void stream
+            .writeSSE({
+              event: "hoverSettings",
+              data: JSON.stringify(settings),
+            })
+            .catch(cleanup);
         });
         await writeTerminals();
         await writeWorkflows();

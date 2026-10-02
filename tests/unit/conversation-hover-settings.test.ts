@@ -21,18 +21,29 @@ test("hover settings preserve false preferences and ignore invalid runtime value
   assert.equal(settings.enabled, true);
 });
 
+const readerBuffers = new WeakMap<
+  ReadableStreamDefaultReader<Uint8Array>,
+  string
+>();
+
 async function readSettings(reader: ReadableStreamDefaultReader<Uint8Array>) {
-  let text = "";
-  while (!text.includes("\n\n")) {
+  let text = readerBuffers.get(reader) ?? "";
+  while (true) {
+    let boundary: number;
+    while ((boundary = text.indexOf("\n\n")) !== -1) {
+      const frame = text.slice(0, boundary);
+      text = text.slice(boundary + 2);
+      if (!/^event: hoverSettings$/m.test(frame)) continue;
+      readerBuffers.set(reader, text);
+      return JSON.parse(/^data: (.*)$/m.exec(frame)![1]);
+    }
     const next = await reader.read();
     assert.equal(next.done, false);
     text += new TextDecoder().decode(next.value);
   }
-  assert.match(text, /event: hoverSettings/);
-  return JSON.parse(/^data: (.*)$/m.exec(text)![1]);
 }
 
-test("saving floating tip preferences broadcasts to every reader and is global across homes", async () => {
+test("saving floating tip preferences broadcasts on the shared sessions stream to every reader", async () => {
   const { rootDir, cleanup } = await createTempCodexDir(
     "hover-settings-stream",
   );
@@ -40,10 +51,8 @@ test("saving floating tip preferences broadcasts to every reader and is global a
   const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
   try {
     const responses = await Promise.all([
-      server.app.request("/api/codex-deck/hover-settings/stream"),
-      server.app.request(
-        "/api/codex-deck/hover-settings/stream?codexHome=work",
-      ),
+      server.app.request("/api/sessions/stream"),
+      server.app.request("/api/sessions/stream"),
     ]);
     for (const response of responses) {
       assert.equal(response.status, 200);

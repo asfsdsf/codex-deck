@@ -320,7 +320,7 @@ cache_creation_tokens = false
 timestamp = false
 ```
 
-See [config.toml.example](config.toml.example) for every field name. These display settings belong to the main config and apply across Codex homes. UI changes reach local clients over SSE and remote clients through encrypted polling; direct file edits are picked up within five seconds in local mode and on the next remote settings poll. No restart is needed.
+See [config.toml.example](config.toml.example) for every field name. These display settings belong to the main config and apply across Codex homes. Local clients reuse the shared sessions SSE connection for settings updates, and remote clients use encrypted polling. Direct file edits and updates in additional-home runtimes are picked up within five seconds in local mode and on the next remote settings poll. No restart is needed.
 
 Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Only the main codex-deck process opens a network port; additional homes communicate with it over internal process IPC. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
 

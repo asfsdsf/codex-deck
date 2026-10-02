@@ -2,6 +2,7 @@ import { fork, type ChildProcess } from "node:child_process";
 import type { ResolvedCodexHome } from "./codex-home-registry";
 import {
   CODEX_HOME_RUNTIME_CHILD_ENV,
+  CODEX_HOME_RUNTIME_MAIN_HOME_ENV,
   CODEX_HOME_RUNTIME_TRANSLATION_ENV,
   isCodexHomeRuntimeChildMessage,
   type CodexHomeRuntimeAbortMessage,
@@ -14,6 +15,7 @@ import {
 
 export {
   CODEX_HOME_RUNTIME_CHILD_ENV,
+  CODEX_HOME_RUNTIME_MAIN_HOME_ENV,
   CODEX_HOME_RUNTIME_TRANSLATION_ENV,
 } from "./codex-home-runtime-ipc";
 
@@ -78,6 +80,7 @@ export class CodexHomeRuntimeManager {
   public constructor(
     homes: ResolvedCodexHome[],
     private readonly entryPath: string,
+    private readonly mainCodexHome?: string,
   ) {
     this.homesById = new Map(homes.map((home) => [home.id, home]));
   }
@@ -399,6 +402,11 @@ export class CodexHomeRuntimeManager {
         CODEX_HOME: home.path,
         [CODEX_HOME_RUNTIME_CHILD_ENV]: "1",
       };
+      if (this.mainCodexHome) {
+        env[CODEX_HOME_RUNTIME_MAIN_HOME_ENV] = this.mainCodexHome;
+      } else {
+        delete env[CODEX_HOME_RUNTIME_MAIN_HOME_ENV];
+      }
       if (home.translationCommand) {
         env[CODEX_HOME_RUNTIME_TRANSLATION_ENV] = home.translationCommand;
       } else {

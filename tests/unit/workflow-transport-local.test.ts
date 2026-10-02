@@ -8,6 +8,11 @@ import type {
   WorkflowSummary,
 } from "@codex-deck/api";
 import { createLocalTransport } from "../../web/transport/local";
+import {
+  DEFAULT_CONVERSATION_HOVER_SETTINGS,
+  type ConversationHoverSettings,
+} from "../../api/conversation-hover-settings";
+import { setActiveCodexHomeId } from "../../web/codex-home-scope";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -77,6 +82,7 @@ class MockEventSource {
   public readonly url: string;
   public onopen: (() => void) | null = null;
   public onerror: (() => void) | null = null;
+  public closed = false;
   private readonly listeners = new Map<
     string,
     Array<(event: MessageEvent) => void>
@@ -96,7 +102,9 @@ class MockEventSource {
     this.listeners.set(eventName, handlers);
   }
 
-  public close(): void {}
+  public close(): void {
+    this.closed = true;
+  }
 
   public emit(eventName: string, data: unknown): void {
     const event = { data: JSON.stringify(data) } as MessageEvent;
@@ -339,6 +347,65 @@ test("local transport shares one global EventSource for sessions, terminals, and
     unsubscribeTerminals();
     unsubscribeSessions();
   } finally {
+    restoreEventSource();
+  }
+});
+
+test("floating tip preferences reuse the shared stream and survive home switches", () => {
+  const restoreEventSource = installMockEventSource();
+  const transport = createLocalTransport();
+  const seen: ConversationHoverSettings[] = [];
+  const lateSeen: ConversationHoverSettings[] = [];
+  let unsubscribeSettings = () => {};
+  let unsubscribeSessions = () => {};
+  let unsubscribeLateSettings = () => {};
+  try {
+    unsubscribeSettings = transport.subscribeConversationHoverSettings({
+      onSettings: (settings) => seen.push(settings),
+    });
+    unsubscribeSessions = transport.subscribeSessionsStream({
+      onSessions: () => {},
+      onSessionsUpdate: () => {},
+      onSessionsRemoved: () => {},
+    });
+    assert.equal(MockEventSource.instances.length, 1);
+    const source = MockEventSource.instances[0]!;
+    assert.equal(source.url, "/api/sessions/stream");
+    source.emit("hoverSettings", DEFAULT_CONVERSATION_HOVER_SETTINGS);
+    unsubscribeLateSettings = transport.subscribeConversationHoverSettings({
+      onSettings: (settings) => lateSeen.push(settings),
+    });
+    assert.deepEqual(lateSeen, [DEFAULT_CONVERSATION_HOVER_SETTINGS]);
+    unsubscribeSessions();
+    assert.equal(source.closed, false);
+
+    setActiveCodexHomeId("work");
+    unsubscribeSessions = transport.subscribeSessionsStream({
+      onSessions: () => {},
+      onSessionsUpdate: () => {},
+      onSessionsRemoved: () => {},
+    });
+    assert.equal(source.closed, true);
+    assert.equal(MockEventSource.instances.length, 2);
+    const workSource = MockEventSource.instances[1]!;
+    assert.equal(workSource.url, "/api/sessions/stream?codexHome=work");
+    const changed = {
+      ...DEFAULT_CONVERSATION_HOVER_SETTINGS,
+      timestamp: false,
+    };
+    workSource.emit("hoverSettings", changed);
+    assert.deepEqual(seen, [DEFAULT_CONVERSATION_HOVER_SETTINGS, changed]);
+    assert.deepEqual(lateSeen, seen);
+    unsubscribeSessions();
+    unsubscribeLateSettings();
+    assert.equal(workSource.closed, false);
+    unsubscribeSettings();
+    assert.equal(workSource.closed, true);
+  } finally {
+    unsubscribeSessions();
+    unsubscribeLateSettings();
+    unsubscribeSettings();
+    setActiveCodexHomeId("main");
     restoreEventSource();
   }
 });
