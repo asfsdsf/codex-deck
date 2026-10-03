@@ -47,6 +47,7 @@ export default function ConversationPager({
   onJumpToMessage,
 }: ConversationPagerProps) {
   const [topMessageNumber, setTopMessageNumber] = useState(1);
+  const [atBottom, setAtBottom] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [editing, setEditing] = useState(false);
   const [editingSuffix, setEditingSuffix] = useState("01");
@@ -65,6 +66,10 @@ export default function ConversationPager({
       if (!container) return;
       const number = getTopVisibleMessageNumber(container);
       if (number !== null) setTopMessageNumber(number);
+      setAtBottom(
+        container.scrollHeight - container.scrollTop - container.clientHeight <=
+          1,
+      );
     });
   }, [containerRef]);
 
@@ -75,9 +80,13 @@ export default function ConversationPager({
     container?.addEventListener("scroll", schedulePositionUpdate, {
       passive: true,
     });
+    const observer = new ResizeObserver(schedulePositionUpdate);
+    if (container) observer.observe(container);
     return () => {
+      observer.disconnect();
       container?.removeEventListener("scroll", schedulePositionUpdate);
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
     };
   }, [containerRef, schedulePositionUpdate]);
 
@@ -101,9 +110,7 @@ export default function ConversationPager({
     <button
       type="button"
       onClick={() => step(direction)}
-      disabled={
-        direction < 0 ? currentMessage <= 1 : currentMessage >= totalMessages
-      }
+      disabled={direction < 0 ? currentMessage <= 1 : atBottom}
       className="h-7 min-w-[30px] px-2 inline-flex items-center justify-center rounded border border-zinc-500/90 bg-zinc-900/55 text-[14px] font-black leading-none text-zinc-50 hover:bg-zinc-800/55 disabled:border-zinc-700/60 disabled:bg-zinc-900/55 disabled:opacity-45 disabled:cursor-not-allowed"
       style={{
         color: "var(--app-page-control-foreground)",

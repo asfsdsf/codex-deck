@@ -779,7 +779,6 @@ const SessionView = memo(
       const [messageJumpTarget, setMessageJumpTarget] = useState<number | null>(
         null,
       );
-      const [scrollEndPadding, setScrollEndPadding] = useState(0);
       const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState<
         number | null
       >(null);
@@ -1061,7 +1060,6 @@ const SessionView = memo(
         setCollapsedDefaultSegmentKeys({});
         setCurrentPage(1);
         setMessageJumpTarget(null);
-        setScrollEndPadding(0);
         setActiveSearchMatchIndex(null);
         submittingRequestIdsRef.current.clear();
         offsetRef.current = 0;
@@ -1659,7 +1657,6 @@ const SessionView = memo(
 
         const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
         const isAtBottom =
-          scrollEndPadding === 0 &&
           scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX;
         setAutoScroll(isAtBottom);
       };
@@ -1973,7 +1970,6 @@ const SessionView = memo(
       const jumpToLatest = useCallback(() => {
         shouldFollowActiveSearchMatchRef.current = false;
         setMessageJumpTarget(null);
-        setScrollEndPadding(0);
         setCurrentPage(totalPages);
         setAutoScroll(true);
         autoScrollRef.current = true;
@@ -2227,15 +2223,17 @@ const SessionView = memo(
           target.getBoundingClientRect().top -
           container.getBoundingClientRect().top -
           container.clientTop;
-        const missingSpace =
-          targetTop - (container.scrollHeight - container.clientHeight);
-        if (missingSpace > 0.5) {
-          // Keep direct jumps exact even when fewer than a viewport of messages remain.
-          setScrollEndPadding((padding) => padding + Math.ceil(missingSpace));
-          return;
-        }
+        // Stop at the natural bottom instead of adding space below the final message.
+        const maxScrollTop = Math.max(
+          0,
+          container.scrollHeight - container.clientHeight,
+        );
         isScrollingProgrammaticallyRef.current = true;
-        pageVirtualizer.scrollToOffset(Math.max(0, targetTop));
+        pageVirtualizer.scrollToOffset(
+          messageJumpTarget >= totalMessageCount
+            ? maxScrollTop
+            : Math.max(0, Math.min(targetTop, maxScrollTop)),
+        );
         setMessageJumpTarget(null);
         requestAnimationFrame(() => {
           isScrollingProgrammaticallyRef.current = false;
@@ -2248,7 +2246,7 @@ const SessionView = memo(
         expandDefaultSegmentForSearch,
         pageVirtualizer,
         virtualPages,
-        scrollEndPadding,
+        totalMessageCount,
       ]);
       const cachedMessagesByNumber = useMemo(
         () =>
@@ -2901,7 +2899,6 @@ const SessionView = memo(
               </div>
             ) : null}
             <div
-              style={{ paddingBottom: scrollEndPadding + 48 }}
               ref={contentRef}
               className={`mx-auto max-w-4xl px-4 pb-12 md:px-6 ${
                 hasSessionShortcut ? "pt-3" : "pt-5"

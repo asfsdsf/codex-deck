@@ -57,6 +57,40 @@ async function expectPositionMatchesViewport(page: Page) {
     .toBe(true);
 }
 
+async function expectNavigationAtBottom(page: Page, total: number) {
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-conversation-scroll]")
+        .evaluate(
+          (container) =>
+            container.scrollHeight -
+            container.scrollTop -
+            container.clientHeight,
+        ),
+    )
+    .toBeLessThanOrEqual(1);
+  const lastMessage = page.locator(`[data-conversation-message="${total}"]`);
+  await expect(lastMessage).toBeInViewport();
+  await expect
+    .poll(() =>
+      lastMessage.evaluate((node) => {
+        const container = node.closest<HTMLElement>(
+          "[data-conversation-scroll]",
+        )!;
+        const gap =
+          container.getBoundingClientRect().bottom -
+          node.getBoundingClientRect().bottom;
+        return gap >= -1 && gap <= 64;
+      }),
+    )
+    .toBe(true);
+  const top = await topVisibleMessage(page);
+  await expectPositionMatchesViewport(page);
+  await expect(page.getByRole("button", { name: "Next page" })).toBeDisabled();
+  return top;
+}
+
 async function jumpToMessage(page: Page, number: number) {
   const current = await topVisibleMessage(page);
   const total = Number(
@@ -368,12 +402,12 @@ test("steps exactly 100 messages from the topmost block and styles the message c
   await page.getByRole("button", { name: "Next page" }).click();
   await expect.poll(() => topVisibleMessage(page)).toBe(543);
 
-  // Saturate at both ends, and permit exact alignment of the final short page.
+  // The final step stops at the natural bottom with earlier messages still visible.
   await page.getByRole("button", { name: "Next page" }).click();
-  await expect.poll(() => topVisibleMessage(page)).toBe(611);
-  await expect(page.getByRole("button", { name: "Next page" })).toBeDisabled();
+  const bottomTop = await expectNavigationAtBottom(page, 611);
+  expect(bottomTop).toBeLessThan(611);
   await page.getByRole("button", { name: "Previous page" }).click();
-  await expect.poll(() => topVisibleMessage(page)).toBe(511);
+  await expect.poll(() => topVisibleMessage(page)).toBe(bottomTop - 100);
   await jumpToMessage(page, 42);
   await page.getByRole("button", { name: "Previous page" }).click();
   await expect.poll(() => topVisibleMessage(page)).toBe(1);
@@ -432,16 +466,131 @@ test("edits only the leading digits, preserves the offset, and clamps oversized 
 
   await input.fill("999999999999999999999999999999");
   await input.press("Enter");
-  await expect.poll(() => topVisibleMessage(page)).toBe(8611);
-  await expect(position).toHaveAttribute("data-current-message", "8611");
-  await expect(input).toHaveValue("86");
-  await expect(suffix).toHaveText("11");
+  const bottomTop = await expectNavigationAtBottom(page, 8611);
+  expect(bottomTop).toBeLessThan(8611);
+  await expect(position).toHaveAttribute(
+    "data-current-message",
+    String(bottomTop),
+  );
+  await expect(input).toHaveValue(String(bottomTop).slice(0, -2));
+  await expect(suffix).toHaveText(String(bottomTop).slice(-2));
   await expectBoundedWindow(page, 87);
 
   // A prefix of zero reaches the first hundred without making the suffix editable.
   await input.fill("0");
   await input.press("Enter");
-  await expect.poll(() => topVisibleMessage(page)).toBe(11);
-  await expect(suffix).toHaveText("11");
+  const target = Math.max(1, bottomTop % 100);
+  await expect.poll(() => topVisibleMessage(page)).toBe(target);
+  await expect(suffix).toHaveText(String(target));
   await expectPositionMatchesViewport(page);
+});
+
+test("page steps and numeric jumps stop at the bottom of a 542-message conversation", async ({
+  page,
+  app,
+}) => {
+  await appendFile(
+    join(app.rootDir, "sessions", `${app.sessions.alpha}.jsonl`),
+    Array.from({ length: 539 }, (_, index) =>
+      responseItemMessageLine("assistant", `Bottom limit message ${index + 4}`),
+    ).join("\n") + "\n",
+  );
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  await ui.selectSession("Review the launch checklist");
+  await expect(page.locator("[data-total-messages]")).toHaveText("542");
+  for (const { width, height, theme } of [
+    { width: 1440, height: 960, theme: "light" },
+    { width: 390, height: 844, theme: "dark" },
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    if (width < 500)
+      await page.getByRole("button", { name: "Collapse left pane" }).click();
+    await jumpToMessage(page, 442);
+    await page.getByRole("button", { name: "Next page" }).click();
+    const bottomTop = await expectNavigationAtBottom(page, 542);
+    expect(bottomTop).toBeLessThan(542);
+    await page.getByRole("button", { name: "Previous page" }).click();
+    await expect.poll(() => topVisibleMessage(page)).toBe(bottomTop - 100);
+    await expect(page.getByRole("button", { name: "Next page" })).toBeEnabled();
+
+    await jumpToMessage(page, 442);
+    const input = page.getByRole("textbox", { name: "Page number" });
+    await input.fill("5");
+    await input.press("Enter");
+    await expectNavigationAtBottom(page, 542);
+    await expectBoundedWindow(page, 6);
+
+    await page.getByRole("button", { name: "Previous page" }).click();
+    await input.fill("99");
+    await input.press("Enter");
+    await expectNavigationAtBottom(page, 542);
+  }
+});
+
+test("page navigation is disabled when the whole conversation fits in the viewport", async ({
+  page,
+  app,
+}) => {
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  await ui.selectSession("Review the launch checklist");
+  await expect(page.locator("[data-total-messages]")).toHaveText("3");
+  await expect(page.getByRole("button", { name: "Next page" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Previous page" }),
+  ).toBeDisabled();
+  const input = page.getByRole("textbox", { name: "Page number" });
+  await input.fill("99");
+  await input.press("Enter");
+  await expect.poll(() => topVisibleMessage(page)).toBe(1);
+  await expectPositionMatchesViewport(page);
+  expect(
+    await page
+      .locator("[data-conversation-scroll]")
+      .evaluate((container) => container.scrollTop),
+  ).toBe(0);
+  await expect(page.getByRole("button", { name: "Next page" })).toBeDisabled();
+});
+
+test("an oversized page jump reaches the end of a final message taller than the viewport", async ({
+  page,
+  app,
+}) => {
+  const finalText = Array.from(
+    { length: 100 },
+    (_, index) => `Long final message paragraph ${index + 1}`,
+  ).join("\n\n");
+  await appendFile(
+    join(app.rootDir, "sessions", `${app.sessions.alpha}.jsonl`),
+    Array.from({ length: 539 }, (_, index) =>
+      responseItemMessageLine(
+        "assistant",
+        index === 538 ? finalText : `Long-tail message ${index + 4}`,
+      ),
+    ).join("\n") + "\n",
+  );
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  await ui.selectSession("Review the launch checklist");
+  await expect(page.locator("[data-total-messages]")).toHaveText("542");
+  await jumpToMessage(page, 442);
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expectNavigationAtBottom(page, 542);
+  await expect(
+    page.getByText("Long final message paragraph 100", { exact: true }),
+  ).toBeInViewport();
+
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect.poll(() => topVisibleMessage(page)).toBe(442);
+  const input = page.getByRole("textbox", { name: "Page number" });
+  await input.fill("99");
+  await input.press("Enter");
+  await expectNavigationAtBottom(page, 542);
+  await expect(
+    page.getByText("Long final message paragraph 100", { exact: true }),
+  ).toBeInViewport();
 });
