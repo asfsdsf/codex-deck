@@ -395,6 +395,16 @@ codex-deck \
 
 Open `https://your-server-host/` in a browser and sign in with the same remote username and password used for that local machine.
 
+## Guided Git diffs
+
+Use `/codex-deck-diff` or `/ai-diff` in a session composer to fork the conversation and generate a guided tour of its repository's current Git changes. You can add a request, for example `/ai-diff --branch main Explain the API changes`. Enter and the Run button both execute the command. Bound Workflow and Terminal composers also support it.
+
+If `codex-deck-diff` is missing, choose **Install locally**, **Install globally**, or **Cancel**. The fork runs in normal mode even when its parent uses Plan mode; the parent continues unchanged. A disabled installation must be enabled in Skills settings first. Git and Python 3 must be available on the CLI machine.
+
+The fork has a **diff guide** badge in the session list. Use **Origin session** at the top left of the conversation to return to the source session, or **Diff guide** at the top right to open the full-screen viewer. These buttons work in local and remote mode, including mobile browsers. Incomplete or failed generation can be retried in the same fork. For an empty diff, read the explanation in the conversation. Embedded comments support export; persistent browser storage may be unavailable in the isolated viewer.
+
+Artifacts live on the CLI machine under the active `$CODEX_HOME/codex-deck/diff/sessions/<forkSessionId>/`: `snapshot.json`, `guide.json`, and `diff-tour.html`. Each invocation creates a separate fork marked with a **diff guide** badge in the session list. Archiving preserves these files. When deleting the fork, choose **Delete session only** to retain the saved guide files, or **Delete session + diff guide** to remove them too. Retained HTML can be opened directly from its artifact directory. The default comparison is HEAD against current staged, unstaged, and non-ignored untracked code. A requested commit, branch, or tag is compared directly against current code.
+
 ## AI Terminal usage
 
 You can chat with Codex at any time while working in the terminal.

@@ -1434,6 +1434,41 @@ test("workflow routes request expected endpoints over local transport", async ()
   });
 });
 
+test("session deletion forwards the guide cleanup choice in local and remote mode", async () => {
+  const calls: string[] = [];
+  const response = { sessionId: "session/one" };
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(`${String(input)}:${init?.method}`);
+    return jsonResponse(response);
+  };
+  await deleteSession("session/one", "client-1", { deleteDiffGuide: false });
+  await deleteSession("session/one", undefined, { deleteDiffGuide: true });
+
+  const originalIsConnected = RemoteClient.prototype.isConnected;
+  const originalRequestJson = RemoteClient.prototype.requestJson;
+  RemoteClient.prototype.isConnected = () => true;
+  RemoteClient.prototype.requestJson = async function <T>(
+    path: string,
+    init?: RequestInit,
+  ): Promise<T> {
+    calls.push(`${path}:${init?.method}`);
+    return response as T;
+  };
+  try {
+    await deleteSession("session/one", "client-1", { deleteDiffGuide: false });
+    await deleteSession("session/one", undefined, { deleteDiffGuide: true });
+  } finally {
+    RemoteClient.prototype.isConnected = originalIsConnected;
+    RemoteClient.prototype.requestJson = originalRequestJson;
+  }
+  assert.deepEqual(calls, [
+    "/api/sessions/session%2Fone?clientId=client-1&deleteDiffGuide=false:DELETE",
+    "/api/sessions/session%2Fone?deleteDiffGuide=true:DELETE",
+    "/api/sessions/session%2Fone?clientId=client-1&deleteDiffGuide=false:DELETE",
+    "/api/sessions/session%2Fone?deleteDiffGuide=true:DELETE",
+  ]);
+});
+
 test("deleteWorkflow forwards deleteSessions query when requested", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
 

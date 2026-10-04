@@ -10,6 +10,7 @@ import {
   onSessionChange,
   offSessionChange,
   onWorkflowChange,
+  onDiffGuideChange,
   offWorkflowChange,
   shouldIgnoreWatchPathForTests,
   shouldUsePollingForWatcherForTests,
@@ -25,6 +26,39 @@ import {
 } from "./test-utils";
 
 const TEST_TIMEOUT_MS = 6000;
+
+test(
+  "diff artifact changes broadcast to every subscribed listener",
+  { timeout: TEST_TIMEOUT_MS },
+  async () => {
+    const { rootDir, cleanup } = await createTempCodexDir("watcher-diff");
+    const dir = join(rootDir, "codex-deck", "diff", "sessions", "fork-one");
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, "diff-tour.html");
+    await writeFile(path, "<html>");
+    let first = 0;
+    let second = 0;
+    initWatcher(rootDir);
+    const stopFirst = onDiffGuideChange(() => {
+      first += 1;
+    });
+    const stopSecond = onDiffGuideChange(() => {
+      second += 1;
+    });
+    try {
+      startWatcher();
+      await waitForWatcherReady();
+      await appendFile(path, "</html>");
+      await waitFor(() => first > 0 && second > 0, 3000);
+      assert.equal(first, second);
+    } finally {
+      stopFirst();
+      stopSecond();
+      stopWatcher();
+      await cleanup();
+    }
+  },
+);
 
 test(
   "history listener fires when history.jsonl changes",
@@ -263,6 +297,7 @@ test("watcher roots exclude unrelated codex directories", () => {
     join(codexHome, "history.jsonl"),
     join(codexHome, "sessions"),
     join(codexHome, "codex-deck", "workflows"),
+    join(codexHome, "codex-deck", "diff", "sessions"),
   ]);
   assert.equal(
     shouldIgnoreWatchPathForTests(

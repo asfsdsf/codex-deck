@@ -15,6 +15,7 @@ let sessionsDir = "";
 let workflowsDir = "";
 let workflowSessionIndexDir = "";
 let workflowDaemonDir = "";
+let diffGuidesDir = "";
 let watcherReadyPromise: Promise<void> | null = null;
 let watcherRefCount = 0;
 
@@ -24,6 +25,14 @@ const debounceMs = 20;
 const historyChangeListeners = new Set<HistoryChangeCallback>();
 const sessionChangeListeners = new Set<SessionChangeCallback>();
 const workflowChangeListeners = new Set<WorkflowChangeCallback>();
+const diffGuideChangeListeners = new Set<() => void>();
+
+export function onDiffGuideChange(callback: () => void): () => void {
+  diffGuideChangeListeners.add(callback);
+  return () => {
+    diffGuideChangeListeners.delete(callback);
+  };
+}
 
 export function initWatcher(dir: string): void {
   codexDir = dir;
@@ -32,10 +41,11 @@ export function initWatcher(dir: string): void {
   workflowsDir = join(codexDir, "codex-deck", "workflows");
   workflowSessionIndexDir = join(workflowsDir, "session-index");
   workflowDaemonDir = join(workflowsDir, "daemon-state");
+  diffGuidesDir = join(codexDir, "codex-deck", "diff", "sessions");
 }
 
 function getWatchRoots(): string[] {
-  return [historyPath, sessionsDir, workflowsDir]
+  return [historyPath, sessionsDir, workflowsDir, diffGuidesDir]
     .map((value) => value.trim())
     .filter(Boolean);
 }
@@ -218,6 +228,12 @@ function handleChange(filePath: string): void {
 
   const timer = setTimeout(() => {
     debounceTimers.delete(filePath);
+    if (
+      isPathWithinDirectory(filePath, diffGuidesDir) ||
+      filePath === diffGuidesDir
+    ) {
+      for (const callback of diffGuideChangeListeners) callback();
+    }
     emitWorkflowChange(filePath);
     void emitChange(filePath);
   }, debounceMs);

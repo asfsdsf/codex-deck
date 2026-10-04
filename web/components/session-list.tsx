@@ -22,6 +22,7 @@ interface SessionListItem {
   lastUserMessageAt?: number;
   timestamp: number;
   workflowRoleLabel?: string | null;
+  isDiffGuide?: boolean;
   status?: SessionStatus;
 }
 
@@ -380,6 +381,15 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                       }
                     >
                       <p className="text-[13px] font-medium text-zinc-200 leading-snug line-clamp-2 break-words">
+                        {session.isDiffGuide ? (
+                          <span
+                            title="Diff guide session"
+                            aria-label="Diff guide session"
+                            className="mr-1.5 inline-flex rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-[0.01em] text-cyan-200"
+                          >
+                            diff guide
+                          </span>
+                        ) : null}
                         {session.workflowRoleLabel ? (
                           <span className="mr-1.5 inline-flex rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-[0.01em] text-cyan-200">
                             {session.workflowRoleLabel}

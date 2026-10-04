@@ -8,6 +8,7 @@ import type {
   WorkflowDaemonStatusResponse,
   WorkflowDetailResponse,
   WorkflowSummary,
+  DiffGuideSummary,
 } from "@codex-deck/api";
 import type { ConversationHoverSettings } from "../../api/conversation-hover-settings";
 
@@ -21,6 +22,7 @@ export interface SessionsStreamHandlers {
   onSessionsUpdate: (sessions: Session[]) => void;
   onSessionsRemoved: (sessionIds: string[]) => void;
   onSkillsChanged?: (payload: { sessionId: string }) => void;
+  onDiffGuides?: (guides: DiffGuideSummary[]) => void;
   onCodexAppServerEvent?: (event: CodexAppServerEvent) => void;
   onError?: () => void;
 }

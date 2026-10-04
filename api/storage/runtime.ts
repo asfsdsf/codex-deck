@@ -371,6 +371,45 @@ export interface CodexThreadForkResponse {
   thread: CodexThreadSummary;
 }
 
+export type DiffGuideStatus =
+  | "starting"
+  | "generating"
+  | "ready"
+  | "unavailable"
+  | "failed";
+
+export interface DiffGuideSummary {
+  sessionId: string;
+  parentSessionId: string;
+  projectRoot: string;
+  status: DiffGuideStatus;
+  error: string | null;
+}
+
+export interface DiffGuideStartRequest {
+  sourceSessionId: string;
+  requestId: string;
+  prompt?: string;
+  model?: string | null;
+  effort?: CodexReasoningEffort | null;
+  skillInstallChoice?: "local" | "global" | null;
+  retry?: boolean;
+}
+
+export type DiffGuideStartResponse =
+  | { status: "needs_skill_install"; projectRoot: string }
+  | {
+      status: "started" | "failed";
+      guide: DiffGuideSummary;
+      thread: CodexThreadSummary;
+      turnId: string | null;
+    };
+
+export interface DiffGuideContentResponse {
+  guide: DiffGuideSummary;
+  html: string | null;
+}
+
 export interface CodexThreadSideStartResponse {
   thread: CodexThreadSummary;
   parentThreadId: string;
@@ -677,6 +716,11 @@ export interface DeleteSessionSqliteResult {
   logsDeleted: number;
   skippedReason: string | null;
   warnings: string[];
+}
+
+export interface DeleteSessionOptions {
+  /** Defaults to true. Set false to retain the saved diff guide files. */
+  deleteDiffGuide?: boolean;
 }
 
 export interface DeleteSessionResponse {
@@ -5197,6 +5241,7 @@ export async function sessionExists(
 
 export async function deleteSession(
   sessionId: string,
+  options: DeleteSessionOptions = {},
 ): Promise<DeleteSessionResponse> {
   return dedupe(`deleteSession:${sessionId}`, async () => {
     const normalizedSessionId = sessionId.trim();
@@ -5238,6 +5283,11 @@ export async function deleteSession(
       sqlite.logsDeleted > 0;
     if (!foundAny) {
       throw new Error(`session not found: ${normalizedSessionId}`);
+    }
+
+    if (options.deleteDiffGuide !== false) {
+      const { DiffGuideStore } = await import("../diff-guide-store");
+      await new DiffGuideStore(codexDir).remove(normalizedSessionId);
     }
 
     return {

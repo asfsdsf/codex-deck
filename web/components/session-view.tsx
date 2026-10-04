@@ -246,6 +246,16 @@ interface SessionViewProps {
     title?: string;
     onClick: () => void;
   } | null;
+  diffGuideShortcut?: {
+    label: string;
+    title?: string;
+    onClick: () => void;
+  } | null;
+  originSessionShortcut?: {
+    label: string;
+    title?: string;
+    onClick: () => void;
+  } | null;
   onPlanAction?: (sessionId: string, action: "implement" | "stay") => void;
   onFilePathLinkClick?: (href: string) => boolean;
   onMessageHistoryChange?: (
@@ -745,6 +755,8 @@ const SessionView = memo(
         conversationSearchQuery = "",
         workflowShortcut = null,
         terminalShortcut = null,
+        diffGuideShortcut = null,
+        originSessionShortcut = null,
         onPlanAction,
         onFilePathLinkClick,
         onMessageHistoryChange,
@@ -2819,7 +2831,10 @@ const SessionView = memo(
       ]);
 
       const hasSessionShortcut =
-        workflowShortcut !== null || terminalShortcut !== null;
+        workflowShortcut !== null ||
+        terminalShortcut !== null ||
+        diffGuideShortcut !== null ||
+        originSessionShortcut !== null;
 
       useLayoutEffect(() => {
         const container = containerRef.current;
@@ -2858,39 +2873,98 @@ const SessionView = memo(
           >
             {hasSessionShortcut ? (
               <div className="sticky top-0 z-20 px-4 pt-3 md:px-6">
-                <div className="mx-auto flex max-w-4xl items-start justify-start gap-2">
-                  {workflowShortcut ? (
+                <div
+                  className={`flex items-start justify-between gap-2 ${
+                    diffGuideShortcut || originSessionShortcut
+                      ? ""
+                      : "mx-auto max-w-4xl"
+                  }`}
+                >
+                  <div className="flex min-w-0 flex-1 flex-wrap items-start gap-2">
+                    {originSessionShortcut ? (
+                      <button
+                        type="button"
+                        onClick={originSessionShortcut.onClick}
+                        aria-label={originSessionShortcut.label}
+                        title={
+                          originSessionShortcut.title ??
+                          originSessionShortcut.label
+                        }
+                        className="group inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-cyan-400/25 bg-zinc-900/30 px-3 py-2 text-left shadow-lg shadow-black/10 ring-1 ring-black/10 transition-all hover:-translate-y-0.5 hover:border-cyan-300/40 hover:bg-zinc-900/40 sm:gap-3 sm:px-4"
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-cyan-200 sm:h-8 sm:w-8">
+                          <svg
+                            aria-hidden="true"
+                            className="h-4 w-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path
+                              d="m12 5-7 7 7 7M5 12h14"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </span>
+                        <span className="min-w-0 truncate text-xs font-medium text-zinc-100 sm:text-sm">
+                          {originSessionShortcut.label}
+                        </span>
+                      </button>
+                    ) : null}
+                    {workflowShortcut ? (
+                      <button
+                        type="button"
+                        onClick={workflowShortcut.onClick}
+                        title={workflowShortcut.title ?? workflowShortcut.label}
+                        className="group inline-flex max-w-full items-center gap-3 rounded-full border border-emerald-400/20 bg-zinc-900/30 px-4 py-2 text-left shadow-lg shadow-black/30 ring-1 ring-black/30 transition-all hover:-translate-y-0.5 hover:border-emerald-300/35 hover:bg-zinc-900/40"
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-400/12 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                          WF
+                        </span>
+                        <span className="min-w-0 truncate text-sm font-medium text-zinc-100">
+                          Workflow
+                        </span>
+                        <span className="shrink-0 text-sm text-emerald-200 transition-transform group-hover:translate-x-0.5">
+                          &gt;
+                        </span>
+                      </button>
+                    ) : null}
+                    {terminalShortcut ? (
+                      <button
+                        type="button"
+                        onClick={terminalShortcut.onClick}
+                        title={terminalShortcut.title ?? terminalShortcut.label}
+                        className="group inline-flex max-w-full items-center gap-3 rounded-full border border-cyan-400/25 bg-zinc-900/30 px-4 py-2 text-left shadow-lg shadow-black/30 ring-1 ring-black/30 transition-all hover:-translate-y-0.5 hover:border-cyan-300/40 hover:bg-zinc-900/40"
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+                          TM
+                        </span>
+                        <span className="min-w-0 truncate text-sm font-medium text-zinc-100">
+                          Terminal
+                        </span>
+                        <span className="shrink-0 text-sm text-cyan-200 transition-transform group-hover:translate-x-0.5">
+                          &gt;
+                        </span>
+                      </button>
+                    ) : null}
+                  </div>
+                  {diffGuideShortcut ? (
                     <button
                       type="button"
-                      onClick={workflowShortcut.onClick}
-                      title={workflowShortcut.title ?? workflowShortcut.label}
-                      className="group inline-flex max-w-full items-center gap-3 rounded-full border border-emerald-400/20 bg-zinc-900/30 px-4 py-2 text-left shadow-lg shadow-black/30 ring-1 ring-black/30 transition-all hover:-translate-y-0.5 hover:border-emerald-300/35 hover:bg-zinc-900/40"
+                      onClick={diffGuideShortcut.onClick}
+                      aria-label={diffGuideShortcut.label}
+                      title={diffGuideShortcut.title ?? diffGuideShortcut.label}
+                      className="group ml-auto inline-flex min-w-0 max-w-[55%] items-center gap-2 rounded-full border border-violet-400/35 bg-zinc-900/30 px-3 py-2 text-left shadow-lg shadow-black/10 ring-1 ring-black/10 transition-all hover:-translate-y-0.5 hover:border-violet-400/60 hover:bg-zinc-900/40 sm:gap-3 sm:px-4"
                     >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-400/12 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
-                        WF
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-400/15 text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-200 sm:h-8 sm:w-8">
+                        DF
                       </span>
-                      <span className="min-w-0 truncate text-sm font-medium text-zinc-100">
-                        Workflow
+                      <span className="min-w-0 truncate text-xs font-medium text-zinc-100 sm:text-sm">
+                        {diffGuideShortcut.label}
                       </span>
-                      <span className="shrink-0 text-sm text-emerald-200 transition-transform group-hover:translate-x-0.5">
-                        &gt;
-                      </span>
-                    </button>
-                  ) : null}
-                  {terminalShortcut ? (
-                    <button
-                      type="button"
-                      onClick={terminalShortcut.onClick}
-                      title={terminalShortcut.title ?? terminalShortcut.label}
-                      className="group inline-flex max-w-full items-center gap-3 rounded-full border border-cyan-400/25 bg-zinc-900/30 px-4 py-2 text-left shadow-lg shadow-black/30 ring-1 ring-black/30 transition-all hover:-translate-y-0.5 hover:border-cyan-300/40 hover:bg-zinc-900/40"
-                    >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-                        TM
-                      </span>
-                      <span className="min-w-0 truncate text-sm font-medium text-zinc-100">
-                        Terminal
-                      </span>
-                      <span className="shrink-0 text-sm text-cyan-200 transition-transform group-hover:translate-x-0.5">
+                      <span className="shrink-0 text-sm text-violet-200 transition-transform group-hover:translate-x-0.5">
                         &gt;
                       </span>
                     </button>

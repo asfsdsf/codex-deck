@@ -6,8 +6,11 @@ import type {
   TerminalStreamEvent,
   WorkflowDetailResponse,
   WorkflowSummary,
+  DiffGuideSummary,
 } from "@codex-deck/api";
 import { createLocalTransport } from "../../web/transport/local";
+import { createRemoteTransport } from "../../web/transport/remote";
+import type { RemoteClient } from "../../web/remote-client";
 import {
   DEFAULT_CONVERSATION_HOVER_SETTINGS,
   type ConversationHoverSettings,
@@ -26,6 +29,102 @@ function flushAsyncWork(): Promise<void> {
     setImmediate(resolve);
   });
 }
+
+const diffGuide: DiffGuideSummary = {
+  sessionId: "fork-one",
+  parentSessionId: "parent",
+  projectRoot: "/repo",
+  status: "ready",
+  error: null,
+};
+
+test("local diff guide events fan out through the shared stream", () => {
+  const restore = installMockEventSource();
+  const transport = createLocalTransport();
+  const received: DiffGuideSummary[][] = [];
+  const subscribe = () =>
+    transport.subscribeSessionsStream({
+      onSessions: () => {},
+      onSessionsUpdate: () => {},
+      onSessionsRemoved: () => {},
+      onDiffGuides: (guides) => received.push(guides),
+    });
+  const stopFirst = subscribe();
+  const stopSecond = subscribe();
+  try {
+    assert.equal(MockEventSource.instances.length, 1);
+    MockEventSource.instances[0].emit("diffGuides", [diffGuide]);
+    assert.deepEqual(received, [[diffGuide], [diffGuide]]);
+  } finally {
+    stopFirst();
+    stopSecond();
+    restore();
+  }
+});
+
+test("remote sessions polling reports diff guides through JSON transport", async () => {
+  const requested: string[] = [];
+  const transport = createRemoteTransport({
+    requestJson: async (path: string) => {
+      requested.push(path);
+      if (path === "/api/diff-guides") return [diffGuide];
+      return {
+        version: 1,
+        isFullSnapshot: true,
+        sessions: [],
+        updates: [],
+        removedSessionIds: [],
+        skillsChangedSessionIds: [],
+      };
+    },
+  } as unknown as RemoteClient);
+  const received: DiffGuideSummary[][] = [];
+  const stop = transport.subscribeSessionsStream({
+    onSessions: () => {},
+    onSessionsUpdate: () => {},
+    onSessionsRemoved: () => {},
+    onDiffGuides: (guides) => received.push(guides),
+  });
+  try {
+    await flushAsyncWork();
+    assert.deepEqual(received, [[diffGuide]]);
+    assert.ok(requested.includes("/api/diff-guides"));
+    assert.ok(requested.some((path) => path.startsWith("/api/sessions/delta")));
+  } finally {
+    stop();
+  }
+});
+
+test("a guide endpoint failure does not block remote session updates", async () => {
+  const transport = createRemoteTransport({
+    requestJson: async (path: string) => {
+      if (path === "/api/diff-guides") throw new Error("Guide unavailable");
+      return {
+        version: 1,
+        isFullSnapshot: true,
+        sessions: [],
+        updates: [],
+        removedSessionIds: [],
+        skillsChangedSessionIds: [],
+      };
+    },
+  } as unknown as RemoteClient);
+  let sessionsUpdated = false;
+  const stop = transport.subscribeSessionsStream({
+    onSessions: () => {
+      sessionsUpdated = true;
+    },
+    onSessionsUpdate: () => {},
+    onSessionsRemoved: () => {},
+    onDiffGuides: () => {},
+  });
+  try {
+    await flushAsyncWork();
+    assert.equal(sessionsUpdated, true);
+  } finally {
+    stop();
+  }
+});
 
 class ManualTimerController {
   private nextId = 1;

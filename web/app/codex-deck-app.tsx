@@ -13,6 +13,8 @@ import {
   type RefObject,
 } from "react";
 import type {
+  DiffGuideSummary,
+  DiffGuideStartResponse,
   CodexAppServerEvent,
   CodexAgentAction,
   CodexAgentWaitConfig,
@@ -77,11 +79,18 @@ import {
   resolveSessionSelection,
 } from "../session-selection";
 import SessionList from "../components/session-list";
+import SessionDeleteDialog, {
+  type SessionDeleteMode,
+} from "../components/session-delete-dialog";
 import SessionView, {
   getConversationActivityDetails,
   type SessionSearchStatus,
   type SessionViewHandle,
 } from "../components/session-view";
+import {
+  DiffGuideViewer,
+  DiffSkillInstallDialog,
+} from "../components/diff-guide-viewer";
 import LatestSessionMessageBox from "../components/latest-session-message-box";
 import TerminalView from "../components/terminal-view";
 import WorkflowView from "../components/workflow-view";
@@ -250,6 +259,8 @@ import {
   sendTerminalInput as sendTerminalInputRequest,
   setCodexThreadName,
   forkCodexThread,
+  startDiffGuide,
+  getDiffGuides,
   startCodexSideThread,
   compactCodexThread,
   archiveCodexThread,
@@ -2652,6 +2663,7 @@ const MessageComposer = memo(function MessageComposer(
     [activeSkillSelector, draft, historyNavigation.index],
   );
 
+  const slashCommandBusyRef = useRef(false);
   const executeSlashCommand = useCallback(
     async (
       command: SlashCommandDefinition,
@@ -2698,9 +2710,13 @@ const MessageComposer = memo(function MessageComposer(
         return;
       }
 
-      const handled = await onRunSlashCommand(command.name, args);
-      if (handled) {
-        clearAfterSendSuccess();
+      if (slashCommandBusyRef.current) return;
+      slashCommandBusyRef.current = true;
+      try {
+        const handled = await onRunSlashCommand(command.name, args);
+        if (handled) clearAfterSendSuccess();
+      } finally {
+        slashCommandBusyRef.current = false;
       }
     },
     [clearAfterSendSuccess, onRunSlashCommand],
@@ -2708,6 +2724,11 @@ const MessageComposer = memo(function MessageComposer(
 
   const handleSendMessage = useCallback(
     async (trigger: ComposerSendTrigger = "other") => {
+      const invocation = parseSlashCommandInvocation(draft, slashCommands);
+      if (invocation) {
+        await executeSlashCommand(invocation.command, invocation.args);
+        return;
+      }
       if (!hasMessageContent) {
         return;
       }
@@ -2738,6 +2759,8 @@ const MessageComposer = memo(function MessageComposer(
       hasMessageContent,
       normalizedImageFiles,
       onSendMessage,
+      slashCommands,
+      executeSlashCommand,
     ],
   );
   const handleIdlePrimaryAction = useCallback(
@@ -3295,6 +3318,14 @@ const MessageComposer = memo(function MessageComposer(
             }
           }}
           onClick={() => {
+            const invocation = parseSlashCommandInvocation(
+              draft,
+              slashCommands,
+            );
+            if (invocation) {
+              void executeSlashCommand(invocation.command, invocation.args);
+              return;
+            }
             if (primaryActionState.kind === "stop") {
               void onStopConversation();
               return;
@@ -3305,7 +3336,11 @@ const MessageComposer = memo(function MessageComposer(
             }
             void handleSendMessage("send-button");
           }}
-          disabled={primaryActionState.disabled}
+          disabled={
+            composerBusy ||
+            (primaryActionState.disabled &&
+              !parseSlashCommandInvocation(draft, slashCommands))
+          }
           className={`flex h-9 items-center justify-center rounded-lg px-4 text-sm font-medium text-zinc-50 transition-colors disabled:opacity-50 cursor-pointer ${
             shouldUseStopAction
               ? "bg-red-700/90 hover:bg-red-700"
@@ -3314,7 +3349,9 @@ const MessageComposer = memo(function MessageComposer(
                 : "bg-cyan-700/80 hover:bg-cyan-700"
           }`}
         >
-          {primaryActionState.label}
+          {parseSlashCommandInvocation(draft, slashCommands)
+            ? "Run"
+            : primaryActionState.label}
         </button>
       </div>
     </>
@@ -3618,6 +3655,24 @@ export default function CodexDeckApp() {
   const [sessionTerminalRolesById, setSessionTerminalRolesById] = useState<
     Record<string, TerminalSessionRoleSummary | null>
   >({});
+  const [diffGuidesBySession, setDiffGuidesBySession] = useState<
+    Record<string, DiffGuideSummary>
+  >({});
+  const [diffGuideViewerSessionId, setDiffGuideViewerSessionId] = useState<
+    string | null
+  >(null);
+  const [diffSkillInstallProject, setDiffSkillInstallProject] = useState<
+    string | null
+  >(null);
+  const diffSkillInstallResolveRef = useRef<
+    ((choice: "local" | "global" | "cancel") => void) | null
+  >(null);
+  const diffStartBusyRef = useRef(false);
+  const diffStartRequestRef = useRef<{
+    sourceSessionId: string;
+    prompt: string;
+    requestId: string;
+  } | null>(null);
   const [workflowDetail, setWorkflowDetail] =
     useState<WorkflowDetailResponse | null>(null);
   const [workflowDetailLoading, setWorkflowDetailLoading] = useState(false);
@@ -3836,7 +3891,9 @@ export default function CodexDeckApp() {
     number | null
   >(null);
   const [showFixDangling, setShowFixDangling] = useState(false);
-  const [deletingSession, setDeletingSession] = useState(false);
+  const [sessionDeleteMode, setSessionDeleteMode] =
+    useState<SessionDeleteMode>(null);
+  const deletingSession = sessionDeleteMode !== null;
   const [deleteSessionTargetId, setDeleteSessionTargetId] = useState<
     string | null
   >(null);
@@ -4155,6 +4212,12 @@ export default function CodexDeckApp() {
     setWorkflowLatestSessionPreviewLoading(false);
     setSessionWorkflowRolesById({});
     setSessionTerminalRolesById({});
+    setDiffGuidesBySession({});
+    setDiffGuideViewerSessionId(null);
+    setDiffSkillInstallProject(null);
+    diffSkillInstallResolveRef.current?.("cancel");
+    diffSkillInstallResolveRef.current = null;
+    diffStartRequestRef.current = null;
     setTerminalEmbeddedMessages(EMPTY_TERMINAL_EMBEDDED_MESSAGES_STATE);
     setTerminalEmbeddedMessagesLoading(false);
     terminalEmbeddedRawMessagesRef.current = [];
@@ -4213,7 +4276,7 @@ export default function CodexDeckApp() {
     setFixDanglingTargetSessionId(null);
     setWaitSilenceStartedAt(null);
     setShowFixDangling(false);
-    setDeletingSession(false);
+    setSessionDeleteMode(null);
     setDeleteSessionTargetId(null);
     setWorkflowDeleteMode(null);
     setDeleteWorkflowTargetId(null);
@@ -4647,6 +4710,9 @@ export default function CodexDeckApp() {
       current === normalizedSessionId ? null : current,
     );
     setSelectedSession((current) =>
+      current === normalizedSessionId ? null : current,
+    );
+    setDiffGuideViewerSessionId((current) =>
       current === normalizedSessionId ? null : current,
     );
   }, []);
@@ -5217,6 +5283,7 @@ export default function CodexDeckApp() {
         return {
           ...session,
           display: override || session.display,
+          isDiffGuide: !!diffGuidesBySession[session.id],
           workflowRoleLabel:
             getTerminalSessionRoleLabel(terminalRole) ??
             getWorkflowSessionRoleLabel(
@@ -5231,6 +5298,7 @@ export default function CodexDeckApp() {
       sessions,
       threadNameOverrides,
       trackedSessionStatuses,
+      diffGuidesBySession,
     ],
   );
 
@@ -7055,6 +7123,12 @@ export default function CodexDeckApp() {
         });
         handleSkillsChanged(event);
       },
+      onDiffGuides: (guides) => {
+        if (codexHomeGenerationRef.current !== generation) return;
+        setDiffGuidesBySession(
+          Object.fromEntries(guides.map((guide) => [guide.sessionId, guide])),
+        );
+      },
       onCodexAppServerEvent: (event) => {
         if (codexHomeGenerationRef.current === generation) {
           handleCodexAppServerEvent(event);
@@ -7096,6 +7170,23 @@ export default function CodexDeckApp() {
         }
       },
     });
+  }, [apiReady, isPageVisible, selectedCodexHomeId]);
+
+  useEffect(() => {
+    if (!apiReady || !isPageVisible) return;
+    let cancelled = false;
+    const generation = codexHomeGenerationRef.current;
+    getDiffGuides()
+      .then((guides) => {
+        if (!cancelled && codexHomeGenerationRef.current === generation)
+          setDiffGuidesBySession(
+            Object.fromEntries(guides.map((guide) => [guide.sessionId, guide])),
+          );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [apiReady, isPageVisible, selectedCodexHomeId]);
 
   const { sessionIds, sessionIdsKey } = useMemo(
@@ -10511,6 +10602,159 @@ export default function CodexDeckApp() {
     setSessionMode,
   ]);
 
+  const closeDiffGuideViewer = useCallback(
+    () => setDiffGuideViewerSessionId(null),
+    [],
+  );
+  const updateDiffGuide = useCallback((guide: DiffGuideSummary) => {
+    setDiffGuidesBySession((current) => ({
+      ...current,
+      [guide.sessionId]: guide,
+    }));
+  }, []);
+  const resolveDiffSkillInstall = useCallback(
+    (choice: "local" | "global" | "cancel") => {
+      const resolve = diffSkillInstallResolveRef.current;
+      diffSkillInstallResolveRef.current = null;
+      setDiffSkillInstallProject(null);
+      resolve?.(choice);
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      diffSkillInstallResolveRef.current?.("cancel");
+    },
+    [],
+  );
+
+  const applyDiffGuideStart = useCallback(
+    (response: DiffGuideStartResponse) => {
+      if (response.status === "needs_skill_install") return;
+      upsertSessionFromThreadSummary(response.thread);
+      setDiffGuidesBySession((current) => ({
+        ...current,
+        [response.guide.sessionId]: response.guide,
+      }));
+      setSessionMode(response.guide.sessionId, DEFAULT_MODE_KEY);
+      if (response.turnId && response.guide.status === "generating") {
+        trackWebManagedSessionTurn(response.guide.sessionId, response.turnId);
+        clearConnectionFailureNoticeForSession(response.guide.sessionId);
+        waitSuppressSessionsRef.current.delete(response.guide.sessionId);
+        setPendingTurn({
+          sessionId: response.guide.sessionId,
+          turnId: response.turnId,
+        });
+      }
+      if (response.status === "failed")
+        setInteractionError(response.guide.error);
+    },
+    [
+      upsertSessionFromThreadSummary,
+      setSessionMode,
+      trackWebManagedSessionTurn,
+      clearConnectionFailureNoticeForSession,
+    ],
+  );
+
+  const runDiffGuideCommand = useCallback(
+    async (sourceSessionId: string, prompt: string): Promise<boolean> => {
+      if (diffStartBusyRef.current) return false;
+      diffStartBusyRef.current = true;
+      const generation = codexHomeGenerationRef.current;
+      let request = diffStartRequestRef.current;
+      if (
+        !request ||
+        request.sourceSessionId !== sourceSessionId ||
+        request.prompt !== prompt
+      ) {
+        request = { sourceSessionId, prompt, requestId: crypto.randomUUID() };
+        diffStartRequestRef.current = request;
+      }
+      const defaultMode =
+        collaborationModes.find((mode) => mode.mode === DEFAULT_MODE_KEY) ??
+        null;
+      const model = getEffectiveModelId({
+        selectedModelId,
+        selectedModeOption: defaultMode,
+        configDefaults,
+        models,
+      });
+      const effort = getEffectiveReasoningEffort({
+        selectedEffort,
+        selectedModeKey: DEFAULT_MODE_KEY,
+        selectedModeOption: defaultMode,
+        configDefaults,
+        models,
+        effectiveModelId: model,
+      });
+      const input = {
+        ...request,
+        model,
+        effort,
+      };
+      try {
+        let response = await startDiffGuide(input);
+        if (codexHomeGenerationRef.current !== generation) return false;
+        if (response.status === "needs_skill_install") {
+          const projectRoot = response.projectRoot;
+          const choice = await new Promise<"local" | "global" | "cancel">(
+            (resolve) => {
+              diffSkillInstallResolveRef.current = resolve;
+              setDiffSkillInstallProject(projectRoot);
+            },
+          );
+          if (
+            choice === "cancel" ||
+            codexHomeGenerationRef.current !== generation
+          ) {
+            diffStartRequestRef.current = null;
+            return false;
+          }
+          response = await startDiffGuide({
+            ...input,
+            skillInstallChoice: choice,
+          });
+        }
+        if (
+          codexHomeGenerationRef.current !== generation ||
+          response.status === "needs_skill_install"
+        )
+          return false;
+        applyDiffGuideStart(response);
+        setSelectedSession(response.guide.sessionId);
+        setCenterView("session");
+        if (isMobilePhone) setSidebarCollapsed(true);
+        diffStartRequestRef.current = null;
+        showCommandNoticeForDuration(
+          response.status === "failed"
+            ? "Diff session created. Check the error and retry in the guide viewer."
+            : "Generating a diff guide in the forked session.",
+        );
+        return true;
+      } catch (error) {
+        if (codexHomeGenerationRef.current === generation)
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+        // Retain the request ID for a retry after an uncertain network response.
+        return false;
+      } finally {
+        diffStartBusyRef.current = false;
+      }
+    },
+    [
+      selectedModelId,
+      selectedEffort,
+      applyDiffGuideStart,
+      collaborationModes,
+      configDefaults,
+      models,
+      isMobilePhone,
+      showCommandNoticeForDuration,
+    ],
+  );
+
   const handleRunSlashCommand = useCallback(
     async (commandName: string, args: string): Promise<boolean> => {
       const normalizedArgs = args.trim();
@@ -10549,6 +10793,16 @@ export default function CodexDeckApp() {
         refresh?.();
       };
       setInteractionError(null);
+
+      if (commandName === "/codex-deck-diff") {
+        if (!commandSessionId) {
+          setInteractionError(
+            "Select a session before using /codex-deck-diff.",
+          );
+          return false;
+        }
+        return runDiffGuideCommand(commandSessionId, args);
+      }
 
       if (commandName === "/model") {
         return openModelSelectorFromCommand();
@@ -11148,6 +11402,7 @@ export default function CodexDeckApp() {
       centerView,
       activeComposerSessionData,
       activeComposerSessionId,
+      runDiffGuideCommand,
       sessionsWithThreadNames,
       ensureSessionExistsForUse,
       openModelSelectorFromCommand,
@@ -12123,40 +12378,66 @@ export default function CodexDeckApp() {
     handleRequestDeleteWorkflow,
   ]);
 
-  const handleConfirmDeleteSession = useCallback(async () => {
-    if (!deleteSessionTargetId || deletingSession) {
-      return;
-    }
-
-    setDeletingSession(true);
-    setInteractionError(null);
-
-    try {
-      const response = await deleteSessionRequest(
-        deleteSessionTargetId,
-        pageClientIdRef.current,
-      );
-      removeSessionFromLocalState(response.sessionId);
-      setDeleteSessionTargetId(null);
-      showCommandNoticeForDuration("Deleted session.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (isSessionUnavailableMessage(message)) {
-        notifyDeletedSessionAndCleanup(deleteSessionTargetId);
-        setDeleteSessionTargetId(null);
-      } else {
-        setInteractionError(message);
+  const handleConfirmDeleteSession = useCallback(
+    async (deleteDiffGuide = true) => {
+      if (!deleteSessionTargetId || deletingSession) {
+        return;
       }
-    } finally {
-      setDeletingSession(false);
-    }
-  }, [
-    deleteSessionTargetId,
-    deletingSession,
-    removeSessionFromLocalState,
-    showCommandNoticeForDuration,
-    notifyDeletedSessionAndCleanup,
-  ]);
+
+      const sessionId = deleteSessionTargetId;
+      const hasDiffGuide = !!diffGuidesBySession[sessionId];
+      const generation = codexHomeGenerationRef.current;
+      setSessionDeleteMode(
+        hasDiffGuide && deleteDiffGuide ? "session-and-diff-guide" : "session",
+      );
+      setInteractionError(null);
+
+      try {
+        const response = await deleteSessionRequest(
+          sessionId,
+          pageClientIdRef.current,
+          { deleteDiffGuide },
+        );
+        if (codexHomeGenerationRef.current !== generation) return;
+        removeSessionFromLocalState(response.sessionId);
+        if (deleteDiffGuide) {
+          setDiffGuidesBySession((current) => {
+            const next = { ...current };
+            delete next[response.sessionId];
+            return next;
+          });
+        }
+        setDeleteSessionTargetId(null);
+        showCommandNoticeForDuration(
+          hasDiffGuide
+            ? deleteDiffGuide
+              ? "Deleted session and diff guide files."
+              : "Deleted session; kept diff guide files."
+            : "Deleted session.",
+        );
+      } catch (error) {
+        if (codexHomeGenerationRef.current !== generation) return;
+        const message = error instanceof Error ? error.message : String(error);
+        if (isSessionUnavailableMessage(message)) {
+          notifyDeletedSessionAndCleanup(deleteSessionTargetId);
+          setDeleteSessionTargetId(null);
+        } else {
+          setInteractionError(message);
+        }
+      } finally {
+        if (codexHomeGenerationRef.current === generation)
+          setSessionDeleteMode(null);
+      }
+    },
+    [
+      deleteSessionTargetId,
+      deletingSession,
+      diffGuidesBySession,
+      removeSessionFromLocalState,
+      showCommandNoticeForDuration,
+      notifyDeletedSessionAndCleanup,
+    ],
+  );
 
   const handleConfirmDeleteTerminal = useCallback(
     async (options?: { deleteBoundSession?: boolean }) => {
@@ -13916,35 +14197,17 @@ export default function CodexDeckApp() {
         )}
 
         {deleteSessionTargetId && (
-          <CenteredConfirmDialog
-            tone="danger"
-            title="Delete this session?"
-            message="This will delete the session rollout file, remove matching registry entries, and remove related state-db records."
-          >
-            <p className="mt-2 break-all text-[11px] text-zinc-500">
-              {deleteSessionTargetData?.display ?? deleteSessionTargetId}
-            </p>
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeleteSessionTargetId(null)}
-                disabled={deletingSession}
-                className="h-8 rounded border border-zinc-700 bg-zinc-800/80 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleConfirmDeleteSession();
-                }}
-                disabled={deletingSession}
-                className="h-8 rounded border border-red-600/70 bg-red-700/25 px-3 text-xs text-red-100 transition-colors hover:bg-red-700/35 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {deletingSession ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </CenteredConfirmDialog>
+          <SessionDeleteDialog
+            sessionLabel={
+              deleteSessionTargetData?.display ?? deleteSessionTargetId
+            }
+            hasDiffGuide={!!diffGuidesBySession[deleteSessionTargetId]}
+            deleteMode={sessionDeleteMode}
+            onCancel={() => setDeleteSessionTargetId(null)}
+            onConfirm={(deleteDiffGuide) => {
+              void handleConfirmDeleteSession(deleteDiffGuide);
+            }}
+          />
         )}
 
         {deleteWorkflowTargetId && (
@@ -14199,6 +14462,24 @@ export default function CodexDeckApp() {
             </div>
           </div>
         )}
+
+        {diffSkillInstallProject && (
+          <DiffSkillInstallDialog
+            projectRoot={diffSkillInstallProject}
+            onChoice={resolveDiffSkillInstall}
+          />
+        )}
+        {diffGuideViewerSessionId &&
+          diffGuidesBySession[diffGuideViewerSessionId] && (
+            <DiffGuideViewer
+              key={`${selectedCodexHomeId}:${diffGuideViewerSessionId}`}
+              guide={diffGuidesBySession[diffGuideViewerSessionId]}
+              onClose={closeDiffGuideViewer}
+              onStarted={applyDiffGuideStart}
+              onGuideChange={updateDiffGuide}
+              theme={resolvedTheme}
+            />
+          )}
 
         {workflowSkillInstallPrompt && (
           <div
@@ -14847,6 +15128,39 @@ export default function CodexDeckApp() {
                           label: selectedSessionWorkflowShortcut.label,
                           title: selectedSessionWorkflowShortcut.title,
                           onClick: handleOpenWorkflowForSession,
+                        }
+                      : null
+                  }
+                  diffGuideShortcut={
+                    diffGuidesBySession[selectedSession]
+                      ? {
+                          label:
+                            diffGuidesBySession[selectedSession].status ===
+                            "ready"
+                              ? "Diff guide"
+                              : diffGuidesBySession[selectedSession].status ===
+                                    "generating" ||
+                                  diffGuidesBySession[selectedSession]
+                                    .status === "starting"
+                                ? "Diff guide · generating…"
+                                : "Diff guide · unavailable",
+                          title: "Open this session's Git diff guide",
+                          onClick: () =>
+                            setDiffGuideViewerSessionId(selectedSession),
+                        }
+                      : null
+                  }
+                  originSessionShortcut={
+                    diffGuidesBySession[selectedSession]?.parentSessionId
+                      ? {
+                          label: "Origin session",
+                          title:
+                            "Open the session this diff guide was forked from",
+                          onClick: () =>
+                            handleSelectSession(
+                              diffGuidesBySession[selectedSession]
+                                .parentSessionId,
+                            ),
                         }
                       : null
                   }

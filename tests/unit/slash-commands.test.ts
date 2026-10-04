@@ -9,6 +9,38 @@ import {
   type SlashCommandDefinition,
 } from "../../web/slash-commands";
 
+test("diff command aliases preserve multiline prompts in session and bound composers", () => {
+  const prompt = "--commit abc123\nExplain the API changes in Korean.";
+  for (const commands of [
+    SESSION_COMPOSER_SLASH_COMMANDS,
+    getWorkflowComposerSlashCommands("bound-session"),
+  ]) {
+    for (const name of ["/ai-diff", "/codex-deck-diff"]) {
+      const invocation = parseSlashCommandInvocation(
+        `${name} ${prompt}`,
+        commands,
+      );
+      assert.equal(invocation?.command.name, "/codex-deck-diff");
+      assert.equal(invocation?.args, prompt);
+      assert.equal(invocation?.command.supportsInlineArgs, true);
+    }
+    for (const query of ["/", "/ai", "/ai-diff"]) {
+      const alias = getSlashPaletteCommands(query, commands).find(
+        (command) => command.name === "/ai-diff",
+      );
+      assert.ok(alias, `/ai-diff should appear for ${query}`);
+      assert.equal(alias.supportsInlineArgs, true);
+    }
+  }
+  assert.equal(
+    parseSlashCommandInvocation(
+      "/ai-diff",
+      getWorkflowComposerSlashCommands(null),
+    ),
+    null,
+  );
+});
+
 test("parseSlashCommandQuery parses query and argument state", () => {
   assert.equal(parseSlashCommandQuery("hello"), null);
   assert.deepEqual(parseSlashCommandQuery("/"), {

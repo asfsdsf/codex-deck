@@ -206,6 +206,11 @@ export function createLocalTransport(): WebTransport {
             subscriber.onSkillsChanged?.({ sessionId: payload.sessionId });
           }
         });
+        eventSource.addEventListener("diffGuides", (event) => {
+          const guides = JSON.parse(event.data);
+          for (const subscriber of sessionsStreamSubscribers)
+            subscriber.onDiffGuides?.(guides);
+        });
         eventSource.addEventListener("codexAppServerEvent", (event) => {
           const payload = JSON.parse(event.data) as CodexAppServerEvent;
           for (const subscriber of sessionsStreamSubscribers) {

@@ -10,6 +10,7 @@ import type {
   WorkflowDaemonStatusResponse,
   WorkflowDetailResponse,
   WorkflowSummary,
+  DiffGuideSummary,
 } from "@codex-deck/api";
 import type { RemoteClient } from "../remote-client";
 import type { ConversationHoverSettings } from "../../api/conversation-hover-settings";
@@ -344,6 +345,7 @@ export function createRemoteTransport(
     subscribeSessionsStream(handlers: SessionsStreamHandlers): () => void {
       let version = 0;
       let initialized = false;
+      let previousDiffGuides = "";
 
       return createPollingSubscription(async () => {
         try {
@@ -351,9 +353,21 @@ export function createRemoteTransport(
             sinceVersion: String(Math.max(0, Math.floor(version))),
             waitMs: String(REMOTE_SESSIONS_DELTA_WAIT_MS),
           });
-          const delta = await remoteClient.requestJson<SessionsDeltaResponse>(
-            `/api/sessions/delta?${params.toString()}`,
-          );
+          const [delta, guides] = await Promise.all([
+            remoteClient.requestJson<SessionsDeltaResponse>(
+              `/api/sessions/delta?${params.toString()}`,
+            ),
+            handlers.onDiffGuides
+              ? remoteClient
+                  .requestJson<DiffGuideSummary[]>("/api/diff-guides")
+                  .catch(() => null)
+              : Promise.resolve(null),
+          ]);
+          const diffPayload = JSON.stringify(guides);
+          if (guides && diffPayload !== previousDiffGuides) {
+            previousDiffGuides = diffPayload;
+            handlers.onDiffGuides?.(guides);
+          }
           version = Math.max(version, delta.version);
 
           if (delta.isFullSnapshot || !initialized) {

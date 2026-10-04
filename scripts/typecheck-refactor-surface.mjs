@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process";
 
 const surfaceFiles = [
+  "api/diff-guide.ts",
+  "api/diff-guide-store.ts",
+  "api/server/diff-guide-routes.ts",
+  "web/components/diff-guide-viewer.tsx",
+  "web/components/session-delete-dialog.tsx",
+  "web/components/session-list.tsx",
+  "web/diff-guide-html.ts",
+  "web/transport/remote.ts",
+  "tests/unit/diff-guide.test.ts",
   "web/app/codex-deck-app.tsx",
   "web/hooks/use-codex-memories.ts",
   "web/hooks/use-codex-pets.ts",
@@ -41,7 +50,9 @@ const combined = `${stdout}${stderr}`;
 const relevantLines = combined
   .split(/\r?\n/)
   .filter((line) =>
-    surfaceFiles.some((file) => line.includes(`${file}(`) || line.includes(`${file}:`)),
+    surfaceFiles.some(
+      (file) => line.includes(`${file}(`) || line.includes(`${file}:`),
+    ),
   );
 
 if (relevantLines.length > 0) {
@@ -54,4 +65,3 @@ if (result.status && result.status !== 0) {
     "typecheck-refactor-surface: ignored non-surface TypeScript errors\n",
   );
 }
-

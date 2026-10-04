@@ -123,6 +123,7 @@ import {
   offSessionChange,
   onWorkflowChange,
   offWorkflowChange,
+  onDiffGuideChange,
 } from "../watcher";
 import { dirname, join, resolve } from "path";
 import { homedir } from "os";
@@ -155,6 +156,7 @@ import {
 import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../remote/internal-proxy";
 import { RemoteServerClient } from "../remote/remote-server-client";
 import { registerTerminalRoutes } from "./terminal-routes";
+import { registerDiffGuideRoutes } from "./diff-guide-routes";
 import { registerTranslationRoutes } from "./translation-routes";
 import { registerSystemRoutes } from "./system-routes";
 import { registerSettingsRoutes } from "./settings-routes";
@@ -2448,6 +2450,15 @@ export function createServer(options: ServerOptions) {
       return c.json({ error: "session id is required" }, 400);
     }
 
+    const deleteDiffGuide = c.req.query("deleteDiffGuide");
+    if (
+      deleteDiffGuide !== undefined &&
+      deleteDiffGuide !== "true" &&
+      deleteDiffGuide !== "false"
+    ) {
+      return c.json({ error: "deleteDiffGuide must be true or false" }, 400);
+    }
+
     const actorClientIdRaw = c.req.query("clientId");
     const actorClientId =
       typeof actorClientIdRaw === "string" && actorClientIdRaw.trim()
@@ -2455,7 +2466,9 @@ export function createServer(options: ServerOptions) {
         : null;
 
     try {
-      const response = await deleteSession(sessionId);
+      const response = await deleteSession(sessionId, {
+        deleteDiffGuide: deleteDiffGuide !== "false",
+      });
       emitSessionsRemoved({
         sessionIds: [response.sessionId],
         actorClientId,
@@ -2532,6 +2545,7 @@ export function createServer(options: ServerOptions) {
   registerDaemonUpdateRoutes(app, daemonUpdater);
   registerSettingsRoutes(app);
   registerTerminalRoutes(app);
+  const diffGuides = registerDiffGuideRoutes(app);
   registerTranslationRoutes(app, {
     getTranslationCommand: () => runtimeTranslationCommand,
   });
@@ -2552,6 +2566,7 @@ export function createServer(options: ServerOptions) {
       let unsubscribeTerminals: (() => void) | null = null;
       let unsubscribeTerminalBindings: (() => void) | null = null;
       let unsubscribeHoverSettings: (() => void) | null = null;
+      let unsubscribeDiffGuides: (() => void) | null = null;
 
       const cleanup = () => {
         if (!isConnected) {
@@ -2559,6 +2574,8 @@ export function createServer(options: ServerOptions) {
         }
         isConnected = false;
         disconnectController.abort();
+        unsubscribeDiffGuides?.();
+        appServerEventListeners.delete(handleDiffGuideEvent);
         offHistoryChange(handleSessionsChange);
         offSessionChange(handleSessionsChange);
         offWorkflowChange(handleWorkflowsChange);
@@ -2577,6 +2594,33 @@ export function createServer(options: ServerOptions) {
           unsubscribeHoverSettings();
           unsubscribeHoverSettings = null;
         }
+      };
+
+      let diffGuideRefresh = Promise.resolve();
+      let previousDiffGuidesPayload = "";
+      const knownDiffGuideSessionIds = new Set<string>();
+      const writeDiffGuides = () => {
+        diffGuideRefresh = diffGuideRefresh
+          .then(async () => {
+            if (!isConnected) return;
+            const guides = await diffGuides.summaries();
+            knownDiffGuideSessionIds.clear();
+            for (const guide of guides)
+              knownDiffGuideSessionIds.add(guide.sessionId);
+            const payload = JSON.stringify(guides);
+            if (payload === previousDiffGuidesPayload || !isConnected) return;
+            previousDiffGuidesPayload = payload;
+            await stream.writeSSE({ event: "diffGuides", data: payload });
+          })
+          .catch(() => {});
+        return diffGuideRefresh;
+      };
+      const handleDiffGuideEvent = (event: CodexAppServerEvent) => {
+        if (
+          knownDiffGuideSessionIds.has(event.threadId) &&
+          (event.type === "thread_status" || event.type === "error")
+        )
+          void writeDiffGuides();
       };
 
       const writeTerminals = async () => {
@@ -2622,6 +2666,8 @@ export function createServer(options: ServerOptions) {
         if (!isConnected) {
           return;
         }
+        if (changedSessionId && knownDiffGuideSessionIds.has(changedSessionId))
+          void writeDiffGuides();
         try {
           const sessions = await getSessions();
           const updateMap = new Map<string, (typeof sessions)[number]>();
@@ -2733,6 +2779,10 @@ export function createServer(options: ServerOptions) {
       };
 
       onHistoryChange(handleSessionsChange);
+      unsubscribeDiffGuides = onDiffGuideChange(() => {
+        void writeDiffGuides();
+      });
+      appServerEventListeners.add(handleDiffGuideEvent);
       onSessionChange(handleSessionsChange);
       onWorkflowChange(handleWorkflowsChange);
       sessionsRemovedListeners.add(handleSessionsRemoved);
@@ -2758,6 +2808,7 @@ export function createServer(options: ServerOptions) {
           event: "sessions",
           data: JSON.stringify(sessions),
         });
+        await writeDiffGuides();
         if (!isConnected) return;
         unsubscribeHoverSettings = hoverSettingsRoutes.subscribe((settings) => {
           void stream

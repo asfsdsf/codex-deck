@@ -98,7 +98,8 @@ export function getSlashPaletteCommands(
 
   const query = queryState.commandQuery;
   const visibleCommands = commands.filter(
-    (command) => !command.hidden && !command.aliasFor,
+    (command) =>
+      !command.hidden && (!command.aliasFor || command.hidden === false),
   );
 
   if (!query) {
@@ -209,6 +210,18 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     name: "/fork",
     description: "Fork the current chat",
+  },
+  {
+    name: "/codex-deck-diff",
+    description: "Fork this session and generate a guided Git diff tour",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/ai-diff",
+    description: "Alias for /codex-deck-diff",
+    supportsInlineArgs: true,
+    hidden: false,
+    aliasFor: "/codex-deck-diff",
   },
   {
     name: "/init",

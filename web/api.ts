@@ -1,4 +1,8 @@
 import type {
+  DiffGuideStartRequest,
+  DiffGuideStartResponse,
+  DiffGuideContentResponse,
+  DiffGuideSummary,
   ConversationMessage,
   CodexCollaborationModeOption,
   CodexThreadStateResponse,
@@ -39,6 +43,7 @@ import type {
   CodexSessionContextResponse,
   DeleteTerminalResponse,
   DeleteWorkflowResponse,
+  DeleteSessionOptions,
   DeleteSessionResponse,
   FixDanglingSessionResponse,
   EditConversationMessageResponse,
@@ -1094,6 +1099,34 @@ export async function forkCodexThread(
   );
 }
 
+export function startDiffGuide(
+  input: DiffGuideStartRequest,
+): Promise<DiffGuideStartResponse> {
+  return requestJson("/api/diff-guides/start", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function retryDiffGuide(
+  sessionId: string,
+): Promise<DiffGuideStartResponse> {
+  return requestJson(
+    `/api/diff-guides/${encodeURIComponent(sessionId)}/retry`,
+    { method: "POST" },
+  );
+}
+
+export function getDiffGuides(): Promise<DiffGuideSummary[]> {
+  return requestJson("/api/diff-guides");
+}
+
+export function getDiffGuide(
+  sessionId: string,
+): Promise<DiffGuideContentResponse> {
+  return requestJson(`/api/diff-guides/${encodeURIComponent(sessionId)}`);
+}
+
 export async function startCodexSideThread(
   threadId: string,
 ): Promise<CodexThreadSideStartResponse> {
@@ -1350,10 +1383,16 @@ export async function searchSessionContent(
 export async function deleteSession(
   sessionId: string,
   clientId?: string,
+  options: DeleteSessionOptions = {},
 ): Promise<DeleteSessionResponse> {
-  const params = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
+  const params = new URLSearchParams();
+  if (clientId) params.set("clientId", clientId);
+  if (options.deleteDiffGuide !== undefined) {
+    params.set("deleteDiffGuide", String(options.deleteDiffGuide));
+  }
+  const query = params.size ? `?${params.toString()}` : "";
   return requestJson<DeleteSessionResponse>(
-    `/api/sessions/${encodeURIComponent(sessionId)}${params}`,
+    `/api/sessions/${encodeURIComponent(sessionId)}${query}`,
     {
       method: "DELETE",
     },
