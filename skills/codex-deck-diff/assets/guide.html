@@ -482,6 +482,7 @@ __THEME_CSS__
   function renderStep(index, noteIndex = 0) {
     review?.cancelSelection();
     setCodeMenu(false);
+    const previousStep = current;
     current = index;
     const step = steps[index];
     document.title = `${index + 1}. ${step.title} · ${data.repositoryName} · Git Diff Tour`;
@@ -497,10 +498,12 @@ __THEME_CSS__
     el('guide').scrollTop = 0;
     paneScroll.guide = 0;
     el('workspace').scrollTop = 0;
-    const navButton = document.querySelector('.nav-step[aria-current="step"]');
-    const nav = el('step-nav');
-    const top = navButton.offsetTop - nav.offsetTop;
-    if (top < nav.scrollTop || top + navButton.offsetHeight > nav.scrollTop + nav.clientHeight) nav.scrollTop = Math.max(0, top - 50);
+    if (!mobileQuery.matches && (previousStep >= 0 || index > 0)) {
+      const navButton = document.querySelector('.nav-step[aria-current="step"]');
+      const sidebar = el('sidebar');
+      const top = navButton.getBoundingClientRect().top - sidebar.getBoundingClientRect().top + sidebar.scrollTop;
+      if (top < sidebar.scrollTop || top + navButton.offsetHeight > sidebar.scrollTop + sidebar.clientHeight) sidebar.scrollTop = Math.max(0, top - 50);
+    }
   }
 
   function renderFile(path) {

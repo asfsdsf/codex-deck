@@ -1,9 +1,12 @@
 .pane-resizer{display:none}
+.sidebar{overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin}
+.sidebar-intro,.nav-scroll{flex-shrink:0}
+.nav-scroll{overflow:visible}
 /* Match the complement of mobileQuery, including short phone landscapes. */
 @media(min-width:951px),(min-width:851px) and (min-height:501px){
   .workspace{--pane-columns:var(--resized-guide-width,var(--guide-width)) 8px minmax(0,1fr);grid-template-columns:var(--resized-sidebar-width,var(--sidebar-width)) 8px var(--pane-columns)}
   .workspace[data-layout="code-first"]{--pane-columns:minmax(0,1fr) 8px var(--resized-guide-width,var(--guide-width))}
-  .sidebar{min-width:0;border-right:0;overflow:hidden}.nav-step>span:last-child{min-width:0}.nav-file{overflow-wrap:anywhere}
+  .sidebar{min-width:0;border-right:0}.nav-step>span:last-child{min-width:0}.nav-file{overflow-wrap:anywhere}
   .workspace>:last-child{border-left:0}
   .pane-resizer{display:flex;align-items:center;justify-content:center;position:relative;min-width:0;background:#f4f6fa;border-inline:1px solid var(--line);cursor:col-resize;touch-action:none;user-select:none;outline-offset:-2px}
   .pane-resizer::after{content:"";width:2px;height:32px;border-radius:2px;background:#aebccd}
