@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Deck Diff"
+  short_description: "Offline code-flow tours of local Git changes"
+  default_prompt: "Use $codex-deck-diff to create guide.json and an HTML walkthrough of this repository's current Git changes."

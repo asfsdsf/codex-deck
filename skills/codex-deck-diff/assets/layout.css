@@ -1,0 +1,16 @@
+.pane-resizer{display:none}
+/* Match the complement of mobileQuery, including short phone landscapes. */
+@media(min-width:951px),(min-width:851px) and (min-height:501px){
+  .workspace{--pane-columns:var(--resized-guide-width,var(--guide-width)) 8px minmax(0,1fr);grid-template-columns:var(--resized-sidebar-width,var(--sidebar-width)) 8px var(--pane-columns)}
+  .workspace[data-layout="code-first"]{--pane-columns:minmax(0,1fr) 8px var(--resized-guide-width,var(--guide-width))}
+  .sidebar{min-width:0;border-right:0;overflow:hidden}.nav-step>span:last-child{min-width:0}.nav-file{overflow-wrap:anywhere}
+  .workspace>:last-child{border-left:0}
+  .pane-resizer{display:flex;align-items:center;justify-content:center;position:relative;min-width:0;background:#f4f6fa;border-inline:1px solid var(--line);cursor:col-resize;touch-action:none;user-select:none;outline-offset:-2px}
+  .pane-resizer::after{content:"";width:2px;height:32px;border-radius:2px;background:#aebccd}
+  .pane-resizer:hover,.pane-resizer:focus-visible,.pane-resizer[data-dragging=true]{background:#dce8ff;border-color:#a9c3f5}
+  .pane-resizer:hover::after,.pane-resizer:focus-visible::after,.pane-resizer[data-dragging=true]::after{background:var(--blue)}
+  .pane-resizer:focus-visible{outline:2px solid var(--blue)}
+  .bottom-bar{grid-template-columns:calc(var(--resized-sidebar-width,var(--sidebar-width,218px)) + 8px) minmax(0,1fr)}
+  .code-actions{max-width:100%;min-width:0;flex-shrink:1}.code-menu,.file-stats{flex-wrap:wrap}.filebar-bottom{flex-wrap:wrap;gap:6px 12px}
+}
+body[data-pane-dragging=true],body[data-pane-dragging=true] *{cursor:col-resize!important;user-select:none!important}

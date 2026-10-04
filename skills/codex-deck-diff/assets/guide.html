@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M8 10h7m-7 6h16m-7 6h7' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+<title>__GUIDE_TITLE__ · Git Diff Tour</title>
+<style>
+:root{--ink:#202b3c;--muted:#647084;--line:#e0e5ec;--blue:#255fd6;--blue-soft:#edf3ff;--bg:#f6f8fb;--add:#dafbe1;--del:#ffebe9;--green:#167146;--red:#b4463d;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Apple SD Gothic Neo",monospace}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}body{font:14px/1.65 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;color:var(--ink);background:var(--bg);display:grid;grid-template-rows:76px minmax(0,1fr)64px;word-break:keep-all}button,a,select{-webkit-tap-highlight-color:transparent}button,select{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.4}a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:3px}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #88affc;outline-offset:3px}h1,h2,h3,p{margin:0}.sr-only{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap}
+.topbar{display:flex;justify-content:space-between;gap:22px;align-items:center;padding:0 26px;border-bottom:1px solid var(--line);background:white;min-width:0}.identity{display:flex;align-items:center;gap:13px;min-width:0}.logo{width:38px;height:38px;display:grid;place-items:center;background:#eaf1ff;border:1px solid #d6e3ff;border-radius:10px;color:var(--blue);font:700 18px var(--mono);flex-shrink:0}.top-label{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--muted);font-weight:650;letter-spacing:.02em}.top-label strong{color:var(--blue)}h1{font-size:17px;letter-spacing:-.025em;line-height:1.4;margin-top:3px}.top-actions{display:flex;align-items:center;gap:17px;flex-shrink:0}.commit{font:11px var(--mono);color:var(--muted);background:var(--bg);padding:5px 8px;border:1px solid var(--line);border-radius:5px}.external{font-size:12px;color:var(--muted)}.top-actions .external{color:var(--blue);font-weight:650}.mobile-step{display:none}
+.workspace{--sidebar-width:218px;--guide-width:326px;--pane-columns:var(--guide-width) minmax(0,1fr);display:grid;grid-template-columns:var(--sidebar-width) var(--pane-columns);min-height:0;min-width:0}.sidebar{background:#f8f9fc;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}.sidebar-intro{padding:22px 19px 17px;border-bottom:1px solid var(--line)}.sidebar-intro h2{font-size:13px;font-weight:750}.sidebar-intro p{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.flow-strip{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:10px;color:#788398;margin-top:11px}.flow-strip span.active{color:var(--blue);font-weight:750}.nav-scroll{padding:12px 9px 20px;overflow:auto;min-height:0}.nav-group{font-size:10px;font-weight:750;color:#818da0;letter-spacing:.04em;margin:12px 10px 5px;display:flex;align-items:center;gap:9px}.nav-group::after{content:"";height:1px;flex:1;background:#e6eaf0}.nav-step{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;border:1px solid transparent;background:none;padding:8px 9px;border-radius:7px;color:#4e5a6f;line-height:1.45}.nav-step:hover{background:#edf0f6}.nav-step[aria-current=step]{background:#e8f0ff;border-color:#d4e2ff;color:var(--blue)}.nav-num{font:11px/22px var(--mono);color:#8b96a7;flex-shrink:0;width:19px}.nav-step[aria-current=step] .nav-num{color:var(--blue)}.nav-title{font-size:12px;font-weight:650}.nav-file{display:block;font:10px/1.6 var(--mono);color:#8a95a6;margin-top:1px}.nav-step[aria-current=step] .nav-file{color:#6587bf}
+.code-pane{background:white;display:grid;grid-template-rows:auto auto minmax(0,1fr);min-height:0;min-width:0}.filebar{padding:18px 21px 14px;border-bottom:1px solid var(--line);min-width:0}.filebar-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}.file-symbol{color:#8a95a4;font:14px var(--mono)}.file-path{font:12px/1.5 var(--mono);overflow-wrap:anywhere;min-width:0;font-weight:600}.filebar-bottom{display:flex;align-items:center;justify-content:space-between;gap:16px}.file-stats{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--muted)}.plus{color:var(--green);font-weight:700}.minus{color:var(--red);font-weight:700}.legend-focus{display:inline-flex;align-items:center;gap:5px}.legend-focus i{display:inline-block;width:3px;height:10px;background:var(--blue)}.filebar .external{font-size:11px;white-space:nowrap}.code-tools{padding:10px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fbfcfe;border-bottom:1px solid var(--line);font-size:11px;min-width:0}.focus-label{display:flex;align-items:center;gap:8px;min-width:0;color:#5a6b84}.focus-label strong{font:600 11px var(--mono);color:var(--blue);white-space:nowrap}.focus-label span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.focus-back{border:1px solid #d9e2ef;padding:3px 8px;border-radius:5px;font-size:10px;background:white;color:#486897;white-space:nowrap}.focus-back:hover{background:var(--blue-soft)}.diff-scroll{overflow:auto;min-width:0;min-height:0;position:relative;padding:0 0 35px;overscroll-behavior:contain;scrollbar-width:thin}.diff-scroll:focus-visible{outline:2px solid #a9c4f7;outline-offset:-2px}.diff-table{font:12px/24px var(--mono);border-collapse:collapse;min-width:100%;width:max-content;table-layout:auto}.diff-table td{padding:0;vertical-align:top;height:24px}.diff-table .line{min-width:41px;width:41px;max-width:41px;text-align:right;padding:0 9px;color:#9aa2ae;font-size:10px;user-select:none;white-space:nowrap}.diff-table .sign{width:22px;min-width:22px;user-select:none;text-align:center;color:#8f9aa8}.diff-table .code-cell{white-space:pre;padding-right:22px;min-width:160px}.diff-table tr.add{background:var(--add)}.diff-table tr.del{background:var(--del)}.diff-table tr.add .line{background:#ccefd4;color:#739f7d}.diff-table tr.del .line{background:#f9d8d4;color:#b2847e}.diff-table tr.add .sign{color:#479360}.diff-table tr.del .sign{color:#b46760}.diff-table tr.hunk{background:#f0f5fd;color:#71839b;font-size:10px}.diff-table tr.hunk .code-cell{padding:5px 12px;line-height:24px}.diff-table tr.hunk td{border-block:1px solid #e5edf9}.diff-table tr.focus .code-cell{box-shadow:inset 3px 0 var(--blue);background-image:linear-gradient(90deg,#5785f222,transparent 230px)}.diff-table:not([data-focus-side=left]) tr.focus .line-new,.diff-table[data-focus-side=left] tr.focus .line-old{background:#cbdfff;color:#204eaa;font-weight:750}.diff-table tr.focus .sign{color:var(--blue);font-weight:750}
+.guide{background:#fff;overflow:auto;min-width:0;padding:24px 23px 35px;scrollbar-width:thin;overscroll-behavior:contain}.step-eyebrow{display:flex;gap:9px;align-items:center;font-size:10px;font-weight:750;letter-spacing:.04em;color:var(--blue);margin-bottom:14px}.step-pill{border:1px solid #d3e0fc;border-radius:5px;background:#f4f7ff;padding:2px 6px;font:11px var(--mono)}.guide h2{font-size:23px;line-height:1.45;letter-spacing:-.045em;font-weight:730}.why{font-size:13px;color:#66748a;line-height:1.85;margin:14px 0 25px}.guide-label{font-size:10px;letter-spacing:.03em;font-weight:750;color:#8a95a4;margin:19px 0 9px}.note-button{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:9px;padding:12px 12px 13px;margin:8px 0;background:#fff;color:var(--ink)}.note-button:hover{border-color:#aec7f2}.note-button[aria-pressed=true]{background:#f4f7fe;border-color:#a9c3f5;box-shadow:0 0 0 1px #e5edfc}.note-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.note-title{font-size:12px;font-weight:750}.note-line{font:10px var(--mono);white-space:nowrap;color:var(--blue)}.note-body{font-size:12px;color:#66748a;line-height:1.8;margin-top:7px}.checkpoint{margin-top:24px;border-top:1px solid var(--line);padding-top:3px}.checkpoint .guide-label{color:var(--blue)}.checkpoint p{font-size:13px;font-weight:650;line-height:1.85}.next-flow{margin-top:23px;padding:13px 14px;background:#f6f8fb;border-radius:8px;font-size:12px;color:#758196;line-height:1.8}.next-flow strong{display:block;font-size:10px;color:#556782;margin-bottom:4px}.reference{margin-top:14px;border:1px solid var(--line);border-radius:7px;padding:10px;font-size:11px;color:var(--muted)}summary{cursor:pointer;font-weight:650}.reference p{margin:10px 0;line-height:1.8}.reference pre{font:10px/1.8 var(--mono);overflow:auto;white-space:pre;margin:10px 0;background:#f6f8fb;padding:10px;border-radius:5px}.reference a{color:var(--blue)}.finding{margin-top:23px;background:#fff8ee;border:1px solid #ebd9b7;border-radius:9px;padding:13px 14px;color:#86591f}.finding summary{font-size:11px;line-height:1.8}.finding h3{font-size:13px;line-height:1.7;margin:13px 0 9px}.finding p{font-size:12px;line-height:1.85;margin:8px 0;color:#856c48}.finding a{font-size:11px;text-decoration:underline}.recap{padding:12px 14px;margin-top:18px;border:1px solid var(--line);border-radius:8px}.recap ul{padding-left:16px;margin:6px 0;font-size:12px;color:var(--muted)}.recap li+li{margin-top:10px}
+.bottom-bar{border-top:1px solid var(--line);background:white;display:grid;grid-template-columns:218px minmax(0,1fr);align-items:center}.snapshot-note{padding-left:19px;font-size:10px;color:#8994a4;line-height:1.7}.navigation{display:flex;align-items:center;gap:15px;padding:0 24px;min-width:0}.nav-control{border:1px solid #d8dfeb;border-radius:7px;background:white;padding:8px 14px;font-size:12px;font-weight:650;white-space:nowrap;color:#536177}.nav-control:not(:disabled):hover{background:#f2f5fa}.nav-control.primary{background:var(--blue);border-color:var(--blue);color:white}.nav-control.primary:not(:disabled):hover{background:#174dbd}.progress-area{min-width:0;flex:1;display:flex;align-items:center;gap:14px}.progress-track{width:90px;height:4px;background:#e8edf5;border-radius:10px;overflow:hidden;flex-shrink:0}.progress-fill{background:var(--blue);height:100%;width:0}.progress-text{font:11px var(--mono);color:#748096;white-space:nowrap}.next-title{font-size:11px;color:#748096;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:auto}.status-live{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}noscript{position:fixed;inset:76px 0 64px;background:white;padding:40px;z-index:9}
+.workspace[data-layout="code-first"]{--pane-columns:minmax(0,1fr) var(--guide-width)}
+.workspace>:last-child{border-left:1px solid var(--line)}
+.layout-control{display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:11px;color:var(--muted)}
+.layout-control select{width:148px;border:1px solid var(--line);border-radius:5px;background:var(--bg);padding:5px 7px;font-size:11px;color:var(--ink)}
+.top-label strong{white-space:nowrap}
+.top-actions .github-link{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;flex-shrink:0;border-radius:8px;color:var(--ink)}
+.github-link:hover{background:var(--blue-soft);color:var(--blue)}.github-link svg{display:block;fill:currentColor}
+@media(min-width:1600px){.workspace{--sidebar-width:240px;--guide-width:370px}.bottom-bar{grid-template-columns:240px minmax(0,1fr)}.guide{padding:30px}.diff-table{font-size:13px;line-height:26px}.diff-table td{height:26px}}
+@media(max-width:1100px){.workspace{--sidebar-width:188px;--guide-width:292px}.bottom-bar{grid-template-columns:188px minmax(0,1fr)}.guide{padding:21px 18px}.guide h2{font-size:21px}.topbar{padding:0 19px}.top-actions{gap:10px}.commit{display:none}.next-title{display:none}.sidebar-intro{padding-left:17px}.nav-step{gap:6px;padding:8px 6px}.nav-title{font-size:11px}.nav-file{font-size:9px}}
+.code-actions{display:flex;gap:6px;flex-shrink:0}.code-tools{flex-wrap:wrap}.code-hint{font-size:10px;color:var(--muted);margin-top:7px}.symbol-link{font:inherit;line-height:inherit;color:#245fb0;text-decoration:underline dotted #7699c8;text-underline-offset:3px;border:0;padding:0;margin:0;background:none;vertical-align:baseline;border-radius:2px}.symbol-link:hover{background:#d8e7ff;color:#16478e;text-decoration-style:solid}.gap td{background:#f3f6fb;border-block:1px solid #e0e7f1}.gap-controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 24px);position:sticky;left:0;padding:8px 12px;white-space:normal;font:11px/1.7 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif}.gap-label{color:#75849b;margin-right:3px}.gap-button{font:inherit;white-space:nowrap;background:white;border:1px solid #d6e0ed;border-radius:5px;padding:3px 7px;color:#45668f}.gap-button:hover{background:var(--blue-soft)}.gap-button:disabled{opacity:.45}.definition-dialog{width:min(900px,calc(100vw - 36px));max-height:85dvh;border:1px solid #cfd9e7;border-radius:12px;padding:0;color:var(--ink);box-shadow:0 24px 90px #182b5140;background:white;overflow:hidden}.definition-dialog[open]{display:flex;flex-direction:column}.definition-dialog::backdrop{background:#12233c66}.definition-header{padding:18px 22px;border-bottom:1px solid var(--line);flex-shrink:0}.definition-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.definition-top h2{font:650 16px/1.5 var(--mono);overflow-wrap:anywhere;min-width:0}.definition-actions{display:flex;gap:7px;flex-shrink:0}.definition-description{font-size:13px;color:#52657e;margin-top:10px;line-height:1.8}.definition-meta{display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap;font:10px/1.7 var(--mono);color:#75849b;margin-top:9px;overflow-wrap:anywhere}.definition-meta a{color:var(--blue)}.definition-code{overflow:auto;min-height:0;padding:12px 0 22px;background:#fafbfd;overscroll-behavior:contain}.definition-code table{border-collapse:collapse;width:max-content;min-width:100%;font:12px/24px var(--mono)}.definition-code td{padding:0;vertical-align:top}.definition-code .line{color:#97a3b5;text-align:right;padding:0 16px;user-select:none;font-size:10px}.definition-code .code-cell{white-space:pre;padding-right:22px}.definition-footer{padding:9px 22px;border-top:1px solid var(--line);font-size:10px;color:var(--muted);flex-shrink:0}.definition-actions [hidden]{display:none}
+/* Dark foregrounds remain readable on context, addition, deletion, and focus backgrounds. */
+.code-cell .hljs-keyword,.code-cell .hljs-selector-tag,.code-cell .hljs-doctag{color:#a02362}
+.code-cell .hljs-string,.code-cell .hljs-regexp,.code-cell .hljs-meta .hljs-string{color:#155b38}
+.code-cell .hljs-comment,.code-cell .hljs-quote{color:#576575}
+.code-cell .hljs-title,.code-cell .hljs-section{color:#6639a6}
+.code-cell .hljs-number,.code-cell .hljs-literal,.code-cell .hljs-symbol,.code-cell .hljs-bullet{color:#075b9a}
+.code-cell .hljs-built_in,.code-cell .hljs-type,.code-cell .hljs-attr,.code-cell .hljs-attribute,.code-cell .hljs-variable,.code-cell .hljs-template-variable{color:#85410c}
+.code-cell .hljs-meta,.code-cell .hljs-tag,.code-cell .hljs-name,.code-cell .hljs-selector-id,.code-cell .hljs-selector-class{color:#075b9a}
+.code-cell .hljs-subst{color:var(--ink)}.code-cell .hljs-emphasis{font-style:italic}.code-cell .hljs-strong{font-weight:700}
+.code-cell .symbol-link{color:inherit}.code-cell .symbol-link:hover{color:inherit}
+.mobile-panes,.wrap-control,.reader-control{display:none}
+.code-menu{display:flex;gap:6px}.code-menu[hidden]{display:none}
+.workspace>[hidden]{display:none}
+/* Keep this breakpoint in sync with mobileQuery below. Include phone landscape. */
+@media(max-width:850px),(max-width:950px) and (max-height:500px){
+  body{height:100%;height:100dvh;grid-template-rows:auto minmax(0,1fr) auto}
+  .topbar{min-height:0;padding:8px max(12px,env(safe-area-inset-right)) 8px max(12px,env(safe-area-inset-left));padding-top:max(8px,env(safe-area-inset-top));display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 10px}
+  .identity{gap:8px}.identity>div:last-child{min-width:0}.logo{width:30px;height:30px;font-size:15px}
+  h1{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-label{font-size:10px}.top-label span{display:none}
+  .top-actions{display:contents}.top-actions>.external{grid-column:2;grid-row:1;font-size:10px;justify-self:end;padding-block:10px}
+  .layout-control,.commit{display:none}
+  .mobile-step{display:flex;grid-column:1;grid-row:2;min-width:0}
+  .mobile-step label{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}
+  .mobile-step select{width:100%;min-width:0;height:44px;border:1px solid var(--line);border-radius:7px;background:var(--bg);padding:0 8px;font-size:16px;color:var(--ink)}
+  .mobile-panes{display:flex;grid-column:2;grid-row:2;border:1px solid var(--line);border-radius:7px;background:var(--bg);padding:2px;gap:2px}
+  .pane-tab{min-width:60px;min-height:44px;border:0;border-radius:5px;background:none;color:var(--muted);font-size:13px;font-weight:650;padding:5px 10px}
+  .pane-tab[aria-selected=true]{background:white;color:var(--blue);box-shadow:0 1px 4px #202b3c18}
+  .workspace{display:block;overflow:hidden;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  .sidebar{display:none}.workspace>:last-child{border:0}
+  .guide{height:100%;overflow:auto;border:0;padding:22px 20px 32px}.guide h2{font-size:23px}
+  .why{font-size:14px}.note-body{font-size:13px}.reference summary{min-height:24px}
+  .code-pane{height:100%;min-height:0;border:0}.filebar{padding:6px 12px}.filebar-top{margin:0}
+  .file-path{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.filebar-bottom,.code-hint{display:none}
+  .code-tools{position:relative;padding:6px 12px;gap:8px;flex-wrap:nowrap}.focus-label{flex:1;display:block;overflow:hidden}.focus-label strong{font-size:12px}.focus-label span{display:block;font-size:11px}
+  .code-actions{margin:0;gap:6px}.focus-back{font-size:12px;min-height:44px;padding:8px}
+  .reader-control{display:inline-block}#code-menu-toggle{min-width:44px;font-size:20px;padding:0 8px}#show-guide{display:none}
+  .code-menu{position:absolute;z-index:3;right:12px;top:calc(100% - 2px);display:flex;flex-direction:column;gap:4px;width:min(280px,calc(100vw - 24px));max-height:calc(100dvh - 260px);overflow:auto;padding:8px;background:white;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px #202b3c26}
+  .code-menu .focus-back{width:100%;text-align:left;border-color:transparent}.code-menu .external{padding:8px;font-size:12px;min-height:44px;color:var(--blue)}.menu-hint{padding:8px;font-size:11px;color:var(--muted);line-height:1.7}
+  .wrap-control{display:inline-block}.wrap-control[aria-pressed=true]{background:var(--blue-soft);border-color:#a9c3f5;color:var(--blue)}
+  .diff-table{font-size:13px;line-height:28px;margin-bottom:var(--focus-tail,0px)}.diff-table td{height:28px}
+  .diff-table .line{min-width:30px;width:30px;max-width:30px;padding:0 4px}.diff-table .sign{min-width:18px;width:18px}
+  .gap-controls{gap:6px;padding:8px;max-width:calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))}
+  .gap-label{flex-basis:100%}.gap-button{min-height:44px;padding:8px;font-size:12px}
+  body[data-wrap=true] .diff-table,body[data-wrap=true] .definition-code table{width:100%;table-layout:fixed}
+  body[data-wrap=true] .code-cell{white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;padding-right:10px}
+  body[data-wrap=true] .diff-table col.line-column{width:30px}
+  body[data-wrap=true] .diff-table col.sign-column{width:18px}
+  body[data-wrap=true] .definition-code col.line-column{width:44px}
+  .bottom-bar{display:block;padding:8px max(12px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+  .snapshot-note{display:none}.navigation{height:auto;padding:0;gap:10px}.nav-control{min-height:44px;font-size:13px;padding:8px 12px}
+  .progress-area{gap:8px;justify-content:center}.progress-track{width:36px}.progress-text{font-size:11px}
+  body[data-mobile-pane=code] .progress-track{display:none}
+  body[data-mobile-pane=code] .navigation{gap:6px}
+  body[data-mobile-pane=code] .nav-control{padding-inline:8px;font-size:12px}
+  body[data-code-expanded=true]{grid-template-rows:minmax(0,1fr) auto}
+  body[data-code-expanded=true] .topbar{display:none}
+  body[data-code-expanded=true] .filebar{padding-top:max(6px,env(safe-area-inset-top))}
+  body[data-code-expanded=true] #show-guide{display:inline-block}
+  body[data-code-expanded=true] .code-menu{max-height:calc(100dvh - 170px)}
+  .definition-dialog{width:calc(100% - 16px - env(safe-area-inset-left) - env(safe-area-inset-right));height:calc(100% - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));max-height:calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:auto;border-radius:10px}
+  .definition-header{padding:12px;max-height:45%;overflow:auto}.definition-top{flex-wrap:wrap;gap:8px}.definition-top h2{font-size:14px;flex:1}
+  .definition-actions{gap:6px}.definition-actions button{min-height:44px;font-size:12px;padding:8px}
+  .definition-description{font-size:13px;margin-top:8px}.definition-code{flex:1}.definition-code table{font-size:13px;line-height:28px}
+  .definition-code .line{padding:0 10px}.definition-footer{padding:8px 12px}.desktop-hint{display:none}
+  noscript{inset:0}
+}
+@media(min-width:540px) and (max-width:950px) and (max-height:500px){
+  .topbar{grid-template-columns:minmax(0,1fr) minmax(160px,1fr) auto;gap:8px}
+  .mobile-step{grid-column:2;grid-row:1}.mobile-panes{grid-column:3;grid-row:1}.top-actions>.external{display:none}
+  .filebar{padding-block:6px}.filebar-bottom,.code-hint{display:none}.filebar-top{margin:0}
+  .code-tools{padding-block:4px;flex-wrap:nowrap}.focus-label{width:auto}.code-actions{flex-wrap:nowrap}
+  .bottom-bar{padding-top:4px;padding-bottom:max(4px,env(safe-area-inset-bottom))}
+}
+__REVIEW_CSS__
+__TRANSITION_CSS__
+__LAYOUT_CSS__
+__SPLIT_CSS__
+__THEME_CSS__
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="identity"><div class="logo" aria-hidden="true">±</div><div><div class="top-label"><strong>__REPOSITORY_NAME__</strong><span>GIT DIFF · 읽기 가이드</span></div><h1>__GUIDE_TITLE__</h1></div></div>
+  <div class="top-actions"><button type="button" class="review-open" id="review-open" aria-haspopup="dialog">코멘트 (0)</button><div class="layout-control"><label for="layout-select">화면 배치</label><select id="layout-select"><option value="code-last">설명 → 코드</option><option value="code-first">코드 → 설명</option></select></div><span class="commit" title="__COMPARISON_LABEL__">__SHORT_SNAPSHOT__ · __COMPARISON_LABEL__</span></div>
+  <div class="mobile-step"><label for="step-select">읽는 구간</label><select id="step-select"></select></div>
+  <div class="mobile-panes" role="tablist" aria-label="읽기 화면"><button type="button" class="pane-tab" id="guide-tab" role="tab" aria-controls="guide" aria-selected="true">설명</button><button type="button" class="pane-tab" id="code-tab" role="tab" aria-controls="code-pane" aria-selected="false" tabindex="-1">코드</button></div>
+</header>
+<main class="workspace" id="workspace" data-layout="code-last">
+  <aside class="sidebar" id="sidebar" aria-label="실행 흐름에 따른 읽기 순서">
+    <div class="sidebar-intro"><h2>코드 흐름 따라 읽기</h2><p>__OVERVIEW__</p><div class="flow-strip" id="flow-strip"></div></div>
+    <nav class="nav-scroll" id="step-nav" aria-label="__STEP_COUNT__개 읽기 구간"></nav>
+  </aside>
+  <div class="pane-resizer" id="sidebar-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="읽기 순서 영역 너비" aria-controls="sidebar"></div>
+  <aside class="guide" id="guide" aria-label="현재 구간 설명과 리뷰 포인트"></aside>
+  <div class="pane-resizer" id="pane-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="설명 영역 너비" aria-controls="guide"></div>
+  <section class="code-pane" id="code-pane" aria-label="현재 파일의 변경 코드와 생략 구간">
+    <div class="filebar"><div class="filebar-top"><span class="file-symbol" aria-hidden="true">⌘</span><h2 class="file-path" id="file-path"></h2></div><div class="filebar-bottom"><div class="file-stats"><span id="file-added" class="plus"></span><span id="file-removed" class="minus"></span><span id="context-state">변경 구간</span><span class="legend-focus"><i aria-hidden="true"></i>현재 읽는 줄</span></div><a class="external" id="source-link" target="_blank" rel="noopener noreferrer">Source snapshot ↗</a></div><p class="code-hint">점선이 있는 이름을 누르면 정의가 열립니다. · 생략된 코드는 아래에서 펼칠 수 있습니다.</p></div>
+    <div class="code-tools"><div class="focus-label"><strong id="focus-lines"></strong><span id="focus-title"></span></div><div class="code-actions"><button type="button" class="focus-back reader-control" id="show-guide">설명 보기</button><button type="button" class="focus-back reader-control" id="expand-code" aria-pressed="false">크게 보기</button><button type="button" class="focus-back reader-control" id="code-menu-toggle" aria-label="코드 도구" aria-expanded="false" aria-controls="code-menu">⋯</button><div class="code-menu" id="code-menu" role="group" aria-label="코드 도구"><label class="diff-view-control" for="diff-view">비교 방식<select id="diff-view"><option value="unified">한 줄 보기</option><option value="split">좌우 비교</option></select></label><button type="button" class="focus-back" id="review-add">코멘트 추가</button><button type="button" class="focus-back reader-control" id="review-menu-open" aria-haspopup="dialog">코멘트 (0)</button><button type="button" class="focus-back" id="show-context" aria-pressed="false">전체 파일 보기</button><button type="button" class="focus-back wrap-control" id="wrap-code" aria-pressed="false">줄바꿈</button><button type="button" class="focus-back" id="focus-back">강조한 줄로 이동 ↓</button><a class="external reader-control" id="mobile-source-link" target="_blank" rel="noopener noreferrer">Source snapshot ↗</a><p class="menu-hint reader-control">점선이 있는 이름을 누르면 정의가 열립니다. · 생략된 코드는 아래에서 펼칠 수 있습니다.</p></div></div></div>
+    <div id="review-selection" class="review-selection" hidden><span id="review-selection-label" role="status"></span><button type="button" id="review-write" disabled>메모 쓰기</button><button type="button" id="review-cancel-selection">선택 취소</button></div>
+    <div class="diff-scroll" id="diff-scroll" tabindex="0" aria-label="코드 diff, 세로 및 가로로 스크롤 가능"><table class="diff-table"><caption class="sr-only" id="diff-caption"></caption><colgroup><col class="line-column"><col class="line-column"><col class="sign-column"><col></colgroup><thead class="sr-only"><tr><th>이전 줄</th><th>변경 후 줄</th><th>변경</th><th>코드</th></tr></thead><tbody id="diff-body"></tbody></table></div>
+  </section>
+</main>
+<footer class="bottom-bar"><div class="snapshot-note">__TOTAL_FILES__개 파일 · <span class="plus">+__ADDITIONS__</span> <span class="minus">−__DELETIONS__</span><br>__DATE__ · __SHORT_SNAPSHOT__</div><div class="navigation"><button type="button" class="nav-control" id="previous">← 이전</button><div class="progress-area"><div class="progress-track" aria-hidden="true"><div class="progress-fill" id="progress-fill"></div></div><span class="progress-text" id="progress-text"></span><span class="next-title" id="next-title"></span></div><button type="button" class="nav-control primary" id="next">다음 →</button></div></footer>
+<div class="status-live" id="status-live" role="status" aria-live="polite"></div>
+<dialog id="definition-dialog" class="definition-dialog" aria-labelledby="definition-title" aria-describedby="definition-description"><div class="definition-header"><div class="definition-top"><h2 id="definition-title"></h2><div class="definition-actions"><button type="button" class="focus-back" id="definition-back" hidden>← 이전 정의</button><button type="button" class="focus-back" id="definition-close" autofocus>닫기 ×</button></div></div><p class="definition-description" id="definition-description"></p><div class="definition-meta"><span id="definition-location"></span><a id="definition-source" target="_blank" rel="noopener noreferrer">Source snapshot ↗</a></div></div><div id="definition-code" class="definition-code" tabindex="0" aria-label="정의 코드"><table><colgroup><col class="line-column"><col></colgroup><tbody id="definition-body"></tbody></table></div><div class="definition-footer"><span id="definition-version">Snapshot __SHORT_SNAPSHOT__</span> 기준 · 점선 이름으로 관련 정의를 이어서 볼 수 있습니다.<span class="desktop-hint"> · Esc로 닫기</span></div></dialog>
+<dialog id="source-dialog" class="definition-dialog" aria-labelledby="source-title"><div class="definition-header definition-top"><h2 id="source-title"></h2><button type="button" class="focus-back" id="source-close" autofocus>Close ×</button></div><div id="source-body" class="definition-code" tabindex="0"></div></dialog>
+<dialog id="review-dialog" class="review-dialog" aria-labelledby="review-title">
+<header class="review-header"><h2 id="review-title">리뷰 코멘트</h2><button type="button" id="review-close" autofocus>닫기 ×</button></header>
+<div class="review-content">
+  <section id="review-list"><button type="button" id="review-add-from-list">현재 코드에 코멘트</button><div id="review-items"></div></section>
+  <section id="review-editor" hidden><p id="review-location" class="review-editor-location"></p><pre id="review-code" class="review-code"></pre><label for="review-text">코멘트</label><textarea id="review-text" maxlength="10000" placeholder="궁금한 점이나 수정 의견을 남겨주세요."></textarea><div class="review-editor-actions"><button type="button" id="review-cancel-edit">취소</button><button type="button" class="primary" id="review-save">저장</button></div></section>
+  <section id="review-export" hidden><label for="review-export-text">자동 복사가 제한되어 있습니다. 아래 코멘트를 직접 복사하세요.</label><textarea id="review-export-text" readonly spellcheck="false"></textarea><button type="button" id="review-export-back">목록으로</button></section>
+  <section id="review-import" hidden>
+    <p class="review-import-hint">이 가이드에서 내보낸 JSON을 선택하거나 붙여넣으세요. 파일은 서버로 전송되지 않습니다.</p>
+    <button type="button" id="review-import-file-button">JSON 파일 선택</button><input type="file" id="review-import-file" accept=".json,application/json" hidden><span id="review-import-filename"></span>
+    <label for="review-import-text">JSON 내용</label><textarea id="review-import-text" maxlength="10485760" spellcheck="false"></textarea>
+    <p id="review-import-error" role="alert"></p>
+    <button type="button" id="review-import-check">내용 확인</button>
+    <div id="review-import-preview" hidden>
+      <p id="review-import-summary" role="status"></p>
+      <div id="review-import-conflict-options" hidden><label for="review-import-policy">같은 코멘트가 서로 다르게 수정된 경우</label><select id="review-import-policy"><option value="keep">기존 코멘트 유지</option><option value="replace">가져온 코멘트로 교체</option></select><div id="review-import-conflicts"></div></div>
+      <button type="button" class="primary" id="review-import-apply">가져오기</button>
+    </div>
+    <div class="review-editor-actions"><button type="button" id="review-import-cancel">목록으로</button></div>
+  </section>
+  <div id="review-exports" class="review-exports"><button type="button" class="primary" id="review-copy">AI에 복사</button><button type="button" id="review-download">JSON 다운로드</button><button type="button" id="review-import-open">JSON 불러오기</button></div>
+</div><footer class="review-footer"><div id="review-feedback" role="status"></div><p id="review-storage" role="status"></p></footer>
+</dialog>
+<noscript>이 가이드는 파일에 포함된 JavaScript로 구간을 전환합니다. JavaScript를 허용하는 브라우저에서 이 HTML을 열어 주세요.</noscript>
+<script type="application/json" id="guide-data">__GUIDE_DATA__</script>
+<script>__SYNTAX_ASSETS__</script>
+<script>
+(() => {
+  'use strict';
+  const data = JSON.parse(document.getElementById('guide-data').textContent);
+  const steps = data.steps;
+  const el = id => document.getElementById(id);
+  let current = -1;
+  let review = null;
+  let activeFile = '';
+  let activeNote = 0;
+  let focusedRange = null;
+  let diffView = 'unified';
+  try { if (localStorage.getItem('codex-deck-diff.diff-view') === 'split') diffView = 'split'; } catch {}
+  const contextStates = new Map();
+  const highlightedFiles = new Set();
+  const highlightedDefinitions = new Set();
+  const definitionHistory = [];
+  const layoutStorageKey = 'codex-deck-diff.layout';
+  const mobileQuery = window.matchMedia('(max-width:850px), (max-width:950px) and (max-height:500px)');
+  let mobilePane = 'guide';
+  let codeExpanded = false;
+  let codeMenuOpen = false;
+  let pendingFocus = false;
+  const paneScroll = {guide: 0, code: 0, left: 0};
+  let paneSizing = null;
+
+  let savedLayout = 'code-last';
+  try { savedLayout = localStorage.getItem(layoutStorageKey) || savedLayout; } catch {}
+  setLayout(savedLayout);
+  paneSizing = TourLayout.init({workspace:el('workspace'), mobileQuery});
+
+  buildNavigation();
+  ['guide', 'code'].forEach(pane => {
+    el(`${pane}-tab`).addEventListener('click', () => setMobilePane(pane));
+    el(`${pane}-tab`).addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const target = event.key === 'Home' ? 'guide' : event.key === 'End' ? 'code' : pane === 'guide' ? 'code' : 'guide';
+      setMobilePane(target);
+      el(`${target}-tab`).focus();
+    });
+  });
+  mobileQuery.addEventListener('change', () => {
+    savePaneScroll();
+    codeExpanded = false;
+    pendingFocus = true;
+    applyMobileView();
+  });
+  applyMobileView();
+  el('wrap-code').addEventListener('click', () => {
+    const wrap = el('wrap-code').getAttribute('aria-pressed') !== 'true';
+    document.body.dataset.wrap = String(wrap);
+    el('wrap-code').setAttribute('aria-pressed', String(wrap));
+    scrollToFocus();
+  });
+  el('layout-select').addEventListener('change', event => {
+    const layout = setLayout(event.target.value);
+    try { localStorage.setItem(layoutStorageKey, layout); } catch {}
+    el('status-live').textContent = layout === 'code-last' ? '설명 다음에 코드를 표시합니다.' : '코드 다음에 설명을 표시합니다.';
+  });
+  el('previous').addEventListener('click', () => navigate(-1));
+  el('next').addEventListener('click', () => navigate(1));
+  el('step-select').addEventListener('change', event => chooseStep(Number(event.target.value)));
+  el('focus-back').addEventListener('click', scrollToFocus);
+  el('show-context').addEventListener('click', toggleContext);
+  el('diff-view').value = diffView;
+  el('diff-view').addEventListener('change', event => {
+    const scroll = el('diff-scroll');
+    const {top, bottom} = scroll.getBoundingClientRect();
+    const visible = [...el('diff-body').querySelectorAll('tr[data-line], tr[data-old-line]')]
+      .filter(row => row.getBoundingClientRect().bottom > top + 36 && row.getBoundingClientRect().top < bottom);
+    const anchor = visible.find(row => row.getBoundingClientRect().top >= top + 36) || visible[0];
+    const offset = anchor ? anchor.getBoundingClientRect().top - top : 0;
+    const side = anchor?.dataset.reviewSide || el('diff-body').closest('table').dataset.focusSide;
+    const attribute = ((side === 'left' && anchor?.dataset.oldLine) || !anchor?.dataset.line) ? 'data-old-line' : 'data-line';
+    const line = anchor?.getAttribute(attribute);
+    diffView = event.target.value === 'split' ? 'split' : 'unified';
+    try { localStorage.setItem('codex-deck-diff.diff-view', diffView); } catch {}
+    renderRows();
+    scroll.scrollLeft = 0;
+    const nextAnchor = line && el('diff-body').querySelector(`tr[${attribute}="${line}"]`);
+    if (nextAnchor) scroll.scrollTop += nextAnchor.getBoundingClientRect().top - top - offset;
+    el('status-live').textContent = diffView === 'split' ? '변경 전·후 코드를 좌우로 표시합니다.' : '변경 전·후 코드를 한 줄로 표시합니다.';
+  });
+  el('expand-code').addEventListener('click', () => setCodeExpanded(!codeExpanded));
+  el('show-guide').addEventListener('click', () => {
+    setMobilePane('guide');
+    const note = el('guide').querySelector('.note-button[aria-pressed=true]');
+    if (note) {
+      note.scrollIntoView({block: 'center'});
+      note.focus({preventScroll: true});
+    }
+  });
+  el('code-menu-toggle').addEventListener('click', () => setCodeMenu(!codeMenuOpen));
+  el('code-menu').addEventListener('click', event => {
+    if (event.target.closest('button, a') && mobileQuery.matches) setCodeMenu(false);
+  });
+  document.addEventListener('click', event => {
+    if (codeMenuOpen && !event.target.closest('#code-menu, #code-menu-toggle')) setCodeMenu(false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+    if (codeMenuOpen) {
+      event.preventDefault();
+      setCodeMenu(false);
+    } else if (mobileQuery.matches && mobilePane === 'code' && codeExpanded) {
+      event.preventDefault();
+      setCodeExpanded(false);
+      el('expand-code').focus({preventScroll: true});
+    }
+  });
+  el('definition-close').addEventListener('click', () => el('definition-dialog').close());
+  el('definition-back').addEventListener('click', () => {
+    definitionHistory.pop();
+    renderDefinition(definitionHistory[definitionHistory.length - 1]);
+  });
+  dismissOnBackdropClick(el('definition-dialog'));
+  review = TourReview.init({data, sourceUrl, currentFile: () => steps[current < 0 ? 0 : current].file,
+    showCode: () => { if (mobileQuery.matches) setMobilePane('code'); }, reveal: revealComment});
+  dismissOnBackdropClick(el('review-dialog'));
+  el('source-close').addEventListener('click', () => el('source-dialog').close());
+  dismissOnBackdropClick(el('source-dialog'));
+  document.addEventListener('click', event => {
+    const anchor = event.target.closest('a');
+    if (!anchor) return;
+    const url = new URL(anchor.href, location.href);
+    if (url.hash.startsWith('#source?') && url.pathname === location.pathname) {
+      event.preventDefault();
+      openSource(url.hash);
+    }
+  }, true);
+  window.addEventListener('hashchange', readHash);
+  readHash();
+
+  function savePaneScroll() {
+    if (!el('guide').hidden) paneScroll.guide = el('guide').scrollTop;
+    if (!el('code-pane').hidden) {
+      paneScroll.code = el('diff-scroll').scrollTop;
+      paneScroll.left = el('diff-scroll').scrollLeft;
+    }
+  }
+
+  function setMobilePane(pane) {
+    savePaneScroll();
+    mobilePane = pane;
+    applyMobileView();
+  }
+
+  function applyMobileView() {
+    const mobile = mobileQuery.matches;
+    const active = document.activeElement;
+    document.body.dataset.mobilePane = mobilePane;
+    document.body.dataset.codeExpanded = String(mobile && mobilePane === 'code' && codeExpanded);
+    el('expand-code').setAttribute('aria-pressed', String(codeExpanded));
+    el('expand-code').textContent = codeExpanded ? '작게 보기' : '크게 보기';
+    setCodeMenu(false);
+    ['guide', 'code'].forEach(pane => {
+      const panel = el(pane === 'guide' ? 'guide' : 'code-pane');
+      const selected = pane === mobilePane;
+      panel.hidden = mobile && !selected;
+      if (mobile) {
+        panel.setAttribute('role', 'tabpanel');
+        panel.setAttribute('aria-labelledby', `${pane}-tab`);
+        panel.tabIndex = 0;
+      } else {
+        panel.removeAttribute('role');
+        panel.removeAttribute('aria-labelledby');
+        panel.removeAttribute('tabindex');
+      }
+      el(`${pane}-tab`).setAttribute('aria-selected', String(selected));
+      el(`${pane}-tab`).tabIndex = selected ? 0 : -1;
+    });
+    el('guide').scrollTop = paneScroll.guide;
+    el('diff-scroll').scrollTop = paneScroll.code;
+    el('diff-scroll').scrollLeft = paneScroll.left;
+    if (pendingFocus && !el('code-pane').hidden) scrollToFocus();
+    // A breakpoint change must not leave keyboard focus in a hidden panel/tab.
+    if (active && active !== document.body && !active.getClientRects().length) {
+      el(mobile && !(mobilePane === 'code' && codeExpanded) ? `${mobilePane}-tab` : 'diff-scroll').focus({preventScroll: true});
+    }
+    if (current >= 0) updateNavigation();
+  }
+
+  function setCodeExpanded(expanded) {
+    savePaneScroll();
+    codeExpanded = expanded;
+    applyMobileView();
+    scrollToFocus();
+  }
+
+  function setCodeMenu(open) {
+    codeMenuOpen = mobileQuery.matches && open;
+    const menu = el('code-menu');
+    const restoreFocus = !codeMenuOpen && menu.contains(document.activeElement);
+    menu.hidden = mobileQuery.matches && !codeMenuOpen;
+    el('code-menu-toggle').setAttribute('aria-expanded', String(codeMenuOpen));
+    if (restoreFocus && mobileQuery.matches) el('code-menu-toggle').focus({preventScroll: true});
+  }
+
+  function dismissOnBackdropClick(dialog) {
+    let startedOnBackdrop = false;
+    const isBackdrop = event => {
+      if (event.target !== dialog) return false;
+      const rect = dialog.getBoundingClientRect();
+      return event.clientX < rect.left || event.clientX > rect.right ||
+        event.clientY < rect.top || event.clientY > rect.bottom;
+    };
+    dialog.addEventListener('pointerdown', event => {
+      startedOnBackdrop = event.isPrimary && event.button === 0 && isBackdrop(event);
+    });
+    dialog.addEventListener('pointercancel', () => { startedOnBackdrop = false; });
+    dialog.addEventListener('close', () => { startedOnBackdrop = false; });
+    dialog.addEventListener('click', event => {
+      // A drag starting inside can also target the dialog on release outside.
+      // Wait for click so closing cannot send the release to content underneath.
+      const dismiss = startedOnBackdrop && event.button === 0 && event.detail > 0 && isBackdrop(event);
+      startedOnBackdrop = false;
+      if (dismiss) dialog.close();
+    });
+  }
+
+  function setLayout(value) {
+    const layout = value === 'code-first' ? value : 'code-last';
+    const workspace = el('workspace');
+    const guide = el('guide');
+    const code = el('code-pane');
+    const diff = el('diff-scroll');
+    const guideTop = guide.scrollTop;
+    const diffTop = diff.scrollTop;
+    const diffLeft = diff.scrollLeft;
+    workspace.dataset.layout = layout;
+    const [first, second] = layout === 'code-last' ? [guide, code] : [code, guide];
+    // Keep keyboard and screen-reader order aligned with the visible panes.
+    const divider = el('pane-resizer');
+    if (first.nextElementSibling !== divider || divider.nextElementSibling !== second) {
+      workspace.append(first, divider, second);
+    }
+    paneSizing?.layoutChanged();
+    guide.scrollTop = guideTop;
+    diff.scrollTop = diffTop;
+    diff.scrollLeft = diffLeft;
+    workspace.scrollTop = 0;
+    el('layout-select').value = layout;
+    return layout;
+  }
+
+  function buildNavigation() {
+    let group = '';
+    steps.forEach((step, index) => {
+      if (step.group !== group) {
+        group = step.group;
+        el('step-nav').append(make('div', 'nav-group', group));
+      }
+      const button = make('button', 'nav-step');
+      button.type = 'button';
+      button.dataset.step = String(index);
+      button.setAttribute('aria-label', `${String(index + 1).padStart(2, '0')} ${step.title}`);
+      button.append(make('span', 'nav-num', String(index + 1).padStart(2, '0')));
+      const label = make('span');
+      label.append(make('span', 'nav-title', step.title), make('span', 'nav-file', step.file.split('/').pop()));
+      button.append(label);
+      button.addEventListener('click', () => chooseStep(index));
+      el('step-nav').append(button);
+      const option = make('option', '', `${String(index + 1).padStart(2, '0')} · ${step.title}`);
+      option.value = String(index);
+      el('step-select').append(option);
+    });
+    [...new Set(steps.map(step => step.group))].forEach((group, index) => {
+      if (index) el('flow-strip').append(make('span', '', '→'));
+      const label = make('span', '', group);
+      label.dataset.group = group;
+      el('flow-strip').append(label);
+    });
+  }
+
+  function chooseStep(index, noteIndex = 0) {
+    if (index < 0 || index >= steps.length) return;
+    // Render immediately so repeated taps navigate from the newly selected point.
+    if (location.hash !== `#${steps[index].id}`) location.hash = steps[index].id;
+    renderStep(index, noteIndex);
+  }
+
+  function navigate(direction) {
+    if (mobileQuery.matches && mobilePane === 'code') {
+      const nextNote = activeNote + direction;
+      if (nextNote >= 0 && nextNote < Math.max(1, steps[current].notes.length)) {
+        focusNote(nextNote);
+        return;
+      }
+      const nextStep = current + direction;
+      if (nextStep < 0 || nextStep >= steps.length) return;
+      chooseStep(nextStep, direction < 0 ? Math.max(0, steps[nextStep].notes.length - 1) : 0);
+    } else {
+      chooseStep(current + direction);
+    }
+  }
+
+  function updateNavigation() {
+    const codeMode = mobileQuery.matches && mobilePane === 'code';
+    const total = codeMode ? steps.reduce((count, step) => count + Math.max(1, step.notes.length), 0) : steps.length;
+    const position = codeMode ? steps.slice(0, current).reduce((count, step) => count + Math.max(1, step.notes.length), 0) + activeNote + 1 : current + 1;
+    el('previous').textContent = codeMode ? '← 이전 코드' : '← 이전';
+    el('next').textContent = codeMode ? '다음 코드 →' : '다음 →';
+    el('previous').disabled = position === 1;
+    el('next').disabled = position === total;
+    el('progress-text').textContent = `${String(position).padStart(2, '0')} / ${total}`;
+    el('progress-text').setAttribute('aria-label', codeMode ? `코드 포인트 ${position} / ${total}` : `읽는 구간 ${position} / ${total}`);
+    el('progress-fill').style.width = `${position / total * 100}%`;
+    el('next-title').textContent = steps[current + 1] ? `다음 · ${steps[current + 1].title}` : '모든 변경 파일을 따라왔습니다.';
+  }
+
+  function readHash() {
+    if (location.hash.startsWith('#source?')) {
+      if (current < 0) renderStep(0);
+      openSource(location.hash);
+      return;
+    }
+    const id = location.hash.slice(1);
+    const index = steps.findIndex(step => step.id === id);
+    // chooseStep already rendered this hash, including the requested note.
+    if (index >= 0 && index === current) return;
+    renderStep(index < 0 ? 0 : index);
+  }
+
+  function renderStep(index, noteIndex = 0) {
+    review?.cancelSelection();
+    setCodeMenu(false);
+    current = index;
+    const step = steps[index];
+    document.title = `${index + 1}. ${step.title} · ${data.repositoryName} · Git Diff Tour`;
+    document.querySelectorAll('.nav-step').forEach(button => {
+      if (Number(button.dataset.step) === index) button.setAttribute('aria-current', 'step');
+      else button.removeAttribute('aria-current');
+    });
+    document.querySelectorAll('[data-group]').forEach(label => label.classList.toggle('active', label.dataset.group === step.group));
+    el('step-select').value = String(index);
+    renderFile(step.file);
+    renderGuide(step, index);
+    focusNote(noteIndex);
+    el('guide').scrollTop = 0;
+    paneScroll.guide = 0;
+    el('workspace').scrollTop = 0;
+    const navButton = document.querySelector('.nav-step[aria-current="step"]');
+    const nav = el('step-nav');
+    const top = navButton.offsetTop - nav.offsetTop;
+    if (top < nav.scrollTop || top + navButton.offsetHeight > nav.scrollTop + nav.clientHeight) nav.scrollTop = Math.max(0, top - 50);
+  }
+
+  function renderFile(path) {
+    const file = data.files[path];
+    el('file-path').textContent = file.oldPath !== path ? `${file.oldPath} → ${path}` : path;
+    el('file-path').title = path;
+    el('file-added').textContent = file.added === null ? '' : `+${file.added}`;
+    el('file-removed').textContent = file.removed === null ? '' : `−${file.removed}`;
+    el('diff-caption').textContent = `${path} 변경 전·후 줄 번호와 코드`;
+    if (activeFile === path) return;
+    activeFile = path;
+    if (!highlightedFiles.has(path)) {
+      TourSyntax.file(file, hljs);
+      highlightedFiles.add(path);
+    }
+    renderRows();
+    el('diff-scroll').scrollLeft = 0;
+    paneScroll.left = 0;
+  }
+
+  function renderRows() {
+    const file = data.files[activeFile];
+    const table = el('diff-body').closest('table');
+    table.dataset.view = diffView;
+    const split = diffView === 'split';
+    table.querySelector('colgroup').replaceChildren(...(split ? ['line-column', '', 'line-column', ''] : ['line-column', 'line-column', 'sign-column', '']).map(name => make('col', name)));
+    const head = table.querySelector('thead');
+    head.className = split ? 'split-heading' : 'sr-only';
+    const headings = make('tr');
+    (split ? ['변경 전', '변경 후'] : ['이전 줄', '변경 후 줄', '변경', '코드']).forEach(label => {
+      const th = make('th', '', label);
+      th.colSpan = split ? 2 : 1;
+      th.scope = split ? 'colgroup' : 'col';
+      headings.append(th);
+    });
+    head.replaceChildren(headings);
+    const fragment = document.createDocumentFragment();
+    let removed = [], added = [];
+    const flushChanges = () => {
+      for (let i = 0; i < Math.max(removed.length, added.length); i++) fragment.append(splitRow(removed[i], added[i]));
+      removed = []; added = [];
+    };
+    if (file.notice || file.changeNote) {
+      const tr = make('tr', 'hunk');
+      const cell = make('td', 'code-cell', file.notice || file.changeNote);
+      cell.colSpan = 4;
+      cell.style.whiteSpace = 'normal';
+      tr.append(cell);
+      fragment.append(tr);
+    }
+    file.rows.forEach(row => {
+      if (split && (row.kind === 'del' || row.kind === 'add')) {
+        (row.kind === 'del' ? removed : added).push(row);
+        return;
+      }
+      flushChanges();
+      if (row.kind === 'gap') {
+        const state = gapState(row);
+        row.lines.slice(0, state.top).forEach(line => fragment.append(codeRow(line)));
+        if (state.top + state.bottom < row.lines.length) fragment.append(gapRow(row, state));
+        row.lines.slice(row.lines.length - state.bottom).forEach(line => fragment.append(codeRow(line)));
+      } else if (row.kind === 'hunk') {
+        const tr = make('tr', 'hunk');
+        const cell = make('td', 'code-cell', row.text);
+        cell.colSpan = 4;
+        tr.append(cell);
+        fragment.append(tr);
+      } else {
+        fragment.append(codeRow(row));
+      }
+    });
+    flushChanges();
+    el('diff-body').replaceChildren(fragment);
+    const gaps = file.rows.filter(row => row.kind === 'gap');
+    const hidden = gaps.reduce((sum, gap) => sum + gap.lines.length - gapState(gap).top - gapState(gap).bottom, 0);
+    el('context-state').textContent = file.notice ? '코드 미리보기 없음' : hidden ? `생략 ${hidden.toLocaleString()}줄` : '전체 코드';
+    el('show-context').textContent = file.notice ? '코드 미리보기 없음' : hidden ? '전체 파일 보기' : gaps.length ? '변경 부분만 보기' : '전체 파일 표시 중';
+    el('show-context').disabled = !gaps.length;
+    el('show-context').setAttribute('aria-pressed', String(!hidden));
+    markFocus();
+    review?.refresh();
+  }
+
+  function codeRow(row) {
+    if (diffView === 'split') return splitRow(row.old == null ? null : row, row.new == null ? null : row);
+    const tr = make('tr', row.kind);
+    if (row.new !== null) tr.dataset.line = String(row.new);
+    if (row.old !== null) tr.dataset.oldLine = String(row.old);
+    const oldCell = make('td', 'line line-old'), newCell = make('td', 'line line-new');
+    oldCell.append(review.lineButton(row.old, 'left'));
+    newCell.append(review.lineButton(row.new, 'right'));
+    tr.append(oldCell, newCell,
+              make('td', 'sign', row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ' '),
+              codeCell(row));
+    return tr;
+  }
+
+  function splitRow(left, right) {
+    const tr = make('tr', 'split-row');
+    if (left) tr.dataset.oldLine = String(left.old);
+    if (right) tr.dataset.line = String(right.new);
+    for (const [row, side, column] of [[left, 'left', 'old'], [right, 'right', 'new']]) {
+      const kind = row?.kind || 'empty';
+      const line = make('td', `line line-${column} ${kind}`);
+      line.dataset.side = side;
+      if (row) {
+        const sign = make('span', 'split-sign', kind === 'del' ? '−' : kind === 'add' ? '+' : '');
+        sign.setAttribute('aria-hidden', 'true');
+        line.append(sign, review.lineButton(row[column], side));
+      }
+      // Definitions belong to a verified snapshot. Context links are authored
+      // for head, so do not reuse them for the merge-base copy of that line.
+      const source = row && side === 'left' ? {...row, syntax:row.oldSyntax, links:row.kind === 'del' ? row.links : []} : row;
+      const cell = source ? codeCell(source) : make('td', 'code-cell');
+      cell.classList.add(kind);
+      cell.dataset.side = side;
+      tr.append(line, cell);
+    }
+    return tr;
+  }
+
+  function codeCell(row, currentDefinition = '') {
+    const cell = make('td', 'code-cell');
+    let cursor = 0;
+    (row.links || []).forEach(link => {
+      TourSyntax.append(cell, row, cursor, link.start);
+      if (link.name === currentDefinition) TourSyntax.append(cell, row, link.start, link.end);
+      else {
+        const button = make('button', 'symbol-link');
+        TourSyntax.append(button, row, link.start, link.end);
+        button.type = 'button';
+        button.dataset.symbol = link.name;
+        button.title = `${data.definitions[link.name].name} 정의 미리보기`;
+        button.setAttribute('aria-haspopup', 'dialog');
+        button.addEventListener('click', () => openDefinition(link.name));
+        cell.append(button);
+      }
+      cursor = link.end;
+    });
+    TourSyntax.append(cell, row, cursor);
+    return cell;
+  }
+
+  function gapState(gap) {
+    const key = `${activeFile}:${gap.id}`;
+    if (!contextStates.has(key)) contextStates.set(key, {top: 0, bottom: 0});
+    return contextStates.get(key);
+  }
+
+  function gapRow(gap, state) {
+    const tr = make('tr', 'gap');
+    tr.dataset.gap = gap.id;
+    const cell = make('td');
+    cell.colSpan = 4;
+    const controls = make('div', 'gap-controls');
+    const count = gap.lines.length - state.top - state.bottom;
+    const start = gap.lines[state.top].new;
+    const end = gap.lines[gap.lines.length - state.bottom - 1].new;
+    controls.append(make('span', 'gap-label', `⋯ 변경 없는 ${count.toLocaleString()}줄 · L${start}–${end}`));
+    [['top', '앞 20줄'], ['bottom', '뒤 20줄'], ['all', '이 구간 전체']].forEach(([direction, label]) => {
+      const button = make('button', 'gap-button', label);
+      button.type = 'button';
+      button.setAttribute('aria-label', `L${start}–${end} ${label} 펼치기`);
+      button.addEventListener('click', () => expandGap(gap, direction, tr));
+      controls.append(button);
+    });
+    cell.append(controls);
+    tr.append(cell);
+    return tr;
+  }
+
+  function expandGap(gap, direction, previousRow) {
+    const state = gapState(gap);
+    const count = gap.lines.length - state.top - state.bottom;
+    const amount = direction === 'all' ? count : Math.min(20, count);
+    const first = direction === 'bottom' ? gap.lines.length - state.bottom - amount : state.top;
+    const previousTop = previousRow.getBoundingClientRect().top;
+    if (direction === 'bottom') state.bottom += amount;
+    else state.top += amount;
+    renderRows();
+    const revealed = el('diff-body').querySelector(`tr[data-line="${gap.lines[first].new}"]`);
+    el('diff-scroll').scrollTop += revealed.getBoundingClientRect().top - previousTop;
+    el('diff-scroll').focus({preventScroll: true});
+    el('status-live').textContent = `생략된 코드 ${amount}줄을 펼쳤습니다.`;
+  }
+
+  function toggleContext() {
+    const gaps = data.files[activeFile].rows.filter(row => row.kind === 'gap');
+    const expand = gaps.some(gap => gapState(gap).top + gapState(gap).bottom < gap.lines.length);
+    gaps.forEach(gap => Object.assign(gapState(gap), {top: expand ? gap.lines.length : 0, bottom: 0}));
+    renderRows();
+    scrollToFocus();
+    el('status-live').textContent = expand ? '변경 없는 부분을 포함해 파일 전체를 표시합니다.' : '변경 구간만 표시합니다.';
+  }
+
+  function openDefinition(name) {
+    // Start a fresh history even if the previous close event is still queued.
+    if (!el('definition-dialog').open) definitionHistory.length = 0;
+    definitionHistory.push(name);
+    renderDefinition(name);
+    if (!el('definition-dialog').open) el('definition-dialog').showModal();
+    el('definition-close').focus({preventScroll: true});
+  }
+
+  function renderDefinition(name) {
+    const definition = data.definitions[name];
+    if (!highlightedDefinitions.has(name)) {
+      TourSyntax.rows(definition.rows, definition.path, hljs);
+      highlightedDefinitions.add(name);
+    }
+    el('definition-title').textContent = definition.qualified;
+    el('definition-description').textContent = definition.description;
+    el('definition-location').textContent = `${definition.path} · ${lineLabel(definition)}`;
+    el('definition-source').href = sourceUrl(definition.path, definition.start, definition.end, definition.side);
+    el('definition-version').textContent = `${definition.side === 'left' ? 'Baseline' : 'Current code'} · ${data.comparison.fingerprint.slice(0,8)}`;
+    el('definition-back').hidden = definitionHistory.length < 2;
+    const fragment = document.createDocumentFragment();
+    definition.rows.forEach(row => {
+      const tr = make('tr');
+      tr.append(make('td', 'line', String(row.new)), codeCell(row, name));
+      fragment.append(tr);
+    });
+    el('definition-body').replaceChildren(fragment);
+    el('definition-code').scrollTop = 0;
+    el('definition-code').scrollLeft = 0;
+  }
+
+  function renderGuide(step, index) {
+    const guide = el('guide');
+    const eyebrow = make('div', 'step-eyebrow');
+    eyebrow.append(make('span', 'step-pill', String(index + 1).padStart(2, '0')), make('span', '', `${step.group} · 변경 설명`));
+    const title = make('h2', '', step.heading);
+    title.id = 'step-heading';
+    guide.replaceChildren(eyebrow, title, make('p', 'why', step.why));
+    if (step.notes.length) guide.append(make('div', 'guide-label', '아래 설명을 누르면 해당 줄로 이동합니다'));
+    step.notes.forEach((note, noteIndex) => {
+      const button = make('button', 'note-button');
+      button.type = 'button';
+      button.dataset.note = String(noteIndex);
+      button.setAttribute('aria-pressed', 'false');
+      const top = make('div', 'note-top');
+      top.append(make('span', 'note-title', note.title), make('span', 'note-line', lineLabel(note)));
+      button.append(top, make('p', 'note-body', note.text));
+      button.addEventListener('click', () => {
+        if (mobileQuery.matches) setMobilePane('code');
+        focusNote(noteIndex);
+        if (mobileQuery.matches) {
+          el('diff-scroll').focus({preventScroll: true});
+          return;
+        }
+        const workspace = el('workspace');
+        if (workspace.scrollHeight > workspace.clientHeight) {
+          workspace.scrollTop += el('code-pane').getBoundingClientRect().top - workspace.getBoundingClientRect().top;
+        }
+      });
+      guide.append(button);
+    });
+    if (step.reference) {
+      const ref = step.reference;
+      const details = make('details', 'reference');
+      details.append(make('summary', '', ref.label), make('p', '', ref.text), make('pre', '', ref.code), externalLink('해당 코드의 원본 ↗', sourceUrl(ref.path, ref.start, ref.end, ref.side)));
+      guide.append(details);
+    }
+    const checkpoint = make('div', 'checkpoint');
+    checkpoint.append(make('div', 'guide-label', '직접 확인할 포인트'), make('p', '', step.check));
+    guide.append(checkpoint);
+    if (step.finding) {
+      const finding = make('details', 'finding');
+      finding.append(make('summary', '', step.finding.label || '기존 리뷰 메모 보기'), make('h3', '', step.finding.title), make('p', '', step.finding.body), make('p', '', step.finding.fix), externalLink('기존 리뷰 확인 ↗', step.finding.url));
+      guide.append(finding);
+    }
+    if (step.recap) {
+      const recap = make('div', 'recap');
+      const list = make('ul');
+      step.recap.forEach(text => list.append(make('li', '', text)));
+      recap.append(make('div', 'guide-label', '앞선 리뷰의 확인 기록'), list);
+      guide.append(recap);
+    }
+    guide.append(TourTransitions.render(step, steps[index + 1], data.transitionSummary, sourceUrl));
+    if (data.attribution) {
+      const source = make('details', 'reference');
+      source.append(make('summary', '', '예제 출처와 라이선스'), make('p', '', data.attribution.title),
+                    make('pre', '', data.attribution.text), externalLink('예제 원본 ↗', data.attribution.url));
+      guide.append(source);
+    }
+  }
+
+  function focusNote(index) {
+    review?.cancelSelection();
+    activeNote = index;
+    el('diff-scroll').scrollLeft = 0;
+    paneScroll.left = 0;
+    const step = steps[current];
+    const note = step.notes[index];
+    focusedRange = note || null;
+    updateNavigation();
+    el('status-live').textContent = `${current + 1}/${steps.length}, ${step.title}, ${step.file}${note ? `, ${lineLabel(note)}, ${note.title}` : ''}`;
+    el('focus-title').title = note ? note.title : step.title;
+    if (!note) {
+      pendingFocus = false;
+      paneScroll.code = 0;
+      const file = data.files[step.file];
+      el('focus-lines').textContent = '파일 변경';
+      el('focus-title').textContent = step.title;
+      el('source-link').href = sourceUrl(file.status === 'D' ? file.oldPath : step.file, null, null, file.status === 'D' ? 'left' : 'right');
+      el('mobile-source-link').href = el('source-link').href;
+      markFocus();
+      el('diff-scroll').scrollTop = 0;
+      return;
+    }
+    document.querySelectorAll('.note-button').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.note) === index)));
+    markFocus();
+    el('focus-lines').textContent = lineLabel(note);
+    el('focus-title').textContent = note.title;
+    el('source-link').href = sourceUrl(note.side === 'left' ? data.files[step.file].oldPath : step.file, note.start, note.end, note.side);
+    el('mobile-source-link').href = el('source-link').href;
+    requestAnimationFrame(scrollToFocus);
+  }
+
+  function markFocus() {
+    const note = focusedRange;
+    el('diff-body').closest('table').dataset.focusSide = note?.side || 'right';
+    el('diff-body').querySelectorAll('tr').forEach(row => {
+      const line = Number(note?.side === 'left' ? row.dataset.oldLine : row.dataset.line);
+      row.classList.toggle('focus', Boolean(note) && line >= note.start && line <= note.end);
+    });
+  }
+
+  function scrollToFocus() {
+    if (el('code-pane').hidden) {
+      pendingFocus = true;
+      return;
+    }
+    pendingFocus = false;
+    const row = el('diff-body').querySelector('tr.focus');
+    if (!row) return;
+    const scroll = el('diff-scroll');
+    // Let even the last source line reach the top of the mobile reading area.
+    if (mobileQuery.matches) el('diff-body').closest('table').style.setProperty('--focus-tail', `${Math.max(0, scroll.clientHeight - 56)}px`);
+    const top = row.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop;
+    scroll.scrollTop = Math.max(0, top - (mobileQuery.matches ? (diffView === 'split' ? 40 : 28) : 72));
+    revealSide(row, focusedRange?.side);
+  }
+
+  function revealSide(row, side) {
+    const scroll = el('diff-scroll');
+    scroll.scrollLeft = diffView === 'split' && side !== 'left' ? row.querySelector('.line-new')?.offsetLeft || 0 : 0;
+  }
+
+  function lineLabel(note) {
+    const range = note.start === note.end ? `L${note.start}` : `L${note.start}–${note.end}`;
+    return note.side === 'left' ? `이전 ${range}` : range;
+  }
+
+  function revealComment(comment) {
+    const related = steps.findIndex(step => step.file === comment.file && step.notes.some(note => note.side === comment.side && note.start <= comment.end && note.end >= comment.start));
+    chooseStep(related >= 0 ? related : steps.findIndex(step => step.file === comment.file));
+    if (mobileQuery.matches) setMobilePane('code');
+    const column = comment.side === 'left' ? 'old' : 'new';
+    data.files[comment.file].rows.filter(row => row.kind === 'gap').forEach(gap => {
+      if (gap.lines.some(row => row[column] >= comment.start && row[column] <= comment.end)) {
+        Object.assign(gapState(gap), {top: gap.lines.length, bottom: 0});
+      }
+    });
+    renderRows();
+    // Wait until the step's scheduled focus scroll has run, then reveal the comment.
+    requestAnimationFrame(() => {
+      const scroll = el('diff-scroll');
+      const attr = comment.side === 'left' ? 'oldLine' : 'line';
+      const rows = [...el('diff-body').querySelectorAll('tr')];
+      focusedRange = comment;
+      el('diff-body').closest('table').dataset.focusSide = comment.side;
+      rows.forEach(row => {
+        const selected = Number(row.dataset[attr]) >= comment.start && Number(row.dataset[attr]) <= comment.end;
+        row.classList.toggle('review-selected', selected);
+        row.dataset.reviewSide = comment.side;
+        row.classList.toggle('focus', selected);
+      });
+      el('focus-lines').textContent = lineLabel(comment);
+      el('focus-title').textContent = comment.body;
+      el('focus-title').title = comment.body;
+      el('source-link').href = sourceUrl(comment.side === 'left' ? data.files[comment.file].oldPath : comment.file, comment.start, comment.end, comment.side);
+      el('mobile-source-link').href = el('source-link').href;
+      const row = rows.find(row => Number(row.dataset[attr]) === comment.start);
+      if (row) {
+        el('diff-body').closest('table').style.setProperty('--focus-tail', `${Math.max(0, scroll.clientHeight - 56)}px`);
+        revealSide(row, comment.side);
+        scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - (diffView === 'split' ? 40 : 28);
+        row.querySelector(comment.side === 'left' ? '.line-old button' : '.line-new button')?.focus({preventScroll: true});
+      }
+    });
+  }
+
+  function sourceUrl(path, start, end, side = 'right') {
+    const ref = side === 'left' ? data.comparison.base : data.comparison.head;
+    const committed = side === 'left' || data.rightCommitted.includes(path);
+    if (data.repositoryUrl && ref && committed) {
+      const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+      return `${data.repositoryUrl}/blob/${ref}/${encodedPath}${start ? '#L' + start + (end !== start ? '-L' + end : '') : ''}`;
+    }
+    return '#source?' + new URLSearchParams({path, side, start: start || '', end: end || start || ''});
+  }
+
+  function openSource(hash) {
+    const params = new URLSearchParams(hash.slice('#source?'.length));
+    const path = params.get('path'), side = params.get('side');
+    const lines = ['left', 'right'].includes(side) && Object.hasOwn(data.sources[side], path)
+      ? data.sources[side][path] : null;
+    el('source-title').textContent = `${path} · ${side === 'left' ? 'Baseline' : 'Current code'}`;
+    const body = el('source-body');
+    body.replaceChildren();
+    if (!lines) {
+      body.append(make('p', '', 'Text source is unavailable for this file.'));
+    } else {
+      const table = make('table');
+      const rows = lines.map((text, index) => ({text, new:index + 1}));
+      TourSyntax.rows(rows, path, hljs);
+      rows.forEach(row => {
+        const tr = make('tr');
+        tr.dataset.sourceLine = row.new;
+        if (row.new >= Number(params.get('start')) && row.new <= Number(params.get('end'))) tr.className = 'source-focus';
+        const code = make('td', 'code-cell');
+        TourSyntax.append(code, row);
+        tr.append(make('td', 'line', String(row.new)), code);
+        table.append(tr);
+      });
+      body.append(table);
+    }
+    const dialog = el('source-dialog');
+    if (!dialog.open) dialog.showModal();
+    body.scrollTop = 0;
+    body.querySelector('.source-focus')?.scrollIntoView({block:'center'});
+  }
+
+  function externalLink(label, href) {
+    const a = make('a', '', label);
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    return a;
+  }
+
+  function make(tag, className = '', text = '') {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text) node.textContent = text;
+    return node;
+  }
+})();
+</script>
+</body>
+</html>
