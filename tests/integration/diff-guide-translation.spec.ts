@@ -59,6 +59,9 @@ async function publishGuide(app: IntegrationAppFixture) {
 async function openGuide(page: Page, app: IntegrationAppFixture) {
   const ui = new CodexDeckPage(page);
   await ui.goto(app.baseURL);
+  await expect(
+    page.getByRole("combobox", { name: "Codex home" }),
+  ).toBeEnabled();
   await ui.selectSession("Review the launch checklist");
   await page.getByRole("button", { name: "Diff guide", exact: true }).click();
   const frame = page.frameLocator(frameSelector);
@@ -69,7 +72,7 @@ async function openGuide(page: Page, app: IntegrationAppFixture) {
 test("embedded guide toggles each description independently, preserves navigation, and retries failed groups", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   const { original, store } = await publishGuide(app);
   const calls: string[] = [];
   let failNote = true;
@@ -88,6 +91,43 @@ test("embedded guide toggles each description independently, preserves navigatio
       await route.fulfill({ json: { translatedText: translated(body.text) } });
   });
   const frame = await openGuide(page, app);
+  const layout = await frame.locator("#guide").evaluate((guide) => {
+    const blocks = [
+      ...guide.ownerDocument.querySelectorAll(".deck-diff-translation-block"),
+    ];
+    return blocks.map((block) => {
+      const card = block.querySelector(".nav-step, .note-button, h2")!;
+      const control = block.querySelector(".deck-diff-translate")!;
+      const cardRect = card.getBoundingClientRect();
+      const controlRect = control.getBoundingClientRect();
+      return {
+        contained:
+          controlRect.left >= cardRect.left &&
+          controlRect.right <= cardRect.right &&
+          controlRect.top >= cardRect.top &&
+          controlRect.bottom <= cardRect.bottom,
+        fullWidth:
+          Math.abs(cardRect.width - block.getBoundingClientRect().width) < 1,
+        bodyFullWidth:
+          !block.querySelector(".note-body") ||
+          block.querySelector(".note-body")!.getBoundingClientRect().width >=
+            cardRect.width - 28,
+      };
+    });
+  });
+  expect(layout.length).toBeGreaterThan(0);
+  for (const block of layout)
+    expect(block).toEqual({
+      contained: true,
+      fullWidth: true,
+      bodyFullWidth: true,
+    });
+  await expect(
+    frame.locator(".deck-diff-translation-block button button"),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("translation-controls-desktop.png"),
+  });
   const dataBefore = await frame.locator("#guide-data").textContent();
   const codeBefore = await frame.locator("#diff-body").innerHTML();
   const firstStep = frame.locator(".deck-diff-step").first();
@@ -188,7 +228,7 @@ test("embedded guide toggles each description independently, preserves navigatio
 test("mobile controls mirror sidebar state, support keyboard toggling, and wrap long translations in both themes", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   await publishGuide(app);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {
@@ -204,6 +244,19 @@ test("mobile controls mirror sidebar state, support keyboard toggling, and wrap 
   let frame = await openGuide(page, app);
   await expect(frame.locator("#sidebar")).not.toBeVisible();
   const mobile = frame.locator('[data-translation-kind="mobile-step"]');
+  const selectorLayout = await mobile.evaluate((button) => {
+    const select = button
+      .parentElement!.querySelector("select")!
+      .getBoundingClientRect();
+    const icon = button.getBoundingClientRect();
+    return (
+      icon.left >= select.left &&
+      icon.right <= select.right &&
+      icon.top >= select.top &&
+      icon.bottom <= select.bottom
+    );
+  });
+  expect(selectorLayout).toBeTruthy();
   await mobile.focus();
   await mobile.press("Enter");
   await expect(mobile).toHaveAttribute("aria-pressed", "true");
@@ -228,6 +281,9 @@ test("mobile controls mirror sidebar state, support keyboard toggling, and wrap 
   await expect(frame.locator(".note-body").first()).toContainText(
     "这是较长的中文翻译说明。",
   );
+  await page.screenshot({
+    path: testInfo.outputPath("translation-controls-mobile-light.png"),
+  });
   await noteToggle.click();
   await expect(frame.locator(".note-body").first()).toHaveText(noteBody);
   const dimensions = await frame
@@ -265,6 +321,9 @@ test("mobile controls mirror sidebar state, support keyboard toggling, and wrap 
     "color",
     "rgb(147, 180, 255)",
   );
+  await page.screenshot({
+    path: testInfo.outputPath("translation-controls-mobile-dark.png"),
+  });
 });
 
 test("loading groups survive step changes and stale responses cannot affect refreshed or closed viewers", async ({

@@ -116,9 +116,11 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
     const button = makeButton(kind);
     const error = makeError();
     originalButton.replaceWith(row);
-    row.append(originalButton, button);
-    if (kind === 'main') targets[1].after(error);
-    else row.append(error);
+    row.append(originalButton);
+    if (kind === 'main') row.append(targets[1]);
+    // Keep independent buttons as siblings, while positioning the translation
+    // control inside the card instead of reserving a separate text column.
+    row.append(button, error);
     const binding = { button, error, targets };
     if (kind === 'step') {
       binding.navButton = originalButton;
@@ -204,27 +206,38 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
 })`;
 
 export const diffGuideTranslationStyles = `
-.deck-diff-translation-block { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px; }
+.deck-diff-translation-block { --deck-diff-action-size: 28px; position: relative; min-width: 0; }
+.deck-diff-translation-block > .deck-diff-translate { position: absolute; inset-block-start: 4px; inset-inline-end: 4px; }
 .deck-diff-step > .nav-step { min-width: 0; }
-.deck-diff-main { gap: 8px; }
+.deck-diff-step .nav-step > div { min-width: 0; flex: 1; }
+.deck-diff-step .nav-title { display: block; }
+.deck-diff-step .nav-title::before, .deck-diff-main h2::before { content: ''; float: right; width: calc(var(--deck-diff-action-size) + 4px); height: var(--deck-diff-action-size); }
+.deck-diff-step .nav-title::after { content: ''; display: block; clear: both; }
+.deck-diff-main { display: flow-root; margin-bottom: 25px; }
+.deck-diff-main > .why { margin-bottom: 0; }
+.deck-diff-main > .deck-diff-translate { inset-block-start: 0; inset-inline-end: 0; }
 .deck-diff-note { margin: 8px 0; }
 .deck-diff-note > .note-button { min-width: 0; margin: 0; }
-.deck-diff-note .note-top { flex-wrap: wrap; }
+.deck-diff-note > .deck-diff-translate { inset-block-start: 8px; inset-inline-end: 8px; }
+.deck-diff-note .note-top { flex-wrap: wrap; min-height: 20px; padding-inline-end: calc(var(--deck-diff-action-size) + 4px); }
 .deck-diff-translation-block .nav-title, .deck-diff-translation-block .note-title,
-.deck-diff-translation-block .note-body, .deck-diff-main h2 { overflow-wrap: anywhere; }
+.deck-diff-translation-block .nav-file, .deck-diff-translation-block .note-body, .deck-diff-main h2 { overflow-wrap: anywhere; }
 .deck-diff-translate { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); }
 .deck-diff-translate:hover { background: var(--blue-soft); color: var(--blue); }
 .deck-diff-translate[aria-pressed=true] { color: var(--blue); background: var(--blue-soft); }
 .deck-diff-translate[data-translation-status=error] { color: var(--red); }
-.deck-diff-translation-error { grid-column: 1 / -1; font-size: 11px; line-height: 1.6; color: var(--red); overflow-wrap: anywhere; }
+.deck-diff-translation-error { margin-top: 4px; font-size: 11px; line-height: 1.6; color: var(--red); overflow-wrap: anywhere; }
 .deck-diff-translate[hidden], .deck-diff-translation-error[hidden] { display: none; }
 .deck-diff-spinner { animation: deck-diff-translation-spin 1s linear infinite; }
 @keyframes deck-diff-translation-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .deck-diff-spinner { animation: none; } }
 @media (max-width:850px), (max-width:950px) and (max-height:500px) {
   .deck-diff-translate { min-width: 44px; min-height: 44px; }
-  .mobile-step { flex-wrap: wrap; gap: 4px; }
-  .mobile-step > select { flex: 1; width: auto; }
+  .deck-diff-translation-block { --deck-diff-action-size: 44px; }
+  .deck-diff-note .note-top { min-height: 36px; }
+  .mobile-step { position: relative; flex-wrap: wrap; }
+  .mobile-step > select { flex: 1; width: 100%; padding-inline-end: 66px; }
+  .mobile-step > .deck-diff-translate { position: absolute; inset-block-start: 0; inset-inline-end: 18px; }
   .mobile-step > .deck-diff-translation-error { flex-basis: 100%; }
 }
 `;
