@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Languages } from "lucide-react";
 import type { DiffGuideSummary, DiffGuideStartResponse } from "@codex-deck/api";
 import {
   getDiffGuide,
@@ -10,6 +11,7 @@ import { prepareDiffGuideHtml } from "../diff-guide-html";
 import {
   createDiffGuideFrameToken,
   createDiffGuideTranslationBridge,
+  setDiffGuideAutoTranslate,
 } from "../diff-guide-translation";
 import { createDiffGuideSourceBridge } from "../diff-guide-source";
 
@@ -31,6 +33,7 @@ export function DiffGuideViewer({
   const [loading, setLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [autoTranslate, setAutoTranslate] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const requestGeneration = useRef(0);
@@ -39,6 +42,17 @@ export function DiffGuideViewer({
     const token = createDiffGuideFrameToken();
     return { token, html: prepareDiffGuideHtml(html, theme, token) };
   }, [html, theme, revision, guide.sessionId]);
+
+  const syncAutoTranslate = useCallback(() => {
+    if (frameDocument)
+      setDiffGuideAutoTranslate(
+        iframeRef.current?.contentWindow ?? null,
+        frameDocument.token,
+        autoTranslate,
+      );
+  }, [frameDocument, autoTranslate]);
+
+  useEffect(syncAutoTranslate, [syncAutoTranslate]);
 
   useEffect(() => {
     if (!frameDocument || error) return;
@@ -139,7 +153,26 @@ export function DiffGuideViewer({
                 : "Guide pending"}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-label="Auto translate"
+            aria-pressed={autoTranslate}
+            title="Translate step titles and descriptions to Chinese automatically. Each translation icon can still show the original text."
+            onClick={() => setAutoTranslate((value) => !value)}
+            disabled={!frameDocument || !!error}
+            className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
+              autoTranslate
+                ? "border-blue-400/50 bg-blue-600/20 text-blue-200"
+                : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+            }`}
+          >
+            <Languages size={16} aria-hidden="true" />
+            Auto translate
+            <span className="text-xs" aria-hidden="true">
+              {autoTranslate ? "On" : "Off"}
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => setRevision((value) => value + 1)}
@@ -163,6 +196,7 @@ export function DiffGuideViewer({
           ref={iframeRef}
           title="Generated Git diff guide"
           srcDoc={frameDocument?.html}
+          onLoad={syncAutoTranslate}
           sandbox="allow-scripts allow-downloads"
           referrerPolicy="no-referrer"
           style={{ colorScheme: theme }}

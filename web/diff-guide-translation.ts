@@ -9,12 +9,21 @@ import {
 
 const REQUEST_TYPE = "codex-deck:diff-guide:translate";
 const RESPONSE_TYPE = "codex-deck:diff-guide:translation";
+const AUTO_TRANSLATE_TYPE = "codex-deck:diff-guide:auto-translate";
 const MAX_TEXT_LENGTH = 200_000;
 const pendingTranslations = new Map<string, Promise<string>>();
 
 type Translate = (
   request: TranslateTextRequest,
 ) => Promise<TranslateTextResponse>;
+
+export function setDiffGuideAutoTranslate(
+  frame: Window | null,
+  token: string,
+  enabled: boolean,
+): void {
+  frame?.postMessage({ type: AUTO_TRANSLATE_TYPE, token, enabled }, "*");
+}
 
 export function createDiffGuideFrameToken(): string {
   // getRandomValues is also available when viewing the app over plain LAN HTTP.

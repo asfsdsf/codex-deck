@@ -3,11 +3,15 @@
 export const diffGuideTranslationRuntime = String.raw`(function (token) {
   const requestType = 'codex-deck:diff-guide:translate';
   const responseType = 'codex-deck:diff-guide:translation';
+  const autoTranslateType = 'codex-deck:diff-guide:auto-translate';
   const states = new Map();
   const navStates = new Map();
   const pending = new Map();
+  const queue = [];
   const decorated = new WeakSet();
   let sequence = 0;
+  let autoTranslate = false;
+  let currentStep = null;
   let mobileButton = null;
   let mobileError = null;
   const nav = document.getElementById('step-nav');
@@ -24,7 +28,8 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
     if (!originals.some(text => text.trim())) return null;
     const key = JSON.stringify([step, kind, index, originals]);
     if (!states.has(key)) states.set(key, {
-      originals, translated: null, showing: false, status: 'idle', error: null, bindings: new Set()
+      step, kind, originals, translated: null, showing: false, wantsTranslation: false,
+      status: 'idle', error: null, bindings: new Set()
     });
     return states.get(key);
   }
@@ -47,7 +52,7 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
   }
 
   function renderControl(button, error, state) {
-    const loading = state.status === 'loading';
+    const loading = state.status === 'loading' || state.status === 'queued';
     const failed = state.status === 'error';
     const label = loading ? 'Translating to Chinese…' : failed ? 'Retry translation to Chinese' :
       state.showing ? 'Show original' : 'Translate to Chinese';
@@ -95,19 +100,66 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
     updateMobile();
   }
 
-  function toggle(state) {
-    if (!state || state.status === 'loading') return;
+  function pump() {
+    // Bound bulk translation requests, and prioritize the selected step over
+    // sidebar titles so long guides remain responsive without flooding the bridge.
+    while (pending.size < 4 && queue.length) {
+      const visible = queue.findIndex(state => state.kind !== 'step' && state.step === currentStep);
+      const [state] = queue.splice(visible < 0 ? 0 : visible, 1);
+      if (!state.wantsTranslation) continue;
+      state.status = 'loading';
+      const requestId = String(++sequence);
+      pending.set(requestId, state);
+      render(state);
+      window.parent.postMessage({ type: requestType, token, requestId, texts: state.originals }, '*');
+    }
+  }
+
+  function showTranslation(state) {
+    state.wantsTranslation = true;
     if (state.translated) {
-      state.showing = !state.showing;
+      state.showing = true;
       render(state);
       return;
     }
-    state.status = 'loading';
+    if (state.status === 'loading' || state.status === 'queued') return;
+    state.status = 'queued';
     state.error = null;
-    const requestId = String(++sequence);
-    pending.set(requestId, state);
+    queue.push(state);
     render(state);
-    window.parent.postMessage({ type: requestType, token, requestId, texts: state.originals }, '*');
+    pump();
+  }
+
+  function toggle(state) {
+    if (!state || state.status === 'loading' || state.status === 'queued') return;
+    if (state.showing) {
+      state.wantsTranslation = false;
+      state.showing = false;
+      render(state);
+    } else showTranslation(state);
+  }
+
+  function visibleDescriptions() {
+    return [...states.values()].filter(state => state.step === currentStep && state.kind !== 'step' &&
+      [...state.bindings].some(binding => binding.button.isConnected));
+  }
+
+  function setAutoTranslate(enabled) {
+    if (autoTranslate === enabled) return;
+    autoTranslate = enabled;
+    if (enabled) {
+      decorate();
+      visibleDescriptions().forEach(showTranslation);
+      navStates.forEach(showTranslation);
+    } else {
+      queue.length = 0;
+      for (const state of states.values()) {
+        state.wantsTranslation = false;
+        state.showing = false;
+        if (state.status === 'queued') state.status = 'idle';
+        render(state);
+      }
+    }
   }
 
   function bind(state, targets, originalButton, kind) {
@@ -145,16 +197,23 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
       if (!state) continue;
       navStates.set(step, state);
       bind(state, [title], originalButton, 'step');
+      if (autoTranslate && state.status === 'idle') showTranslation(state);
     }
     const current = nav.querySelector('.nav-step[aria-current="step"]');
     const step = Number(current?.dataset.step ?? select?.value);
     if (!Number.isInteger(step)) return;
+    const stepChanged = step !== currentStep;
+    currentStep = step;
+    const newDescriptions = [];
     const heading = guide.querySelector('#step-heading');
     const why = guide.querySelector('.why');
     if (heading && why && !decorated.has(heading)) {
       decorated.add(heading);
       const state = getState(step, 'main', 0, [heading, why]);
-      if (state) bind(state, [heading, why], heading, 'main');
+      if (state) {
+        bind(state, [heading, why], heading, 'main');
+        newDescriptions.push(state);
+      }
     }
     for (const originalButton of guide.querySelectorAll('.note-button')) {
       if (decorated.has(originalButton)) continue;
@@ -164,11 +223,21 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
       const body = originalButton.querySelector('.note-body');
       if (!Number.isInteger(index) || !title || !body) continue;
       const state = getState(step, 'note', index, [title, body]);
-      if (state) bind(state, [title, body], originalButton, 'note');
+      if (state) {
+        bind(state, [title, body], originalButton, 'note');
+        newDescriptions.push(state);
+      }
     }
     // Discard references to descriptions replaced by the guide's renderer.
     for (const state of states.values()) {
       for (const binding of state.bindings) if (!binding.button.isConnected) state.bindings.delete(binding);
+    }
+    // Only activate descriptions on entering a step (or adding a new block).
+    // Text mutations and note selection must preserve individual original toggles.
+    if (autoTranslate) {
+      const descriptions = stepChanged ? visibleDescriptions() :
+        newDescriptions.filter(state => state.status === 'idle');
+      descriptions.forEach(showTranslation);
     }
     updateMobile();
   }
@@ -176,7 +245,12 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
   window.addEventListener('message', event => {
     if (event.source !== window.parent) return;
     const data = event.data;
-    if (!data || data.type !== responseType || data.token !== token || typeof data.requestId !== 'string') return;
+    if (!data || data.token !== token) return;
+    if (data.type === autoTranslateType && typeof data.enabled === 'boolean') {
+      setAutoTranslate(data.enabled);
+      return;
+    }
+    if (data.type !== responseType || typeof data.requestId !== 'string') return;
     const state = pending.get(data.requestId);
     if (!state) return;
     if (typeof data.error === 'string') {
@@ -186,10 +260,11 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
       data.texts.every(text => typeof text === 'string')) {
       state.status = 'ready';
       state.translated = data.texts;
-      state.showing = true;
+      state.showing = state.wantsTranslation;
     } else return;
     pending.delete(data.requestId);
     render(state);
+    pump();
   });
 
   if (select) {
