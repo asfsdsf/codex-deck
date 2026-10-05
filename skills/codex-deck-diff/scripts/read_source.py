@@ -21,7 +21,7 @@ def main():
         entry = snapshot[args.side][valid_path(args.path)]
         if entry["mode"] == "160000":
             raise ValueError("Submodule gitlink; no text source")
-        raw = decode_entry(entry)
+        raw = decode_entry(snapshot, entry)
         if b"\0" in raw:
             raise ValueError("Binary file; no text source")
         text = raw.decode("utf-8")

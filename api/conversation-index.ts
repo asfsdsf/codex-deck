@@ -4,6 +4,12 @@ import {
   ConversationParserState,
   parseConversationTextChunk,
 } from "./conversation-parser";
+import {
+  inheritedHistoryChanged,
+  readInheritedHistory,
+  type InheritedHistoryFile,
+  type SessionFileResolver,
+} from "./conversation-history";
 import type {
   CodexAppServerEvent,
   ConversationMessageWindow,
@@ -18,6 +24,9 @@ interface ConversationIndex {
   mtimeMs: number;
   anchor: Buffer;
   parser: ConversationParserState;
+  inheritedBytes: number;
+  inheritedMessages: number;
+  inheritedFiles: InheritedHistoryFile[];
 }
 
 // Bound retained histories, and coalesce simultaneous readers of the same file.
@@ -31,10 +40,13 @@ export function clearConversationIndexes(filePath?: string): void {
   else indexes.clear();
 }
 
-async function readIndex(filePath: string): Promise<ConversationIndex> {
+async function readIndex(
+  filePath: string,
+  resolveSessionFile?: SessionFileResolver,
+): Promise<ConversationIndex> {
   const pending = reads.get(filePath);
   if (pending) return pending;
-  const read = refreshIndex(filePath);
+  const read = refreshIndex(filePath, resolveSessionFile);
   reads.set(filePath, read);
   try {
     return await read;
@@ -43,12 +55,17 @@ async function readIndex(filePath: string): Promise<ConversationIndex> {
   }
 }
 
-async function refreshIndex(filePath: string): Promise<ConversationIndex> {
+async function refreshIndex(
+  filePath: string,
+  resolveSessionFile?: SessionFileResolver,
+): Promise<ConversationIndex> {
   const handle = await open(filePath, "r");
   try {
     const stats = await handle.stat();
     const identity = `${stats.dev}:${stats.ino}:${stats.birthtimeMs}`;
     let index = indexes.get(filePath);
+    if (index && (await inheritedHistoryChanged(index.inheritedFiles)))
+      index = undefined;
     if (
       index &&
       (index.identity !== identity ||
@@ -69,6 +86,12 @@ async function refreshIndex(filePath: string): Promise<ConversationIndex> {
         index = undefined;
     }
     if (!index) {
+      const parser = new ConversationParserState();
+      const inherited = await readInheritedHistory(
+        filePath,
+        parser,
+        resolveSessionFile,
+      );
       index = {
         identity,
         fileId: `${identity}:${randomUUID()}`,
@@ -76,7 +99,10 @@ async function refreshIndex(filePath: string): Promise<ConversationIndex> {
         size: 0,
         mtimeMs: 0,
         anchor: Buffer.alloc(0),
-        parser: new ConversationParserState(),
+        parser,
+        inheritedBytes: inherited.bytes,
+        inheritedMessages: parser.messages.length,
+        inheritedFiles: inherited.files,
       };
     }
     // Parse only appended bytes, with bounded reads and complete UTF-8 records.
@@ -101,7 +127,7 @@ async function refreshIndex(filePath: string): Promise<ConversationIndex> {
       const end = position >= stats.size ? data.length : newline + 1;
       const parsed = parseConversationTextChunk(
         data.subarray(0, end).toString("utf8"),
-        index.offset,
+        index.inheritedBytes + index.offset,
         undefined,
         index.parser,
       );
@@ -121,7 +147,7 @@ async function refreshIndex(filePath: string): Promise<ConversationIndex> {
     indexes.delete(filePath);
     indexes.set(filePath, index);
     let cachedBytes = [...indexes.values()].reduce(
-      (sum, entry) => sum + entry.size,
+      (sum, entry) => sum + entry.size + entry.inheritedBytes,
       0,
     );
     for (const [path, entry] of indexes) {
@@ -133,7 +159,7 @@ async function refreshIndex(filePath: string): Promise<ConversationIndex> {
       )
         continue;
       indexes.delete(path);
-      cachedBytes -= entry.size;
+      cachedBytes -= entry.size + entry.inheritedBytes;
     }
     return index;
   } finally {
@@ -141,11 +167,36 @@ async function refreshIndex(filePath: string): Promise<ConversationIndex> {
   }
 }
 
+function presentMessage(
+  index: ConversationIndex,
+  message: ConversationIndex["parser"]["messages"][number],
+) {
+  if ((message.sequence ?? 0) <= index.inheritedMessages) {
+    return {
+      ...message,
+      editable: false,
+      editId: undefined,
+      editText: undefined,
+    };
+  }
+  if (index.inheritedBytes && message.editId?.startsWith("offset:")) {
+    return {
+      ...message,
+      editId: message.editId.replace(
+        /^offset:(\d+):/,
+        (_, offset) => `offset:${Number(offset) - index.inheritedBytes}:`,
+      ),
+    };
+  }
+  return message;
+}
+
 export async function readConversationMessageWindow(
   filePath: string,
   beforeSequence?: number,
+  resolveSessionFile?: SessionFileResolver,
 ): Promise<ConversationMessageWindow> {
-  const index = await readIndex(filePath);
+  const index = await readIndex(filePath, resolveSessionFile);
   const messages = index.parser.messages;
   const end =
     beforeSequence === undefined
@@ -176,7 +227,9 @@ export async function readConversationMessageWindow(
   }
   start = boundedStart;
   return {
-    messages: messages.slice(start, end),
+    messages: messages
+      .slice(start, end)
+      .map((message) => presentMessage(index, message)),
     historyStartSequence: start === 0 ? 0 : start + 1,
     nextOffset: index.parser.version,
     done: true,
@@ -189,8 +242,9 @@ export async function readConversationMessageUpdates(
   filePath: string,
   fromOffset: number,
   maxPayloadBytes = 128 * 1024,
+  resolveSessionFile?: SessionFileResolver,
 ): Promise<StreamResult> {
-  const index = await readIndex(filePath);
+  const index = await readIndex(filePath, resolveSessionFile);
   const candidates = index.parser.messages.filter(
     (message) => message.revision! > fromOffset,
   );
@@ -206,7 +260,9 @@ export async function readConversationMessageUpdates(
   }
   const done = end === candidates.length;
   return {
-    messages: candidates.slice(0, end),
+    messages: candidates
+      .slice(0, end)
+      .map((message) => presentMessage(index, message)),
     nextOffset: done ? index.parser.version : candidates[end - 1].revision!,
     done,
     fileId: index.fileId,
@@ -218,8 +274,9 @@ export async function readConversationMessageUpdates(
 export async function applyConversationLiveEvent(
   filePath: string,
   event: CodexAppServerEvent,
+  resolveSessionFile?: SessionFileResolver,
 ): Promise<void> {
-  const index = await readIndex(filePath);
+  const index = await readIndex(filePath, resolveSessionFile);
   const state = index.parser;
   switch (event.type) {
     case "assistant_delta":
@@ -260,6 +317,10 @@ export async function applyConversationLiveEvent(
   }
 }
 
-export async function readConversationMessageSnapshot(filePath: string) {
-  return [...(await readIndex(filePath)).parser.messages];
+export async function readConversationMessageSnapshot(
+  filePath: string,
+  resolveSessionFile?: SessionFileResolver,
+) {
+  const index = await readIndex(filePath, resolveSessionFile);
+  return index.parser.messages.map((message) => presentMessage(index, message));
 }

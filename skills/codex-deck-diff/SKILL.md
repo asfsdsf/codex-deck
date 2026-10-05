@@ -5,7 +5,7 @@ description: Create guide.json and a standalone HTML walkthrough of a repository
 
 # Codex Deck Diff
 
-Author a reading guide to actual Git changes and build it with the bundled renderer. Spend reasoning on behavior and code flow; the scripts supply source text, real diffs, and validation. No GitHub PR or network access is required. Python 3.10+ and Git are required.
+Author a reading guide to actual Git changes and build it with the bundled renderer. Spend reasoning on behavior and code flow; the scripts supply source text, real diffs, and validation. Python 3.10+ and Git are required.
 
 ## Choose the comparison and destination
 
@@ -24,7 +24,7 @@ python3 [skill directory]/scripts/capture_diff.py \
   --output [artifact directory]/snapshot.json
 ```
 
-Append one of `--commit [commit revision]`, `--branch [branch name]`, or `--tag [tag name]` when requested. Capture reports the comparison metadata and changed paths. The snapshot's `files` contains actual diff rows, old/new line numbers, hidden context, statuses, and preview limitations. `left` and `right` preserve complete baseline/current file contents, including unchanged files needed to trace definitions. Read numbered source with:
+Append one of `--commit [commit revision]`, `--branch [branch name]`, or `--tag [tag name]` when requested. Capture reports the comparison metadata and changed paths. The snapshot's `files` contains actual diff rows, old/new line numbers, hidden context, statuses, and preview limitations. The compact snapshot preserves complete text source for both sides, including unchanged files needed to trace definitions; `left` and `right` reference a shared compressed `blobs` table. Unchanged binary assets are omitted. Read numbered source with:
 
 ```bash
 python3 [skill directory]/scripts/read_source.py \

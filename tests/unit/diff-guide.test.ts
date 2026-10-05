@@ -35,6 +35,7 @@ import {
 
 function fixture() {
   let forks = 0;
+  const forkSources: string[] = [];
   const messages: Parameters<CodexAppServerClientFacade["sendMessage"]>[0][] =
     [];
   let installed = true;
@@ -58,11 +59,14 @@ function fixture() {
           : [],
       },
     ],
-    forkThread: async () => ({
-      threadId: `fork-${++forks}`,
-      cwd: "/repo",
-      name: null,
-    }),
+    forkThread: async (sourceSessionId: string) => {
+      forkSources.push(sourceSessionId);
+      return {
+        threadId: `fork-${++forks}`,
+        cwd: "/repo",
+        name: null,
+      };
+    },
     sendMessage: async (
       input: Parameters<CodexAppServerClientFacade["sendMessage"]>[0],
     ) => {
@@ -78,6 +82,7 @@ function fixture() {
   return {
     client,
     messages,
+    forkSources,
     get forks() {
       return forks;
     },
@@ -244,6 +249,11 @@ test("diff start deduplicates concurrent calls, preserves prompts, and forces de
     assert.deepEqual(first, second);
     assert.notEqual(first.status, "needs_skill_install");
     assert.equal(mock.forks, 1);
+    assert.deepEqual(mock.forkSources, [request.sourceSessionId]);
+    assert.equal(
+      (await service.store.records())[0].parentSessionId,
+      request.sourceSessionId,
+    );
     assert.equal(mock.messages.length, 1);
     const message = mock.messages[0];
     assert.ok(message.input);

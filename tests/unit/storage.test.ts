@@ -12,6 +12,8 @@ import {
   getClaudeDir,
   getCodexDir,
   getConversation,
+  getConversationMessageWindow,
+  getConversationMessageUpdates,
   getConversationStream,
   getConversationRawWindow,
   getProjects,
@@ -22,6 +24,7 @@ import {
   getSessionContext,
   getSessions,
   initStorage,
+  ingestConversationLiveEvent,
   invalidateHistoryCache,
   loadStorage,
   sessionExists,
@@ -53,6 +56,106 @@ test("initStorage updates codex dir aliases", async () => {
     setStorageDir(rootDir);
     assert.equal(getCodexDir(), rootDir);
     assert.equal(getClaudeDir(), rootDir);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("storage resolves a fork's parent history and edits only its own physical records", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-fork-history",
+  );
+  try {
+    const parentLines = [
+      sessionMetaLine(SESSION_A, "/repo", Date.now()),
+      responseItemMessageLine("assistant", "Inherited reply"),
+      eventMsgLine({ type: "agent_message", message: "Inherited reply" }),
+    ];
+    const parentPath = await writeSessionFile(
+      sessionsDir,
+      `${SESSION_A}.jsonl`,
+      parentLines,
+    );
+    const parentText = await readFile(parentPath, "utf8");
+    const childMeta = JSON.stringify({
+      type: "session_meta",
+      ordinal: 3,
+      payload: {
+        id: SESSION_B,
+        cwd: "/repo",
+        timestamp: Date.now(),
+        history_base: {
+          thread_id: SESSION_A,
+          end_ordinal_exclusive: 3,
+          end_byte_offset: Buffer.byteLength(parentText),
+        },
+      },
+    });
+    const childPath = await writeSessionFile(
+      sessionsDir,
+      `${SESSION_B}.jsonl`,
+      [
+        childMeta,
+        responseItemMessageLine("assistant", "Own reply"),
+        eventMsgLine({ type: "agent_message", message: "Own reply" }),
+      ],
+    );
+    await appendFile(
+      parentPath,
+      responseItemMessageLine("assistant", "Later parent reply") + "\n",
+    );
+    setStorageDir(rootDir);
+    await loadStorage();
+    const snapshot = await getConversation(SESSION_B);
+    assert.equal(snapshot.length, 2);
+    assert.equal(snapshot[0].editable, false);
+    assert.equal(snapshot[0].editId, undefined);
+    assert.equal(snapshot[1].editable, true);
+    assert.equal(
+      snapshot[1].editId,
+      `offset:${Buffer.byteLength(childMeta) + 1}:2026-01-01T00:00:00.000Z`,
+    );
+    const window = await getConversationMessageWindow(SESSION_B);
+    assert.deepEqual(window.messages, snapshot);
+    assert.equal(window.totalMessages, 2);
+    const initialUpdates = await getConversationMessageUpdates(SESSION_B, 0);
+    assert.deepEqual(initialUpdates.messages, snapshot);
+
+    const parentBeforeEdit = await readFile(parentPath, "utf8");
+    const result = await editConversationMessage(SESSION_B, {
+      editId: snapshot[1].editId!,
+      expectedText: "Own reply",
+      text: "Edited own reply",
+    });
+    assert.equal(result.sessionRecordsUpdated, 2);
+    assert.equal(await readFile(parentPath, "utf8"), parentBeforeEdit);
+    const afterEdit = await getConversationMessageWindow(SESSION_B);
+    assert.notEqual(afterEdit.fileId, window.fileId);
+    assert.deepEqual(afterEdit.messages[1].message?.content, [
+      { type: "text", text: "Edited own reply" },
+    ]);
+    assert.equal(
+      (await readFile(childPath, "utf8")).includes("Inherited reply"),
+      false,
+    );
+
+    await appendFile(
+      childPath,
+      eventMsgLine({ type: "task_started", turn_id: "child-turn" }) + "\n",
+    );
+    await ingestConversationLiveEvent({
+      type: "assistant_delta",
+      threadId: SESSION_B,
+      turnId: "child-turn",
+      itemId: "live-child",
+      delta: "Next reply",
+    });
+    const live = await getConversationMessageUpdates(
+      SESSION_B,
+      afterEdit.nextOffset,
+    );
+    assert.equal(live.totalMessages, 3);
+    assert.equal(live.messages.find((m) => m.streaming)?.messageNumber, 3);
   } finally {
     await cleanup();
   }

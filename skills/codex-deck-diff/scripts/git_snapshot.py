@@ -113,12 +113,44 @@ def read_blobs(repo, entries):
     return blobs
 
 
-def encode_entry(mode, content):
-    return {"mode": mode, "content": base64.b64encode(content).decode("ascii")}
+def blob_oid(content, object_format):
+    raw = b"blob " + str(len(content)).encode() + b"\0" + content
+    return hashlib.new(object_format, raw).hexdigest()
 
 
-def decode_entry(entry):
-    return base64.b64decode(entry["content"], validate=True)
+def encode_entry(mode, content, contents, object_format):
+    oid = blob_oid(content, object_format)
+    contents.setdefault(oid, content)
+    return {"mode": mode, "oid": oid}
+
+
+def decode_entry(snapshot, entry):
+    try:
+        return zlib.decompress(base64.b64decode(snapshot["blobs"][entry["oid"]], validate=True))
+    except (KeyError, zlib.error, ValueError) as error:
+        raise ValueError("Missing or invalid compressed source blob") from error
+
+
+def is_binary(content):
+    if b"\0" in content:
+        return True
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return False
+
+
+def compact_sources(left, right, contents):
+    """Keep frozen text for tracing, but no unchanged binary assets or duplicate payloads."""
+    for path in set(left) & set(right):
+        entry = left[path]
+        if entry == right[path] and entry["mode"] != "160000" and is_binary(contents[entry["oid"]]):
+            del left[path]
+            del right[path]
+    used = {entry["oid"] for side in (left, right) for entry in side.values()
+            if entry["mode"] != "160000"}
+    return {oid: base64.b64encode(zlib.compress(contents[oid])).decode("ascii") for oid in sorted(used)}
 
 
 def github_remote(repo):
@@ -157,7 +189,8 @@ def is_excluded(path, exclusions):
 
 def digest(snapshot):
     # Names/contents/modes and pinned revisions define a snapshot, not capture time.
-    value = {key: snapshot[key] for key in ("comparison", "left", "right", "repositoryName",
+    # Blob object IDs identify the decoded bytes, independent of compression.
+    value = {key: snapshot[key] for key in ("schemaVersion", "comparison", "left", "right", "repositoryName",
                                           "repositoryUrl", "objectFormat", "rightCommitted")}
     value["comparison"] = {k: v for k, v in value["comparison"].items() if k != "fingerprint"}
     return hashlib.sha256(json.dumps(value, ensure_ascii=True, sort_keys=True,
@@ -172,8 +205,9 @@ def capture(repo, kind="worktree", ref=None, excludes=()):
         head = None
     base = resolve_base(root, kind, ref, head)
     excluded = excluded_paths(root, excludes)
+    object_format = git(root, "rev-parse", "--show-object-format").decode().strip()
     before, committed = tree_entries(root, base), tree_entries(root, head)
-    blobs = read_blobs(root, {**before, **{f"head:{p}": e for p, e in committed.items()}})
+    contents = read_blobs(root, {**before, **{f"head:{p}": e for p, e in committed.items()}})
     index = {}
     for item in git(root, "ls-files", "--stage", "-z").split(b"\0"):
         if not item:
@@ -190,8 +224,7 @@ def capture(repo, kind="worktree", ref=None, excludes=()):
     left, right = {}, {}
     for path, entry in before.items():
         if not is_excluded(path, excluded):
-            left[path] = ({"mode": "160000", "oid": entry["oid"]} if entry["mode"] == "160000" else
-                          encode_entry(entry["mode"], blobs[entry["oid"]]))
+            left[path] = dict(entry)
     try:
         filemode = git(root, "config", "--get", "core.filemode").strip() != b"false"
     except ValueError:
@@ -220,12 +253,12 @@ def capture(repo, kind="worktree", ref=None, excludes=()):
         except FileNotFoundError:
             continue
         if stat.S_ISLNK(info.st_mode):
-            right[path] = encode_entry("120000", os.fsencode(os.readlink(target)))
+            right[path] = encode_entry("120000", os.fsencode(os.readlink(target)), contents, object_format)
         elif stat.S_ISREG(info.st_mode):
             mode = "100755" if info.st_mode & 0o111 else "100644"
             if not filemode and known.get("mode") in ("100644", "100755"):
                 mode = known["mode"]
-            right[path] = encode_entry(mode, target.read_bytes())
+            right[path] = encode_entry(mode, target.read_bytes(), contents, object_format)
         elif stat.S_ISDIR(info.st_mode) and path in nested_repos:
             try:
                 oid = git(target, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
@@ -234,40 +267,41 @@ def capture(repo, kind="worktree", ref=None, excludes=()):
             right[path] = {"mode": "160000", "oid": oid}
         elif not stat.S_ISDIR(info.st_mode):
             raise ValueError(f"Unsupported special file: {path}")
-    right_committed = []
-    for path, entry in right.items():
-        original = committed.get(path)
-        if original and entry["mode"] == original["mode"]:
-            same = entry.get("oid") == original["oid"] if entry["mode"] == "160000" else decode_entry(entry) == blobs[original["oid"]]
-            if same:
-                right_committed.append(path)
-    snapshot = {"schemaVersion": 1, "repositoryName": root.name, "repositoryUrl": github_remote(root),
-                "objectFormat": git(root, "rev-parse", "--show-object-format").decode().strip(),
+    blobs = compact_sources(left, right, contents)
+    right_committed = sorted(path for path, entry in right.items() if entry == committed.get(path))
+    snapshot = {"schemaVersion": 2, "repositoryName": root.name, "repositoryUrl": github_remote(root),
+                "objectFormat": object_format,
                 "comparison": {"kind": kind, "ref": ref, "base": base, "head": head,
                                "repositoryId": identity, "excluded": excluded},
-                "left": left, "right": right, "rightCommitted": sorted(right_committed)}
+                "left": left, "right": right, "blobs": blobs, "rightCommitted": right_committed}
     snapshot["comparison"]["fingerprint"] = digest(snapshot)
     return snapshot
 
 
 def load_snapshot(path, repo):
     snapshot = json.loads(path.read_text(encoding="utf-8"))
-    if snapshot.get("schemaVersion") != 1 or snapshot.get("objectFormat") not in ("sha1", "sha256"):
+    if snapshot.get("schemaVersion") != 2 or snapshot.get("objectFormat") not in ("sha1", "sha256"):
         raise ValueError("Unsupported snapshot format")
     if snapshot["comparison"]["repositoryId"] != repository(repo)[1]:
         raise ValueError("Snapshot belongs to a different repository")
+    expected = 40 if snapshot["objectFormat"] == "sha1" else 64
+    referenced = set()
     for side in ("left", "right"):
         for path, entry in snapshot[side].items():
             valid_path(path)
             if entry["mode"] not in ("100644", "100755", "120000", "160000"):
                 raise ValueError("Unsupported source mode")
-            if entry["mode"] == "160000":
-                oid = entry["oid"]
-                expected = 40 if snapshot["objectFormat"] == "sha1" else 64
-                if len(oid) != expected or any(c not in "0123456789abcdef" for c in oid):
-                    raise ValueError("Invalid submodule object ID")
-            else:
-                decode_entry(entry)
+            oid = entry["oid"]
+            if len(oid) != expected or any(c not in "0123456789abcdef" for c in oid):
+                raise ValueError("Invalid source object ID")
+            if entry["mode"] != "160000":
+                referenced.add(oid)
+    if set(snapshot["blobs"]) != referenced:
+        raise ValueError("Snapshot source blobs do not match tree references")
+    for oid in referenced:
+        content = decode_entry(snapshot, {"oid": oid})
+        if blob_oid(content, snapshot["objectFormat"]) != oid:
+            raise ValueError("Source blob does not match its object ID")
     if snapshot["comparison"]["fingerprint"] != digest(snapshot):
         raise ValueError("Snapshot fingerprint does not match its contents")
     return snapshot
@@ -286,14 +320,14 @@ def snapshot_trees(snapshot):
         for side in ("left", "right"):
             records = []
             for path, entry in sorted(snapshot[side].items()):
-                if entry["mode"] == "160000":
-                    oid = entry["oid"]
-                else:
-                    content = decode_entry(entry)
-                    raw = b"blob " + str(len(content)).encode() + b"\0" + content
-                    oid = hashlib.new(snapshot["objectFormat"], raw).hexdigest()
+                oid = entry["oid"]
+                if entry["mode"] != "160000":
                     target = objects / oid[:2] / oid[2:]
                     if not target.exists():
+                        content = decode_entry(snapshot, entry)
+                        raw = b"blob " + str(len(content)).encode() + b"\0" + content
+                        if hashlib.new(snapshot["objectFormat"], raw).hexdigest() != oid:
+                            raise ValueError("Source blob does not match its object ID")
                         target.parent.mkdir(exist_ok=True)
                         target.write_bytes(zlib.compress(raw))
                 records.append(f'{entry["mode"]} {oid}\t{path}'.encode() + b"\0")

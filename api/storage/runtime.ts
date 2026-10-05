@@ -5507,7 +5507,10 @@ export async function getConversation(
     }
 
     try {
-      const messages = await readConversationMessageSnapshot(filePath);
+      const messages = await readConversationMessageSnapshot(
+        filePath,
+        findSessionFile,
+      );
       rememberStreamModelOutputs(sessionId, messages);
       return messages;
     } catch (err) {
@@ -5521,7 +5524,8 @@ export async function ingestConversationLiveEvent(
   event: CodexAppServerEvent,
 ): Promise<void> {
   const filePath = await findSessionFile(event.threadId);
-  if (filePath) await applyConversationLiveEvent(filePath, event);
+  if (filePath)
+    await applyConversationLiveEvent(filePath, event, findSessionFile);
 }
 
 export async function getConversationMessageWindow(
@@ -5530,7 +5534,7 @@ export async function getConversationMessageWindow(
 ): Promise<ConversationMessageWindow> {
   const filePath = await findSessionFile(sessionId);
   return filePath
-    ? readConversationMessageWindow(filePath, beforeSequence)
+    ? readConversationMessageWindow(filePath, beforeSequence, findSessionFile)
     : {
         messages: [],
         historyStartSequence: 0,
@@ -5547,7 +5551,12 @@ export async function getConversationMessageUpdates(
 ): Promise<StreamResult> {
   const filePath = await findSessionFile(sessionId);
   return filePath
-    ? readConversationMessageUpdates(filePath, fromOffset, maxPayloadBytes)
+    ? readConversationMessageUpdates(
+        filePath,
+        fromOffset,
+        maxPayloadBytes,
+        findSessionFile,
+      )
     : { messages: [], nextOffset: 0, done: true, totalMessages: 0 };
 }
 

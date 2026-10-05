@@ -1,12 +1,14 @@
 """Observable snapshot, Git comparison, source validation, and CLI behavior."""
 
 import copy
+import base64
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -76,7 +78,7 @@ class BuilderTests(unittest.TestCase):
         self.write("new.ts", "export const answer = 42;\n")
         self.write("ignored/secret", "ignored\n")
         snapshot = capture(self.repo)
-        self.assertEqual(decode_entry(snapshot["right"]["main.py"]), b"final\n")
+        self.assertEqual(decode_entry(snapshot, snapshot["right"]["main.py"]), b"final\n")
         self.assertNotIn("ignored/secret", snapshot["right"])
         self.assertEqual(set(files_of(snapshot)), {"main.py", "new.ts"})
         data = build(self.repo, manifest_for(snapshot), snapshot)
@@ -165,15 +167,90 @@ class BuilderTests(unittest.TestCase):
         snapshot = capture(self.repo)
         path.write_text(json.dumps(snapshot))
         self.assertEqual(load_snapshot(path, self.repo), snapshot)
-        snapshot["right"]["main.py"]["content"] = "dGFtcGVyZWQ="
+        oid = snapshot["right"]["main.py"]["oid"]
+        snapshot["blobs"][oid] = base64.b64encode(zlib.compress(b"tampered")).decode()
         path.write_text(json.dumps(snapshot))
-        with self.assertRaisesRegex(ValueError, "fingerprint"):
+        with self.assertRaisesRegex(ValueError, "object ID"):
             load_snapshot(path, self.repo)
         other = self.directory / "other"
         other.mkdir()
         git(other, "init", "--quiet")
         with self.assertRaisesRegex(ValueError, "different repository"):
             load_snapshot(path, other)
+
+    def test_compact_snapshot_omits_unchanged_assets_and_shares_frozen_text(self):
+        shared = ("# Shared source with Unicode: 中文 😀\r\n" * 2000).encode()
+        self.write(".gitattributes", "shared.py -text\ncopy.py -text\n")
+        self.write("shared.py", shared)
+        self.write("copy.py", shared)
+        self.write("image.png", b"\0" + os.urandom(1024 * 1024))
+        self.write("non-utf8.dat", b"\xff" + os.urandom(1024 * 1024))
+        self.commit()
+        self.write("main.py", "changed\n")
+        snapshot = capture(self.repo)
+        self.assertEqual(snapshot["schemaVersion"], 2)
+        for side in ("left", "right"):
+            self.assertNotIn("image.png", snapshot[side])
+            self.assertNotIn("non-utf8.dat", snapshot[side])
+            self.assertEqual(decode_entry(snapshot, snapshot[side]["shared.py"]), shared)
+            self.assertEqual(snapshot[side]["shared.py"]["oid"], snapshot["right"]["copy.py"]["oid"])
+        self.assertEqual(set(files_of(snapshot)), {"main.py"})
+        self.assertLess(len(json.dumps(snapshot).encode()), 10_000)
+        snapshot_path = self.directory / "snapshot.json"
+        snapshot_path.write_text(json.dumps(snapshot))
+        self.assertEqual(load_snapshot(snapshot_path, self.repo), snapshot)
+        # A replay must still resolve unchanged source after live files disappear.
+        (self.repo / "shared.py").unlink()
+        (self.repo / "copy.py").unlink()
+        manifest = manifest_for(snapshot)
+        manifest["definitions"] = {"Shared": dict(path="shared.py", start=1, end=1, description="Frozen shared source.")}
+        data = build(self.repo, manifest, snapshot)
+        self.assertEqual(data["definitions"]["Shared"]["rows"][0]["text"], shared.decode().split("\n")[0])
+        result = self.cli("read_source.py", "--snapshot", snapshot_path, "--path", "shared.py", "--start", 1, "--end", 1)
+        self.assertIn("中文 😀", result.stdout)
+
+    def test_binary_changes_renames_deletions_and_modes_are_retained(self):
+        binary = b"\0" + os.urandom(2048)
+        for path in ("rename.bin", "mode.bin", "modify.bin", "delete.bin"):
+            self.write(path, binary)
+        self.write("delete.bin", b"\0" + os.urandom(2048))
+        self.commit()
+        (self.repo / "rename.bin").rename(self.repo / "renamed.bin")
+        os.chmod(self.repo / "mode.bin", 0o755)
+        (self.repo / "delete.bin").unlink()
+        self.write("modify.bin", b"\0new binary")
+        snapshot = capture(self.repo)
+        files = files_of(snapshot)
+        self.assertEqual({path: file["status"] for path, file in files.items()},
+                         {"renamed.bin": "R", "mode.bin": "M", "modify.bin": "M", "delete.bin": "D"})
+        self.assertTrue(all(file.get("notice") for file in files.values()))
+        self.assertEqual(decode_entry(snapshot, snapshot["right"]["renamed.bin"]), binary)
+        self.assertEqual(snapshot["left"]["rename.bin"]["oid"], snapshot["right"]["mode.bin"]["oid"])
+        build(self.repo, manifest_for(snapshot), snapshot)
+
+    def test_snapshot_rejects_missing_invalid_or_unreferenced_blobs_and_old_format(self):
+        self.write("main.py", "changed\n")
+        snapshot = capture(self.repo)
+        path = self.directory / "snapshot.json"
+        oid = snapshot["right"]["main.py"]["oid"]
+        for kind in ("missing", "invalid-base64", "invalid-zlib", "unreferenced", "old-format", "fingerprint"):
+            with self.subTest(kind=kind):
+                bad = copy.deepcopy(snapshot)
+                if kind == "missing":
+                    del bad["blobs"][oid]
+                elif kind == "invalid-base64":
+                    bad["blobs"][oid] = "!"
+                elif kind == "invalid-zlib":
+                    bad["blobs"][oid] = base64.b64encode(b"uncompressed").decode()
+                elif kind == "unreferenced":
+                    bad["blobs"]["0" * 40] = bad["blobs"][oid]
+                elif kind == "old-format":
+                    bad["schemaVersion"] = 1
+                else:
+                    bad["comparison"]["fingerprint"] = "incorrect"
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):
+                    load_snapshot(path, self.repo)
 
     def test_file_kinds_and_exact_lines(self):
         self.write("long.txt", "".join(f"line {i}\n" for i in range(130)))

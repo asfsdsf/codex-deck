@@ -157,7 +157,7 @@ def build_snapshot(repo, manifest, snapshot, base, head):
         for path in paths:
             entry = snapshot[side].get(path)
             if entry and entry['mode'] != '160000':
-                content = decode_entry(entry)
+                content = decode_entry(snapshot, entry)
                 try:
                     if b'\0' not in content:
                         sources[side][path] = code_lines(content.decode('utf-8'))
