@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -41,6 +42,8 @@ def selectors(parser):
     group.add_argument("--tag", help="Compare this tag (including annotated tags) with current code")
     parser.add_argument("--exclude", type=Path, action="append", default=[],
                         help="Exclude an artifact path or directory; repeat as needed")
+    parser.add_argument("--omit-source", action="store_true",
+                        help="Keep the diff without source blobs; reconstruct source from the pinned Git baseline")
 
 
 def selection(args):
@@ -190,14 +193,16 @@ def is_excluded(path, exclusions):
 def digest(snapshot):
     # Names/contents/modes and pinned revisions define a snapshot, not capture time.
     # Blob object IDs identify the decoded bytes, independent of compression.
-    value = {key: snapshot[key] for key in ("schemaVersion", "comparison", "left", "right", "repositoryName",
+    value = {key: snapshot[key] for key in ("schemaVersion", "sourceMode", "comparison", "left", "right", "repositoryName",
                                           "repositoryUrl", "objectFormat", "rightCommitted")}
+    if snapshot["sourceMode"] == "project":
+        value["files"] = snapshot["files"]
     value["comparison"] = {k: v for k, v in value["comparison"].items() if k != "fingerprint"}
     return hashlib.sha256(json.dumps(value, ensure_ascii=True, sort_keys=True,
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def capture(repo, kind="worktree", ref=None, excludes=()):
+def capture(repo, kind="worktree", ref=None, excludes=(), omit_source=False):
     root, identity = repository(repo)
     try:
         head = git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
@@ -269,18 +274,153 @@ def capture(repo, kind="worktree", ref=None, excludes=()):
             raise ValueError(f"Unsupported special file: {path}")
     blobs = compact_sources(left, right, contents)
     right_committed = sorted(path for path, entry in right.items() if entry == committed.get(path))
-    snapshot = {"schemaVersion": 2, "repositoryName": root.name, "repositoryUrl": github_remote(root),
+    snapshot = {"schemaVersion": 3, "sourceMode": "embedded", "repositoryName": root.name, "repositoryUrl": github_remote(root),
                 "objectFormat": object_format,
                 "comparison": {"kind": kind, "ref": ref, "base": base, "head": head,
                                "repositoryId": identity, "excluded": excluded},
                 "left": left, "right": right, "blobs": blobs, "rightCommitted": right_committed}
     snapshot["comparison"]["fingerprint"] = digest(snapshot)
-    return snapshot
+    return omit_sources(snapshot) if omit_source else snapshot
+
+
+def omit_sources(snapshot):
+    from build_guide import changed_files
+    with snapshot_trees(snapshot) as (repo, left, right):
+        files = changed_files(repo, left, right)
+    result = copy.deepcopy(snapshot)
+    result.update(sourceMode="project", files=strip_gaps(files))
+    result.pop("blobs", None)
+    result["comparison"]["fingerprint"] = digest(result)
+    return result
+
+
+def strip_gaps(files):
+    files = copy.deepcopy(files)
+    for file in files.values():
+        for row in file["rows"]:
+            if row["kind"] == "gap" and "lines" in row:
+                lines = row.pop("lines")
+                row.update(oldStart=lines[0]["old"], newStart=lines[0]["new"], count=len(lines))
+                links = {str(line["new"]): line["links"] for line in lines if line.get("links")}
+                if links:
+                    row["links"] = links
+    return files
+
+
+def check_baseline(repo, snapshot):
+    base = snapshot["comparison"]["base"]
+    if base is not None:
+        try:
+            git(repo, "cat-file", "-e", base + "^{commit}")
+        except ValueError as error:
+            raise ValueError(f"Baseline commit {base} is unavailable") from error
+
+
+def baseline_source(repo, snapshot, path):
+    check_baseline(repo, snapshot)
+    base = snapshot["comparison"]["base"]
+    if base is None:
+        return b""
+    return git(repo, "show", f"{base}:{valid_path(path)}")
+
+
+def reconstruct_source(file, before):
+    if file.get("notice"):
+        raise ValueError("Text source is unavailable for this file")
+    text = before.decode("utf-8")
+    old = text.split("\n") if text else []
+    if text.endswith("\n"):
+        old.pop()
+    result, cursor = [], 0
+    for row in file["rows"]:
+        kind = row["kind"]
+        if kind == "hunk":
+            continue
+        if kind == "gap":
+            start = row.get("oldStart", row.get("lines", [{}])[0].get("old"))
+            new = row.get("newStart", row.get("lines", [{}])[0].get("new"))
+            count = row.get("count", len(row.get("lines", [])))
+            if start != cursor + 1 or new != len(result) + 1 or count < 1 or cursor + count > len(old):
+                raise ValueError("Invalid unchanged source range")
+            result.extend(old[cursor:cursor + count])
+            cursor += count
+            continue
+        if kind not in ("context", "del", "add"):
+            raise ValueError("Invalid diff row")
+        if kind != "add":
+            if row["old"] != cursor + 1 or cursor >= len(old) or row["text"] != old[cursor]:
+                raise ValueError("Diff does not match baseline source")
+            cursor += 1
+        if kind != "del":
+            if row["new"] != len(result) + 1:
+                raise ValueError("Invalid current source numbering")
+            result.append(row["text"])
+    if cursor != len(old) or len(old) != file["oldLineCount"] or len(result) != file["lineCount"]:
+        raise ValueError("Incomplete source reconstruction")
+    return ("\n".join(result) + ("\n" if file["newEndsWithNewline"] else "")).encode("utf-8")
+
+
+def read_snapshot_source(snapshot, repo, path, side="right"):
+    path = valid_path(path)
+    if side not in ("left", "right"):
+        raise ValueError("Invalid source side")
+    entry = snapshot[side][path]
+    if entry["mode"] == "160000":
+        raise ValueError("Submodule gitlink; no text source")
+    if snapshot["sourceMode"] == "embedded":
+        content = decode_entry(snapshot, entry)
+    else:
+        check_baseline(repo, snapshot)
+        file = snapshot["files"].get(path) if side == "right" else None
+        if file:
+            before = b"" if file["oldMode"] == "000000" else baseline_source(repo, snapshot, file["oldPath"])
+            content = reconstruct_source(file, before)
+        else:
+            content = baseline_source(repo, snapshot, path)
+    if blob_oid(content, snapshot["objectFormat"]) != entry["oid"]:
+        raise ValueError("Source blob does not match its object ID")
+    return content
+
+
+def restore_sources(snapshot, repo):
+    """Transient reconstruction for building; never write reconstructed blobs to artifacts."""
+    if snapshot["sourceMode"] == "embedded":
+        return snapshot
+    result = copy.deepcopy(snapshot)
+    check_baseline(repo, snapshot)
+    actual = tree_entries(repo, snapshot["comparison"]["base"])
+    if any(entry != actual.get(path) for path, entry in snapshot["left"].items()):
+        raise ValueError("Baseline source does not match its captured object IDs")
+    baseline = read_blobs(repo, snapshot["left"])
+    contents = {}
+    for side in ("left", "right"):
+        for path, entry in list(result[side].items()):
+            if entry["mode"] == "160000":
+                continue
+            file = snapshot["files"].get(path)
+            if file and file.get("notice"):
+                del result[side][path]
+                continue
+            if side == "left":
+                content = baseline[entry["oid"]]
+            elif file:
+                before = b"" if file["oldMode"] == "000000" else baseline[snapshot["left"][file["oldPath"]]["oid"]]
+                content = reconstruct_source(file, before)
+            else:
+                content = baseline[entry["oid"]]
+            if blob_oid(content, snapshot["objectFormat"]) != entry["oid"]:
+                raise ValueError("Source blob does not match its object ID")
+            if is_binary(content):
+                del result[side][path]
+                continue
+            contents[entry["oid"]] = content
+    result.update(sourceMode="embedded", blobs=compact_sources(result["left"], result["right"], contents))
+    return result
 
 
 def load_snapshot(path, repo):
     snapshot = json.loads(path.read_text(encoding="utf-8"))
-    if snapshot.get("schemaVersion") != 2 or snapshot.get("objectFormat") not in ("sha1", "sha256"):
+    if snapshot.get("schemaVersion") != 3 or snapshot.get("sourceMode") not in ("embedded", "project") or snapshot.get("objectFormat") not in ("sha1", "sha256"):
         raise ValueError("Unsupported snapshot format")
     if snapshot["comparison"]["repositoryId"] != repository(repo)[1]:
         raise ValueError("Snapshot belongs to a different repository")
@@ -296,9 +436,12 @@ def load_snapshot(path, repo):
                 raise ValueError("Invalid source object ID")
             if entry["mode"] != "160000":
                 referenced.add(oid)
-    if set(snapshot["blobs"]) != referenced:
+    if snapshot["sourceMode"] == "project":
+        if "blobs" in snapshot or not isinstance(snapshot.get("files"), dict):
+            raise ValueError("Invalid source-free snapshot")
+    elif set(snapshot["blobs"]) != referenced:
         raise ValueError("Snapshot source blobs do not match tree references")
-    for oid in referenced:
+    for oid in referenced if snapshot["sourceMode"] == "embedded" else ():
         content = decode_entry(snapshot, {"oid": oid})
         if blob_oid(content, snapshot["objectFormat"]) != oid:
             raise ValueError("Source blob does not match its object ID")

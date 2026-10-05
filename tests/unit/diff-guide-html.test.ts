@@ -58,3 +58,15 @@ test("frame tokens cannot inject HTML and incomplete documents are left intact",
     "incomplete",
   );
 });
+
+test("source code resembling the renderer stays intact inside guide JSON", () => {
+  const source =
+    "const TourReview = (() => {\n    function codeOf(c) {\n      return 'captured code';\n    }\n})();";
+  const data = `<script id="guide-data" type="application/json">${JSON.stringify({ sources: { right: { "review.js": source.split("\n") } } })}</script>`;
+  const output = prepareDiffGuideHtml(
+    `<html><body>${data}</body></html>`,
+    "light",
+    "token",
+  );
+  assert.ok(output.includes(data));
+});

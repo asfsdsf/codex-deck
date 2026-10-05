@@ -7,7 +7,7 @@ from pathlib import Path
 from test_builder import SKILL, build, capture, files_of, git, manifest_for, render
 
 
-def create(directory):
+def create(directory, omit_source=False):
     repo = directory / "repo"
     repo.mkdir(parents=True, exist_ok=True)
     git(repo, "init", "--quiet", "--initial-branch=main")
@@ -26,7 +26,7 @@ def create(directory):
     (repo / "response.txt").write_text("The response now carries a token.\n")
     (repo / "removed.txt").unlink()
     (repo / "old-name.txt").rename(repo / "new-name.txt")
-    snapshot = capture(repo)
+    snapshot = capture(repo, omit_source=omit_source)
     manifest = manifest_for(snapshot)
     manifest.update(title="Return a typed search response", overview="Follow the changed request through its result type and response.")
     order = {"main.py": 0, "response.txt": 1, "removed.txt": 2, "new-name.txt": 3}
@@ -59,5 +59,6 @@ def create(directory):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--omit-source", action="store_true")
     args = parser.parse_args()
-    print(create(args.output.resolve()))
+    print(create(args.output.resolve(), args.omit_source))

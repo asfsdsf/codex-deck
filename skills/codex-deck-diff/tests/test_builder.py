@@ -14,10 +14,12 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL / "scripts"))
 from build_guide import build, changed_files, flatten, render
-from git_snapshot import capture, decode_entry, git, load_snapshot, snapshot_trees
+from git_snapshot import capture, decode_entry, git, load_snapshot, read_snapshot_source, snapshot_trees, digest
 
 
 def files_of(snapshot):
+    if snapshot["sourceMode"] == "project":
+        return copy.deepcopy(snapshot["files"])
     with snapshot_trees(snapshot) as (repo, left, right):
         return changed_files(repo, left, right)
 
@@ -70,6 +72,74 @@ class BuilderTests(unittest.TestCase):
         else:
             self.assertNotEqual(result.returncode, 0)
         return result
+
+    def test_source_free_reconstruction_survives_later_edits_and_ref_moves(self):
+        original = "".join(f"line {i} 中文 😀\r\n" for i in range(1, 301))
+        self.write(".gitattributes", "large.txt -text\n")
+        self.write("large.txt", original)
+        self.commit()
+        git(self.repo, "tag", "before")
+        updated = original.replace("line 150", "changed 150").rstrip("\n")
+        self.write("large.txt", updated)
+        self.write("added.txt", "new without newline")
+        self.write("helper.py", b"\xef\xbb\xbfclass Token:\n    pass\n")
+        (self.repo / "main.py").rename(self.repo / "renamed.py")
+        snapshot = capture(self.repo, "tag", "before", omit_source=True)
+        self.assertNotIn("blobs", snapshot)
+        self.assertEqual(snapshot["sourceMode"], "project")
+        self.assertTrue(any(row["kind"] == "gap" and "lines" not in row
+                            for row in snapshot["files"]["large.txt"]["rows"]))
+        path = self.directory / "snapshot.json"
+        path.write_text(json.dumps(snapshot))
+        manifest = manifest_for(snapshot)
+        self.write("large.txt", "later edit\n")
+        self.write("added.txt", "later addition\n")
+        self.commit()
+        git(self.repo, "tag", "-f", "before")
+        loaded = load_snapshot(path, self.repo)
+        self.assertEqual(read_snapshot_source(loaded, self.repo, "large.txt"), updated.encode())
+        self.assertEqual(read_snapshot_source(loaded, self.repo, "large.txt", "left"), original.encode())
+        self.assertEqual(read_snapshot_source(loaded, self.repo, "renamed.py"), b"def compute(value):\n    return value + 1\n")
+        data = build(self.repo, manifest, loaded)
+        self.assertEqual(data["sources"], {"left": {}, "right": {}})
+        self.assertTrue(all("lines" not in row for file in data["files"].values()
+                            for row in file["rows"] if row["kind"] == "gap"))
+        self.assertIn('"sourceMode": "project"', render((SKILL / "assets/guide.html").read_text(), data))
+        result = self.cli("read_source.py", "--snapshot", path, "--path", "added.txt")
+        self.assertIn("new without newline", result.stdout)
+        output = self.directory / "guide.json"
+        output.write_text(json.dumps(manifest))
+        self.cli("build_guide.py", "--snapshot", path, "--manifest", output,
+                 "--output", self.directory / "thin.html")
+        snapshot["comparison"]["base"] = "0" * 40
+        snapshot["comparison"]["fingerprint"] = digest(snapshot)
+        with self.assertRaisesRegex(ValueError, "Baseline commit.*unavailable"):
+            read_snapshot_source(snapshot, self.repo, "large.txt", "left")
+
+    def test_source_free_size_tampering_empty_baseline_and_binary_notice(self):
+        self.write("large.txt", "unchanged source line\n" * 10000)
+        self.commit()
+        self.write("large.txt", "unchanged source line\n" * 5000 + "changed line\n" + "unchanged source line\n" * 4999)
+        self.write("binary", b"\0\xff")
+        snapshot = capture(self.repo, omit_source=True)
+        self.assertLess(len(json.dumps(snapshot)), 10000)
+        data = build(self.repo, manifest_for(snapshot), snapshot)
+        self.assertIn("notice", data["files"]["binary"])
+        row = next(row for row in snapshot["files"]["large.txt"]["rows"] if row["kind"] == "add")
+        row["text"] = "tampered"
+        with self.assertRaisesRegex(ValueError, "object ID"):
+            read_snapshot_source(snapshot, self.repo, "large.txt")
+        path = self.directory / "invalid.json"
+        path.write_text(json.dumps(snapshot))
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            load_snapshot(path, self.repo)
+        empty = self.directory / "empty"
+        empty.mkdir()
+        git(empty, "init", "--quiet")
+        (empty / "new").write_bytes(b"new code\n")
+        first = capture(empty, omit_source=True)
+        self.assertIsNone(first["comparison"]["base"])
+        self.assertEqual(read_snapshot_source(first, empty, "new"), b"new code\n")
 
     def test_default_final_worktree_and_new_files(self):
         self.write("main.py", "staged\n")
@@ -188,7 +258,7 @@ class BuilderTests(unittest.TestCase):
         self.commit()
         self.write("main.py", "changed\n")
         snapshot = capture(self.repo)
-        self.assertEqual(snapshot["schemaVersion"], 2)
+        self.assertEqual(snapshot["schemaVersion"], 3)
         for side in ("left", "right"):
             self.assertNotIn("image.png", snapshot[side])
             self.assertNotIn("non-utf8.dat", snapshot[side])
@@ -390,6 +460,9 @@ class BuilderTests(unittest.TestCase):
         snapshot = capture(repo)
         self.assertEqual(snapshot["objectFormat"], "sha256")
         self.assertEqual(files_of(snapshot)["first"]["status"], "A")
+        thin = capture(repo, omit_source=True)
+        self.assertEqual(read_snapshot_source(thin, repo, "first"), b"first\n")
+        build(repo, manifest_for(thin), thin)
 
     def test_cli_revision_and_frozen_branch_after_movement(self):
         git(self.repo, "branch", "baseline")

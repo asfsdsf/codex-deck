@@ -4,7 +4,7 @@
 import argparse
 from pathlib import Path
 
-from git_snapshot import decode_entry, load_snapshot, valid_path
+from git_snapshot import load_snapshot, read_snapshot_source
 
 
 def main():
@@ -18,10 +18,7 @@ def main():
     args = parser.parse_args()
     try:
         snapshot = load_snapshot(args.snapshot, args.repo)
-        entry = snapshot[args.side][valid_path(args.path)]
-        if entry["mode"] == "160000":
-            raise ValueError("Submodule gitlink; no text source")
-        raw = decode_entry(snapshot, entry)
+        raw = read_snapshot_source(snapshot, args.repo, args.path, args.side)
         if b"\0" in raw:
             raise ValueError("Binary file; no text source")
         text = raw.decode("utf-8")

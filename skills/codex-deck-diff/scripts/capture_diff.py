@@ -18,11 +18,15 @@ def main():
     if args.output.exists() and not args.overwrite:
         parser.error("Output exists; choose another path or use --overwrite")
     try:
-        snapshot = capture(args.repo, *selection(args), excludes=[*args.exclude, args.output.absolute()])
+        snapshot = capture(args.repo, *selection(args), excludes=[*args.exclude, args.output.absolute()],
+                           omit_source=args.omit_source)
         # Reuse the exact builder's diff parser to expose hunk ranges for authoring.
         from build_guide import changed_files
-        with snapshot_trees(snapshot) as (repo, left, right):
-            files = changed_files(repo, left, right)
+        if snapshot["sourceMode"] == "project":
+            files = snapshot["files"]
+        else:
+            with snapshot_trees(snapshot) as (repo, left, right):
+                files = changed_files(repo, left, right)
         if not files:
             raise ValueError("This comparison has no changed files")
         snapshot["files"] = files

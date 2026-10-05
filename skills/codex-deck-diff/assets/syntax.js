@@ -66,7 +66,7 @@ const TourSyntax = (() => {
   }
 
   function file(file, highlighter) {
-    const items = file.rows.flatMap(row => row.kind === 'gap' ? row.lines : row.kind === 'hunk' ? [] : [row]);
+    const items = file.rows.flatMap(row => row.kind === 'gap' ? (row.lines || []) : row.kind === 'hunk' ? [] : [row]);
     // Parse each complete snapshot independently, including hidden context. A deletion
     // must not change how the following added lines are interpreted (or vice versa).
     rows(items.filter(row => row.old != null), file.oldPath, highlighter);

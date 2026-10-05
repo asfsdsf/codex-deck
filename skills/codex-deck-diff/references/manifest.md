@@ -156,9 +156,14 @@ Optional top-level `attribution: {title,text,url}` embeds notices required for t
 
 ## Capture and regeneration
 
-`capture_diff.py` writes a compact source snapshot and its parsed `files` for authoring. Each file records `path,oldPath,status,oldMode,newMode,rows,lineCount,oldLineCount,added,removed`, plus any preview notice. Diff rows have `kind,text,old,new`; `gap` rows contain hidden unchanged `lines`. Snapshot schema version 2 stores `mode,oid` entries in `left`/`right`; `blobs` maps each Git blob object ID to one base64-encoded zlib-compressed payload. Identical contents share a payload across paths and sides. Unchanged binary or non-UTF-8 files are omitted from both sides; changed binary files, renames, and mode changes are retained. Complete text source remains frozen for unchanged definitions and references. Use `read_source.py` to decode and read numbered source.
+`capture_diff.py` writes snapshot schema version 3 and parsed `files` for authoring. Each file records `path,oldPath,status,oldMode,newMode,rows,lineCount,oldLineCount,added,removed`, final-newline flags, and any preview notice. Visible diff rows have `kind,text,old,new`.
 
-Build with `--snapshot` for reproducible rendering. The builder recomputes diffs from frozen contents rather than trusting snapshot `files`. Without it, the builder recaptures current code (using the CLI selector or default HEAD), restores recorded exclusions, and rejects mismatched comparison metadata. New output paths are protected; use `--overwrite` for intentional updates. The final JSON reports output path, comparison, file/step/definition counts, size, unavailable previews, transitions, warnings, and source verification.
+The default `sourceMode: "embedded"` stores `mode,oid` entries in `left`/`right` and a shared `blobs` table of base64-encoded zlib payloads. Identical source is deduplicated; unchanged binary assets are omitted. Hidden `gap` rows contain unchanged `lines`. This mode supports rebuilding from frozen source.
+
+`--omit-source` selects `sourceMode: "project"`. It omits `blobs` and replaces gap text with `oldStart,newStart,count` descriptors. Generated HTML also omits complete source and hidden context text, retaining definition-link metadata and authored excerpts. The captured baseline commit and diff hunks reconstruct exact current contents, including renames, additions, deletions, empty files, CRLF, and missing final newlines. Reconstruction verifies Git blob IDs. Source lookup and building require the origin repository, and unavailable baseline commits produce errors. Later working-tree edits and movement of branch/tag names do not affect reconstruction. `read_source.py` handles both modes.
+
+Build with `--snapshot` to infer the captured source mode. Without it, use the same `--omit-source` setting and selector used for capture; the builder rejects mismatched comparison metadata. New output paths are protected; use `--overwrite` for intentional updates. The final JSON reports output path, comparison, file/step/definition counts, size, unavailable previews, transitions, warnings, and source verification. Earlier snapshot versions require regeneration.
+
 
 ## Maintaining the skill
 

@@ -562,9 +562,9 @@ __THEME_CSS__
       flushChanges();
       if (row.kind === 'gap') {
         const state = gapState(row);
-        row.lines.slice(0, state.top).forEach(line => fragment.append(codeRow(line)));
-        if (state.top + state.bottom < row.lines.length) fragment.append(gapRow(row, state));
-        row.lines.slice(row.lines.length - state.bottom).forEach(line => fragment.append(codeRow(line)));
+        (row.lines || []).slice(0, state.top).forEach(line => fragment.append(codeRow(line)));
+        if (state.top + state.bottom < gapCount(row)) fragment.append(gapRow(row, state));
+        (row.lines || []).slice(gapCount(row) - state.bottom).forEach(line => fragment.append(codeRow(line)));
       } else if (row.kind === 'hunk') {
         const tr = make('tr', 'hunk');
         const cell = make('td', 'code-cell', row.text);
@@ -578,7 +578,7 @@ __THEME_CSS__
     flushChanges();
     el('diff-body').replaceChildren(fragment);
     const gaps = file.rows.filter(row => row.kind === 'gap');
-    const hidden = gaps.reduce((sum, gap) => sum + gap.lines.length - gapState(gap).top - gapState(gap).bottom, 0);
+    const hidden = gaps.reduce((sum, gap) => sum + gapCount(gap) - gapState(gap).top - gapState(gap).bottom, 0);
     el('context-state').textContent = file.notice ? '코드 미리보기 없음' : hidden ? `생략 ${hidden.toLocaleString()}줄` : '전체 코드';
     el('show-context').textContent = file.notice ? '코드 미리보기 없음' : hidden ? '전체 파일 보기' : gaps.length ? '변경 부분만 보기' : '전체 파일 표시 중';
     el('show-context').disabled = !gaps.length;
@@ -647,6 +647,12 @@ __THEME_CSS__
     return cell;
   }
 
+  function gapCount(gap) { return gap.count ?? gap.lines.length; }
+  function gapStart(gap) { return gap.newStart ?? gap.lines[0].new; }
+  function omittedSource() {
+    openSource('#source?' + new URLSearchParams({path: activeFile, side: 'right'}));
+  }
+
   function gapState(gap) {
     const key = `${activeFile}:${gap.id}`;
     if (!contextStates.has(key)) contextStates.set(key, {top: 0, bottom: 0});
@@ -659,9 +665,9 @@ __THEME_CSS__
     const cell = make('td');
     cell.colSpan = 4;
     const controls = make('div', 'gap-controls');
-    const count = gap.lines.length - state.top - state.bottom;
-    const start = gap.lines[state.top].new;
-    const end = gap.lines[gap.lines.length - state.bottom - 1].new;
+    const count = gapCount(gap) - state.top - state.bottom;
+    const start = gapStart(gap) + state.top;
+    const end = gapStart(gap) + gapCount(gap) - state.bottom - 1;
     controls.append(make('span', 'gap-label', `⋯ 변경 없는 ${count.toLocaleString()}줄 · L${start}–${end}`));
     [['top', '앞 20줄'], ['bottom', '뒤 20줄'], ['all', '이 구간 전체']].forEach(([direction, label]) => {
       const button = make('button', 'gap-button', label);
@@ -676,10 +682,11 @@ __THEME_CSS__
   }
 
   function expandGap(gap, direction, previousRow) {
+    if (!gap.lines) { omittedSource(); return; }
     const state = gapState(gap);
-    const count = gap.lines.length - state.top - state.bottom;
+    const count = gapCount(gap) - state.top - state.bottom;
     const amount = direction === 'all' ? count : Math.min(20, count);
-    const first = direction === 'bottom' ? gap.lines.length - state.bottom - amount : state.top;
+    const first = direction === 'bottom' ? gapCount(gap) - state.bottom - amount : state.top;
     const previousTop = previousRow.getBoundingClientRect().top;
     if (direction === 'bottom') state.bottom += amount;
     else state.top += amount;
@@ -692,8 +699,9 @@ __THEME_CSS__
 
   function toggleContext() {
     const gaps = data.files[activeFile].rows.filter(row => row.kind === 'gap');
-    const expand = gaps.some(gap => gapState(gap).top + gapState(gap).bottom < gap.lines.length);
-    gaps.forEach(gap => Object.assign(gapState(gap), {top: expand ? gap.lines.length : 0, bottom: 0}));
+    if (gaps.some(gap => !gap.lines)) { omittedSource(); return; }
+    const expand = gaps.some(gap => gapState(gap).top + gapState(gap).bottom < gapCount(gap));
+    gaps.forEach(gap => Object.assign(gapState(gap), {top: expand ? gapCount(gap) : 0, bottom: 0}));
     renderRows();
     scrollToFocus();
     el('status-live').textContent = expand ? '변경 없는 부분을 포함해 파일 전체를 표시합니다.' : '변경 구간만 표시합니다.';
@@ -864,8 +872,8 @@ __THEME_CSS__
     if (mobileQuery.matches) setMobilePane('code');
     const column = comment.side === 'left' ? 'old' : 'new';
     data.files[comment.file].rows.filter(row => row.kind === 'gap').forEach(gap => {
-      if (gap.lines.some(row => row[column] >= comment.start && row[column] <= comment.end)) {
-        Object.assign(gapState(gap), {top: gap.lines.length, bottom: 0});
+      if ((gap.lines || []).some(row => row[column] >= comment.start && row[column] <= comment.end)) {
+        Object.assign(gapState(gap), {top: gapCount(gap), bottom: 0});
       }
     });
     renderRows();
@@ -916,7 +924,7 @@ __THEME_CSS__
     const body = el('source-body');
     body.replaceChildren();
     if (!lines) {
-      body.append(make('p', '', 'Text source is unavailable for this file.'));
+      body.append(make('p', '', data.sourceMode === 'project' ? 'Complete source was omitted. A source provider is required to view this file.' : 'Text source is unavailable for this file.'));
     } else {
       const table = make('table');
       const rows = lines.map((text, index) => ({text, new:index + 1}));

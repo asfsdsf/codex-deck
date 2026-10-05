@@ -26,7 +26,7 @@ const TourReview = (() => {
       const id = JSON.stringify([file, side]);
       if (!sources.has(id)) {
         const column = side === 'left' ? 'old' : 'new';
-        const rows = data.files[file].rows.flatMap(row => row.kind === 'gap' ? row.lines : [row]);
+        const rows = data.files[file].rows.flatMap(row => row.kind === 'gap' ? (row.lines || []) : [row]);
         sources.set(id, new Map(rows.filter(row => Number.isInteger(row[column])).map(row => [row[column], row.text])));
       }
       return sources.get(id);
@@ -461,7 +461,7 @@ const TourReview = (() => {
     }, true);
     refresh();
     load();
-    return {lineButton, refresh, cancelSelection};
+    return {lineButton, refresh, cancelSelection, invalidateSources: () => sources.clear()};
   }
   return {init};
 })();

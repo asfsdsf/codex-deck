@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from git_snapshot import capture, load_snapshot, private_git_env, selection, selectors, snapshot_trees
+from git_snapshot import capture, load_snapshot, private_git_env, restore_sources, selection, selectors, snapshot_trees, strip_gaps
 
 
 def main():
@@ -39,6 +39,8 @@ def main():
         if args.snapshot:
             require(not args.exclude, '--exclude applies during capture; recapture to change exclusions')
             snapshot = load_snapshot(args.snapshot, args.repo)
+            require(not args.omit_source or snapshot['sourceMode'] == 'project',
+                    '--omit-source conflicts with embedded snapshot; recapture with --omit-source')
             kind, ref = selection(args)
             if kind != 'worktree':
                 require((kind, ref) == (snapshot['comparison']['kind'], snapshot['comparison']['ref']),
@@ -46,7 +48,8 @@ def main():
         else:
             excludes = [Path(p) for p in manifest.get('comparison', {}).get('excluded', [])]
             snapshot = capture(args.repo, *selection(args),
-                               excludes=[*excludes, *args.exclude, args.manifest.absolute(), args.output.absolute()])
+                               excludes=[*excludes, *args.exclude, args.manifest.absolute(), args.output.absolute()],
+                               omit_source=args.omit_source)
         data = build(args.repo.resolve(), manifest, snapshot)
         template = (Path(__file__).resolve().parents[1] / 'assets/guide.html').read_text(encoding='utf-8')
         page = render(template, data)
@@ -70,15 +73,33 @@ def build(repo, manifest, snapshot=None):
         snapshot = capture(repo, excludes=[Path(p) for p in manifest['comparison'].get('excluded', [])])
     require(manifest['comparison'] == snapshot['comparison'],
             'Manifest comparison does not match source snapshot; recapture and reauthor, or use --snapshot')
-    with snapshot_trees(snapshot) as (private_repo, left, right):
-        return build_snapshot(private_repo, manifest, snapshot, left, right)
+    material = restore_sources(snapshot, repo)
+    with snapshot_trees(material) as (private_repo, left, right):
+        files = None
+        if snapshot["sourceMode"] == "project":
+            files = copy.deepcopy(snapshot["files"])
+            from git_snapshot import decode_entry
+            for file in files.values():
+                gaps = [r for r in file["rows"] if r["kind"] == "gap"]
+                if gaps:
+                    lines = code_lines(decode_entry(material, material["left"][file["oldPath"]]).decode("utf-8"))
+                    for gap in gaps:
+                        gap["lines"] = [dict(kind="context", text=lines[gap["oldStart"] + i - 1],
+                                             old=gap["oldStart"] + i, new=gap["newStart"] + i)
+                                        for i in range(gap["count"])]
+        data = build_snapshot(private_repo, manifest, material, left, right, files)
+    data["sourceMode"] = snapshot["sourceMode"]
+    if snapshot["sourceMode"] == "project":
+        data["files"] = strip_gaps(data["files"])
+        data["sources"] = {"left": {}, "right": {}}
+    return data
 
 
-def build_snapshot(repo, manifest, snapshot, base, head):
+def build_snapshot(repo, manifest, snapshot, base, head, files=None):
     manifest = copy.deepcopy(manifest)
     # The supplied revision is the baseline itself, never its merge base.
     merge = base
-    files = changed_files(repo, merge, head)
+    files = changed_files(repo, merge, head) if files is None else files
     require(files, 'This snapshot has no changed files.')
     definitions = {}
     for key, spec in manifest.get('definitions', {}).items():
@@ -332,6 +353,7 @@ def changed_files(repo, base, head):
             continue
         before = b'' if set(old_oid) == {'0'} else git(repo, 'cat-file', 'blob', old_oid)
         after = b'' if set(new_oid) == {'0'} else git(repo, 'cat-file', 'blob', new_oid)
+        file.update(oldEndsWithNewline=before.endswith(b'\n'), newEndsWithNewline=after.endswith(b'\n'))
         try:
             require(b'\0' not in before + after, 'binary')
             old = code_lines(before.decode('utf-8'))

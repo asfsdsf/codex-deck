@@ -3,6 +3,7 @@ import type {
   DiffGuideStartResponse,
   DiffGuideContentResponse,
   DiffGuideSummary,
+  DiffGuideSourceResponse,
   ConversationMessage,
   CodexCollaborationModeOption,
   CodexThreadStateResponse,
@@ -1125,6 +1126,26 @@ export function getDiffGuide(
   sessionId: string,
 ): Promise<DiffGuideContentResponse> {
   return requestJson(`/api/diff-guides/${encodeURIComponent(sessionId)}`);
+}
+
+export function getDiffGuideSource(
+  sessionId: string,
+  input: {
+    path: string;
+    side: "left" | "right";
+    start: number;
+    limit: number;
+  },
+): Promise<DiffGuideSourceResponse> {
+  const query = new URLSearchParams({
+    path: input.path,
+    side: input.side,
+    start: String(input.start),
+    limit: String(input.limit),
+  });
+  return requestJson(
+    `/api/diff-guides/${encodeURIComponent(sessionId)}/source?${query}`,
+  );
 }
 
 export async function startCodexSideThread(

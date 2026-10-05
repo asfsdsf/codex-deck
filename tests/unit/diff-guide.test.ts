@@ -261,6 +261,8 @@ test("diff start deduplicates concurrent calls, preserves prompts, and forces de
     assert.equal(message.collaborationMode?.mode, "default");
     const text = message.input[0].type === "text" ? message.input[0].text : "";
     assert.ok(text.endsWith(request.prompt));
+    assert.match(text, /Always capture with --omit-source/);
+    assert.match(text, /never from later working-tree edits/);
     assert.ok(
       text.includes(
         join(home, "codex-deck", "diff", "sessions", "fork-1", "guide.json"),

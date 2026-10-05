@@ -185,6 +185,15 @@ export class DiffGuideStore {
     }
   }
 
+  async sourceSnapshot(record: DiffGuideRecord): Promise<unknown> {
+    const path = await this.safePath([
+      "sessions",
+      record.sessionId,
+      "snapshot.json",
+    ]);
+    return JSON.parse(await readFile(path, "utf8"));
+  }
+
   async summary(record: DiffGuideRecord): Promise<DiffGuideSummary> {
     return {
       sessionId: record.sessionId,

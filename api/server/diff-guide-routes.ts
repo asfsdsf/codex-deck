@@ -10,6 +10,10 @@ import {
 } from "../storage";
 import { DiffGuideStore } from "../diff-guide-store";
 import { DiffGuideService } from "../diff-guide";
+import {
+  DiffGuideSourceError,
+  readDiffGuideSource,
+} from "../diff-guide-source";
 import { resolveSessionProjectPath } from "./route-helpers";
 import { responseStatusForError, toErrorMessage } from "./utils";
 
@@ -81,6 +85,33 @@ export function registerDiffGuideRoutes(app: Hono) {
       return c.json(
         { error: toErrorMessage(error) },
         responseStatusForError(error),
+      );
+    }
+  });
+  app.get("/api/diff-guides/:id/source", async (c) => {
+    try {
+      const record = await service.store.read(c.req.param("id"));
+      if (!record) return c.json({ error: "Diff guide not found" }, 404);
+      const path = c.req.query("path") ?? "";
+      const side = c.req.query("side") ?? "right";
+      if (side !== "left" && side !== "right")
+        return c.json({ error: "Invalid source side" }, 400);
+      return c.json(
+        await readDiffGuideSource(
+          record.projectRoot,
+          await service.store.sourceSnapshot(record),
+          {
+            path,
+            side,
+            start: Number(c.req.query("start") ?? 1),
+            limit: Number(c.req.query("limit") ?? 200),
+          },
+        ),
+      );
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        error instanceof DiffGuideSourceError ? error.status : 409,
       );
     }
   });

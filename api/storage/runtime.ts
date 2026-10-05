@@ -410,6 +410,15 @@ export interface DiffGuideContentResponse {
   html: string | null;
 }
 
+export interface DiffGuideSourceResponse {
+  path: string;
+  side: "left" | "right";
+  lineStart: number;
+  lines: string[];
+  totalLines: number;
+  nextLine: number | null;
+}
+
 export interface CodexThreadSideStartResponse {
   thread: CodexThreadSummary;
   parentThreadId: string;

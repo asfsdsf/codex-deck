@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DiffGuideSummary, DiffGuideStartResponse } from "@codex-deck/api";
-import { getDiffGuide, retryDiffGuide, translateText } from "../api";
+import {
+  getDiffGuide,
+  getDiffGuideSource,
+  retryDiffGuide,
+  translateText,
+} from "../api";
 import { prepareDiffGuideHtml } from "../diff-guide-html";
 import {
   createDiffGuideFrameToken,
   createDiffGuideTranslationBridge,
 } from "../diff-guide-translation";
+import { createDiffGuideSourceBridge } from "../diff-guide-source";
 
 export function DiffGuideViewer({
   guide,
@@ -41,12 +47,20 @@ export function DiffGuideViewer({
       token: frameDocument.token,
       translate: translateText,
     });
+    const sourceBridge = createDiffGuideSourceBridge({
+      getFrameWindow: () => iframeRef.current?.contentWindow ?? null,
+      token: frameDocument.token,
+      load: (input) => getDiffGuideSource(guide.sessionId, input),
+    });
     window.addEventListener("message", bridge.onMessage);
+    window.addEventListener("message", sourceBridge.onMessage);
     return () => {
       window.removeEventListener("message", bridge.onMessage);
       bridge.dispose();
+      window.removeEventListener("message", sourceBridge.onMessage);
+      sourceBridge.dispose();
     };
-  }, [frameDocument, error]);
+  }, [frameDocument, error, guide.sessionId]);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
