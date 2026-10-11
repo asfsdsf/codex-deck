@@ -39,24 +39,24 @@ test("project selector options include all projects and project paths", () => {
 
 test("project selector filtering matches basename and path segments", () => {
   const options = buildProjectSelectorOptions([
-    "/Users/test-user/Programming/Web/Project/codex-deck",
-    "/Users/test-user/Programming/Web/Project/other-app",
+    "/Users/example/projects/web/codex-deck",
+    "/Users/example/projects/web/other-app",
   ]);
 
   assert.deepEqual(
     filterProjectSelectorOptions(options, "codex").map(
       (option) => option.project,
     ),
-    ["/Users/test-user/Programming/Web/Project/codex-deck"],
+    ["/Users/example/projects/web/codex-deck"],
   );
 
   assert.deepEqual(
-    filterProjectSelectorOptions(options, "users web").map(
+    filterProjectSelectorOptions(options, "projects web").map(
       (option) => option.project,
     ),
     [
-      "/Users/test-user/Programming/Web/Project/codex-deck",
-      "/Users/test-user/Programming/Web/Project/other-app",
+      "/Users/example/projects/web/codex-deck",
+      "/Users/example/projects/web/other-app",
     ],
   );
 
@@ -64,6 +64,6 @@ test("project selector filtering matches basename and path segments", () => {
     filterProjectSelectorOptions(options, "other-app").map(
       (option) => option.project,
     ),
-    ["/Users/test-user/Programming/Web/Project/other-app"],
+    ["/Users/example/projects/web/other-app"],
   );
 });

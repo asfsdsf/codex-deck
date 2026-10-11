@@ -320,7 +320,7 @@ test("parseAiTerminalBootstrapMessage parses controller context and first reques
 <cwd>/repo</cwd>
 <shell>/bin/zsh</shell>
 <os_name>macOS</os_name>
-<os_release>macOS 26.4.1</os_release>
+<os_release>macOS 15.0</os_release>
 <architecture>arm64</architecture>
 <platform>darwin</platform>
 </ai-terminal-controller-context>
@@ -345,7 +345,7 @@ package.json]]></content>
     cwd: "/repo",
     shell: "/bin/zsh",
     osName: "macOS",
-    osRelease: "macOS 26.4.1",
+    osRelease: "macOS 15.0",
     architecture: "arm64",
     platform: "darwin",
     userRequest: "Show largest 10 files",

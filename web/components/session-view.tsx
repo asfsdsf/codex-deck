@@ -1555,7 +1555,6 @@ const SessionView = memo(
         collapsedDefaultSegmentKeysRef.current = {};
         setCollapsedDefaultSegmentKeys({});
         setMessageJumpTarget(null);
-        setScrollEndPadding(0);
         setCurrentPage(totalPagesRef.current);
         setAutoScroll(true);
         requestAnimationFrame(() => {

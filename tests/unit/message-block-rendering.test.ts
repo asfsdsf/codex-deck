@@ -730,20 +730,20 @@ test("MessageBlock renders terminal bootstrap user messages and hides raw tags",
     type: "user",
     message: {
       role: "user",
-      content: `(Use skill codex-deck-terminal) This chat is bound to terminal terminal-ufyscs8a5kdz. The controller will parse markdown replies that contain one terminal tag block such as <ai-terminal-plan>, <ai-terminal-need-input>, or <requirement_finished>.
+      content: `(Use skill codex-deck-terminal) This chat is bound to terminal terminal-1. The controller will parse markdown replies that contain one terminal tag block such as <ai-terminal-plan>, <ai-terminal-need-input>, or <requirement_finished>.
 
 <ai-terminal-controller-context>
-<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
-<cwd>/Users/zky/Programming/Web/Project/codex-deck</cwd>
+<terminal_id>terminal-1</terminal_id>
+<cwd>/repo</cwd>
 <shell>/bin/zsh</shell>
 <os_name>macOS</os_name>
-<os_release>macOS 26.4.1</os_release>
+<os_release>macOS 15.0</os_release>
 <architecture>arm64</architecture>
 <platform>darwin</platform>
 </ai-terminal-controller-context>
 
 <terminal-command-output>
-<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<terminal_id>terminal-1</terminal_id>
 <content><![CDATA[$ ls
 package.json]]></content>
 </terminal-command-output>
@@ -752,20 +752,20 @@ Treat the next section as the user's first request for this terminal chat sessio
 
 User first request:
 <user-request>
-Show larget 10 fiels
+Show largest 10 files
 </user-request>`,
     },
   };
 
   const html = renderMessageBlock(message);
   assert.match(html, /Terminal Chat/);
-  assert.match(html, /terminal-ufyscs8a5kdz/);
-  assert.match(html, /\/Users\/zky\/Programming\/Web\/Project\/codex-deck/);
+  assert.match(html, /terminal-1/);
+  assert.match(html, /\/repo/);
   assert.match(html, /\/bin\/zsh/);
-  assert.match(html, /macOS 26\.4\.1/);
+  assert.match(html, /macOS 15\.0/);
   assert.match(html, /arm64/);
   assert.match(html, /darwin/);
-  assert.match(html, /Show larget 10 fiels/);
+  assert.match(html, /Show largest 10 files/);
   assert.match(html, /package\.json/);
   assert.match(html, /title="Show raw text"/);
   assert.doesNotMatch(html, /&lt;ai-terminal-controller-context&gt;/);
@@ -780,7 +780,7 @@ test("MessageBlock renders terminal command output user messages and hides raw t
       content: `Please explain the failure.
 
 <terminal-command-output>
-<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<terminal_id>terminal-1</terminal_id>
 <content><![CDATA[$ pnpm test
 FAIL src/example.test.ts]]></content>
 </terminal-command-output>`,
@@ -805,7 +805,7 @@ test("MessageBlock renders tagged terminal restart notices with a styled callout
 Please continue from the previous output.
 
 <terminal-command-output>
-<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<terminal_id>terminal-1</terminal_id>
 <content><![CDATA[$ pnpm test
 FAIL src/example.test.ts]]></content>
 </terminal-command-output>`,
@@ -827,7 +827,7 @@ test("MessageBlock renders frozen output as scrollable plain text with styled om
       content: `Please inspect the captured output.
 
 <terminal-command-output>
-<terminal_id>terminal-ufyscs8a5kdz</terminal_id>
+<terminal_id>terminal-1</terminal_id>
 <content><![CDATA[line 1
 **literal markdown**
 <codex-deck-frozen-terminal-omitted-lines-notice omitted-lines="15">15 lines omitted from frozen terminal output.</codex-deck-frozen-terminal-omitted-lines-notice>

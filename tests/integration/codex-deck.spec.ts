@@ -5,6 +5,35 @@ import { join } from "node:path";
 import { responseItemMessageLine } from "../unit/test-utils";
 
 test.describe("codex-deck integration", () => {
+  test("switches between text and block modes without crashing the conversation", async ({
+    page,
+    app,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    const ui = new CodexDeckPage(page);
+    await ui.goto(app.baseURL);
+    await ui.selectSession("Review the launch checklist");
+    const reply = page.getByText("The deployment steps are ready.", {
+      exact: true,
+    });
+    await expect(reply).toBeVisible();
+
+    await page.getByRole("button", { name: "Text Mode", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Block Mode", exact: true }),
+    ).toBeVisible();
+    await expect(reply).toBeVisible();
+
+    await page.getByRole("button", { name: "Block Mode", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Text Mode", exact: true }),
+    ).toBeVisible();
+    await expect(reply).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  });
+
   test("shows the latest page before older conversation history finishes loading", async ({
     page,
     app,
