@@ -10,7 +10,11 @@ import {
   forwardRef,
 } from "react";
 import type { MouseEvent } from "react";
-import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
+import {
+  defaultRangeExtractor,
+  useVirtualizer,
+  type Virtualizer,
+} from "@tanstack/react-virtual";
 import type {
   ConversationMessage,
   CodexApprovalRequest,
@@ -1491,12 +1495,17 @@ const SessionView = memo(
           return;
         }
         isScrollingProgrammaticallyRef.current = true;
+        const lastPage = pagesRef.current?.lastElementChild;
+        const bottomOffset = lastPage
+          ? containerRef.current.scrollTop +
+            lastPage.getBoundingClientRect().bottom -
+            containerRef.current.getBoundingClientRect().top +
+            Number.parseFloat(
+              getComputedStyle(contentRef.current!).paddingBottom,
+            )
+          : containerRef.current.scrollHeight;
         pageVirtualizerRef.current?.scrollToOffset(
-          Math.max(
-            0,
-            containerRef.current.scrollHeight -
-              containerRef.current.clientHeight,
-          ),
+          Math.max(0, bottomOffset - containerRef.current.clientHeight),
         );
         requestAnimationFrame(() => {
           isScrollingProgrammaticallyRef.current = false;
@@ -1858,6 +1867,20 @@ const SessionView = memo(
         (index: number) => `${sessionId}:${railCollapsedByDefault}:${index}`,
         [sessionId, railCollapsedByDefault],
       );
+      const extractPageRange = useCallback<typeof defaultRangeExtractor>(
+        (range) => {
+          // Estimated offsets may still point at an earlier page while the
+          // tail is being measured. Keep its blocks mounted during that gap.
+          if (autoScroll && isLatestPage && range.endIndex < range.count - 1) {
+            return Array.from(
+              { length: Math.min(2, range.count) },
+              (_, index) => Math.max(0, range.count - 2) + index,
+            );
+          }
+          return defaultRangeExtractor(range);
+        },
+        [autoScroll, isLatestPage],
+      );
       // Virtualize whole pages: every intersecting page plus one on either side.
       // Only numeric height measurements survive after a page is unmounted.
       const pageVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
@@ -1867,9 +1890,15 @@ const SessionView = memo(
         estimateSize: () =>
           MESSAGES_PER_PAGE * (railCollapsedByDefault ? 24 : 120),
         overscan: 1,
+        rangeExtractor: extractPageRange,
         scrollMargin: pagesScrollMargin,
         enabled: !loading,
       });
+      // Following the tail is handled after the page layout commits below.
+      // An automatic resize correction would move the scroll position before
+      // React has moved the pages, briefly scrolling past the visible blocks.
+      pageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
+        autoScroll && isLatestPage ? () => false : undefined;
       useLayoutEffect(() => {
         pageVirtualizerRef.current = pageVirtualizer;
         return () => {
@@ -1896,9 +1925,23 @@ const SessionView = memo(
           ),
         [visibleMessageEntries, firstCachedPage, lastCachedPage],
       );
+      const committedMessageChunksRef = useRef<{
+        sessionId: string;
+        chunks: MessageViewportChunk[];
+      }>({ sessionId, chunks: [] });
       const pagedMessageChunks = useMemo<MessageViewportChunk[]>(() => {
         const chunks: MessageViewportChunk[] = [];
         let defaultRun: PagedMessageEntry[] = [];
+        const previousSegmentByEntry = new Map<string, string>();
+        const retainedSegmentKeys = new Set<string>();
+        if (committedMessageChunksRef.current.sessionId === sessionId) {
+          for (const chunk of committedMessageChunksRef.current.chunks) {
+            if (chunk.kind !== "default-segment") continue;
+            for (const entry of chunk.entries) {
+              previousSegmentByEntry.set(entry.entryKey, chunk.segmentKey);
+            }
+          }
+        }
 
         const flushDefaultRun = () => {
           if (defaultRun.length === 0) {
@@ -1906,9 +1949,17 @@ const SessionView = memo(
           }
 
           const firstEntry = defaultRun[0];
+          // A byte-limited history window can begin inside a page/group.
+          // Reuse its committed identity when earlier entries arrive, keeping
+          // the visible MessageBlocks and their local state mounted.
+          const retainedKey = defaultRun
+            .map((entry) => previousSegmentByEntry.get(entry.entryKey))
+            .find((key) => key !== undefined && !retainedSegmentKeys.has(key));
+          const segmentKey = retainedKey ?? `default:${firstEntry.entryKey}`;
+          retainedSegmentKeys.add(segmentKey);
           chunks.push({
             kind: "default-segment",
-            segmentKey: `default:${firstEntry.entryKey}`,
+            segmentKey,
             entries: defaultRun,
           });
           defaultRun = [];
@@ -1932,7 +1983,13 @@ const SessionView = memo(
 
         flushDefaultRun();
         return chunks;
-      }, [pagedMessageEntries]);
+      }, [pagedMessageEntries, sessionId]);
+      useLayoutEffect(() => {
+        committedMessageChunksRef.current = {
+          sessionId,
+          chunks: pagedMessageChunks,
+        };
+      }, [pagedMessageChunks, sessionId]);
       const chunksByPage = useMemo(() => {
         const pages = new Map<number, MessageViewportChunk[]>();
         for (const chunk of pagedMessageChunks) {
@@ -2591,6 +2648,17 @@ const SessionView = memo(
 
       useLayoutEffect(() => {
         if (autoScroll && isLatestPage) {
+          // Backfill can change an already mounted page. Measure it before
+          // painting instead of waiting for ResizeObserver. Follow the actual
+          // tail element while React commits the newly measured offsets.
+          for (const page of pagesRef.current?.querySelectorAll<HTMLDivElement>(
+            "[data-conversation-page]",
+          ) ?? []) {
+            pageVirtualizer.resizeItem(
+              Number(page.dataset.index),
+              page.offsetHeight,
+            );
+          }
           scrollToBottom();
         }
       }, [
@@ -2599,6 +2667,8 @@ const SessionView = memo(
         autoScroll,
         isLatestPage,
         pagesHeight,
+        pageVirtualizer,
+        virtualPages,
         loading,
         scrollToBottom,
       ]);

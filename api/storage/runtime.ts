@@ -1709,8 +1709,16 @@ const sessionUserMessageTimestampCache = new Map<
   SessionUserMessageTimestampCacheEntry
 >();
 let historyCache: Map<string, SessionHistory> | null = null;
+let sessionsCache: Session[] | null = null;
+let sessionsVersion = 0;
+
+function invalidateSessionsCache(): void {
+  sessionsCache = null;
+  sessionsVersion += 1;
+}
 
 const pendingRequests = new Map<string, Promise<unknown>>();
+const pendingSessionIndexUpdates = new Set<Promise<unknown>>();
 const sessionEditQueues = new Map<string, Promise<void>>();
 const sessionToolNameIndex = new Map<string, Map<string, string>>();
 const sessionStreamPendingModelOutputs = new Map<
@@ -1726,6 +1734,7 @@ const sessionStreamTokenUsageUpdates = new Map<
 >();
 
 export function initStorage(dir?: string): void {
+  invalidateSessionsCache();
   clearConversationIndexes();
   sessionStreamPendingModelOutputs.clear();
   sessionStreamModelMetadata.clear();
@@ -1756,9 +1765,11 @@ export function getClaudeDir(): string {
 
 export function invalidateHistoryCache(): void {
   historyCache = null;
+  invalidateSessionsCache();
 }
 
 export function addToFileIndex(sessionId: string, filePath: string): void {
+  invalidateSessionsCache();
   fileIndex.set(sessionId, filePath);
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
@@ -1767,6 +1778,7 @@ export function addToFileIndex(sessionId: string, filePath: string): void {
 }
 
 function clearSessionCaches(sessionId: string): void {
+  invalidateSessionsCache();
   const indexedPath = fileIndex.get(sessionId);
   if (indexedPath) clearConversationIndexes(indexedPath);
   fileIndex.delete(sessionId);
@@ -2836,7 +2848,8 @@ async function collectSessionFiles(
   }
 }
 
-async function buildFileIndex(): Promise<void> {
+async function buildFileIndex(invalidateSessionList = true): Promise<void> {
+  if (invalidateSessionList) invalidateSessionsCache();
   fileIndex.clear();
   sessionMetaIndex.clear();
   sessionWaitStateCache.clear();
@@ -5006,7 +5019,10 @@ async function getLatestUserMessageTimestamp(
     fileHandle = await open(filePath, "r");
     const blockSize = 64 * 1024;
     let position = fileStat.size;
-    let partialLine = "";
+    // Keep byte fragments until a newline is reached. Concatenating and
+    // splitting a growing partial string per block makes large tool-output
+    // lines quadratic, and can split UTF-8 characters across read boundaries.
+    const partialLine: Buffer[] = [];
 
     while (position > 0 && timestamp === 0) {
       const start = Math.max(0, position - blockSize);
@@ -5021,16 +5037,31 @@ async function getLatestUserMessageTimestamp(
         break;
       }
 
-      const lines =
-        `${buffer.subarray(0, bytesRead).toString("utf-8")}${partialLine}`.split(
-          "\n",
-        );
-      partialLine = start > 0 ? (lines.shift() ?? "") : "";
-
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        timestamp = getUserMessageTimestampFromLine(lines[index]);
+      let lineEnd = bytesRead;
+      let index = buffer.lastIndexOf(10, bytesRead - 1);
+      while (index >= 0) {
+        const fragment = buffer.subarray(index + 1, lineEnd);
+        let line: Buffer;
+        if (partialLine.length > 0) {
+          partialLine.push(fragment);
+          line = Buffer.concat(partialLine.reverse());
+          partialLine.length = 0;
+        } else {
+          line = fragment;
+        }
+        timestamp = getUserMessageTimestampFromLine(line.toString("utf-8"));
         if (timestamp > 0) {
           break;
+        }
+        lineEnd = index;
+        index = index > 0 ? buffer.lastIndexOf(10, index - 1) : -1;
+      }
+      if (timestamp === 0) {
+        partialLine.push(buffer.subarray(0, lineEnd));
+        if (start === 0) {
+          timestamp = getUserMessageTimestampFromLine(
+            Buffer.concat(partialLine.reverse()).toString("utf-8"),
+          );
         }
       }
 
@@ -5056,6 +5087,19 @@ export async function loadStorage(): Promise<void> {
 }
 
 export async function syncSessionFileIndex(
+  sessionId: string,
+  filePath: string,
+): Promise<"updated" | "removed"> {
+  const update = updateSessionFileIndex(sessionId, filePath);
+  pendingSessionIndexUpdates.add(update);
+  try {
+    return await update;
+  } finally {
+    pendingSessionIndexUpdates.delete(update);
+  }
+}
+
+async function updateSessionFileIndex(
   sessionId: string,
   filePath: string,
 ): Promise<"updated" | "removed"> {
@@ -5113,21 +5157,38 @@ export async function archiveSession(sessionId: string): Promise<{
 
 export async function getSessions(): Promise<Session[]> {
   return dedupe("getSessions", async () => {
+    // Watcher listeners fan out without awaiting one another. Wait for the
+    // shared index update before a stream subscriber reads the cached list.
+    while (pendingSessionIndexUpdates.size > 0) {
+      await Promise.allSettled([...pendingSessionIndexUpdates]);
+    }
+    if (sessionsCache) return [...sessionsCache];
+    const version = sessionsVersion;
     const history = historyCache ?? (await loadHistoryCache());
 
-    const sessionIds = new Set<string>([
-      ...fileIndex.keys(),
-      ...history.keys(),
-      ...sessionMetaIndex.keys(),
-    ]);
+    // History can retain sessions whose rollout files were removed. Refresh
+    // discovery once for the whole listing, rather than rebuilding the index
+    // for every missing entry (including on each browser refresh).
+    if (
+      [...history.keys(), ...sessionMetaIndex.keys()].some(
+        (sessionId) => !fileIndex.has(sessionId),
+      )
+    ) {
+      // This listing owns the new snapshot; keep its version so intervening
+      // watcher events can still prevent caching a stale result.
+      await buildFileIndex(false);
+    }
 
-    const sessions: Session[] = [];
+    const sessionIds = [
+      ...new Set<string>([
+        ...fileIndex.keys(),
+        ...history.keys(),
+        ...sessionMetaIndex.keys(),
+      ]),
+    ];
 
-    for (const sessionId of sessionIds) {
-      let filePath: string | null = fileIndex.get(sessionId) ?? null;
-      if (!filePath) {
-        filePath = await findSessionFile(sessionId);
-      }
+    const readSession = async (sessionId: string): Promise<Session | null> => {
+      const filePath = fileIndex.get(sessionId) ?? null;
 
       let meta: SessionMeta | null = sessionMetaIndex.get(sessionId) ?? null;
       if (!meta && filePath) {
@@ -5138,7 +5199,7 @@ export async function getSessions(): Promise<Session[]> {
       }
 
       if (meta?.archivedAt) {
-        continue;
+        return null;
       }
 
       const historyEntry = history.get(sessionId);
@@ -5183,7 +5244,7 @@ export async function getSessions(): Promise<Session[]> {
 
       const project = meta?.cwd ?? "";
 
-      sessions.push({
+      return {
         id: sessionId,
         display,
         createdAt,
@@ -5191,14 +5252,30 @@ export async function getSessions(): Promise<Session[]> {
         timestamp: lastUserMessageAt,
         project,
         projectName: getProjectName(project),
-      });
-    }
+      };
+    };
 
-    return sessions.sort(
-      (a, b) =>
-        (b.lastUserMessageAt ?? b.timestamp) -
-        (a.lastUserMessageAt ?? a.timestamp),
+    const sessions = new Array<Session | null>(sessionIds.length);
+    let nextIndex = 0;
+    // Bound open files while allowing independent session reads to overlap.
+    await Promise.all(
+      Array.from({ length: Math.min(8, sessionIds.length) }, async () => {
+        while (nextIndex < sessionIds.length) {
+          const index = nextIndex++;
+          sessions[index] = await readSession(sessionIds[index]);
+        }
+      }),
     );
+    const result = sessions
+      .filter((session) => session !== null)
+      .sort(
+        (a, b) =>
+          (b.lastUserMessageAt ?? b.timestamp) -
+          (a.lastUserMessageAt ?? a.timestamp),
+      );
+    // A watcher event during an async read must invalidate this snapshot too.
+    if (version === sessionsVersion) sessionsCache = result;
+    return result;
   });
 }
 

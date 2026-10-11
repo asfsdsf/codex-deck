@@ -1,7 +1,10 @@
 import type { Page } from "@playwright/test";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
-import { responseItemMessageLine } from "../unit/test-utils";
+import {
+  responseItemMessageLine,
+  responseItemRawLine,
+} from "../unit/test-utils";
 import { test, expect } from "./helpers/codex-deck-fixture";
 import { CodexDeckPage } from "./pages/codex-deck-page";
 
@@ -152,6 +155,121 @@ async function expectBoundedWindow(page: Page, totalPages: number) {
       );
     })
     .toBe(true);
+}
+
+for (const kind of ["assistant", "tool"] as const) {
+  test(`keeps the latest ${kind} blocks visible while a long history backfills`, async ({
+    page,
+    app,
+  }) => {
+    await appendFile(
+      join(app.rootDir, "sessions", `${app.sessions.alpha}.jsonl`),
+      Array.from({ length: 639 }, (_, index) =>
+        kind === "assistant"
+          ? responseItemMessageLine(
+              "assistant",
+              `Backfill message ${index + 4}\n\n<!-- ${"x".repeat(6000)} -->`,
+            )
+          : [
+              responseItemRawLine({
+                type: "function_call",
+                call_id: `backfill-${index}`,
+                name: "exec_command",
+                arguments: JSON.stringify({ cmd: "true" }),
+              }),
+              responseItemRawLine({
+                type: "function_call_output",
+                call_id: `backfill-${index}`,
+                output: "x".repeat(6000),
+              }),
+            ].join("\n"),
+      ).join("\n") + "\n",
+    );
+    // Keep history loading long enough to observe frames after the tail paints.
+    let backfillComplete = false;
+    page.on("response", async (response) => {
+      if (!response.url().includes("/messages?beforeSequence=")) return;
+      const window = await response.json();
+      backfillComplete = window.historyStartSequence === 0;
+    });
+    await page.route("**/messages?beforeSequence=*", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await route.continue();
+    });
+    const ui = new CodexDeckPage(page);
+    await ui.goto(app.baseURL);
+    await page.evaluate(() => {
+      const samples: {
+        visible: boolean;
+        bottom: number;
+        connected: boolean;
+      }[] = [];
+      const state = { samples, started: false, done: false };
+      (
+        window as typeof window & { backfillFrames?: typeof state }
+      ).backfillFrames = state;
+      let retained: HTMLElement | null = null;
+      const sample = () => {
+        if (state.done) return;
+        const container = document.querySelector("[data-conversation-scroll]");
+        const block = document.querySelector<HTMLElement>(
+          '[data-conversation-message="642"]',
+        );
+        if (container && block) {
+          const viewport = container.getBoundingClientRect();
+          const rect = block.getBoundingClientRect();
+          const visible =
+            rect.bottom > viewport.top && rect.top < viewport.bottom;
+          if (visible) state.started = true;
+          if (state.started) {
+            retained ??= block;
+            samples.push({
+              visible,
+              bottom: rect.bottom,
+              connected: retained.isConnected,
+            });
+          }
+        } else if (state.started) {
+          samples.push({ visible: false, bottom: 0, connected: false });
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await ui.selectSession("Review the launch checklist");
+    await expect(
+      page.locator('[data-conversation-message="642"]'),
+    ).toBeInViewport();
+    await expect.poll(() => backfillComplete).toBe(true);
+    const samples = await page.evaluate(() => {
+      const state = (
+        window as typeof window & {
+          backfillFrames?: {
+            done: boolean;
+            samples: { visible: boolean; bottom: number; connected: boolean }[];
+          };
+        }
+      ).backfillFrames!;
+      state.done = true;
+      return state.samples;
+    });
+    expect(samples.length).toBeGreaterThan(0);
+    expect(
+      samples.filter((sample) => !sample.visible || !sample.connected),
+    ).toEqual([]);
+    // Tool renderers can resize as their content initializes. Static text
+    // should also hold its position, in addition to staying mounted/visible.
+    if (kind === "assistant") {
+      expect(
+        Math.max(...samples.map((sample) => sample.bottom)) -
+          Math.min(...samples.map((sample) => sample.bottom)),
+      ).toBeLessThan(2);
+    }
+    await jumpToPage(page, 1);
+    await expect(
+      page.getByText("The deployment steps are ready.", { exact: true }),
+    ).toBeVisible();
+  });
 }
 
 test("scrolls across page boundaries and evicts distant message elements", async ({

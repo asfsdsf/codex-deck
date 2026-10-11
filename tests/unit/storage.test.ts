@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -255,6 +257,179 @@ test("getSessions excludes archived sessions even when history entries remain", 
   }
 });
 
+test("session listing scans once for history-only entries and discovers new rollouts", async (t) => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-session-list-scan",
+  );
+  const missingIds = Array.from(
+    { length: 12 },
+    (_, index) => `history-only-${index}`,
+  );
+  let restoreReaddir = () => {};
+
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo/existing", Date.now()),
+      responseItemMessageLine("user", "existing rollout"),
+    ]);
+    await writeHistoryFile(
+      rootDir,
+      [...missingIds, SESSION_C].map((id) =>
+        JSON.stringify({
+          session_id: id,
+          ts: 1700000000,
+          text: `History for ${id}`,
+        }),
+      ),
+    );
+    setStorageDir(rootDir);
+    await loadStorage();
+
+    // The listing must still find rollouts added after the initial index scan.
+    await writeSessionFile(sessionsDir, `${SESSION_C}.jsonl`, [
+      sessionMetaLine(SESSION_C, "/repo/new", Date.now()),
+      responseItemMessageLine("user", "new rollout"),
+    ]);
+    const readdirSpy = t.mock.method(fsPromises, "readdir");
+    syncBuiltinESMExports();
+    restoreReaddir = () => {
+      readdirSpy.mock.restore();
+      syncBuiltinESMExports();
+    };
+
+    const [sessions, projects] = await Promise.all([
+      getSessions(),
+      getProjects(),
+    ]);
+    assert.equal(sessions.length, missingIds.length + 2);
+    assert.equal(
+      sessions.find((session) => session.id === SESSION_C)?.project,
+      "/repo/new",
+    );
+    assert.ok(
+      missingIds.every((id) =>
+        sessions.some(
+          (session) =>
+            session.id === id && session.display === `History for ${id}`,
+        ),
+      ),
+    );
+    assert.deepEqual(projects, ["/repo/existing", "/repo/new"]);
+    assert.equal(
+      readdirSpy.mock.calls.filter((call) => call.arguments[0] === sessionsDir)
+        .length,
+      1,
+    );
+    assert.deepEqual(await getSessions(), sessions);
+    assert.equal(readdirSpy.mock.calls.length, 1);
+
+    await appendFile(
+      join(rootDir, "history.jsonl"),
+      JSON.stringify({
+        session_id: SESSION_B,
+        ts: 1700000001,
+        text: "New history",
+      }) + "\n",
+    );
+    invalidateHistoryCache();
+    const updatedHistory = await getSessions();
+    assert.equal(
+      updatedHistory.find((session) => session.id === SESSION_B)?.display,
+      "New history",
+    );
+
+    const latestTimestamp = "2027-01-01T00:00:00.000Z";
+    await appendFile(
+      join(sessionsDir, `${SESSION_A}.jsonl`),
+      responseItemMessageLine("user", "Updated rollout", latestTimestamp) +
+        "\n",
+    );
+    const indexUpdate = syncSessionFileIndex(
+      SESSION_A,
+      join(sessionsDir, `${SESSION_A}.jsonl`),
+    );
+    // An SSE listener reads the list while the shared watcher updates its
+    // index. It must see the update rather than the previous cached snapshot.
+    const [updatedSessions] = await Promise.all([getSessions(), indexUpdate]);
+    assert.equal(
+      updatedSessions.find((session) => session.id === SESSION_A)
+        ?.lastUserMessageAt,
+      Date.parse(latestTimestamp),
+    );
+  } finally {
+    restoreReaddir();
+    await cleanup();
+  }
+});
+
+test("session listing does not cache a snapshot invalidated during discovery", async (t) => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-session-cache-race",
+  );
+  let resumeScan = () => {};
+  let scanStarted = () => {};
+  const started = new Promise<void>((resolve) => {
+    scanStarted = resolve;
+  });
+  const resumed = new Promise<void>((resolve) => {
+    resumeScan = resolve;
+  });
+  let restoreReaddir = () => {};
+  try {
+    await writeHistoryFile(rootDir, [
+      JSON.stringify({
+        session_id: SESSION_A,
+        ts: 1700000000,
+        text: "Old history",
+      }),
+    ]);
+    setStorageDir(rootDir);
+    await loadStorage();
+    const originalReaddir = fsPromises.readdir;
+    let held = false;
+    const spy = t.mock.method(
+      fsPromises,
+      "readdir",
+      async (...args: Parameters<typeof fsPromises.readdir>) => {
+        if (args[0] === sessionsDir && !held) {
+          held = true;
+          scanStarted();
+          await resumed;
+        }
+        return Reflect.apply(originalReaddir, fsPromises, args);
+      },
+    );
+    syncBuiltinESMExports();
+    restoreReaddir = () => {
+      spy.mock.restore();
+      syncBuiltinESMExports();
+    };
+
+    const listing = getSessions();
+    await started;
+    await appendFile(
+      join(rootDir, "history.jsonl"),
+      JSON.stringify({
+        session_id: SESSION_B,
+        ts: 1700000001,
+        text: "Arrived during scan",
+      }) + "\n",
+    );
+    invalidateHistoryCache();
+    resumeScan();
+    await listing;
+    assert.equal(
+      (await getSessions()).find((session) => session.id === SESSION_B)
+        ?.display,
+      "Arrived during scan",
+    );
+  } finally {
+    resumeScan();
+    restoreReaddir();
+    await cleanup();
+  }
+});
+
 test("getSessions sorts file-backed sessions by latest user message time", async () => {
   const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
     "storage-session-user-message-order",
@@ -322,6 +497,54 @@ test("getSessions sorts file-backed sessions by latest user message time", async
       Date.parse("2026-01-01T00:01:00.000Z"),
     );
     assert.equal(sessions[1]?.createdAt, 2000);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("session timestamps handle large lines and files without a trailing newline", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "storage-session-large-lines",
+  );
+  const timestamp = "2026-01-01T00:05:00.000Z";
+  const largeText = "😀".repeat(100_000);
+  const largeOutput = responseItemRawLine({
+    type: "function_call_output",
+    call_id: "large-output",
+    output: largeText,
+  });
+  try {
+    await writeSessionFile(sessionsDir, `${SESSION_A}.jsonl`, [
+      sessionMetaLine(SESSION_A, "/repo", 1000),
+      responseItemMessageLine("user", "First prompt", timestamp),
+      responseItemMessageLine("assistant", "Reply"),
+      largeOutput,
+    ]);
+    await writeFile(
+      join(sessionsDir, `${SESSION_B}.jsonl`),
+      [
+        sessionMetaLine(SESSION_B, "/repo", 1000),
+        responseItemMessageLine("user", "First prompt"),
+        responseItemMessageLine("assistant", "Reply"),
+        largeOutput,
+        responseItemMessageLine("user", largeText, timestamp),
+      ].join("\r\n"),
+    );
+    // A rollout without metadata also exercises the first unterminated
+    // fragment, when the backward scan reaches the beginning of the file.
+    await writeFile(
+      join(sessionsDir, `${SESSION_C}.jsonl`),
+      responseItemMessageLine("user", largeText, timestamp),
+    );
+    setStorageDir(rootDir);
+    await loadStorage();
+    const sessions = await getSessions();
+    assert.equal(sessions.length, 3);
+    assert.ok(
+      sessions.every(
+        (session) => session.lastUserMessageAt === Date.parse(timestamp),
+      ),
+    );
   } finally {
     await cleanup();
   }

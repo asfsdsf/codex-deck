@@ -124,6 +124,39 @@ test.describe("codex-deck integration", () => {
     }
   });
 
+  test("reloads cached session browsing and receives new sessions after refresh", async ({
+    page,
+    app,
+  }) => {
+    const ui = new CodexDeckPage(page);
+    await ui.goto(app.baseURL);
+    await ui.selectSession("Review the launch checklist");
+    await expect(
+      page.getByText("The deployment steps are ready.", { exact: true }),
+    ).toBeVisible();
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await ui.expectSessionVisible("Review the launch checklist");
+    await ui.selectSession("Review the launch checklist");
+    await expect(
+      page.getByText("The deployment steps are ready.", { exact: true }),
+    ).toBeVisible();
+
+    await app.createSession({
+      sessionId: "44444444-4444-4444-4444-444444444444",
+      projectKey: "alpha",
+      prompt: "New session after refreshing",
+      assistantReply: "The refreshed page received this session.",
+    });
+    await ui.expectSessionVisible("New session after refreshing");
+    await ui.selectSession("New session after refreshing");
+    await expect(
+      page.getByText("The refreshed page received this session.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+  });
+
   test("loads sessions and filters them by project and search text", async ({
     page,
     app,
