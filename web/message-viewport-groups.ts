@@ -866,6 +866,26 @@ function getAssistantInlinePreview(
         continue;
       }
       const normalized = normalizeToolUse(block.name, block.input);
+      if (normalized.calls) {
+        const summaries = normalized.calls.map((call) =>
+          summarizeToolCall(call.name.toLowerCase(), call.input, context),
+        );
+        if (summaries.every((summary) => summary !== null)) {
+          return plainLine(
+            "tool",
+            summaries.map((summary) => summary.text).join(" · "),
+            summaries.flatMap((summary, index) => [
+              ...(index > 0 ? [punctuationSegment("·")] : []),
+              ...(summary.segments ?? [detailSegment(summary.text)]),
+            ]),
+          );
+        }
+        // A partial summary would hide calls that cannot be summarized.
+        return plainLine("tool", `Called ${normalized.name}`, [
+          plainSegment("label", "Called"),
+          detailSegment(normalized.name),
+        ]);
+      }
       const toolName = normalizeInlineText(normalized.name).toLowerCase();
       if (!toolName) {
         continue;

@@ -439,6 +439,27 @@ test("collapsed text mode unwraps JSON-wrapped exec commands", () => {
   });
 });
 
+test("collapsed text mode summarizes every command in an exec batch", () => {
+  const line = getCollapsedViewportLine(
+    createAssistantMessage([
+      {
+        type: "tool_use",
+        name: "exec",
+        input: {
+          raw: 'await Promise.allSettled([tools.exec_command({cmd:"cat /repo/first.md"}), tools.exec_command({cmd:"cat /repo/second.md"})]);',
+        },
+      },
+    ]),
+    { projectPath: "/repo" },
+  );
+
+  assert.equal(line?.text, "Read first.md · Read second.md");
+  assert.equal(
+    line?.segments?.filter((segment) => segment.kind === "path").length,
+    2,
+  );
+});
+
 test("collapsed text mode unwraps exec apply_patch calls", () => {
   const rawPatch = [
     "*** Begin Patch",

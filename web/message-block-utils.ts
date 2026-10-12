@@ -3,6 +3,7 @@ import { sanitizeText } from "./utils";
 import { normalizeToolUse } from "./tool-use-normalization";
 
 const DEFAULT_EXPANDED_TOOL_USE_NAMES = new Set([
+  "exec",
   "exec_command",
   "bash",
   "write_stdin",
@@ -14,9 +15,13 @@ export function shouldDefaultExpandToolUse(
   toolName: string | null | undefined,
   input?: Record<string, unknown>,
 ): boolean {
-  const normalizedName = input
-    ? normalizeToolUse(toolName, input).name
-    : toolName || "";
+  const normalized = input ? normalizeToolUse(toolName, input) : undefined;
+  if (normalized?.calls) {
+    return normalized.calls.some((call) =>
+      shouldDefaultExpandToolUse(call.name, call.input),
+    );
+  }
+  const normalizedName = normalized?.name ?? toolName ?? "";
   return DEFAULT_EXPANDED_TOOL_USE_NAMES.has(normalizedName.toLowerCase());
 }
 
@@ -177,10 +182,25 @@ export function getSearchableToolUseText(block: ContentBlock): string {
     block.name,
     block.input as Record<string, unknown>,
   );
+  if (normalized.calls) {
+    return normalized.calls
+      .map((call) =>
+        getSearchableToolUseText({
+          ...block,
+          name: call.name,
+          input: call.input,
+        }),
+      )
+      .join("\n");
+  }
   const input = normalized.input;
   const toolName = sanitizeText(normalized.name);
   const normalizedToolName = toolName.toLowerCase();
   const parts = toolName.length > 0 ? [toolName] : [];
+
+  if (normalizedToolName === "exec" && typeof input.raw === "string") {
+    return [...parts, sanitizeText(input.raw)].join("\n");
+  }
 
   if (normalizedToolName === "apply_patch" && typeof input.raw === "string") {
     parts.push(sanitizeText(input.raw));

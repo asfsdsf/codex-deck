@@ -1,6 +1,7 @@
 export interface NormalizedToolUse {
   name: string;
   input: Record<string, unknown>;
+  calls?: NormalizedToolUse[];
 }
 
 interface ParsedStringLiteral {
@@ -109,27 +110,43 @@ function parseStringLiteral(
   return null;
 }
 
-function findCallArgumentStart(raw: string, toolName: string): number | null {
-  const marker = `tools.${toolName}`;
-  let searchFrom = 0;
-
-  while (searchFrom < raw.length) {
-    const markerIndex = raw.indexOf(marker, searchFrom);
-    if (markerIndex < 0) {
-      return null;
+function findToolCalls(
+  raw: string,
+): { name: string; argumentStart: number }[] | null {
+  const calls: { name: string; argumentStart: number }[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index];
+    if (character === '"' || character === "'" || character === "`") {
+      const literal = parseStringLiteral(raw, index);
+      if (!literal) return null;
+      index = literal.end - 1;
+      continue;
     }
-    const before = raw[markerIndex - 1];
-    const after = raw[markerIndex + marker.length];
-    if (!isIdentifierCharacter(before) && !isIdentifierCharacter(after)) {
-      const openParen = skipWhitespace(raw, markerIndex + marker.length);
-      if (raw[openParen] === "(") {
-        return skipWhitespace(raw, openParen + 1);
-      }
+    if (raw.startsWith("//", index)) {
+      const end = raw.indexOf("\n", index + 2);
+      index = end < 0 ? raw.length : end;
+      continue;
     }
-    searchFrom = markerIndex + marker.length;
+    if (raw.startsWith("/*", index)) {
+      const end = raw.indexOf("*/", index + 2);
+      if (end < 0) return null;
+      index = end + 1;
+      continue;
+    }
+    if (
+      !raw.startsWith("tools.", index) ||
+      isIdentifierCharacter(raw[index - 1]) ||
+      raw[index - 1] === "."
+    ) {
+      continue;
+    }
+    const match = raw.slice(index).match(/^tools\.([A-Za-z_$][\w$]*)\s*\(/);
+    if (!match) continue;
+    const argumentStart = skipWhitespace(raw, index + match[0].length);
+    calls.push({ name: match[1], argumentStart });
+    index += match[0].length - 1;
   }
-
-  return null;
+  return calls;
 }
 
 function findObjectStringProperty(
@@ -341,12 +358,10 @@ function findAssignedString(
   return value;
 }
 
-function parseApplyPatch(raw: string): NormalizedToolUse | null {
-  const argumentStart = findCallArgumentStart(raw, "apply_patch");
-  if (argumentStart === null) {
-    return null;
-  }
-
+function parseApplyPatch(
+  raw: string,
+  argumentStart: number,
+): NormalizedToolUse | null {
   const literal = parseStringLiteral(raw, argumentStart);
   if (literal) {
     return { name: "apply_patch", input: { raw: literal.value } };
@@ -360,15 +375,13 @@ function parseApplyPatch(raw: string): NormalizedToolUse | null {
   return patch === null ? null : { name: "apply_patch", input: { raw: patch } };
 }
 
-function parseExecCommand(raw: string): NormalizedToolUse | null {
-  const argumentStart = findCallArgumentStart(raw, "exec_command");
-  if (argumentStart === null) {
-    return null;
-  }
-
+function parseExecCommand(
+  raw: string,
+  argumentStart: number,
+): NormalizedToolUse | null {
   const parsedInput = parseObjectArgument(raw, argumentStart);
   const parsedCommand = parsedInput?.cmd ?? parsedInput?.command;
-  if (typeof parsedCommand === "string") {
+  if (parsedInput && typeof parsedCommand === "string") {
     return { name: "exec_command", input: parsedInput };
   }
 
@@ -382,12 +395,10 @@ function parseExecCommand(raw: string): NormalizedToolUse | null {
     : { name: "exec_command", input: { cmd: command } };
 }
 
-function parseWriteStdin(raw: string): NormalizedToolUse | null {
-  const argumentStart = findCallArgumentStart(raw, "write_stdin");
-  if (argumentStart === null) {
-    return null;
-  }
-
+function parseWriteStdin(
+  raw: string,
+  argumentStart: number,
+): NormalizedToolUse | null {
   const parsedInput = parseObjectArgument(raw, argumentStart);
   const sessionId = parsedInput?.session_id;
   if (
@@ -410,12 +421,23 @@ export function normalizeToolUse(
     return { name: toolName || "", input };
   }
 
-  return (
-    parseApplyPatch(input.raw) ??
-    parseExecCommand(input.raw) ??
-    parseWriteStdin(input.raw) ?? {
-      name: toolName || "",
-      input,
-    }
-  );
+  const original = { name: toolName || "", input };
+  const toolCalls = findToolCalls(input.raw);
+  if (!toolCalls?.length) return original;
+
+  const calls: NormalizedToolUse[] = [];
+  for (const call of toolCalls) {
+    const parsed =
+      call.name === "apply_patch"
+        ? parseApplyPatch(input.raw, call.argumentStart)
+        : call.name === "exec_command"
+          ? parseExecCommand(input.raw, call.argumentStart)
+          : call.name === "write_stdin"
+            ? parseWriteStdin(input.raw, call.argumentStart)
+            : null;
+    // Keep the whole script if any call is unknown or uses dynamic arguments.
+    if (!parsed) return original;
+    calls.push(parsed);
+  }
+  return calls.length === 1 ? calls[0] : { ...original, calls };
 }

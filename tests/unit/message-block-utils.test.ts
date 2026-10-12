@@ -64,6 +64,31 @@ test("getSearchableToolUseText indexes JSON-wrapped exec commands", () => {
   assert.equal(text, "exec_command\npwd && ls");
 });
 
+test("exec batches expand by default and index all commands", () => {
+  const input = {
+    raw: `await Promise.allSettled([
+  tools.exec_command({cmd:"sed -n '1,238p' NvChad/find_actions.lua"}),
+  tools.exec_command({cmd:"cat tests/find_actions.lua; sed -n '50,95p' NvChad/README.md"})
+]);`,
+  };
+  assert.equal(shouldDefaultExpandToolUse("exec", input), true);
+  assert.equal(
+    getSearchableToolUseText({ type: "tool_use", name: "exec", input }),
+    "exec_command\nsed -n '1,238p' NvChad/find_actions.lua\nexec_command\ncat tests/find_actions.lua; sed -n '50,95p' NvChad/README.md",
+  );
+});
+
+test("getSearchableToolUseText indexes the full script of an unparsed exec batch", () => {
+  const raw = `await tools.exec_command({cmd:"${"echo first; ".repeat(20)}"});
+await tools.exec_command(optionsForSecondCommand);`;
+  const text = getSearchableToolUseText({
+    type: "tool_use",
+    name: "exec",
+    input: { raw },
+  });
+  assert.match(text, /optionsForSecondCommand/);
+});
+
 test("getSearchableToolUseText indexes wrapped write_stdin sessions", () => {
   const text = getSearchableToolUseText({
     type: "tool_use",

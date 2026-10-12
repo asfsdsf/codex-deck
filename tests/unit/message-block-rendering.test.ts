@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ConversationMessage } from "@codex-deck/api";
+import { parseConversationTextChunk } from "../../api/conversation-parser";
 import MessageBlock, {
   shouldClearAiTerminalPendingAction,
   shouldRenderAiTerminalStepActions,
@@ -160,6 +161,63 @@ test("MessageBlock renders JSON-wrapped exec command options", () => {
   assert.match(html, /yield_time_ms/);
   assert.match(html, /max_output_tokens/);
   assert.doesNotMatch(html, /tools\.exec_command/);
+});
+
+test("MessageBlock renders every persisted batched exec command and its options", () => {
+  const raw = `const results = await Promise.allSettled([
+  tools.exec_command({cmd:"sed -n '1,238p' NvChad/find_actions.lua", max_output_tokens:7600}),
+  tools.exec_command({cmd:"cat tests/find_actions.lua; sed -n '50,95p' NvChad/README.md", max_output_tokens:7000})
+]);
+for (const result of results) text(result);`;
+  const { messages } = parseConversationTextChunk(
+    [
+      {
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          call_id: "batch-command",
+          name: "exec",
+          input: raw,
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "batch-command",
+          output: "Batch output",
+        },
+      },
+    ]
+      .map((record) => JSON.stringify(record))
+      .join("\n") + "\n",
+  );
+  assert.equal(messages.length, 1);
+  const html = renderMessageBlock(messages[0]);
+
+  assert.match(html, /sed -n &#39;1,238p&#39; NvChad\/find_actions\.lua/);
+  assert.match(
+    html,
+    /cat tests\/find_actions\.lua; sed -n &#39;50,95p&#39; NvChad\/README\.md/,
+  );
+  assert.match(html, /7600/);
+  assert.match(html, /7000/);
+  assert.match(html, /Batch output/);
+  assert.doesNotMatch(html, /tools\.exec_command/);
+});
+
+test("MessageBlock preserves the full exec script when a batch cannot be unwrapped", () => {
+  const raw = `await tools.exec_command({cmd:"${"echo first; ".repeat(20)}"});
+await tools.exec_command(optionsForSecondCommand);`;
+  const html = renderMessageBlock({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "tool_use", name: "exec", input: { raw } }],
+    },
+  });
+
+  assert.match(html, /optionsForSecondCommand/);
 });
 
 test("MessageBlock renders wrapped write_stdin polling details", () => {

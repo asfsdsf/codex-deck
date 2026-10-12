@@ -3599,6 +3599,35 @@ function renderFormattedToolInput(
   const toolName = (block.name || "").toLowerCase();
   const rawInput = typeof input.raw === "string" ? input.raw : null;
 
+  if (toolName === "exec" && rawInput) {
+    const calls = normalizeToolUse(block.name, input).calls;
+    if (calls) {
+      return (
+        <div className="space-y-3">
+          {calls.map((call, index) => (
+            <div key={index} className="space-y-1">
+              <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                {call.name}
+              </div>
+              {renderFormattedToolInput(
+                { ...block, name: call.name },
+                call.input,
+                embedded,
+                hideHeader,
+                onFilePathLinkClick,
+              )}
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <pre className="whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300">
+        {rawInput}
+      </pre>
+    );
+  }
+
   if (toolName === "apply_patch" && rawInput) {
     return (
       <ApplyPatchInputRenderer
