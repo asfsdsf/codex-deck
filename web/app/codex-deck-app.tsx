@@ -10064,6 +10064,12 @@ export default function CodexDeckApp() {
     [selectedSession, sendMessageText],
   );
 
+  const handleAnswerAsyncQuestion = useCallback(
+    (sessionId: string, text: string) =>
+      sendMessageText({ text, images: [] }, { sessionIdOverride: sessionId }),
+    [sendMessageText],
+  );
+
   const upsertSessionFromThreadSummary = useCallback(
     (thread: CodexThreadSummary) => {
       setThreadSummaryById((current) => {
@@ -15125,6 +15131,7 @@ export default function CodexDeckApp() {
                   }
                   onForceSendPendingUserMessage={forceSendPendingUserMessage}
                   onCancelPendingUserMessage={cancelPendingUserMessage}
+                  onAnswerAsyncQuestion={handleAnswerAsyncQuestion}
                   railCollapsedByDefault={railCollapsedByDefault}
                   conversationSearchOpen={conversationSearchOpen}
                   conversationSearchQuery={conversationSearchQuery}

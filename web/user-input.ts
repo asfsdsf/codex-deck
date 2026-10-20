@@ -7,6 +7,7 @@ import type {
 import {
   USER_INPUT_NOTE_PREFIX,
   USER_INPUT_OTHER_OPTION_LABEL,
+  parseResolvedUserInputAnswers,
   type UserInputAnswerDraft,
 } from "./utils";
 
@@ -100,6 +101,140 @@ export function buildUserInputResponsePayload(
     answers[question.id] = { answers: answerList };
   }
   return { answers };
+}
+
+const ASYNC_MESSAGE_REQUEST_PREFIX = "async-message:";
+
+export function isMessageUserInputRequest(
+  request: CodexUserInputRequest,
+): boolean {
+  return (
+    request.requestId === `${ASYNC_MESSAGE_REQUEST_PREFIX}${request.itemId}`
+  );
+}
+
+/** Native async questions are answered by a later user message, without an RPC response. */
+export function buildAsyncUserInputMessage(
+  request: CodexUserInputRequest,
+  response: CodexUserInputResponsePayload,
+): string {
+  return request.questions
+    .map((question) => {
+      const answers = response.answers[question.id]?.answers ?? [];
+      const note = answers.find((answer) =>
+        answer.startsWith(USER_INPUT_NOTE_PREFIX),
+      );
+      const answer = note
+        ? note.slice(USER_INPUT_NOTE_PREFIX.length)
+        : answers.join("\n");
+      return `Question: ${question.question}\nAnswer: ${answer}`;
+    })
+    .join("\n\n");
+}
+
+function parseAsyncUserInputMessage(
+  request: CodexUserInputRequest,
+  text: string,
+): Record<string, UserInputAnswerDraft> | null {
+  const drafts: Record<string, UserInputAnswerDraft> = {};
+  let remaining = text.trim();
+  for (const [index, question] of request.questions.entries()) {
+    const prefix = `Question: ${question.question}\nAnswer: `;
+    if (!remaining.startsWith(prefix)) return null;
+    remaining = remaining.slice(prefix.length);
+    const nextQuestion = request.questions[index + 1];
+    const end = nextQuestion
+      ? remaining.indexOf(`\n\nQuestion: ${nextQuestion.question}\nAnswer: `)
+      : remaining.length;
+    if (end < 0) return null;
+    const answer = remaining.slice(0, end).trim();
+    if (!answer) return null;
+    drafts[question.id] = question.options.some(
+      (option) => option.label === answer,
+    )
+      ? { optionLabel: answer, otherText: "" }
+      : { optionLabel: USER_INPUT_OTHER_OPTION_LABEL, otherText: answer };
+    remaining = remaining.slice(end).trimStart();
+  }
+  return drafts;
+}
+
+export function getAsyncUserInputState(
+  messages: readonly ConversationMessage[],
+  threadId: string,
+  pendingMessages: readonly { text: string }[] = [],
+): {
+  requests: CodexUserInputRequest[];
+  resolvedAnswersByItemId: Map<string, Record<string, UserInputAnswerDraft>>;
+} {
+  const requests = new Map<string, CodexUserInputRequest>();
+  const resolvedAnswersByItemId = new Map<
+    string,
+    Record<string, UserInputAnswerDraft>
+  >();
+  const resolveReply = (text: string) => {
+    // Match the latest unanswered occurrence when an agent repeats a question.
+    for (const request of [...requests.values()].reverse()) {
+      if (resolvedAnswersByItemId.has(request.itemId)) continue;
+      const answers = parseAsyncUserInputMessage(request, text);
+      if (!answers) continue;
+      resolvedAnswersByItemId.set(request.itemId, answers);
+      break;
+    }
+  };
+  for (const message of messages) {
+    const content = message.message?.content;
+    if (message.type === "user") {
+      resolveReply(
+        typeof content === "string"
+          ? content
+          : Array.isArray(content)
+            ? content
+                .filter((block) => block.type === "text")
+                .map((block) => block.text ?? "")
+                .join("\n\n")
+            : "",
+      );
+    }
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (
+        block.type === "tool_use" &&
+        block.name?.toLowerCase() === "request_user_input_async" &&
+        block.id
+      ) {
+        const questions = normalizeUserInputQuestions(
+          block.input &&
+            typeof block.input === "object" &&
+            !Array.isArray(block.input)
+            ? (block.input as Record<string, unknown>)
+            : {},
+        );
+        if (!questions.length) continue;
+        requests.set(block.id, {
+          requestId: `${ASYNC_MESSAGE_REQUEST_PREFIX}${block.id}`,
+          threadId,
+          turnId: message.turnId ?? "",
+          itemId: block.id,
+          isBlocking: false,
+          questions,
+        });
+      } else if (
+        block.type === "tool_result" &&
+        block.tool_use_id &&
+        requests.has(block.tool_use_id)
+      ) {
+        if (block.is_error) {
+          requests.delete(block.tool_use_id);
+        } else {
+          const answers = parseResolvedUserInputAnswers(block.content);
+          if (answers) resolvedAnswersByItemId.set(block.tool_use_id, answers);
+        }
+      }
+    }
+  }
+  for (const message of pendingMessages) resolveReply(message.text);
+  return { requests: [...requests.values()], resolvedAnswersByItemId };
 }
 
 /** Requests can arrive before their tool call is persisted, or without a tool call at all. */

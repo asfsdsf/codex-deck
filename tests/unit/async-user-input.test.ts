@@ -14,8 +14,11 @@ import {
   getSearchableToolUseText,
 } from "../../web/message-block-utils";
 import {
+  buildAsyncUserInputMessage,
   buildUserInputResponsePayload,
+  getAsyncUserInputState,
   getUnattachedUserInputRequests,
+  isMessageUserInputRequest,
   isUserInputQuestionAnswered,
   normalizeUserInputQuestions,
 } from "../../web/user-input";
@@ -179,6 +182,135 @@ test("async tool calls expand, stay prominent and use the app-server question ID
   assert.match(html, /Any other requirements\?/);
   assert.match(html, /<textarea[^>]+aria-label="Any other requirements\?"/);
   assert.doesNotMatch(html, /<button[^>]+disabled=""[^>]*>[\s\S]*?Engineers/);
+});
+
+test("acknowledged async tool calls accept message replies without a pending RPC", () => {
+  const messages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "async-call",
+            name: "request_user_input_async",
+            input: { questions: [{ title: "Any requirements?" }] },
+          },
+        ],
+      },
+    },
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "async-call",
+            content: '{"accepted":true}',
+          },
+        ],
+      },
+    },
+  ];
+  const state = getAsyncUserInputState(messages, "thread-1");
+  assert.equal(state.requests.length, 1);
+  assert.equal(state.resolvedAnswersByItemId.size, 0);
+  const request = state.requests[0];
+  assert.equal(isMessageUserInputRequest(request), true);
+  assert.equal(request.questions[0].id, "question-0");
+  const draft = {
+    optionLabel: USER_INPUT_OTHER_OPTION_LABEL,
+    otherText: "Include examples",
+  };
+  const text = buildAsyncUserInputMessage(
+    request,
+    buildUserInputResponsePayload(request, { "question-0": draft }),
+  );
+  assert.equal(text, "Question: Any requirements?\nAnswer: Include examples");
+  assert.deepEqual(
+    getAsyncUserInputState(messages, "thread-1", [
+      { text },
+    ]).resolvedAnswersByItemId.get("async-call"),
+    { "question-0": draft },
+  );
+  // Removing a failed or cancelled pending message makes the question answerable again.
+  assert.equal(
+    getAsyncUserInputState(messages, "thread-1").resolvedAnswersByItemId.size,
+    0,
+  );
+  messages.push({
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text }] },
+  });
+  assert.deepEqual(
+    getAsyncUserInputState(messages, "thread-1").resolvedAnswersByItemId.get(
+      "async-call",
+    ),
+    { "question-0": draft },
+  );
+});
+
+test("message replies resolve only their own questions and preserve choice and custom answers", () => {
+  const messages: ConversationMessage[] = [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: ["first", "second"].map((id) => ({
+          type: "tool_use" as const,
+          id,
+          name: "request_user_input_async",
+          input: {
+            questions: [
+              {
+                title: `Audience for ${id}?`,
+                options: ["Engineers", "Executives"],
+              },
+              { title: `Requirements for ${id}?`, options: ["Use defaults"] },
+            ],
+          },
+        })),
+      },
+    },
+  ];
+  const state = getAsyncUserInputState(messages, "thread-1");
+  const drafts = {
+    "question-0": { optionLabel: "Engineers", otherText: "" },
+    "question-1": {
+      optionLabel: USER_INPUT_OTHER_OPTION_LABEL,
+      otherText: "Custom\nrequirements",
+    },
+  };
+  const request = state.requests[1];
+  const text = buildAsyncUserInputMessage(
+    request,
+    buildUserInputResponsePayload(request, drafts),
+  );
+  const resolved = getAsyncUserInputState(messages, "thread-1", [{ text }]);
+  assert.equal(resolved.resolvedAnswersByItemId.has("first"), false);
+  assert.deepEqual(resolved.resolvedAnswersByItemId.get("second"), drafts);
+  messages.push({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "first",
+          is_error: true,
+          content: "Tool failed",
+        },
+      ],
+    },
+  });
+  assert.deepEqual(
+    getAsyncUserInputState(messages, "thread-1").requests.map(
+      (request) => request.itemId,
+    ),
+    ["second"],
+  );
 });
 
 function rpcHarness() {

@@ -5,6 +5,107 @@ import { responseItemRawLine } from "../unit/test-utils";
 import { test, expect } from "./helpers/codex-deck-fixture";
 import { CodexDeckPage } from "./pages/codex-deck-page";
 
+for (const theme of ["dark", "light"] as const) {
+  test(`acknowledged async tool questions send chat replies in ${theme} mode`, async ({
+    page,
+    context,
+    app,
+  }, testInfo) => {
+    await context.addInitScript(
+      (value) => localStorage.setItem("codex-deck:theme:v1", value),
+      theme,
+    );
+    if (theme === "light")
+      await page.setViewportSize({ width: 390, height: 844 });
+    await appendFile(
+      join(app.rootDir, "sessions", `${app.sessions.alpha}.jsonl`),
+      [
+        responseItemRawLine({
+          type: "function_call",
+          call_id: "async-call",
+          name: "request_user_input_async",
+          arguments: JSON.stringify({
+            questions: [{ title: "Which GPU and checkpoint will you use?" }],
+          }),
+        }),
+        responseItemRawLine({
+          type: "function_call_output",
+          call_id: "async-call",
+          output: '{"accepted":true}',
+        }),
+        "",
+      ].join("\n"),
+    );
+    await context.route("**/api/codex/threads/*/requests/user-input", (route) =>
+      route.fulfill({ json: { requests: [] } }),
+    );
+    let failNextReply = true;
+    const replies: string[] = [];
+    await context.route("**/api/codex/threads/*/messages", async (route) => {
+      if (failNextReply) {
+        failNextReply = false;
+        await route.fulfill({
+          status: 500,
+          json: { error: "Transient failure" },
+        });
+        return;
+      }
+      const text = route.request().postDataJSON().input[0].text;
+      replies.push(text);
+      await app.appendSessionMessage("alpha", "user", text);
+      await route.fulfill({ json: { turnId: "reply-turn" } });
+    });
+    const ui = new CodexDeckPage(page);
+    await ui.goto(app.baseURL);
+    await ui.selectSession("Review the launch checklist");
+    if (theme === "light")
+      await page.getByRole("button", { name: "Collapse left pane" }).click();
+    const answer = page.getByRole("textbox", {
+      name: "Which GPU and checkpoint will you use?",
+      exact: true,
+    });
+    await expect(answer).toBeEnabled();
+    await answer.fill("H100 + Qwen3.5-9B BF16");
+    await app.appendSessionMessage(
+      "alpha",
+      "assistant",
+      "Checking the backends while you answer.",
+    );
+    await expect(
+      page.getByText("Checking the backends while you answer.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    // Polling an empty RPC list must not discard a message-based answer draft.
+    await page.waitForResponse((response) =>
+      response.url().endsWith("/requests/user-input"),
+    );
+    await expect(answer).toHaveValue("H100 + Qwen3.5-9B BF16");
+    await page.getByRole("button", { name: "Submit answers" }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Could not send your answer" }),
+    ).toBeVisible();
+    await expect(answer).toBeEnabled();
+    await expect(answer).toHaveValue("H100 + Qwen3.5-9B BF16");
+    await page.screenshot({
+      path: testInfo.outputPath(`async-message-${theme}.png`),
+    });
+    await page.getByRole("button", { name: "Submit answers" }).click();
+    await expect(answer).toBeDisabled();
+    expect(replies).toEqual([
+      "Question: Which GPU and checkpoint will you use?\nAnswer: H100 + Qwen3.5-9B BF16",
+    ]);
+    await page.reload();
+    await expect(answer).toBeDisabled();
+    await expect(answer).toHaveValue("H100 + Qwen3.5-9B BF16");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
+}
+
 for (const placement of ["pending", "inline"] as const) {
   for (const answerKind of ["free-text", "custom"] as const) {
     test(`${answerKind} textarea follows the resize cursor in ${placement} questions`, async ({

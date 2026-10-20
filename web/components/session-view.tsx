@@ -26,8 +26,11 @@ import MessageBlock from "./message-block";
 import { PendingUserInputRequests } from "./pending-user-input-requests";
 import { UserInputResizeContainer } from "./user-input-textarea";
 import {
+  buildAsyncUserInputMessage,
   buildUserInputResponsePayload,
+  getAsyncUserInputState,
   getUnattachedUserInputRequests,
+  isMessageUserInputRequest,
   isUserInputQuestionAnswered,
   isUserInputToolName,
 } from "../user-input";
@@ -248,6 +251,7 @@ interface SessionViewProps {
     pendingId: string,
   ) => Promise<boolean>;
   onCancelPendingUserMessage?: (sessionId: string, pendingId: string) => void;
+  onAnswerAsyncQuestion?: (sessionId: string, text: string) => Promise<boolean>;
   railCollapsedByDefault?: boolean;
   latestButtonBottomOffsetPx?: number;
   conversationSearchOpen?: boolean;
@@ -737,6 +741,7 @@ const SessionView = memo(
         pendingUserMessages = [],
         onForceSendPendingUserMessage,
         onCancelPendingUserMessage,
+        onAnswerAsyncQuestion,
         railCollapsedByDefault = false,
         latestButtonBottomOffsetPx,
         conversationSearchOpen = false,
@@ -771,6 +776,31 @@ const SessionView = memo(
       >({});
       const [submittingUserInputRequestIds, setSubmittingUserInputRequestIds] =
         useState<string[]>([]);
+      const asyncUserInputState = useMemo(
+        () => getAsyncUserInputState(messages, sessionId, pendingUserMessages),
+        [messages, sessionId, pendingUserMessages],
+      );
+      const answerableUserInputRequests = useMemo(() => {
+        const liveItemIds = new Set(
+          pendingUserInputRequests.map((request) => request.itemId),
+        );
+        return [
+          ...pendingUserInputRequests,
+          ...(onAnswerAsyncQuestion
+            ? asyncUserInputState.requests.filter(
+                (request) =>
+                  !liveItemIds.has(request.itemId) &&
+                  !asyncUserInputState.resolvedAnswersByItemId.has(
+                    request.itemId,
+                  ),
+              )
+            : []),
+        ];
+      }, [
+        pendingUserInputRequests,
+        asyncUserInputState,
+        onAnswerAsyncQuestion,
+      ]);
       const [submittingApprovalRequestIds, setSubmittingApprovalRequestIds] =
         useState<string[]>([]);
       const [forceSendingPendingId, setForceSendingPendingId] = useState<
@@ -1188,7 +1218,11 @@ const SessionView = memo(
             areUserInputRequestsEqual(previous, requests) ? previous : requests,
           );
           const activeIds = new Set(
-            requests.map((request) => request.requestId),
+            [
+              ...requests,
+              ...getAsyncUserInputState(messagesRef.current, sessionId)
+                .requests,
+            ].map((request) => request.requestId),
           );
           setUserInputErrors((previous) => {
             if (Object.keys(previous).every((id) => activeIds.has(id)))
@@ -1346,7 +1380,19 @@ const SessionView = memo(
           );
 
           try {
-            await respondCodexUserInputRequest(sessionId, requestId, response);
+            if (isMessageUserInputRequest(request)) {
+              const sent = await onAnswerAsyncQuestion?.(
+                sessionId,
+                buildAsyncUserInputMessage(request, response),
+              );
+              if (!sent) throw new Error("Could not send async answer");
+            } else {
+              await respondCodexUserInputRequest(
+                sessionId,
+                requestId,
+                response,
+              );
+            }
           } catch {
             setUserInputErrors((previous) => ({
               ...previous,
@@ -1360,7 +1406,7 @@ const SessionView = memo(
             void pollPendingUserInputRequests();
           }
         },
-        [pollPendingUserInputRequests, sessionId],
+        [onAnswerAsyncQuestion, pollPendingUserInputRequests, sessionId],
       );
 
       const submitApprovalResponse = useCallback(
@@ -1823,10 +1869,9 @@ const SessionView = memo(
         const toolNameByCallId = new Map<string, string>();
         const toolInputByCallId = new Map<string, Record<string, unknown>>();
         const toolTimestampByCallId = new Map<string, string>();
-        const resolvedAnswersByItemId = new Map<
-          string,
-          Record<string, UserInputAnswerDraft>
-        >();
+        const resolvedAnswersByItemId = new Map(
+          asyncUserInputState.resolvedAnswersByItemId,
+        );
         const suppressedResultIds = new Set<string>();
 
         for (const message of messages) {
@@ -1890,12 +1935,12 @@ const SessionView = memo(
           toolInputMapByCallId: toolInputByCallId,
           toolTimestampMapByCallId: toolTimestampByCallId,
         };
-      }, [messages]);
+      }, [messages, asyncUserInputState]);
 
       const unattachedUserInputRequests = useMemo(
         () =>
-          getUnattachedUserInputRequests(messages, pendingUserInputRequests),
-        [messages, pendingUserInputRequests],
+          getUnattachedUserInputRequests(messages, answerableUserInputRequests),
+        [messages, answerableUserInputRequests],
       );
       const summary = messages.find((m) => m.type === "summary");
       const displayConversationMessages = useMemo(
@@ -2603,7 +2648,7 @@ const SessionView = memo(
                 onFilePathLinkClick={onFilePathLinkClick}
                 onEditMessage={handleEditMessage}
                 pendingUserInputRequests={
-                  usesUserInputState ? pendingUserInputRequests : undefined
+                  usesUserInputState ? answerableUserInputRequests : undefined
                 }
                 pendingApprovalRequests={
                   messageUsesApprovalState(message)
@@ -2671,7 +2716,7 @@ const SessionView = memo(
           onForceSendPendingUserMessage,
           onPlanAction,
           onRejectAiTerminalStep,
-          pendingUserInputRequests,
+          answerableUserInputRequests,
           pendingApprovalRequests,
           resolvedUserInputAnswersByItemId,
           sessionId,
