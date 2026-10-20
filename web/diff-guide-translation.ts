@@ -11,10 +11,16 @@ const REQUEST_TYPE = "codex-deck:diff-guide:translate";
 const RESPONSE_TYPE = "codex-deck:diff-guide:translation";
 const AUTO_TRANSLATE_TYPE = "codex-deck:diff-guide:auto-translate";
 const MAX_TEXT_LENGTH = 200_000;
-const pendingTranslations = new Map<string, Promise<string>>();
+interface PendingTranslation {
+  promise: Promise<string>;
+  listeners: Set<(text: string) => void>;
+  partial?: string;
+}
+const pendingTranslations = new Map<string, PendingTranslation>();
 
 type Translate = (
   request: TranslateTextRequest,
+  onProgress?: (text: string) => void,
 ) => Promise<TranslateTextResponse>;
 
 export function setDiffGuideAutoTranslate(
@@ -37,14 +43,31 @@ export function createDiffGuideFrameToken(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function translateCached(text: string, translate: Translate): Promise<string> {
+function translateCached(
+  text: string,
+  translate: Translate,
+  onProgress: (text: string) => void,
+): Promise<string> {
   if (!text.trim()) return Promise.resolve(text);
   const cached = getCachedTranslation(text, "en", "zh");
   if (cached !== undefined) return Promise.resolve(cached);
   const pending = pendingTranslations.get(text);
-  if (pending) return pending;
+  if (pending) {
+    pending.listeners.add(onProgress);
+    if (pending.partial !== undefined) onProgress(pending.partial);
+    return pending.promise.finally(() => pending.listeners.delete(onProgress));
+  }
+  const entry: PendingTranslation = {
+    promise: Promise.resolve(""),
+    listeners: new Set([onProgress]),
+  };
   const request = Promise.resolve()
-    .then(() => translate({ text, inputLang: "en", outputLang: "zh" }))
+    .then(() =>
+      translate({ text, inputLang: "en", outputLang: "zh" }, (partial) => {
+        entry.partial = partial;
+        for (const listener of entry.listeners) listener(partial);
+      }),
+    )
     .then(({ translatedText }) => {
       if (typeof translatedText !== "string" || !translatedText.trim())
         throw new Error("Translation returned no text.");
@@ -52,10 +75,12 @@ function translateCached(text: string, translate: Translate): Promise<string> {
       return translatedText;
     })
     .finally(() => {
-      if (pendingTranslations.get(text) === request)
+      entry.listeners.clear();
+      if (pendingTranslations.get(text) === entry)
         pendingTranslations.delete(text);
     });
-  pendingTranslations.set(text, request);
+  entry.promise = request;
+  pendingTranslations.set(text, entry);
   return request;
 }
 
@@ -92,7 +117,10 @@ export function createDiffGuideTranslationBridge({
 
     const { requestId } = data;
     const texts = data.texts as string[];
-    const respond = (result: { texts: string[] } | { error: string }) => {
+    let settled = false;
+    const respond = (
+      result: { texts: string[]; partial?: boolean } | { error: string },
+    ) => {
       if (!active || frame !== getFrameWindow()) return;
       // srcdoc has an opaque origin; source-window and token checks bind the channel.
       frame.postMessage(
@@ -109,16 +137,29 @@ export function createDiffGuideTranslationBridge({
       return;
     }
     requests.add(requestId);
-    void Promise.all(texts.map((text) => translateCached(text, translate)))
-      .then((translated) => respond({ texts: translated }))
-      .catch((error: unknown) =>
+    const partials = [...texts];
+    void Promise.all(
+      texts.map((text, index) =>
+        translateCached(text, translate, (partial) => {
+          if (settled) return;
+          partials[index] = partial;
+          respond({ texts: [...partials], partial: true });
+        }),
+      ),
+    )
+      .then((translated) => {
+        settled = true;
+        respond({ texts: translated });
+      })
+      .catch((error: unknown) => {
+        settled = true;
         respond({
           error: (error instanceof Error ? error.message : String(error)).slice(
             0,
             1000,
           ),
-        }),
-      )
+        });
+      })
       .finally(() => requests.delete(requestId));
   };
   return {

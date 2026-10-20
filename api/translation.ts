@@ -23,6 +23,8 @@ export interface TranslateTextOptions {
   outputLang: string;
   /** `translation_command` from the config file; wins over macOS built-in. */
   command?: string;
+  /** Receives accumulated stdout as the translation backend produces it. */
+  onProgress?: (text: string) => void;
   /** Injectable for tests; defaults to `process.platform`. */
   platform?: NodeJS.Platform;
 }
@@ -49,6 +51,7 @@ export async function translateText(
       text,
       options.inputLang,
       options.outputLang,
+      options.onProgress,
     );
   }
   const platform = options.platform ?? process.platform;
@@ -57,6 +60,7 @@ export async function translateText(
       text,
       options.inputLang,
       options.outputLang,
+      options.onProgress,
     );
   }
   throw new TranslationUnavailableError(
@@ -97,6 +101,7 @@ async function translateWithCommand(
   text: string,
   inputLang: string,
   outputLang: string,
+  onProgress?: (text: string) => void,
 ): Promise<string> {
   const expanded = expandTranslationCommand(command, {
     prompt: text,
@@ -105,6 +110,7 @@ async function translateWithCommand(
   });
   const { stdout, stderr } = await runProcess("/bin/sh", ["-c", expanded], {
     timeoutMs: COMMAND_TIMEOUT_MS,
+    onStdout: onProgress,
   });
   const translated = stdout.replace(/\n+$/, "");
   if (!translated) {
@@ -130,7 +136,11 @@ interface MacOSTranslationBackend {
 function runProcess(
   file: string,
   args: string[],
-  options: { input?: string; timeoutMs: number },
+  options: {
+    input?: string;
+    timeoutMs: number;
+    onStdout?: (text: string) => void;
+  },
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -154,10 +164,13 @@ function runProcess(
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
     child.stdout.on("data", (chunk: string) => {
+      if (settled) return;
       stdout += chunk;
       if (stdout.length > MAX_OUTPUT_BYTES) {
         fail(new Error(`process output exceeded limit: ${file}`));
+        return;
       }
+      options.onStdout?.(stdout);
     });
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
@@ -349,6 +362,7 @@ async function translateWithMacOSBuiltIn(
   text: string,
   inputLang: string,
   outputLang: string,
+  onProgress?: (text: string) => void,
 ): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const binaryPath = await getMacOSTranslateBinary();
@@ -359,6 +373,7 @@ async function translateWithMacOSBuiltIn(
         {
           input: text,
           timeoutMs: MACOS_RUN_TIMEOUT_MS,
+          onStdout: onProgress,
         },
       );
       const translated = stdout.replace(/\n+$/, "");

@@ -2270,7 +2270,12 @@ const MessageComposer = memo(function MessageComposer(
     const requestId = (draftTranslationRequestRef.current += 1);
     setDraftTranslation({ status: "loading", original: null, error: null });
     // Reverse of message-block translation: user language -> LLM language.
-    translateText({ text: source, inputLang: "zh", outputLang: "en" })
+    translateText(
+      { text: source, inputLang: "zh", outputLang: "en" },
+      (text) => {
+        if (draftTranslationRequestRef.current === requestId) setDraft(text);
+      },
+    )
       .then((response) => {
         if (draftTranslationRequestRef.current !== requestId) {
           return;
@@ -2287,6 +2292,7 @@ const MessageComposer = memo(function MessageComposer(
         if (draftTranslationRequestRef.current !== requestId) {
           return;
         }
+        setDraft(source);
         setDraftTranslation({
           status: "error",
           original: null,

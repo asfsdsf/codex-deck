@@ -10,6 +10,7 @@ import {
   type IntegrationAppFixture,
 } from "./helpers/codex-deck-fixture";
 import { CodexDeckPage } from "./pages/codex-deck-page";
+import { mockStreamingTranslations } from "./helpers/translation-stream";
 
 const run = promisify(execFile);
 const frameSelector = 'iframe[title="Generated Git diff guide"]';
@@ -96,6 +97,34 @@ async function openGuide(page: Page, app: IntegrationAppFixture) {
   await expect(frame.locator('[data-translation-kind="main"]')).toBeVisible();
   return frame;
 }
+
+test("diff guide renders partial translations while grouped fields are still loading", async ({
+  page,
+  app,
+}) => {
+  await publishGuide(app);
+  const stream = await mockStreamingTranslations(page);
+  const frame = await openGuide(page, app);
+  const toggle = frame.locator('[data-translation-kind="main"]');
+  const originalWhy = await frame.locator(".why").textContent();
+  try {
+    await toggle.click();
+    await expect(frame.locator("#step-heading")).toHaveText(
+      `部分：${mainHeading}`,
+    );
+    await expect(frame.locator(".why")).toHaveText(`部分：${originalWhy}`);
+    await expect(toggle).toHaveAttribute("data-translation-status", "loading");
+    stream.release();
+    await expect(frame.locator("#step-heading")).toHaveText(
+      `完整：${mainHeading}`,
+    );
+    await expect(toggle).toHaveAttribute("data-translation-status", "ready");
+    await toggle.click();
+    await expect(frame.locator("#step-heading")).toHaveText(mainHeading);
+  } finally {
+    stream.release();
+  }
+});
 
 test("embedded guide toggles each description independently, preserves navigation, and retries failed groups", async ({
   page,
@@ -392,7 +421,8 @@ test("auto translation queues large guides and turning it off suppresses delayed
   });
   await auto.click();
   await expect(frame.locator(".nav-step")).toHaveCount(40);
-  await expect.poll(() => releases.length).toBe(7);
+  // Streaming requests share a page-wide limit to leave HTTP/1.1 slots for SSE.
+  await expect.poll(() => releases.length).toBe(4);
   await expect(
     frame.locator('[data-translation-status="queued"]'),
   ).not.toHaveCount(0);

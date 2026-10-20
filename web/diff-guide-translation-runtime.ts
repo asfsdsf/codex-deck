@@ -256,11 +256,17 @@ export const diffGuideTranslationRuntime = String.raw`(function (token) {
     if (typeof data.error === 'string') {
       state.status = 'error';
       state.error = data.error;
+      state.translated = null;
+      state.showing = false;
     } else if (Array.isArray(data.texts) && data.texts.length === state.originals.length &&
       data.texts.every(text => typeof text === 'string')) {
-      state.status = 'ready';
+      state.status = data.partial === true ? 'loading' : 'ready';
       state.translated = data.texts;
       state.showing = state.wantsTranslation;
+      if (data.partial === true) {
+        render(state);
+        return;
+      }
     } else return;
     pending.delete(data.requestId);
     render(state);

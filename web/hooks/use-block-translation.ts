@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useRef, useState } from "react";
 import { translateText } from "../api";
 import {
   getCachedTranslation,
@@ -9,7 +9,7 @@ export type BlockTranslationStatus = "idle" | "loading" | "ready" | "error";
 
 export interface BlockTranslationState {
   status: BlockTranslationStatus;
-  /** Translated text once fetched; kept in component state + module cache. */
+  /** Accumulated output while loading, or the completed cached translation. */
   translated: string | null;
   error: string | null;
   /** Whether the translated text (vs. the original) is currently shown. */
@@ -17,67 +17,75 @@ export interface BlockTranslationState {
   toggle: () => void;
 }
 
-/**
- * Translation state for one message/content block. The first toggle click
- * fetches the translation from the server; later clicks only flip between
- * translated and original text. State is ephemeral (never persisted).
- */
+interface TranslationState extends Omit<BlockTranslationState, "toggle"> {
+  key: string;
+  request: object;
+}
+
+/** Translation state stays tied to its source even when live messages change. */
 export function useBlockTranslation(
   sourceText: string | null,
   inputLang: string,
   outputLang: string,
 ): BlockTranslationState {
-  const [status, setStatus] = useState<BlockTranslationStatus>(() => {
-    if (!sourceText) {
-      return "idle";
-    }
-    return getCachedTranslation(sourceText, inputLang, outputLang) !==
-      undefined
-      ? "ready"
-      : "idle";
-  });
-  const [translated, setTranslated] = useState<string | null>(() => {
-    if (!sourceText) {
-      return null;
-    }
-    return (
-      getCachedTranslation(sourceText, inputLang, outputLang) ?? null
-    );
-  });
-  const [error, setError] = useState<string | null>(null);
-  const [showing, setShowing] = useState(false);
+  const key = JSON.stringify([sourceText, inputLang, outputLang]);
+  const currentKey = useRef(key);
+  currentKey.current = key;
+  const [state, setState] = useState<TranslationState | null>(null);
+  const cached = sourceText
+    ? getCachedTranslation(sourceText, inputLang, outputLang)
+    : undefined;
+  const current =
+    state?.key === key
+      ? state
+      : {
+          key,
+          request: {},
+          status: cached !== undefined ? ("ready" as const) : ("idle" as const),
+          translated: cached ?? null,
+          error: null,
+          showing: false,
+        };
 
-  const toggle = useCallback(() => {
-    if (!sourceText) {
+  const toggle = () => {
+    if (!sourceText || current.status === "loading") return;
+    if (current.status === "ready") {
+      setState({ ...current, showing: !current.showing });
       return;
     }
-    if (status === "loading") {
-      return;
-    }
-    if (status === "ready") {
-      setShowing((current) => !current);
-      return;
-    }
-    setStatus("loading");
-    setError(null);
-    translateText({ text: sourceText, inputLang, outputLang })
-      .then((response) => {
-        setCachedTranslation(
-          sourceText,
-          inputLang,
-          outputLang,
-          response.translatedText,
-        );
-        setTranslated(response.translatedText);
-        setStatus("ready");
-        setShowing(true);
+    const pending: TranslationState = {
+      key,
+      request: {},
+      status: "loading",
+      translated: null,
+      error: null,
+      showing: false,
+    };
+    setState(pending);
+    const update = (changes: Partial<TranslationState>) => {
+      setState((latest) =>
+        currentKey.current === key && latest?.request === pending.request
+          ? { ...latest, ...changes }
+          : latest,
+      );
+    };
+    void translateText({ text: sourceText, inputLang, outputLang }, (text) => {
+      update({ translated: text, showing: true });
+    })
+      .then(({ translatedText }) => {
+        if (!translatedText.trim()) throw new Error("Translation is empty.");
+        setCachedTranslation(sourceText, inputLang, outputLang, translatedText);
+        update({ translated: translatedText, status: "ready", showing: true });
       })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        setError(message);
-        setStatus("error");
+      .catch((error: unknown) => {
+        update({
+          status: "error",
+          translated: null,
+          showing: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-  }, [sourceText, inputLang, outputLang, status]);
+  };
 
-  return { status, translated, error, showing, toggle };
+  return { ...current, toggle };
 }

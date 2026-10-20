@@ -787,10 +787,18 @@ export interface TranslateTextRequest {
   text: string;
   inputLang?: string;
   outputLang?: string;
+  /** Start a job whose output can be streamed or polled. */
+  stream?: boolean;
 }
 
 export interface TranslateTextResponse {
   translatedText: string;
+}
+
+export interface TranslateTextProgress extends TranslateTextResponse {
+  translationId: string;
+  done: boolean;
+  error?: string;
 }
 
 export interface DeleteTerminalResponse {

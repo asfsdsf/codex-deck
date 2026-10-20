@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   expandTranslationCommand,
   setMacOSTranslationBackendForTests,
@@ -34,8 +37,47 @@ test("translateText runs the configured command and returns stdout", async () =>
   assert.equal(translated, "hello world");
 });
 
+test(
+  "translateText publishes accumulated stdout before the command exits",
+  { timeout: 5000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "translation-stream-"));
+    const gate = join(directory, "continue");
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const chunks: string[] = [];
+    let first!: () => void;
+    const received = new Promise<void>((resolve) => {
+      first = resolve;
+    });
+    let finished = false;
+    const result = translateText({
+      text: gate,
+      inputLang: "en",
+      outputLang: "zh",
+      command:
+        "printf '你好'; while [ ! -f $PROMPT ]; do sleep 0.01; done; printf '世界\\n'",
+      onProgress: (text) => {
+        chunks.push(text);
+        first();
+      },
+    }).then((text) => {
+      finished = true;
+      return text;
+    });
+    try {
+      await received;
+      assert.equal(finished, false);
+      assert.equal(chunks[0], "你好");
+    } finally {
+      await writeFile(gate, "");
+    }
+    assert.equal(await result, "你好世界");
+    assert.equal(chunks.at(-1), "你好世界\n");
+  },
+);
+
 test("translateText preserves spaces, quotes, and newlines in the prompt", async () => {
-  const text = "it's a \"test\"\nwith a second line  and  spaces";
+  const text = 'it\'s a "test"\nwith a second line  and  spaces';
   const translated = await translateText({
     text,
     inputLang: "en",

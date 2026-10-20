@@ -138,6 +138,35 @@ test("concurrent blocks share pending translations and duplicate request IDs are
   bridge.dispose();
 });
 
+test("streamed fields fan out to pending blocks and late subscribers without caching partials", async () => {
+  const sources = [unique("Stream title"), unique("Stream body")];
+  const progress = new Map<string, (text: string) => void>();
+  const finish = new Map<string, (value: { translatedText: string }) => void>();
+  const bridge = fixture((request, onProgress) => {
+    progress.set(request.text, onProgress!);
+    return new Promise((resolve) => finish.set(request.text, resolve));
+  });
+  bridge.message(sources, "first");
+  await setImmediate();
+  progress.get(sources[1])!("部分正文");
+  assert.deepEqual(bridge.responses[0].texts, [sources[0], "部分正文"]);
+  assert.equal(bridge.responses[0].partial, true);
+  assert.equal(getCachedTranslation(sources[1], "en", "zh"), undefined);
+  bridge.message(sources, "second");
+  await setImmediate();
+  assert.equal(bridge.responses.at(-1)?.requestId, "second");
+  assert.deepEqual(bridge.responses.at(-1)?.texts, [sources[0], "部分正文"]);
+  progress.get(sources[0])!("部分标题");
+  assert.deepEqual(bridge.responses.at(-1)?.texts, ["部分标题", "部分正文"]);
+  finish.get(sources[0])!({ translatedText: "完整标题" });
+  finish.get(sources[1])!({ translatedText: "完整正文" });
+  await setImmediate();
+  for (const response of bridge.responses.filter((data) => !data.partial))
+    assert.deepEqual(response.texts, ["完整标题", "完整正文"]);
+  assert.equal(getCachedTranslation(sources[1], "en", "zh"), "完整正文");
+  bridge.dispose();
+});
+
 test("group failures are retryable and successful fields are cached without partial display", async () => {
   const sources = [unique("Note title"), unique("Note description")];
   const calls: string[] = [];

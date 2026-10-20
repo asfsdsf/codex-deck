@@ -128,6 +128,9 @@ import {
   subscribeWorkflowsStream as subscribeTransportWorkflowsStream,
 } from "./transport";
 import { readRemoteConversationSnapshot } from "./transport/remote";
+import { requestTranslation } from "./transport/translation";
+import { requestLocalJson } from "./transport/shared";
+import { addCodexHomeToApiUrl } from "./codex-home-scope";
 import { getActiveCodexHomeId } from "./codex-home-scope";
 import type {
   ConversationStreamHandlers,
@@ -1446,13 +1449,24 @@ export async function getConversation(
 
 export async function translateText(
   request: TranslateTextRequest,
+  onProgress?: (text: string) => void,
 ): Promise<TranslateTextResponse> {
-  return requestJson<TranslateTextResponse>("/api/translate", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const remote = remoteClient.isConnected();
+  const homeId = getActiveCodexHomeId();
+  return requestTranslation(request, {
+    requestJson: <T>(url: string, init?: RequestInit) => {
+      if (getActiveCodexHomeId() !== homeId)
+        return Promise.reject(
+          new Error("Selected Codex home changed during translation."),
+        );
+      return remote
+        ? remoteClient.requestJson<T>(addCodexHomeToApiUrl(url, homeId), init)
+        : requestLocalJson<T>(addCodexHomeToApiUrl(url, homeId), init);
     },
-    body: JSON.stringify(request),
+    createEventSource: remote
+      ? undefined
+      : (url) => new EventSource(addCodexHomeToApiUrl(url, homeId)),
+    onProgress,
   });
 }
 
