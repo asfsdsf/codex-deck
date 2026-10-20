@@ -2202,6 +2202,13 @@ test("remote session deltas deliver app-server events to matching conversations"
     status: "active",
     turnId: "turn-1",
   };
+  const questionEvent: CodexAppServerEvent = {
+    type: "user_input_requests_changed",
+    threadId: "remote-session",
+    requestId: "question-1",
+    pending: true,
+  };
+  const answerEvent: CodexAppServerEvent = { ...questionEvent, pending: false };
   const restoreRemoteClient = mockRemoteSessionsDeltaRequests(
     [
       {
@@ -2211,7 +2218,7 @@ test("remote session deltas deliver app-server events to matching conversations"
         updates: [],
         removedSessionIds: [],
         skillsChangedSessionIds: [],
-        codexAppServerEvents: [fullSnapshotEvent],
+        codexAppServerEvents: [fullSnapshotEvent, questionEvent],
       },
       {
         version: 3,
@@ -2220,7 +2227,12 @@ test("remote session deltas deliver app-server events to matching conversations"
         updates: [],
         removedSessionIds: [],
         skillsChangedSessionIds: [],
-        codexAppServerEvents: [fullSnapshotEvent, incrementalEvent],
+        codexAppServerEvents: [
+          fullSnapshotEvent,
+          questionEvent,
+          incrementalEvent,
+          answerEvent,
+        ],
       },
     ],
     true,
@@ -2243,11 +2255,16 @@ test("remote session deltas deliver app-server events to matching conversations"
     });
 
     await flushAsyncWork();
-    assert.deepEqual(received, [fullSnapshotEvent]);
+    assert.deepEqual(received, [fullSnapshotEvent, questionEvent]);
 
     await timerController.runNext();
     await timerController.runNext();
-    assert.deepEqual(received, [fullSnapshotEvent, incrementalEvent]);
+    assert.deepEqual(received, [
+      fullSnapshotEvent,
+      questionEvent,
+      incrementalEvent,
+      answerEvent,
+    ]);
 
     unsubscribeSessions();
     unsubscribeConversation();

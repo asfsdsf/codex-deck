@@ -354,6 +354,7 @@ export interface CodexUserInputRequest {
   threadId: string;
   turnId: string;
   itemId: string;
+  isBlocking?: boolean;
   questions: CodexUserInputQuestion[];
 }
 
@@ -409,6 +410,8 @@ interface PendingUserInputRequest {
   threadId: string;
   turnId: string;
   itemId: string;
+  isBlocking: boolean;
+  responseInFlight?: boolean;
   questions: CodexUserInputQuestion[];
 }
 
@@ -2134,6 +2137,7 @@ class CodexAppServerClient {
         threadId: request.threadId,
         turnId: request.turnId,
         itemId: request.itemId,
+        isBlocking: request.isBlocking,
         questions: request.questions,
       }));
   }
@@ -2187,8 +2191,21 @@ class CodexAppServerClient {
 
     validateUserInputResponsePayload(response);
 
-    await this.respondToServerRequest(pendingRequest.rawRequestId, response);
-    this.pendingUserInputRequests.delete(normalizedRequestId);
+    if (pendingRequest.responseInFlight) {
+      throw new Error("request response already in progress");
+    }
+    pendingRequest.responseInFlight = true;
+    try {
+      await this.respondToServerRequest(pendingRequest.rawRequestId, response);
+      if (
+        this.pendingUserInputRequests.get(normalizedRequestId) ===
+        pendingRequest
+      ) {
+        this.removePendingUserInputRequest(normalizedRequestId);
+      }
+    } finally {
+      pendingRequest.responseInFlight = false;
+    }
   }
 
   public async submitApproval(
@@ -2428,7 +2445,7 @@ class CodexAppServerClient {
 
   public async close(): Promise<void> {
     this.rejectAll(new CodexAppServerTransportError("app-server closed"));
-    this.pendingUserInputRequests.clear();
+    this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
@@ -3464,10 +3481,35 @@ class CodexAppServerClient {
       threadId: normalized.threadId,
       turnId: normalized.turnId,
       itemId: normalized.itemId,
+      isBlocking: normalized.isBlocking,
       questions: normalized.questions,
     });
 
+    this.emitAppServerEvent({
+      type: "user_input_requests_changed",
+      threadId: normalized.threadId,
+      requestId: String(requestId),
+      pending: true,
+    });
     return true;
+  }
+
+  private removePendingUserInputRequest(requestId: string): void {
+    const request = this.pendingUserInputRequests.get(requestId);
+    if (!request) return;
+    this.pendingUserInputRequests.delete(requestId);
+    this.emitAppServerEvent({
+      type: "user_input_requests_changed",
+      threadId: request.threadId,
+      requestId,
+      pending: false,
+    });
+  }
+
+  private clearPendingUserInputRequests(): void {
+    for (const requestId of this.pendingUserInputRequests.keys()) {
+      this.removePendingUserInputRequest(requestId);
+    }
   }
 
   private handleServerRequestResolved(params: unknown): void {
@@ -3481,7 +3523,7 @@ class CodexAppServerClient {
       return;
     }
 
-    this.pendingUserInputRequests.delete(String(requestId));
+    this.removePendingUserInputRequest(String(requestId));
     this.pendingApprovalRequests.delete(String(requestId));
   }
 
@@ -3618,7 +3660,7 @@ class CodexAppServerClient {
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
     this.liveTerminalPendingDeltaByItemByThread.clear();
-    this.pendingUserInputRequests.clear();
+    this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
 
     this.rejectAll(new CodexAppServerTransportError(reason));
@@ -4348,6 +4390,7 @@ function parseRequestUserInputParams(value: unknown): {
   threadId: string;
   turnId: string;
   itemId: string;
+  isBlocking: boolean;
   questions: CodexUserInputQuestion[];
 } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -4428,6 +4471,10 @@ function parseRequestUserInputParams(value: unknown): {
     threadId,
     turnId,
     itemId,
+    isBlocking:
+      typeof record.isBlocking === "boolean"
+        ? record.isBlocking
+        : record.autoResolutionMs == null,
     questions,
   };
 }

@@ -281,8 +281,13 @@ export class ConversationParserState {
       if (index === undefined || !this.messages[index].streaming) continue;
       const previous = this.messages[index];
       const finalText =
-        type === "assistant" && typeof item?.text === "string"
-          ? item.text
+        type === "assistant" && item
+          ? [
+              typeof item.text === "string" ? item.text : "",
+              getAsyncQuestionText(item.questions),
+            ]
+              .filter(Boolean)
+              .join("\n\n") || undefined
           : type === "reasoning" && Array.isArray(item?.summary)
             ? item.summary.filter((part) => typeof part === "string").join("\n")
             : undefined;
@@ -335,6 +340,30 @@ function safeJsonParse(input: string): unknown {
   } catch {
     return null;
   }
+}
+
+// Native async questions are attached to assistant messages rather than tool calls.
+// Keep them readable in history after their live input request has been resolved.
+function getAsyncQuestionText(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry))
+        return [];
+      const question = entry as Record<string, unknown>;
+      if (typeof question.title !== "string" || !question.title.trim())
+        return [];
+      const options = Array.isArray(question.options)
+        ? question.options.filter(
+            (option): option is string =>
+              typeof option === "string" && !!option.trim(),
+          )
+        : [];
+      return [
+        [question.title, ...options.map((option) => `- ${option}`)].join("\n"),
+      ];
+    })
+    .join("\n\n");
 }
 
 function getUtf8ByteLength(value: string): number {
@@ -1605,6 +1634,9 @@ function parseCodexConversation(
       }
 
       const content = extractContentBlocksFromPayloadContent(payload.content);
+      const questionText =
+        role === "assistant" ? getAsyncQuestionText(payload.questions) : "";
+      if (questionText) content.push({ type: "text", text: questionText });
       if (content.length === 0) {
         continue;
       }

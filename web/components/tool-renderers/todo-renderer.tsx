@@ -1,4 +1,6 @@
 import { Circle, CircleCheck, Loader2, ListTodo } from "lucide-react";
+import { useTextTranslations } from "../../hooks/use-text-translations";
+import { TextBlockActions } from "./text-block-actions";
 
 interface TodoItem {
   content: string;
@@ -33,6 +35,9 @@ function getStatusClass(status: string) {
 
 export function TodoRenderer(props: TodoRendererProps) {
   const { todos, embedded = false, hideHeader = false } = props;
+  const translation = useTextTranslations(
+    (todos ?? []).map((todo) => todo.content),
+  );
 
   if (!todos || todos.length === 0) {
     return null;
@@ -40,27 +45,40 @@ export function TodoRenderer(props: TodoRendererProps) {
 
   const completedCount = todos.filter((t) => t.status === "completed").length;
   const totalCount = todos.length;
+  const copyText = todos
+    .map(
+      (todo) =>
+        `- [${todo.status === "completed" ? "x" : " "}] ${translation.text(todo.content)}${todo.status === "in_progress" ? " (in progress)" : ""}`,
+    )
+    .join("\n");
 
   return (
     <div className={`w-full ${embedded ? "" : "mt-2"}`}>
       <div
         className={`${embedded ? "bg-transparent border-0 rounded-none" : "bg-zinc-900/70 border border-zinc-700/50 rounded-lg"} overflow-hidden`}
       >
-        {!hideHeader && (
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-700/50 bg-zinc-800/30">
-            <ListTodo size={14} className="text-violet-400" />
-            <span className="text-xs font-medium text-zinc-300">Tasks</span>
-            <span className="text-xs text-zinc-500 ml-auto">
-              {completedCount}/{totalCount}
-            </span>
-            <div className="w-16 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-violet-500 transition-all duration-300"
-                style={{ width: `${(completedCount / totalCount) * 100}%` }}
-              />
-            </div>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 border-b border-zinc-700/50 bg-zinc-800/30">
+          {!hideHeader && (
+            <>
+              <ListTodo size={14} className="text-violet-400" />
+              <span className="text-xs font-medium text-zinc-300">Tasks</span>
+              <span className="text-xs text-zinc-500 ml-auto">
+                {completedCount}/{totalCount}
+              </span>
+              <div className="w-16 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-violet-500 transition-all duration-300"
+                  style={{ width: `${(completedCount / totalCount) * 100}%` }}
+                />
+              </div>
+            </>
+          )}
+          <TextBlockActions
+            translation={translation}
+            copyText={copyText}
+            label="plan"
+          />
+        </div>
         <ul className="divide-y divide-zinc-800/50">
           {todos.map((todo, index) => (
             <li
@@ -73,7 +91,7 @@ export function TodoRenderer(props: TodoRendererProps) {
               <span
                 className={`text-xs leading-relaxed ${getStatusClass(todo.status)}`}
               >
-                {todo.content}
+                {translation.text(todo.content)}
               </span>
             </li>
           ))}

@@ -1,6 +1,7 @@
 import type { ContentBlock } from "@codex-deck/api";
 import { sanitizeText } from "./utils";
 import { normalizeToolUse } from "./tool-use-normalization";
+import { isUserInputToolName, normalizeUserInputQuestions } from "./user-input";
 
 const DEFAULT_EXPANDED_TOOL_USE_NAMES = new Set([
   "exec",
@@ -8,6 +9,7 @@ const DEFAULT_EXPANDED_TOOL_USE_NAMES = new Set([
   "bash",
   "write_stdin",
   "request_user_input",
+  "request_user_input_async",
   "update_plan",
 ]);
 
@@ -88,52 +90,16 @@ function getTodoSearchText(input: Record<string, unknown>): string {
 }
 
 function getQuestionSearchText(input: Record<string, unknown>): string {
-  if (!Array.isArray(input.questions)) {
-    return "";
-  }
-
-  return input.questions
-    .map((question) => {
-      if (!question || typeof question !== "object") {
-        return "";
-      }
-
-      const record = question as Record<string, unknown>;
-      const header =
-        typeof record.header === "string" ? sanitizeText(record.header) : "";
-      const prompt =
-        typeof record.question === "string"
-          ? sanitizeText(record.question)
-          : "";
-      const options = Array.isArray(record.options)
-        ? record.options
-            .map((option) => {
-              if (!option || typeof option !== "object") {
-                return "";
-              }
-
-              const optionRecord = option as Record<string, unknown>;
-              const label =
-                typeof optionRecord.label === "string"
-                  ? sanitizeText(optionRecord.label)
-                  : "";
-              const description =
-                typeof optionRecord.description === "string"
-                  ? sanitizeText(optionRecord.description)
-                  : "";
-              return [label, description]
-                .filter((part) => part.length > 0)
-                .join(" ");
-            })
-            .filter((line) => line.length > 0)
-            .join("\n")
-        : "";
-
-      return [header, prompt, options]
-        .filter((part) => part.length > 0)
-        .join("\n");
-    })
-    .filter((line) => line.length > 0)
+  return normalizeUserInputQuestions(input)
+    .flatMap((question) => [
+      question.header,
+      question.question,
+      ...question.options.map(
+        (option) => `${option.label} ${option.description}`,
+      ),
+    ])
+    .map(sanitizeText)
+    .filter(Boolean)
     .join("\n");
 }
 
@@ -300,10 +266,7 @@ export function getSearchableToolUseText(block: ContentBlock): string {
       .join("\n");
   }
 
-  if (
-    normalizedToolName === "request_user_input" ||
-    normalizedToolName === "askuserquestion"
-  ) {
+  if (isUserInputToolName(normalizedToolName)) {
     return [...parts, getQuestionSearchText(input)]
       .filter((part) => part.length > 0)
       .join("\n");

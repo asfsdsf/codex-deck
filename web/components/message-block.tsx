@@ -77,6 +77,10 @@ import {
 } from "./tool-renderers";
 import { parseTerminalRestartNoticeMessage } from "../terminal-session-notices";
 import { normalizeToolUse } from "../tool-use-normalization";
+import {
+  isUserInputToolName,
+  normalizeUserInputQuestions,
+} from "../user-input";
 import { getPatchLineTotals, parsePatchSummaryRows } from "../patch-summary";
 import {
   useBlockTranslation,
@@ -3063,6 +3067,7 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
   wait: Clock3,
   close_agent: Bot,
   request_user_input: MessageSquare,
+  request_user_input_async: MessageSquare,
   view_image: ImageIcon,
 };
 
@@ -3256,71 +3261,6 @@ function getTodoItemsFromInput(
   }
 
   return [];
-}
-
-function toAskQuestionInput(input: Record<string, unknown>): {
-  requestId?: string;
-  questions: Array<{
-    id: string;
-    header: string;
-    question: string;
-    options: Array<{ label: string; description: string }>;
-    multiSelect: boolean;
-    isOther: boolean;
-    isSecret: boolean;
-  }>;
-} {
-  if (!Array.isArray(input.questions)) {
-    return { questions: [] };
-  }
-
-  const questions = input.questions
-    .filter((question): question is Record<string, unknown> =>
-      isRecord(question),
-    )
-    .map((question, index) => {
-      const options = Array.isArray(question.options)
-        ? question.options
-            .filter((option): option is Record<string, unknown> =>
-              isRecord(option),
-            )
-            .map((option) => ({
-              label:
-                typeof option.label === "string" &&
-                option.label.trim().length > 0
-                  ? option.label
-                  : "Option",
-              description:
-                typeof option.description === "string"
-                  ? option.description
-                  : "",
-            }))
-        : [];
-
-      return {
-        id:
-          typeof question.id === "string" && question.id.trim().length > 0
-            ? question.id
-            : `question-${index}`,
-        header:
-          typeof question.header === "string" &&
-          question.header.trim().length > 0
-            ? question.header
-            : "Question",
-        question:
-          typeof question.question === "string" &&
-          question.question.trim().length > 0
-            ? question.question
-            : "",
-        options,
-        multiSelect: question.multiSelect === true,
-        isOther: question.isOther === true,
-        isSecret: question.isSecret === true,
-      };
-    })
-    .filter((question) => question.question.length > 0);
-
-  return { questions };
 }
 
 function summarizeValue(value: unknown): string {
@@ -3787,8 +3727,14 @@ function renderFormattedToolInput(
     }
   }
 
-  if (toolName === "request_user_input" || toolName === "askuserquestion") {
-    const normalizedInput = toAskQuestionInput(input);
+  if (isUserInputToolName(toolName)) {
+    const normalizedInput = {
+      questions: normalizeUserInputQuestions(
+        requestUserInputRequest
+          ? { questions: requestUserInputRequest.questions }
+          : input,
+      ),
+    };
     if (normalizedInput.questions.length > 0) {
       return (
         <AskQuestionRenderer
@@ -3997,6 +3943,10 @@ const TOOL_PREVIEW_HANDLERS: Record<string, PreviewHandler> = {
     }
     return null;
   },
+  request_user_input_async: (input) =>
+    Array.isArray(input.questions)
+      ? `${input.questions.length} question(s)`
+      : null,
   request_user_input: (input) =>
     Array.isArray(input.questions)
       ? `${input.questions.length} question(s)`
@@ -4238,7 +4188,7 @@ function getToolResultPreview(
   }
 
   if (
-    name === "request_user_input" &&
+    isUserInputToolName(name) &&
     isRecord(parsed) &&
     isRecord(parsed.answers)
   ) {
@@ -4849,11 +4799,11 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     const preview = getToolPreview(normalized.name, input);
     const toolName = normalized.name.toLowerCase();
     const requestUserInputRequest =
-      toolName === "request_user_input" && block.id
+      isUserInputToolName(toolName) && block.id
         ? pendingUserInputRequestByItemId?.get(block.id)
         : undefined;
     const resolvedAnswersForRequest =
-      toolName === "request_user_input" && block.id
+      isUserInputToolName(toolName) && block.id
         ? resolvedUserInputAnswersByItemId?.get(block.id)
         : undefined;
     const interactiveUserInputRequest = resolvedAnswersForRequest

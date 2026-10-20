@@ -1,10 +1,59 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseConversationTextChunk } from "../../api/conversation-parser";
+import {
+  ConversationParserState,
+  parseConversationTextChunk,
+} from "../../api/conversation-parser";
 
 function line(record: Record<string, unknown>): string {
   return JSON.stringify(record);
 }
+
+test("native async questions survive history parsing and live message completion", () => {
+  const questions = [
+    { title: "Which audience?", options: ["Engineers", "Executives"] },
+    { title: "Any requirements?", options: null },
+  ];
+  const record = line({
+    type: "response_item",
+    payload: {
+      type: "message",
+      id: "async-1",
+      role: "assistant",
+      delivery: "async",
+      content: [],
+      questions,
+    },
+  });
+  const parsed = parseConversationTextChunk(`${record}\n`, 0);
+  assert.equal(parsed.messages.length, 1);
+  assert.match(
+    JSON.stringify(parsed.messages[0].message?.content),
+    /Which audience\?/,
+  );
+  assert.match(
+    JSON.stringify(parsed.messages[0].message?.content),
+    /Engineers/,
+  );
+  assert.match(
+    JSON.stringify(parsed.messages[0].message?.content),
+    /Any requirements\?/,
+  );
+
+  const state = new ConversationParserState();
+  state.applyStreamText("turn-1", "async-1", "assistant", "A quick question.");
+  state.completeStreamItem("turn-1", "async-1", {
+    type: "agentMessage",
+    text: "A quick question.",
+    questions,
+  });
+  assert.equal(state.messages.length, 1);
+  assert.match(
+    JSON.stringify(state.messages[0].message?.content),
+    /Any requirements\?/,
+  );
+  assert.equal(state.messages[0].streaming, false);
+});
 
 test("parseConversationTextChunk keeps unresolved tool calls in-place", () => {
   const text = [

@@ -35,6 +35,7 @@ Codex capabilities:
 - **Image attachments** - Attach images by drag/drop, paste, file picker, or mobile camera/gallery.
 - **Model and reasoning controls** - Pick a model and reasoning effort per session and before sending.
 - **Plan actions** - Use Plan mode and apply plan proposals.
+- **Async questions** - Answer multiple pending questions while Codex keeps working, with choice and free-text replies.
 - **`/`, `@`, and `$` support** - Use slash commands, file mentions, and skill mentions in the composer (similar to Codex CLI).
 - **Live session list** - Real-time session updates with project filtering and session search.
 - **Environment variables** - Pass environment variables into codex sessions.

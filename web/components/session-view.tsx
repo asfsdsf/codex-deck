@@ -23,6 +23,14 @@ import type {
   CodexUserInputResponsePayload,
 } from "@codex-deck/api";
 import MessageBlock from "./message-block";
+import { PendingUserInputRequests } from "./pending-user-input-requests";
+import { UserInputResizeContainer } from "./user-input-textarea";
+import {
+  buildUserInputResponsePayload,
+  getUnattachedUserInputRequests,
+  isUserInputQuestionAnswered,
+  isUserInputToolName,
+} from "../user-input";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
 import ConversationPager from "./conversation-pager";
 import ConversationMessageHover from "./conversation-message-hover";
@@ -44,7 +52,6 @@ import {
   getTotalPages,
   parseResolvedUserInputAnswers,
   sanitizeText,
-  USER_INPUT_NOTE_PREFIX,
   USER_INPUT_OTHER_OPTION_LABEL,
   type UserInputAnswerDraft,
 } from "../utils";
@@ -465,6 +472,7 @@ function areUserInputRequestsEqual(
       left.threadId !== right.threadId ||
       left.turnId !== right.turnId ||
       left.itemId !== right.itemId ||
+      left.isBlocking !== right.isBlocking ||
       left.questions.length !== right.questions.length
     ) {
       return false;
@@ -547,35 +555,6 @@ function pruneSubmittingIds(
   return removedAny ? next : previous;
 }
 
-function buildUserInputResponsePayload(
-  request: CodexUserInputRequest,
-  drafts: Record<string, UserInputAnswerDraft>,
-): CodexUserInputResponsePayload {
-  const answers: CodexUserInputResponsePayload["answers"] = {};
-
-  for (const question of request.questions) {
-    const draft = drafts[question.id];
-    const optionLabel = draft?.optionLabel?.trim() ?? "";
-    if (!optionLabel) {
-      continue;
-    }
-
-    const answerList: string[] = [optionLabel];
-    if (optionLabel === USER_INPUT_OTHER_OPTION_LABEL) {
-      const note = draft?.otherText?.trim() ?? "";
-      if (note.length > 0) {
-        answerList.push(`${USER_INPUT_NOTE_PREFIX}${note}`);
-      }
-    }
-
-    answers[question.id] = {
-      answers: answerList,
-    };
-  }
-
-  return { answers };
-}
-
 function messageUsesUserInputState(message: ConversationMessage): boolean {
   const content = message.message?.content;
   if (!Array.isArray(content)) {
@@ -586,7 +565,7 @@ function messageUsesUserInputState(message: ConversationMessage): boolean {
     (block) =>
       block.type === "tool_use" &&
       typeof block.name === "string" &&
-      block.name.toLowerCase() === "request_user_input",
+      isUserInputToolName(block.name),
   );
 }
 
@@ -776,6 +755,9 @@ const SessionView = memo(
       const [pendingUserInputRequests, setPendingUserInputRequests] = useState<
         CodexUserInputRequest[]
       >([]);
+      const [userInputErrors, setUserInputErrors] = useState<
+        Record<string, string>
+      >({});
       const [pendingApprovalRequests, setPendingApprovalRequests] = useState<
         CodexApprovalRequest[]
       >([]);
@@ -791,6 +773,10 @@ const SessionView = memo(
       >(null);
       const [loading, setLoading] = useState(true);
       const [autoScroll, setAutoScroll] = useState(true);
+      const [resizingAnswer, setResizingAnswer] = useState(false);
+      const answerResizeCleanupRef = useRef<(() => void) | null>(null);
+      const answerResizeAnchorRef = useRef<(() => void) | null>(null);
+      const answerResizeSpaceCleanupRef = useRef<(() => void) | null>(null);
       const [currentPage, setCurrentPage] = useState(1);
       const [messageJumpTarget, setMessageJumpTarget] = useState<number | null>(
         null,
@@ -808,6 +794,7 @@ const SessionView = memo(
       const containerRef = useRef<HTMLDivElement>(null);
       const hoverSettings = useConversationHoverSettings();
       const contentRef = useRef<HTMLDivElement>(null);
+      const pendingUserInputRef = useRef<HTMLDivElement>(null);
       const pagesRef = useRef<HTMLDivElement>(null);
       const pageVirtualizerRef = useRef<Virtualizer<
         HTMLDivElement,
@@ -834,6 +821,7 @@ const SessionView = memo(
       const autoScrollRef = useRef(autoScroll);
       const remoteBootstrapInProgressRef = useRef(false);
       const lastReportedHistoryKeyRef = useRef("");
+      const refreshUserInputRequestsRef = useRef<() => void>(() => {});
       const userInputPollInFlightRef = useRef(false);
       const userInputPollRerunRequestedRef = useRef(false);
       const approvalPollInFlightRef = useRef(false);
@@ -1018,6 +1006,11 @@ const SessionView = memo(
             },
           },
           {
+            onCodexAppServerEvent: (event) => {
+              if (event.type === "user_input_requests_changed") {
+                refreshUserInputRequestsRef.current();
+              }
+            },
             initialOffset: offsetRef.current,
             initialHistoryStartSequence: historyStartSequenceRef.current,
             initialFileId: conversationFileIdRef.current,
@@ -1069,6 +1062,7 @@ const SessionView = memo(
         messagesRef.current = [];
         setMessages([]);
         setPendingUserInputRequests([]);
+        setUserInputErrors({});
         setPendingApprovalRequests([]);
         setSelectedUserInputAnswers({});
         setSubmittingUserInputRequestIds([]);
@@ -1188,6 +1182,13 @@ const SessionView = memo(
           const activeIds = new Set(
             requests.map((request) => request.requestId),
           );
+          setUserInputErrors((previous) => {
+            if (Object.keys(previous).every((id) => activeIds.has(id)))
+              return previous;
+            return Object.fromEntries(
+              Object.entries(previous).filter(([id]) => activeIds.has(id)),
+            );
+          });
 
           setSelectedUserInputAnswers((previous) =>
             pruneSelectedAnswers(previous, activeIds),
@@ -1223,6 +1224,12 @@ const SessionView = memo(
           }
         }
       }, [isPageVisible, sessionId]);
+
+      useEffect(() => {
+        refreshUserInputRequestsRef.current = () => {
+          void pollPendingUserInputRequests();
+        };
+      }, [pollPendingUserInputRequests]);
 
       const pollPendingApprovalRequests = useCallback(async () => {
         if (approvalPollInFlightRef.current) {
@@ -1321,6 +1328,11 @@ const SessionView = memo(
             return;
           }
           submittingRequestIdsRef.current.add(requestId);
+          setUserInputErrors((previous) => {
+            const next = { ...previous };
+            delete next[requestId];
+            return next;
+          });
           setSubmittingUserInputRequestIds((previous) =>
             previous.includes(requestId) ? previous : [...previous, requestId],
           );
@@ -1328,7 +1340,10 @@ const SessionView = memo(
           try {
             await respondCodexUserInputRequest(sessionId, requestId, response);
           } catch {
-            // Let polling keep the request visible if submission fails.
+            setUserInputErrors((previous) => ({
+              ...previous,
+              [requestId]: "Could not send your answer. Try again.",
+            }));
           } finally {
             submittingRequestIdsRef.current.delete(requestId);
             setSubmittingUserInputRequestIds((previous) =>
@@ -1401,9 +1416,8 @@ const SessionView = memo(
               },
             };
 
-            const allAnswered = request.questions.every(
-              (question) =>
-                nextAnswers[question.id]?.optionLabel.trim().length > 0,
+            const allAnswered = request.questions.every((question) =>
+              isUserInputQuestionAnswered(question, nextAnswers[question.id]),
             );
             const hasOtherSelection = request.questions.some(
               (question) =>
@@ -1462,6 +1476,7 @@ const SessionView = memo(
                 ...currentAnswers,
                 [questionId]: {
                   ...currentDraft,
+                  optionLabel: USER_INPUT_OTHER_OPTION_LABEL,
                   otherText: text,
                 },
               },
@@ -1481,6 +1496,12 @@ const SessionView = memo(
           }
 
           const drafts = selectedUserInputAnswers[request.requestId] ?? {};
+          if (
+            !request.questions.every((question) =>
+              isUserInputQuestionAnswered(question, drafts[question.id]),
+            )
+          )
+            return;
           const payload = buildUserInputResponsePayload(request, drafts);
           if (Object.keys(payload.answers).length === 0) {
             return;
@@ -1491,14 +1512,17 @@ const SessionView = memo(
       );
 
       const scrollToBottom = useCallback(() => {
-        if (!containerRef.current) {
+        if (!containerRef.current || answerResizeCleanupRef.current) {
           return;
         }
+        answerResizeSpaceCleanupRef.current?.();
         isScrollingProgrammaticallyRef.current = true;
-        const lastPage = pagesRef.current?.lastElementChild;
-        const bottomOffset = lastPage
+        const tailElement =
+          pendingUserInputRef.current?.lastElementChild ??
+          pagesRef.current?.lastElementChild;
+        const bottomOffset = tailElement
           ? containerRef.current.scrollTop +
-            lastPage.getBoundingClientRect().bottom -
+            tailElement.getBoundingClientRect().bottom -
             containerRef.current.getBoundingClientRect().top +
             Number.parseFloat(
               getComputedStyle(contentRef.current!).paddingBottom,
@@ -1514,6 +1538,7 @@ const SessionView = memo(
 
       const navigateConversationSearchMatch = useCallback(
         (direction: SearchDirection) => {
+          answerResizeSpaceCleanupRef.current?.();
           setMessageJumpTarget(null);
           setAutoScroll(false);
           shouldFollowActiveSearchMatchRef.current = true;
@@ -1671,7 +1696,15 @@ const SessionView = memo(
       );
 
       const handleScroll = () => {
-        if (!containerRef.current || isScrollingProgrammaticallyRef.current) {
+        if (answerResizeAnchorRef.current) {
+          answerResizeAnchorRef.current();
+          return;
+        }
+        if (
+          !containerRef.current ||
+          isScrollingProgrammaticallyRef.current ||
+          answerResizeCleanupRef.current
+        ) {
           return;
         }
 
@@ -1680,6 +1713,73 @@ const SessionView = memo(
           scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX;
         setAutoScroll(isAtBottom);
       };
+
+      const handleAnswerResizeStart = useCallback(
+        (textarea: HTMLTextAreaElement) => {
+          const content = contentRef.current;
+          const container = containerRef.current;
+          if (!content || !container) return () => {};
+          answerResizeCleanupRef.current?.();
+          if (!answerResizeSpaceCleanupRef.current) {
+            const previousMinHeight = content.style.minHeight;
+            answerResizeSpaceCleanupRef.current = () => {
+              content.style.minHeight = previousMinHeight;
+              answerResizeSpaceCleanupRef.current = null;
+            };
+          }
+          // Retain the scroll range when shrinking, including after release.
+          // The next explicit scroll/navigation can reclaim the trailing space.
+          content.style.minHeight = `${content.getBoundingClientRect().height}px`;
+          const top = textarea.getBoundingClientRect().top;
+          const anchor = () => {
+            if (!textarea.isConnected) return;
+            const delta = textarea.getBoundingClientRect().top - top;
+            if (Math.abs(delta) > 0.5) container.scrollTop += delta;
+          };
+          answerResizeAnchorRef.current = anchor;
+          const observer = new ResizeObserver(anchor);
+          observer.observe(content);
+          if (pagesRef.current) observer.observe(pagesRef.current);
+          const virtualizer = pageVirtualizerRef.current;
+          // Apply synchronously, before the first height change is measured.
+          if (virtualizer)
+            virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () =>
+              false;
+          const finish = () => {
+            if (answerResizeCleanupRef.current !== finish) return;
+            window.removeEventListener("blur", finish);
+            // Flush the final page size while compensation is still disabled.
+            for (const page of pagesRef.current?.querySelectorAll<HTMLDivElement>(
+              "[data-conversation-page]",
+            ) ?? []) {
+              virtualizer?.resizeItem(
+                Number(page.dataset.index),
+                page.offsetHeight,
+              );
+            }
+            anchor();
+            observer.disconnect();
+            answerResizeAnchorRef.current = null;
+            answerResizeCleanupRef.current = null;
+            setResizingAnswer(false);
+          };
+          answerResizeCleanupRef.current = finish;
+          window.addEventListener("blur", finish);
+          autoScrollRef.current = false;
+          setAutoScroll(false);
+          setResizingAnswer(true);
+          return finish;
+        },
+        [],
+      );
+
+      useEffect(
+        () => () => {
+          answerResizeCleanupRef.current?.();
+          answerResizeSpaceCleanupRef.current?.();
+        },
+        [sessionId],
+      );
 
       const {
         resolvedUserInputAnswersByItemId,
@@ -1737,7 +1837,7 @@ const SessionView = memo(
               toolNameByCallId.get(block.tool_use_id) ||
               ""
             ).toLowerCase();
-            if (toolName !== "request_user_input" || block.is_error === true) {
+            if (!isUserInputToolName(toolName) || block.is_error === true) {
               continue;
             }
 
@@ -1760,6 +1860,11 @@ const SessionView = memo(
         };
       }, [messages]);
 
+      const unattachedUserInputRequests = useMemo(
+        () =>
+          getUnattachedUserInputRequests(messages, pendingUserInputRequests),
+        [messages, pendingUserInputRequests],
+      );
       const summary = messages.find((m) => m.type === "summary");
       const displayConversationMessages = useMemo(
         () => mergePendingConversationMessages(messages, pendingUserMessages),
@@ -1897,7 +2002,9 @@ const SessionView = memo(
       // An automatic resize correction would move the scroll position before
       // React has moved the pages, briefly scrolling past the visible blocks.
       pageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
-        autoScroll && isLatestPage ? () => false : undefined;
+        resizingAnswer || (autoScroll && isLatestPage)
+          ? () => false
+          : undefined;
       useLayoutEffect(() => {
         pageVirtualizerRef.current = pageVirtualizer;
         return () => {
@@ -2019,6 +2126,7 @@ const SessionView = memo(
       }, [pagedMessageChunks]);
       const jumpToMessage = useCallback(
         (messageNumber: number) => {
+          answerResizeSpaceCleanupRef.current?.();
           const target = Math.max(
             1,
             Math.min(totalMessageCount, messageNumber),
@@ -2663,6 +2771,7 @@ const SessionView = memo(
       }, [
         messages,
         pendingUserMessages,
+        pendingUserInputRequests,
         autoScroll,
         isLatestPage,
         pagesHeight,
@@ -2932,10 +3041,21 @@ const SessionView = memo(
       }
 
       return (
-        <div className="relative h-full">
+        <UserInputResizeContainer
+          className="relative h-full"
+          onResizeStart={handleAnswerResizeStart}
+        >
           <div
             ref={containerRef}
             onScroll={handleScroll}
+            onWheelCapture={() => {
+              if (!answerResizeCleanupRef.current)
+                answerResizeSpaceCleanupRef.current?.();
+            }}
+            onTouchStartCapture={() => {
+              if (!answerResizeCleanupRef.current)
+                answerResizeSpaceCleanupRef.current?.();
+            }}
             data-conversation-scroll
             style={{ overflowAnchor: "none" }}
             className="h-full overflow-y-auto bg-zinc-950"
@@ -3275,6 +3395,25 @@ const SessionView = memo(
                   </div>
                 ))}
               </div>
+              <div ref={pendingUserInputRef}>
+                <PendingUserInputRequests
+                  requests={unattachedUserInputRequests}
+                  selectedAnswers={selectedUserInputAnswers}
+                  submittingRequestIds={submittingUserInputRequestIds}
+                  onSelectOption={handleSelectUserInputOption}
+                  onChangeOtherText={handleChangeUserInputOtherText}
+                  onSubmitAnswers={handleSubmitUserInputAnswers}
+                />
+                {Object.entries(userInputErrors).map(([requestId, error]) => (
+                  <p
+                    key={requestId}
+                    role="alert"
+                    className="mt-2 text-xs text-red-400"
+                  >
+                    {error}
+                  </p>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -3294,14 +3433,14 @@ const SessionView = memo(
             />
           )}
 
-          {(!isLatestPage || !autoScroll) && (
+          {!resizingAnswer && (!isLatestPage || !autoScroll) && (
             <ScrollToBottomButton
               direction={isLatestPage ? "down" : "down-right"}
               bottomOffsetPx={latestButtonBottomOffsetPx}
               onClick={jumpToLatest}
             />
           )}
-        </div>
+        </UserInputResizeContainer>
       );
     },
   ),

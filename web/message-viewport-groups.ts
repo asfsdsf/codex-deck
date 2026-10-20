@@ -51,6 +51,7 @@ export interface CollapsedViewportContext {
 
 const IMPORTANT_TOOL_NAMES = new Set([
   "request_user_input",
+  "request_user_input_async",
   "update_plan",
   "askuserquestion",
   "todowrite",

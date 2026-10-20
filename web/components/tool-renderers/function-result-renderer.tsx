@@ -1259,7 +1259,13 @@ export function FunctionToolResultRenderer(
   if (
     parsed &&
     isMarkdownFriendly(parsed) &&
-    ["spawn_agent", "request_user_input", "wait", "close_agent"].includes(name)
+    [
+      "spawn_agent",
+      "request_user_input",
+      "request_user_input_async",
+      "wait",
+      "close_agent",
+    ].includes(name)
   ) {
     return (
       <div

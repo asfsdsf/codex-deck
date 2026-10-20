@@ -2348,6 +2348,7 @@ export function createServer(options: ServerOptions) {
     });
     if (
       event.type === "thread_status" ||
+      event.type === "user_input_requests_changed" ||
       event.type === "subagent_activity" ||
       event.type === "collab_agent_tool_call" ||
       event.type === "error"
@@ -5236,6 +5237,9 @@ export function createServer(options: ServerOptions) {
         const lowered = message.toLowerCase();
         if (lowered.includes("request not found")) {
           return c.json({ error: message }, 404);
+        }
+        if (lowered.includes("request response already in progress")) {
+          return c.json({ error: message }, 409);
         }
         if (lowered.includes("response.answers")) {
           return c.json({ error: message }, 400);

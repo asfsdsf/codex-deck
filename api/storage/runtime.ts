@@ -227,6 +227,12 @@ export interface CodexCollabAgentState {
 
 export type CodexAppServerEvent =
   | {
+      type: "user_input_requests_changed";
+      threadId: string;
+      requestId: string;
+      pending: boolean;
+    }
+  | {
       type: "item_completed";
       threadId: string;
       turnId: string;
@@ -521,6 +527,8 @@ export interface CodexUserInputRequest {
   threadId: string;
   turnId: string;
   itemId: string;
+  /** Older app-server versions omit this field and use blocking requests. */
+  isBlocking?: boolean;
   questions: CodexUserInputQuestion[];
 }
 
