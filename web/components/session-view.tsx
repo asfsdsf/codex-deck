@@ -9,7 +9,7 @@ import {
   useImperativeHandle,
   forwardRef,
 } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, UIEvent } from "react";
 import {
   defaultRangeExtractor,
   useVirtualizer,
@@ -77,8 +77,13 @@ import {
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
 import { mergePendingConversationMessages } from "../pending-conversation-messages";
+import {
+  captureConversationScrollAnchor,
+  restoreConversationScrollAnchor,
+  type ConversationScrollAnchor,
+} from "../conversation-scroll-position";
 
-const SCROLL_THRESHOLD_PX = 100;
+const SCROLL_THRESHOLD_PX = 1;
 const USER_INPUT_POLL_INTERVAL_MS = 1200;
 const APPROVAL_POLL_INTERVAL_MS = 1200;
 const MESSAGES_PER_PAGE = 100;
@@ -772,7 +777,7 @@ const SessionView = memo(
         string | null
       >(null);
       const [loading, setLoading] = useState(true);
-      const [autoScroll, setAutoScroll] = useState(true);
+      const [autoScroll, setAutoScrollState] = useState(true);
       const [resizingAnswer, setResizingAnswer] = useState(false);
       const answerResizeCleanupRef = useRef<(() => void) | null>(null);
       const answerResizeAnchorRef = useRef<(() => void) | null>(null);
@@ -809,6 +814,8 @@ const SessionView = memo(
       >(undefined);
       const serverMessageCountRef = useRef<number | undefined>(undefined);
       const isScrollingProgrammaticallyRef = useRef(false);
+      const readingAnchorRef = useRef<ConversationScrollAnchor | null>(null);
+      const programmaticScrollTopRef = useRef<number | null>(null);
       const streamCleanupRef = useRef<(() => void) | null>(null);
       const lastEventAtRef = useRef(0);
       const mountedRef = useRef(true);
@@ -819,6 +826,10 @@ const SessionView = memo(
       const onStreamConnectRef = useRef(onStreamConnect);
       const totalPagesRef = useRef(1);
       const autoScrollRef = useRef(autoScroll);
+      const setAutoScroll = useCallback((enabled: boolean) => {
+        autoScrollRef.current = enabled;
+        setAutoScrollState(enabled);
+      }, []);
       const remoteBootstrapInProgressRef = useRef(false);
       const lastReportedHistoryKeyRef = useRef("");
       const refreshUserInputRequestsRef = useRef<() => void>(() => {});
@@ -855,10 +866,6 @@ const SessionView = memo(
         onMessageHistoryChange,
         onStreamConnect,
       ]);
-
-      useEffect(() => {
-        autoScrollRef.current = autoScroll;
-      }, [autoScroll]);
 
       useEffect(() => {
         collapsedDefaultSegmentKeysRef.current = collapsedDefaultSegmentKeys;
@@ -1057,7 +1064,8 @@ const SessionView = memo(
         railAlignmentEpochRef.current += 1;
         setLoading(true);
         setAutoScroll(true);
-        autoScrollRef.current = true;
+        readingAnchorRef.current = null;
+        programmaticScrollTopRef.current = null;
 
         messagesRef.current = [];
         setMessages([]);
@@ -1516,7 +1524,6 @@ const SessionView = memo(
           return;
         }
         answerResizeSpaceCleanupRef.current?.();
-        isScrollingProgrammaticallyRef.current = true;
         const tailElement =
           pendingUserInputRef.current?.lastElementChild ??
           pagesRef.current?.lastElementChild;
@@ -1528,9 +1535,14 @@ const SessionView = memo(
               getComputedStyle(contentRef.current!).paddingBottom,
             )
           : containerRef.current.scrollHeight;
-        pageVirtualizerRef.current?.scrollToOffset(
-          Math.max(0, bottomOffset - containerRef.current.clientHeight),
+        const target = Math.max(
+          0,
+          bottomOffset - containerRef.current.clientHeight,
         );
+        if (Math.abs(containerRef.current.scrollTop - target) <= 0.5) return;
+        isScrollingProgrammaticallyRef.current = true;
+        pageVirtualizerRef.current?.scrollToOffset(target);
+        programmaticScrollTopRef.current = containerRef.current.scrollTop;
         requestAnimationFrame(() => {
           isScrollingProgrammaticallyRef.current = false;
         });
@@ -1652,6 +1664,7 @@ const SessionView = memo(
               }
 
               currentContainer.scrollTop -= delta;
+              programmaticScrollTopRef.current = currentContainer.scrollTop;
             };
 
             const finalizeAlignment = () => {
@@ -1695,22 +1708,42 @@ const SessionView = memo(
         [],
       );
 
-      const handleScroll = () => {
+      // Capture before the virtualizer's scroll listener can render a new
+      // window, so that a user's scroll replaces the previous reading anchor.
+      const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+        if (event.target !== event.currentTarget) return;
         if (answerResizeAnchorRef.current) {
           answerResizeAnchorRef.current();
           return;
         }
+        const container = containerRef.current;
+        if (!container || answerResizeCleanupRef.current) {
+          return;
+        }
         if (
-          !containerRef.current ||
-          isScrollingProgrammaticallyRef.current ||
-          answerResizeCleanupRef.current
+          messageJumpTarget !== null ||
+          shouldFollowActiveSearchMatchRef.current
         ) {
           return;
         }
 
-        const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+        readingAnchorRef.current = captureConversationScrollAnchor(container);
+        const programmaticScrollTop = programmaticScrollTopRef.current;
+        programmaticScrollTopRef.current = null;
+        // Navigation can clamp again while pages are measured. While following
+        // the bottom, ignore only the offset we wrote so users can scroll away.
+        if (
+          (programmaticScrollTop !== null &&
+            Math.abs(container.scrollTop - programmaticScrollTop) <= 0.5) ||
+          (!autoScrollRef.current && isScrollingProgrammaticallyRef.current)
+        ) {
+          return;
+        }
+
+        isScrollingProgrammaticallyRef.current = false;
+        const { scrollTop, scrollHeight, clientHeight } = container;
         const isAtBottom =
-          scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX;
+          scrollHeight - scrollTop - clientHeight <= SCROLL_THRESHOLD_PX;
         setAutoScroll(isAtBottom);
       };
 
@@ -1765,7 +1798,6 @@ const SessionView = memo(
           };
           answerResizeCleanupRef.current = finish;
           window.addEventListener("blur", finish);
-          autoScrollRef.current = false;
           setAutoScroll(false);
           setResizingAnswer(true);
           return finish;
@@ -1998,13 +2030,10 @@ const SessionView = memo(
         scrollMargin: pagesScrollMargin,
         enabled: !loading,
       });
-      // Following the tail is handled after the page layout commits below.
-      // An automatic resize correction would move the scroll position before
-      // React has moved the pages, briefly scrolling past the visible blocks.
-      pageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
-        resizingAnswer || (autoScroll && isLatestPage)
-          ? () => false
-          : undefined;
+      // A page can contain both the reading position and growing blocks below
+      // it. Compensating for its whole height moves the reader unnecessarily.
+      // Restore the top visible message after the page layout commits instead.
+      pageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
       useLayoutEffect(() => {
         pageVirtualizerRef.current = pageVirtualizer;
         return () => {
@@ -2126,6 +2155,7 @@ const SessionView = memo(
       }, [pagedMessageChunks]);
       const jumpToMessage = useCallback(
         (messageNumber: number) => {
+          readingAnchorRef.current = null;
           answerResizeSpaceCleanupRef.current?.();
           const target = Math.max(
             1,
@@ -2134,21 +2164,22 @@ const SessionView = memo(
           const page = Math.floor((target - 1) / MESSAGES_PER_PAGE) + 1;
           shouldFollowActiveSearchMatchRef.current = false;
           setAutoScroll(false);
-          autoScrollRef.current = false;
           setCurrentPage(page);
           setMessageJumpTarget(target);
           if (!chunksByPage.has(page)) {
             pageVirtualizer.scrollToIndex(page - 1, { align: "start" });
+            programmaticScrollTopRef.current =
+              containerRef.current?.scrollTop ?? null;
           }
         },
         [chunksByPage, pageVirtualizer, totalMessageCount],
       );
       const jumpToLatest = useCallback(() => {
+        readingAnchorRef.current = null;
         shouldFollowActiveSearchMatchRef.current = false;
         setMessageJumpTarget(null);
         setCurrentPage(totalPages);
         setAutoScroll(true);
-        autoScrollRef.current = true;
         requestAnimationFrame(scrollToBottom);
       }, [scrollToBottom, totalPages]);
       const agentsBootstrapMessage =
@@ -2410,6 +2441,7 @@ const SessionView = memo(
             ? maxScrollTop
             : Math.max(0, Math.min(targetTop, maxScrollTop)),
         );
+        programmaticScrollTopRef.current = container.scrollTop;
         setMessageJumpTarget(null);
         requestAnimationFrame(() => {
           isScrollingProgrammaticallyRef.current = false;
@@ -2834,6 +2866,8 @@ const SessionView = memo(
           pageVirtualizer.scrollToIndex(activeSearchMatch.page - 1, {
             align: "start",
           });
+          programmaticScrollTopRef.current =
+            containerRef.current?.scrollTop ?? null;
           return;
         }
 
@@ -2996,6 +3030,7 @@ const SessionView = memo(
         isScrollingProgrammaticallyRef.current = true;
         // Replace the page jump's pending alignment with the match position.
         pageVirtualizer.scrollToOffset(Math.max(targetScrollTop, 0));
+        programmaticScrollTopRef.current = container.scrollTop;
         requestAnimationFrame(() => {
           isScrollingProgrammaticallyRef.current = false;
         });
@@ -3013,6 +3048,43 @@ const SessionView = memo(
         terminalShortcut !== null ||
         diffGuideShortcut !== null ||
         originSessionShortcut !== null;
+
+      const stabilizeScrollPosition = useCallback(() => {
+        const container = containerRef.current;
+        if (!container || answerResizeCleanupRef.current) return;
+        if (
+          messageJumpTarget !== null ||
+          shouldFollowActiveSearchMatchRef.current ||
+          isScrollingProgrammaticallyRef.current
+        ) {
+          return;
+        }
+        if (autoScrollRef.current) {
+          scrollToBottom();
+        } else if (readingAnchorRef.current) {
+          const previousScrollTop = container.scrollTop;
+          restoreConversationScrollAnchor(container, readingAnchorRef.current);
+          if (container.scrollTop !== previousScrollTop) {
+            programmaticScrollTopRef.current = container.scrollTop;
+          }
+        }
+        readingAnchorRef.current = captureConversationScrollAnchor(container);
+      }, [messageJumpTarget, scrollToBottom]);
+
+      // React updates and asynchronous block resizes both preserve the same
+      // message and pixel offset; only a reader already at the bottom follows.
+      useLayoutEffect(stabilizeScrollPosition);
+      useLayoutEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+        const observer = new ResizeObserver(stabilizeScrollPosition);
+        observer.observe(container);
+        if (contentRef.current) observer.observe(contentRef.current);
+        for (const page of pagesRef.current?.children ?? []) {
+          observer.observe(page);
+        }
+        return () => observer.disconnect();
+      }, [loading, virtualPages, stabilizeScrollPosition]);
 
       useLayoutEffect(() => {
         const container = containerRef.current;
@@ -3047,7 +3119,7 @@ const SessionView = memo(
         >
           <div
             ref={containerRef}
-            onScroll={handleScroll}
+            onScrollCapture={handleScroll}
             onWheelCapture={() => {
               if (!answerResizeCleanupRef.current)
                 answerResizeSpaceCleanupRef.current?.();

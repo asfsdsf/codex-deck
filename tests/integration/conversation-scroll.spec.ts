@@ -157,6 +157,120 @@ async function expectBoundedWindow(page: Page, totalPages: number) {
     .toBe(true);
 }
 
+for (const viewport of [
+  { width: 1440, height: 960 },
+  { width: 390, height: 844 },
+]) {
+  test(`keeps the top message steady through appends and block resizes at width ${viewport.width}`, async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize(viewport);
+    await appendFile(
+      join(app.rootDir, "sessions", `${app.sessions.alpha}.jsonl`),
+      Array.from({ length: 597 }, (_, index) =>
+        responseItemMessageLine("assistant", `Stable message ${index + 4}`),
+      ).join("\n") + "\n",
+    );
+    const ui = new CodexDeckPage(page);
+    await ui.goto(app.baseURL);
+    await ui.selectSession("Review the launch checklist");
+    if (viewport.width < 500) {
+      await page.getByRole("button", { name: "Collapse left pane" }).click();
+    }
+    await jumpToMessage(page, 342);
+    const container = page.locator("[data-conversation-scroll]");
+    await container.evaluate((node) => (node.scrollTop += 15));
+    await expectPositionMatchesViewport(page);
+    const anchor = page.locator('[data-conversation-message="342"]');
+    const originalTop = (await anchor.boundingBox())!.y;
+    const expectSteady = async () => {
+      await expect
+        .poll(async () =>
+          Math.abs((await anchor.boundingBox())!.y - originalTop),
+        )
+        .toBeLessThanOrEqual(1);
+      await expect.poll(() => topVisibleMessage(page)).toBe(342);
+      await expectPositionMatchesViewport(page);
+    };
+
+    // Resize below, above, and inside the top block, including another page.
+    for (const number of [370, 340, 250, 342]) {
+      const block = page.locator(`[data-conversation-message="${number}"]`);
+      for (const padding of [240, 0]) {
+        await block.evaluate(async (node, padding) => {
+          (node as HTMLElement).style.paddingBottom = `${padding}px`;
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          );
+        }, padding);
+        await expectSteady();
+      }
+    }
+    await app.appendSessionMessage("alpha", "assistant", "Unfollowed update");
+    await expect(page.locator("[data-total-messages]")).toHaveText("601");
+    await expectSteady();
+
+    await page.getByRole("button", { name: "Latest", exact: true }).click();
+    await expectNavigationAtBottom(page, 601);
+    // Even a small deliberate scroll away from the bottom stops following.
+    await container.evaluate((node) => (node.scrollTop -= 40));
+    await expect(
+      page.getByRole("button", { name: "Latest", exact: true }),
+    ).toBeVisible();
+    const scrollTop = await container.evaluate((node) => node.scrollTop);
+    await app.appendSessionMessage("alpha", "assistant", "Near-bottom update");
+    await expect(page.locator("[data-total-messages]")).toHaveText("602");
+    await expect
+      .poll(() => container.evaluate((node) => node.scrollTop))
+      .toBe(scrollTop);
+  });
+}
+
+test("follows new messages and asynchronous block growth only while at the bottom", async ({
+  page,
+  app,
+}) => {
+  await appendFile(
+    join(app.rootDir, "sessions", `${app.sessions.alpha}.jsonl`),
+    Array.from({ length: 197 }, (_, index) =>
+      responseItemMessageLine("assistant", `Following message ${index + 4}`),
+    ).join("\n") + "\n",
+  );
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  await ui.selectSession("Review the launch checklist");
+  await expectNavigationAtBottom(page, 200);
+  for (const padding of [300, 0]) {
+    await page
+      .locator('[data-conversation-message="200"]')
+      .evaluate(async (node, padding) => {
+        (node as HTMLElement).style.paddingBottom = `${padding}px`;
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      }, padding);
+    await expectNavigationAtBottom(page, 200);
+  }
+  await app.appendSessionMessage(
+    "alpha",
+    "assistant",
+    "First block on the next page",
+  );
+  await expect(page.locator("[data-total-messages]")).toHaveText("201");
+  await expectNavigationAtBottom(page, 201);
+  const container = page.locator("[data-conversation-scroll]");
+  await container.evaluate((node) => (node.scrollTop -= 150));
+  await expect(
+    page.getByRole("button", { name: "Latest", exact: true }),
+  ).toBeVisible();
+  // Scrolling back to the bottom resumes following without clicking Latest.
+  await container.evaluate((node) => (node.scrollTop = node.scrollHeight));
+  await app.appendSessionMessage("alpha", "assistant", "Following again");
+  await expect(page.locator("[data-total-messages]")).toHaveText("202");
+  await expectNavigationAtBottom(page, 202);
+});
+
 for (const kind of ["assistant", "tool"] as const) {
   test(`keeps the latest ${kind} blocks visible while a long history backfills`, async ({
     page,

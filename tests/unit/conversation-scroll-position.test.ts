@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getTopVisibleMessageNumber } from "../../web/conversation-scroll-position";
+import {
+  captureConversationScrollAnchor,
+  getTopVisibleMessageNumber,
+  restoreConversationScrollAnchor,
+} from "../../web/conversation-scroll-position";
 
 function viewport(
   messages: { number: number; top: number; bottom: number }[],
@@ -90,4 +94,53 @@ test("finding the topmost block avoids measuring the entire rendered cache", () 
   );
   assert.equal(getTopVisibleMessageNumber(container), 501);
   assert.ok(measurements < 20);
+});
+
+test("a reading anchor preserves a clipped message when earlier content grows or shrinks", () => {
+  let messageTop = 280;
+  const container = {
+    scrollTop: 200,
+    clientTop: 2,
+    clientHeight: 300,
+    getBoundingClientRect: () => ({ top: 100 }),
+    querySelectorAll: () => [message],
+    querySelector: () => message,
+  } as unknown as HTMLElement;
+  const message = {
+    dataset: { conversationMessage: "342" },
+    getBoundingClientRect: () => ({
+      top: messageTop - container.scrollTop,
+      bottom: messageTop - container.scrollTop + 150,
+      height: 150,
+    }),
+  };
+  const anchor = captureConversationScrollAnchor(container)!;
+  assert.deepEqual(anchor, { messageNumber: 342, offset: -22 });
+
+  messageTop += 240;
+  restoreConversationScrollAnchor(container, anchor);
+  assert.equal(container.scrollTop, 440);
+  assert.deepEqual(captureConversationScrollAnchor(container), anchor);
+
+  messageTop -= 120;
+  restoreConversationScrollAnchor(container, anchor);
+  assert.equal(container.scrollTop, 320);
+  assert.deepEqual(captureConversationScrollAnchor(container), anchor);
+
+  // Appending or resizing below the anchor doesn't move the viewport.
+  restoreConversationScrollAnchor(container, anchor);
+  assert.equal(container.scrollTop, 320);
+});
+
+test("an anchor whose message was removed leaves the scroll position alone", () => {
+  const container = {
+    scrollTop: 200,
+    querySelector: () => null,
+  } as unknown as HTMLElement;
+  restoreConversationScrollAnchor(container, {
+    messageNumber: 342,
+    offset: -22,
+  });
+  assert.equal(container.scrollTop, 200);
+  assert.equal(captureConversationScrollAnchor(viewport([])), null);
 });

@@ -1,9 +1,7 @@
 export const CONVERSATION_MESSAGE_SELECTOR = "[data-conversation-message]";
 
 /** Message markers are flat and ordered by their vertical position. */
-export function getTopVisibleMessageNumber(
-  container: HTMLElement,
-): number | null {
+function getTopVisibleMessage(container: HTMLElement): HTMLElement | null {
   const viewport = container.getBoundingClientRect();
   const top = viewport.top + container.clientTop;
   const bottom = top + container.clientHeight;
@@ -29,7 +27,49 @@ export function getTopVisibleMessageNumber(
     if (rect.top >= bottom) break;
     if (rect.height <= 0) continue;
     const number = Number(message.dataset.conversationMessage);
-    if (Number.isInteger(number) && number > 0) return number;
+    if (Number.isInteger(number) && number > 0) return message;
   }
   return null;
+}
+
+export function getTopVisibleMessageNumber(
+  container: HTMLElement,
+): number | null {
+  const message = getTopVisibleMessage(container);
+  return message ? Number(message.dataset.conversationMessage) : null;
+}
+
+export interface ConversationScrollAnchor {
+  messageNumber: number;
+  offset: number;
+}
+
+export function captureConversationScrollAnchor(
+  container: HTMLElement,
+): ConversationScrollAnchor | null {
+  const message = getTopVisibleMessage(container);
+  if (!message) return null;
+  return {
+    messageNumber: Number(message.dataset.conversationMessage),
+    offset:
+      message.getBoundingClientRect().top -
+      container.getBoundingClientRect().top -
+      container.clientTop,
+  };
+}
+
+export function restoreConversationScrollAnchor(
+  container: HTMLElement,
+  anchor: ConversationScrollAnchor,
+): void {
+  const message = container.querySelector<HTMLElement>(
+    `[data-conversation-message="${anchor.messageNumber}"]`,
+  );
+  if (!message) return;
+  const delta =
+    message.getBoundingClientRect().top -
+    container.getBoundingClientRect().top -
+    container.clientTop -
+    anchor.offset;
+  if (Math.abs(delta) > 0.5) container.scrollTop += delta;
 }
