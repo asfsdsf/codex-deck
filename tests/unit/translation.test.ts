@@ -212,3 +212,31 @@ test("macOS translation retries when the helper disappears before spawn", async 
   assert.equal(compileCount, 2);
   assert.equal(runCount, 2);
 });
+
+test("macOS receives bounded chunks while the caller receives the complete long translation", async (t) => {
+  const chunks: string[] = [];
+  const updates: string[] = [];
+  const text = `# Codex conversation\n\n${"Unicode 中文 😀 and the full original paragraph.\n\n".repeat(5000)}End.\n`;
+  assert.ok(text.length > 200_000);
+  setMacOSTranslationBackendForTests({
+    binaryExists: () => true,
+    compileBinary: async () => "/tmp/codex-deck-translate-test",
+    runProcess: async (_file, _args, options) => {
+      assert.ok(options.input!.length <= 16_000);
+      chunks.push(options.input!);
+      options.onStdout?.(options.input!);
+      return { stdout: options.input!, stderr: "" };
+    },
+  });
+  t.after(() => setMacOSTranslationBackendForTests(null));
+  const translated = await translateText({
+    text,
+    inputLang: "en",
+    outputLang: "zh",
+    platform: "darwin",
+    onProgress: (value) => updates.push(value),
+  });
+  assert.ok(chunks.length > 1);
+  assert.equal(translated, text);
+  assert.equal(updates.at(-1), text);
+});

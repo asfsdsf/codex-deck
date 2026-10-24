@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { translateTextInChunks } from "./translation-chunks";
 
 const COMMAND_TIMEOUT_MS = 120_000;
 const MACOS_RUN_TIMEOUT_MS = 60_000;
@@ -45,26 +46,30 @@ export async function translateText(
     throw new Error("text must be a non-empty string");
   }
   const command = options.command?.trim();
-  if (command) {
-    return translateWithCommand(
-      command,
-      text,
-      options.inputLang,
-      options.outputLang,
-      options.onProgress,
-    );
-  }
   const platform = options.platform ?? process.platform;
-  if (platform === "darwin") {
-    return translateWithMacOSBuiltIn(
-      text,
-      options.inputLang,
-      options.outputLang,
-      options.onProgress,
+  if (!command && platform !== "darwin") {
+    throw new TranslationUnavailableError(
+      "Translation is not available on this platform. Set translation_command in the codex-deck config.toml to enable translation.",
     );
   }
-  throw new TranslationUnavailableError(
-    "Translation is not available on this platform. Set translation_command in the codex-deck config.toml to enable translation.",
+  return translateTextInChunks(
+    text,
+    (chunk, onProgress) =>
+      command
+        ? translateWithCommand(
+            command,
+            chunk,
+            options.inputLang,
+            options.outputLang,
+            onProgress,
+          )
+        : translateWithMacOSBuiltIn(
+            chunk,
+            options.inputLang,
+            options.outputLang,
+            onProgress,
+          ),
+    options.onProgress,
   );
 }
 

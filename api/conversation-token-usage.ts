@@ -2,7 +2,7 @@ import type { ConversationMessage, TokenUsage } from "./storage";
 
 export type ConversationModelMetadata = Pick<
   NonNullable<ConversationMessage["message"]>,
-  "model" | "reasoningEffort" | "serviceTier"
+  "model" | "reasoningEffort" | "serviceTier" | "phase"
 >;
 
 export function parseConversationModelMetadata(
@@ -14,11 +14,12 @@ export function parseConversationModelMetadata(
     reasoningEffort: payload.reasoning_effort ?? payload.effort,
     serviceTier: payload.service_tier,
   };
-  for (const key of Object.keys(
-    values,
-  ) as (keyof ConversationModelMetadata)[]) {
+  for (const key of Object.keys(values) as (keyof typeof values)[]) {
     const value = values[key];
     if (typeof value === "string" && value.trim()) metadata[key] = value.trim();
+  }
+  if (payload.phase === "commentary" || payload.phase === "final_answer") {
+    metadata.phase = payload.phase;
   }
   return metadata;
 }

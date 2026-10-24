@@ -80,6 +80,8 @@ import {
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
 import { mergePendingConversationMessages } from "../pending-conversation-messages";
+import { getCompletedTaskAnswers } from "../task-answer";
+import { TaskAnswerActions } from "./task-answer-actions";
 import {
   captureConversationScrollAnchor,
   restoreConversationScrollAnchor,
@@ -722,8 +724,12 @@ function getComposerUserMessages(
     return [];
   }
 
-  const firstMessage = messages[0];
-  const secondMessage = messages[1];
+  const displayMessages = messages.filter(
+    (message) =>
+      message.type !== "task_started" && message.type !== "task_complete",
+  );
+  const firstMessage = displayMessages[0];
+  const secondMessage = displayMessages[1];
   const skipFirstUserMessage =
     firstMessage?.type === "user" && secondMessage?.type === "user";
 
@@ -1009,12 +1015,8 @@ const SessionView = memo(
                 done: batch?.done ?? true,
               });
 
-              const displayMessages = newMessages.filter(
-                (m) => m.type !== "task_started" && m.type !== "task_complete",
-              );
-
               setLoading(false);
-              appendDisplayMessages(displayMessages, {
+              appendDisplayMessages(newMessages, {
                 phase,
                 done: batch?.done,
                 insertion: batch?.insertion,
@@ -1958,6 +1960,10 @@ const SessionView = memo(
         () => visibleConversationMessages.map((entry) => entry.message),
         [visibleConversationMessages],
       );
+      const completedTaskAnswers = useMemo(
+        () => getCompletedTaskAnswers(messages),
+        [messages],
+      );
       const visibleMessageEntries = useMemo<PagedMessageEntry[]>(() => {
         let transientCount = 0;
         return visibleConversationMessages.map((displayEntry, visibleIndex) => {
@@ -1992,11 +1998,17 @@ const SessionView = memo(
             usesUserInputState,
             timestampText,
             timestampAlignment,
-            group: getViewportMessageGroup(message),
+            group: completedTaskAnswers.has(message)
+              ? "important"
+              : getViewportMessageGroup(message),
             pendingUserMessage,
           };
         });
-      }, [visibleConversationMessages, serverMessageCount]);
+      }, [
+        visibleConversationMessages,
+        serverMessageCount,
+        completedTaskAnswers,
+      ]);
       const latestAiTerminalPlanEntryKey = useMemo(() => {
         for (
           let index = visibleMessageEntries.length - 1;
@@ -2621,6 +2633,7 @@ const SessionView = memo(
             );
           }
 
+          const taskCompletion = completedTaskAnswers.get(message);
           return (
             <div
               key={entry.entryKey}
@@ -2689,6 +2702,14 @@ const SessionView = memo(
                   suppressedRequestUserInputResultIds
                 }
               />
+              {taskCompletion && (
+                <TaskAnswerActions
+                  key={`${sessionId}:${taskCompletion.sequence ?? taskCompletion.uuid ?? taskCompletion.turnId}`}
+                  sessionId={sessionId}
+                  completion={taskCompletion}
+                  onFilePathLinkClick={onFilePathLinkClick}
+                />
+              )}
               {timestampText && (
                 <div
                   className={`mt-1 flex ${timestampAlignment} text-[10px] font-mono leading-none text-zinc-500/90`}
@@ -2703,6 +2724,7 @@ const SessionView = memo(
           activeSearchMatch,
           aiTerminalTerminalId,
           agentsBootstrapMessage,
+          completedTaskAnswers,
           forceSendingPendingId,
           handleChangeUserInputOtherText,
           handleEditMessage,

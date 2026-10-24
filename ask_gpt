@@ -1,0 +1,260 @@
+#!/bin/bash
+
+# set -uo pipefail
+# set -x
+
+usage() {
+  cat <<'EOF'
+Usage: ask_gpt [-v] SYSTEM_PROMPT USER_INPUT
+
+Send a system prompt and user input to the configured Responses API.
+Print response text as it arrives, followed by a final newline.
+The final response JSON is saved in .ask_gpt/output.log.
+
+Example:
+  ask_gpt 'Answer concisely.' 'Explain how streaming works.'
+
+Options:
+  -v  Print diagnostic messages when an error occurs.
+  -h  Show this help message.
+
+Configuration: .ask_gpt/env beside this command (shell syntax).
+  BASE_URL and API_KEY are required.
+  MODEL defaults to gpt-6-luna when unset or empty.
+  REASONING_EFFORT is optional; unset or empty omits the reasoning option.
+  Export curl proxy variables here, e.g.:
+    export https_proxy=http://127.0.0.1:7893
+  Optional request settings, e.g.:
+    MODEL=gpt-6-luna
+    REASONING_EFFORT=low
+EOF
+}
+
+verbose=0
+option_error=""
+if [[ ${1:-} == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+OPTIND=1
+while getopts ':vh' option; do
+  case "$option" in
+    v)
+      verbose=1
+      ;;
+    h)
+      usage
+      exit 0
+      ;;
+    :)
+      option_error="option -$OPTARG requires an argument"
+      ;;
+    \?)
+      option_error="unknown option: -$OPTARG"
+      ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+# Errors are silent by default. Parse -v before redirecting stderr so callers
+# can opt in to diagnostics without changing successful stdout output.
+if (( ! verbose )); then
+  exec 2>/dev/null
+fi
+
+if [[ -n $option_error ]]; then
+  printf 'ask_gpt: %s\n' "$option_error" >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ $# -ne 2 ]]; then
+  usage >&2
+  exit 2
+fi
+
+for command_name in curl jq; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    printf 'ask_gpt: required command not found: %s\n' "$command_name" >&2
+    exit 127
+  fi
+done
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+workdir="$script_dir/.ask_gpt"
+env_file="$workdir/env"
+mkdir -p "$workdir"
+
+if [[ ! -r "$env_file" ]]; then
+  printf 'ask_gpt: configuration file is missing or unreadable: %s\n' "$env_file" >&2
+  exit 1
+fi
+
+# This file defines BASE_URL, API_KEY, optional MODEL and REASONING_EFFORT,
+# and exported proxy variables for curl. Do not enable shell tracing here:
+# doing so would print the API key and prompt contents.
+# shellcheck source=/dev/null
+source "$env_file" >/dev/null
+
+if [[ -z ${BASE_URL:-} || -z ${API_KEY:-} ]]; then
+  printf 'ask_gpt: BASE_URL and API_KEY must be set in %s\n' "$env_file" >&2
+  exit 1
+fi
+
+system_prompt=$1
+user_input=$2
+printf '%s\n' "$system_prompt" > "$workdir/system_input.log"
+printf '%s\n' "$user_input" > "$workdir/user_input.log"
+
+if ! payload="$(jq -n \
+  --arg system "$system_prompt" \
+  --arg user "$user_input" \
+  --arg model "${MODEL:-gpt-6-luna}" \
+  --arg reasoning_effort "${REASONING_EFFORT:-}" \
+  '{
+    model: $model,
+    instructions: $system,
+    input: $user,
+    stream: true
+  } + (if $reasoning_effort == "" then {}
+       else {reasoning: {effort: $reasoning_effort}} end)')"; then
+  printf 'ask_gpt: failed to construct the JSON request\n' >&2
+  exit 1
+fi
+
+response_tmp="$(mktemp "$workdir/output.XXXXXX")" || exit 1
+response_json_tmp="$response_tmp.json"
+http_code_tmp="$response_tmp.status"
+stream_error_tmp="$response_tmp.error"
+trap 'rm -f "$response_tmp" "$response_json_tmp" "$http_code_tmp" "$stream_error_tmp"' EXIT
+request_id="$(uuidgen 2>/dev/null || printf '%s-%s-%s' "$(date +%s)" "$$" "$RANDOM")"
+
+# Share the SSE decoder between terminal streaming and final response logging.
+sse_filter='
+  # SSE frames end at a blank line; join multiple data lines and accept CRLF.
+  def events:
+    foreach (inputs, "") as $line (
+      {data: [], event: null};
+      ($line | rtrimstr("\r")) as $line
+      | .event = null
+      | if $line == "" then
+          if (.data | length) > 0 then
+            (.data | join("\n")) as $data
+            | .event = (if $data == "[DONE]" then null
+                        else try ($data | fromjson)
+                             catch {type: "error", message: "invalid streaming event"}
+                        end)
+          else . end
+          | .data = []
+        elif ($line | startswith("data:")) then
+          .data += [($line | ltrimstr("data:") | ltrimstr(" "))]
+        else . end;
+      .event | select(type == "object")
+    );
+'
+
+# Do not retry streamed requests: a retry could duplicate text already printed.
+# Keep the HTTP status separate from the body while curl and jq flush each chunk.
+{
+  curl -sS --no-buffer \
+    --connect-timeout 10 \
+    --max-time 120 \
+    -o /dev/fd/3 \
+    -w '%{http_code}' \
+    -X POST "${BASE_URL%/}/responses" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: text/event-stream' \
+    -H "Idempotency-Key: $request_id" \
+    --data-binary "$payload" > "$http_code_tmp"
+} 3>&1 | tee "$response_tmp" | jq -Rnj --unbuffered "$sse_filter"'
+  foreach (events, {type: "eof"}) as $event (
+    {text: false, completed: false, failure: null, chunk: ""};
+    .chunk = ""
+    | if $event.type == "response.output_text.delta" and .failure == null then
+        .chunk = $event.delta
+        | .text = (.text or (.chunk | length) > 0)
+      elif $event.type == "response.completed" then
+        .completed = true
+      elif ($event.type == "error" or $event.type == "response.failed"
+            or $event.type == "response.incomplete") then
+        .failure = ($event.message // $event.response.error.message
+                    // $event.response.incomplete_details.reason // $event.type)
+      elif $event.type == "eof" then
+        if .failure != null then error(.failure)
+        elif .completed == false then error("response stream ended before response.completed")
+        elif .text == false then error("response contained no output text")
+        else .chunk = "\n" end
+      else . end;
+    .chunk
+  )
+' 2> "$stream_error_tmp"
+pipeline_status=("${PIPESTATUS[@]}")
+curl_status=${pipeline_status[0]}
+http_code="$(cat "$http_code_tmp")"
+
+# Preserve ordinary JSON/error bodies. For SSE, save the terminal response
+# object, matching the old non-streaming log format. Keep partial text readable
+# if the connection ends before a terminal response arrives.
+if [[ ! $http_code =~ ^2[0-9][0-9]$ ]] || jq -e . "$response_tmp" >/dev/null 2>&1; then
+  mv "$response_tmp" "$workdir/output.log" || exit 1
+else
+  if ! jq -Rn "$sse_filter"'
+    reduce events as $event (
+      {response: null, text: "", failure: null};
+      if $event.type == "response.output_text.delta" then
+        .text += ($event.delta // "")
+      elif ($event.type == "response.completed" or $event.type == "response.failed"
+            or $event.type == "response.incomplete") then
+        .response = $event.response
+      elif $event.type == "error" then
+        .failure = {message: $event.message, code: $event.code}
+      else . end
+    )
+    | .response // (
+        {object: "response", status: "incomplete", output: [
+          if .text != "" then
+            {type: "message", role: "assistant", content: [
+              {type: "output_text", text: .text}
+            ]}
+          else empty end
+        ]}
+        + (if .failure != null then {error: .failure} else {} end)
+      )
+  ' "$response_tmp" > "$response_json_tmp"; then
+    printf 'ask_gpt: failed to construct the response log\n' >&2
+    exit 1
+  fi
+  mv "$response_json_tmp" "$workdir/output.log" || exit 1
+fi
+
+if (( curl_status != 0 )); then
+  printf 'ask_gpt: request failed (curl exit %d, HTTP %s)\n' \
+    "$curl_status" "${http_code:-unknown}" >&2
+  exit 1
+fi
+
+if [[ ! $http_code =~ ^2[0-9][0-9]$ ]]; then
+  error_message="$(jq -r '.error.message // .message // empty' \
+    "$workdir/output.log" 2>/dev/null)"
+  if [[ -n $error_message ]]; then
+    printf 'ask_gpt: HTTP %s: %s\n' "$http_code" "$error_message" >&2
+  else
+    printf 'ask_gpt: HTTP %s: ' "$http_code" >&2
+    head -c 1000 "$workdir/output.log" >&2
+    printf '\n' >&2
+  fi
+  exit 1
+fi
+
+if (( pipeline_status[1] != 0 )); then
+  printf 'ask_gpt: failed to save the response stream\n' >&2
+  exit 1
+fi
+
+if (( pipeline_status[2] != 0 )); then
+  printf 'ask_gpt: failed to read the response stream: ' >&2
+  cat "$stream_error_tmp" >&2
+  exit 1
+fi

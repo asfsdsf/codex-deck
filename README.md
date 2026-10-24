@@ -53,6 +53,7 @@ UI design:
 - **Block mode** - View full, detailed message content in blocks.
 - **Text mode** - Simplify less important message blocks into readable text lines.
 - **Expandable blocks** - Toggle blocks between compact and expanded views, with clean copy behavior.
+- **Translate complete answers** - Use **Translate all** after a task completes, then **Copy translation** to copy the complete translated answer. **Copy answer** preserves the original headings, text, and command/code blocks; progress messages and tool execution wrappers are excluded.
 
 Code context and inspection:
 
@@ -134,6 +135,12 @@ Interactive mode uses `codex` under the hood. If `codex` is not on your `PATH`, 
 ```bash
 export CODEX_CLI_PATH="/absolute/path/to/codex"
 ```
+
+When a Codex app-server daemon is already running for the selected Codex home,
+Deck connects to its local control socket. This lets Deck continue conversations
+that are open in the desktop app without opening a second thread writer. Closing
+Deck disconnects its client and leaves the shared daemon running. If no daemon
+is available, Deck starts its own `codex app-server` as before.
 
 ## Installation (Local mode)
 

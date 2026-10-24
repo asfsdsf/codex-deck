@@ -280,6 +280,11 @@ export class ConversationParserState {
       const index = this.itemSlots.get(this.itemKey(turnId, itemId, type));
       if (index === undefined || !this.messages[index].streaming) continue;
       const previous = this.messages[index];
+      const phase =
+        type === "assistant" &&
+        (item?.phase === "commentary" || item?.phase === "final_answer")
+          ? item.phase
+          : undefined;
       const finalText =
         type === "assistant" && item
           ? [
@@ -294,16 +299,21 @@ export class ConversationParserState {
       this.messages[index] = {
         ...previous,
         streaming: false,
-        ...(finalText
+        ...(finalText || phase
           ? {
               message: {
                 ...previous.message!,
-                content: [
-                  {
-                    type: type === "assistant" ? "text" : type,
-                    text: finalText,
-                  },
-                ],
+                ...(phase ? { phase } : {}),
+                ...(finalText
+                  ? {
+                      content: [
+                        {
+                          type: type === "assistant" ? "text" : type,
+                          text: finalText,
+                        },
+                      ],
+                    }
+                  : {}),
               },
             }
           : {}),
