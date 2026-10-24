@@ -39,8 +39,7 @@ npm-debug.log*
 # Cache
 .cache/
 
-# Lock files (using pnpm)
-pnpm-lock.yaml
+# Other package managers' lockfiles (pnpm-lock.yaml is committed)
 package-lock.json
 yarn.lock
 bun.lockb

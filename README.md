@@ -169,7 +169,7 @@ npm uninstall -g codex-deck
 ```bash
 git clone https://github.com/asfsdsf/codex-deck.git
 cd codex-deck
-npm install -g pnpm
+npm install -g pnpm@10.32.1
 pnpm install
 pnpm build
 pnpm start
@@ -469,6 +469,28 @@ pnpm install
 pnpm build
 pnpm dev
 ```
+
+Use the pnpm version declared in the root `package.json` (`pnpm@10.32.1`), which
+matches the workspace packages. The root `pnpm-lock.yaml` is committed and covers
+all workspace packages. When changing dependencies in any `package.json`, run
+`pnpm install` and commit the updated lockfile with the manifest changes. Verify
+reproducible installs with `pnpm install --frozen-lockfile`, which is also used by
+source updates. When merging dependency changes, resolve manifest conflicts
+first, then run `pnpm install` and commit the reconciled lockfile.
+
+After pulling changes, refresh dependencies and rebuild before starting:
+
+```bash
+git pull
+pnpm install --frozen-lockfile
+pnpm build
+```
+
+The [Dependency checks](.github/workflows/dependencies.yml) workflow verifies a
+frozen install, the native terminal module, and the local app build on Linux and
+macOS for every pull request and push. Maintainers should require both checks in
+the target branch's protection rules before merging. If a frozen install reports
+an outdated lockfile, the dependency change needs a matching lockfile update.
 
 `pnpm dev` starts:
 

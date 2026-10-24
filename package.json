@@ -3,6 +3,7 @@
   "version": "0.2.1",
   "description": "Browse and interact with Codex more easily, and orchestrate multiple tasks from a dedicated workflow board.",
   "type": "module",
+  "packageManager": "pnpm@10.32.1",
   "bin": {
     "codex-deck": "dist/index.js"
   },
