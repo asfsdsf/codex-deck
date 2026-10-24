@@ -3,6 +3,7 @@ import type {
   TranslateTextRequest,
   TranslateTextResponse,
 } from "@codex-deck/api";
+import { translateTextInChunks } from "../../api/translation-chunks";
 
 interface TranslationTransportOptions {
   requestJson: <T>(url: string, init?: RequestInit) => Promise<T>;
@@ -27,7 +28,20 @@ export async function requestTranslation(
     } else waitingTranslations.push(resolve);
   });
   try {
-    return await readTranslation(request, options);
+    // One logical translation occupies one concurrency slot. Its chunks run
+    // sequentially so SSE and remote polling both report an ordered prefix.
+    const translatedText = await translateTextInChunks(
+      request.text,
+      async (text, onProgress) => {
+        const translated = await readTranslation(
+          { ...request, text },
+          { ...options, onProgress },
+        );
+        return translated.translatedText;
+      },
+      options.onProgress,
+    );
+    return { translatedText };
   } finally {
     const next = waitingTranslations.shift();
     if (next) next();

@@ -1,0 +1,38 @@
+name: Dependency checks
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-build:
+    name: Install and build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify native build policy
+        run: pnpm exec tsx --tsconfig tsconfig.test.json --test tests/unit/workspace-config.test.ts
+      - name: Verify native terminal module
+        run: node -e "require('node-pty')"
+      - name: Build local app
+        run: pnpm build
+      - name: Check dependency files remain unchanged
+        run: git diff --exit-code -- package.json server/package.json wire/package.json pnpm-lock.yaml pnpm-workspace.yaml

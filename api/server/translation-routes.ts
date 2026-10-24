@@ -11,7 +11,6 @@ import { responseStatusForError, toErrorMessage } from "./utils";
 
 const DEFAULT_INPUT_LANG = "en";
 const DEFAULT_OUTPUT_LANG = "zh";
-const MAX_TRANSLATE_TEXT_LENGTH = 200_000;
 
 export interface TranslationRouteOptions {
   translationCommand?: string;
@@ -80,9 +79,6 @@ export function registerTranslationRoutes(
       if (typeof body.text !== "string" || !body.text.trim()) {
         return c.json({ error: "text must be a non-empty string" }, 400);
       }
-      if (body.text.length > MAX_TRANSLATE_TEXT_LENGTH) {
-        return c.json({ error: "text is too long to translate" }, 413);
-      }
       if (body.inputLang !== undefined && typeof body.inputLang !== "string") {
         return c.json({ error: "inputLang must be a string" }, 400);
       }
@@ -95,6 +91,8 @@ export function registerTranslationRoutes(
       if (body.stream !== undefined && typeof body.stream !== "boolean") {
         return c.json({ error: "stream must be a boolean" }, 400);
       }
+      // Accept full history exports, including requests from older browser
+      // bundles. translateText bounds each backend invocation with chunking.
       const translationOptions = {
         text: body.text,
         inputLang: body.inputLang?.trim() || DEFAULT_INPUT_LANG,

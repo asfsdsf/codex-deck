@@ -1533,6 +1533,8 @@ export interface ConversationMessage {
   message?: {
     role: string;
     content: string | ContentBlock[];
+    /** Distinguish the answer from progress/tool commentary when Codex records it. */
+    phase?: "commentary" | "final_answer";
     model?: string;
     reasoningEffort?: CodexReasoningEffort;
     serviceTier?: string;

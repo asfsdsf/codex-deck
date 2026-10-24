@@ -9,6 +9,70 @@ function line(record: Record<string, unknown>): string {
   return JSON.stringify(record);
 }
 
+for (const incremental of [false, true]) {
+  test(`${incremental ? "incremental" : "static"} parsing preserves answer phases without leaking them to unphased messages`, () => {
+    const records = [
+      "commentary",
+      "final_answer",
+      undefined,
+      "unknown_future_phase",
+    ].map((phase) =>
+      line({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase,
+          content: [
+            { type: "output_text", text: `Content ${phase ?? "legacy"}` },
+          ],
+        },
+      }),
+    );
+    const state = incremental ? new ConversationParserState() : undefined;
+    let messages;
+    if (state) {
+      let offset = 0;
+      for (const record of records)
+        offset += parseConversationTextChunk(
+          record + "\n",
+          offset,
+          undefined,
+          state,
+        ).consumedBytes;
+      messages = state.messages;
+    } else
+      messages = parseConversationTextChunk(records.join("\n") + "\n").messages;
+    assert.deepEqual(
+      messages.map((message) => message.message?.phase),
+      ["commentary", "final_answer", undefined, undefined],
+    );
+  });
+}
+
+test("live assistant completion retains its phase for answer-only copy and translation", () => {
+  const state = new ConversationParserState();
+  state.applyStreamText("turn-1", "progress", "assistant", "Progress text");
+  state.completeStreamItem("turn-1", "progress", {
+    type: "agentMessage",
+    phase: "commentary",
+    text: "Progress text",
+  });
+  state.applyStreamText("turn-1", "answer", "assistant", "Answer text");
+  state.completeStreamItem("turn-1", "answer", {
+    type: "agentMessage",
+    phase: "final_answer",
+  });
+  assert.deepEqual(
+    state.messages.map((message) => message.message?.phase),
+    ["commentary", "final_answer"],
+  );
+  assert.equal(state.messages[1].streaming, false);
+  assert.deepEqual(state.messages[1].message?.content, [
+    { type: "text", text: "Answer text" },
+  ]);
+});
+
 test("native async questions survive history parsing and live message completion", () => {
   const questions = [
     { title: "Which audience?", options: ["Engineers", "Executives"] },

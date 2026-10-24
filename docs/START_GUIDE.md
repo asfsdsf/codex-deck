@@ -8,6 +8,11 @@ pnpm build
 pnpm start
 ```
 
+After pulling source changes, run `pnpm install --frozen-lockfile` and `pnpm build`
+before starting again. The committed root lockfile keeps dependency versions
+consistent with the contributor's checkout. Use the pnpm version specified in
+the root `package.json`.
+
 To run the built local server under the operating system’s user service manager
 instead, install the daemon and use its lifecycle command:
 

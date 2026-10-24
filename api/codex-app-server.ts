@@ -4,7 +4,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
   type Interface as ReadlineInterface,
 } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
+import WebSocket from "ws";
 import type {
   CodexAgentWaitConfig,
   CodexAppServerEvent,
@@ -30,6 +31,17 @@ const MODELS_CACHE_TTL_MS = 30_000;
 const PROVIDER_MODELS_REQUEST_TIMEOUT_MS = 10_000;
 const COLLABORATION_MODES_CACHE_TTL_MS = 30_000;
 const THREAD_STATE_CACHE_TTL_MS = 250;
+const MAX_APP_SERVER_MESSAGE_BYTES = 16 * 1024 * 1024;
+
+function findSharedAppServerSocket(codexHome: string): string | null {
+  if (process.platform === "win32") return null;
+  const path = join(codexHome, "app-server-control", "app-server-control.sock");
+  try {
+    return statSync(path).isSocket() ? path : null;
+  } catch {
+    return null;
+  }
+}
 
 export type CodexReasoningEffort =
   | "none"
@@ -815,6 +827,8 @@ interface CodexAppServerClientOptions {
   env?: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
   userAgent?: string;
+  /** null disables discovery; a path overrides the selected home's socket. */
+  sharedSocketPath?: string | null;
 }
 
 class CodexAppServerClient {
@@ -823,8 +837,12 @@ class CodexAppServerClient {
   private readonly env: NodeJS.ProcessEnv | undefined;
   private readonly requestTimeoutMs: number;
   private readonly userAgent: string;
+  private readonly sharedSocketPath: string | null | undefined;
 
   private process: ChildProcessWithoutNullStreams | null = null;
+  private sharedSocket: WebSocket | null = null;
+  private connectionInFlight: Promise<void> | null = null;
+  private readonly sharedThreadSubscriptions = new Set<string>();
   private stderrReader: ReadlineInterface | null = null;
   private readonly stdoutMessageParser = new AppServerStdoutMessageParser();
   private initialized = false;
@@ -865,6 +883,7 @@ class CodexAppServerClient {
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userAgent = options.userAgent ?? "codex-deck/0.2.4";
+    this.sharedSocketPath = options.sharedSocketPath;
   }
 
   public async listModels(
@@ -1933,6 +1952,16 @@ class CodexAppServerClient {
     // that raced with the first check is loaded before the turn starts.
     await this.reloadAuthIfChanged();
 
+    if (
+      this.sharedSocket &&
+      !this.newlyStartedThreadIds.has(threadId) &&
+      !this.sharedThreadSubscriptions.has(threadId)
+    ) {
+      // The daemon may already have this thread loaded for another app. A
+      // resume subscribes our connection before turn/start can succeed there.
+      await this.resumeThread(threadId, activeConfig);
+    }
+
     try {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
@@ -2457,6 +2486,13 @@ class CodexAppServerClient {
     this.stderrReader?.close();
     this.stderrReader = null;
 
+    // This is only our connection. Never stop the shared Codex daemon, which
+    // may be running turns for the desktop app or other clients.
+    const socket = this.sharedSocket;
+    this.sharedSocket = null;
+    this.sharedThreadSubscriptions.clear();
+    socket?.close();
+
     if (this.process) {
       try {
         this.process.kill("SIGTERM");
@@ -2485,7 +2521,8 @@ class CodexAppServerClient {
   }
 
   private async restartAppServerInner(): Promise<boolean> {
-    const wasRunning = this.process !== null;
+    const wasShared = this.sharedSocket !== null;
+    const wasRunning = this.process !== null || wasShared;
     this.readCoalescer.clearMatching(() => true);
     this.newlyStartedThreadIds.clear();
     this.lastKnownProviderId = null;
@@ -2495,10 +2532,13 @@ class CodexAppServerClient {
     }
 
     console.warn(
-      "[codex-deck] conversation history changed; restarting codex app-server",
+      wasShared
+        ? "[codex-deck] conversation history changed; reconnecting to shared codex app-server"
+        : "[codex-deck] conversation history changed; restarting codex app-server",
     );
     await this.close();
-    this.ensureStarted();
+    if (wasShared) await this.ensureConnected();
+    else this.ensureStarted();
     try {
       await this.ensureInitialized();
     } catch (error) {
@@ -2749,6 +2789,80 @@ class CodexAppServerClient {
     this.process = child;
   }
 
+  private async ensureConnected(): Promise<void> {
+    if (this.process || this.sharedSocket?.readyState === WebSocket.OPEN) {
+      return;
+    }
+    if (this.connectionInFlight) return this.connectionInFlight;
+
+    const connect = async () => {
+      const codexHome =
+        this.env?.CODEX_HOME?.trim() ||
+        process.env.CODEX_HOME?.trim() ||
+        join(homedir(), ".codex");
+      const socketPath =
+        this.sharedSocketPath === undefined
+          ? findSharedAppServerSocket(codexHome)
+          : this.sharedSocketPath;
+      if (socketPath) {
+        try {
+          await this.connectSharedAppServer(socketPath);
+          return;
+        } catch {
+          // Older installations and stale daemon sockets still use the
+          // standalone app-server. Never retry a turn after a lost connection.
+        }
+      }
+      this.ensureStarted();
+    };
+    this.connectionInFlight = connect();
+    try {
+      await this.connectionInFlight;
+    } finally {
+      this.connectionInFlight = null;
+    }
+  }
+
+  private async connectSharedAppServer(socketPath: string): Promise<void> {
+    const socket = new WebSocket(`ws+unix://${socketPath}:/`, {
+      handshakeTimeout: 1_000,
+      maxPayload: MAX_APP_SERVER_MESSAGE_BYTES,
+    });
+    this.sharedSocket = socket;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let opened = false;
+        socket.once("open", () => {
+          opened = true;
+          resolve();
+        });
+        socket.on("message", (data) => {
+          if (this.sharedSocket !== socket) return;
+          try {
+            const message: unknown = JSON.parse(data.toString());
+            const record = asRecord(message);
+            if (record) this.handleStdoutMessage(record);
+          } catch {
+            socket.close(1002, "Invalid app-server JSON");
+          }
+        });
+        socket.on("error", (error) => {
+          if (!opened) reject(error);
+        });
+        socket.on("close", () => {
+          if (!opened) reject(new Error("app-server socket closed"));
+          if (this.sharedSocket !== socket) return;
+          this.sharedSocket = null;
+          this.handleProcessExit("shared app-server connection closed");
+        });
+      });
+    } catch (error) {
+      if (this.sharedSocket === socket) this.sharedSocket = null;
+      socket.terminate();
+      throw error;
+    }
+  }
+
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) {
       return;
@@ -2779,6 +2893,7 @@ class CodexAppServerClient {
         );
       }
 
+      await this.writeMessage({ method: "initialized", params: {} });
       this.initialized = true;
     })().finally(() => {
       this.initializeInFlight = null;
@@ -2788,13 +2903,18 @@ class CodexAppServerClient {
   }
 
   private async request(method: string, params: unknown): Promise<unknown> {
-    this.ensureStarted();
+    await this.ensureConnected();
 
     if (method !== "initialize") {
       await this.ensureInitialized();
     }
 
-    return this.requestRaw(method, params, this.requestTimeoutMs);
+    const result = await this.requestRaw(method, params, this.requestTimeoutMs);
+    if (this.sharedSocket && method === "thread/resume") {
+      const threadId = asTrimmedString(asRecord(params)?.threadId);
+      if (threadId) this.sharedThreadSubscriptions.add(threadId);
+    }
+    return result;
   }
 
   private async requestRaw(
@@ -2802,8 +2922,7 @@ class CodexAppServerClient {
     params: unknown,
     timeoutMs: number,
   ): Promise<unknown> {
-    const processHandle = this.process;
-    if (!processHandle) {
+    if (!this.process && !this.sharedSocket) {
       throw new CodexAppServerTransportError("app-server failed to start");
     }
 
@@ -2828,11 +2947,7 @@ class CodexAppServerClient {
 
       this.pending.set(id, { resolve, reject, timer });
 
-      processHandle.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
-        if (!error) {
-          return;
-        }
-
+      void this.writeMessage(payload).catch((error: Error) => {
         const pendingRequest = this.pending.get(id);
         if (!pendingRequest) {
           return;
@@ -2846,6 +2961,23 @@ class CodexAppServerClient {
           ),
         );
       });
+    });
+  }
+
+  private writeMessage(payload: unknown): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const callback = (error?: Error | null) => {
+        if (error) reject(error);
+        else resolve();
+      };
+      const text = JSON.stringify(payload);
+      if (this.sharedSocket?.readyState === WebSocket.OPEN) {
+        this.sharedSocket.send(text, callback);
+      } else if (this.process) {
+        this.process.stdin.write(`${text}\n`, callback);
+      } else {
+        reject(new CodexAppServerTransportError("app-server is not connected"));
+      }
     });
   }
 
@@ -3595,8 +3727,7 @@ class CodexAppServerClient {
     requestId: JsonRpcRequestId,
     method: string,
   ): Promise<void> {
-    const processHandle = this.process;
-    if (!processHandle) {
+    if (!this.process && !this.sharedSocket) {
       return;
     }
 
@@ -3609,19 +3740,14 @@ class CodexAppServerClient {
       },
     };
 
-    await new Promise<void>((resolve) => {
-      processHandle.stdin.write(`${JSON.stringify(payload)}\n`, () => {
-        resolve();
-      });
-    });
+    await this.writeMessage(payload).catch(() => {});
   }
 
   private async respondToServerRequest(
     requestId: JsonRpcRequestId,
     result: unknown,
   ): Promise<void> {
-    const processHandle = this.process;
-    if (!processHandle) {
+    if (!this.process && !this.sharedSocket) {
       throw new CodexAppServerTransportError("app-server failed to start");
     }
 
@@ -3631,23 +3757,11 @@ class CodexAppServerClient {
       result,
     };
 
-    await new Promise<void>((resolve, reject) => {
-      processHandle.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
-        if (error) {
-          reject(
-            new CodexAppServerTransportError(
-              `Failed to write app-server response: ${error.message}`,
-            ),
-          );
-          return;
-        }
-
-        resolve();
-      });
-    });
+    await this.writeMessage(payload);
   }
 
   private handleProcessExit(reason: string): void {
+    this.sharedThreadSubscriptions.clear();
     for (const message of this.stdoutMessageParser.finish()) {
       this.handleStdoutMessage(message);
     }

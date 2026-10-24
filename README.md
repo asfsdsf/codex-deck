@@ -53,6 +53,7 @@ UI design:
 - **Block mode** - View full, detailed message content in blocks.
 - **Text mode** - Simplify less important message blocks into readable text lines.
 - **Expandable blocks** - Toggle blocks between compact and expanded views, with clean copy behavior.
+- **Translate complete answers** - Use **Translate all** after a task completes to translate every assistant paragraph for that question, including explanations given during the work and the final answer. **Copy translation** copies the complete translated text. **Copy answer** preserves the original headings, paragraphs, and command/code blocks; tool execution wrappers, logs, private reasoning, and user prompts are excluded.
 
 Code context and inspection:
 
@@ -135,6 +136,12 @@ Interactive mode uses `codex` under the hood. If `codex` is not on your `PATH`, 
 export CODEX_CLI_PATH="/absolute/path/to/codex"
 ```
 
+When a Codex app-server daemon is already running for the selected Codex home,
+Deck connects to its local control socket. This lets Deck continue conversations
+that are open in the desktop app without opening a second thread writer. Closing
+Deck disconnects its client and leaves the shared daemon running. If no daemon
+is available, Deck starts its own `codex app-server` as before.
+
 ## Installation (Local mode)
 
 ### Option 1: Install globally from npm
@@ -162,7 +169,7 @@ npm uninstall -g codex-deck
 ```bash
 git clone https://github.com/asfsdsf/codex-deck.git
 cd codex-deck
-npm install -g pnpm
+npm install -g pnpm@10.32.1
 pnpm install
 pnpm build
 pnpm start
@@ -462,6 +469,28 @@ pnpm install
 pnpm build
 pnpm dev
 ```
+
+Use the pnpm version declared in the root `package.json` (`pnpm@10.32.1`), which
+matches the workspace packages. The root `pnpm-lock.yaml` is committed and covers
+all workspace packages. When changing dependencies in any `package.json`, run
+`pnpm install` and commit the updated lockfile with the manifest changes. Verify
+reproducible installs with `pnpm install --frozen-lockfile`, which is also used by
+source updates. When merging dependency changes, resolve manifest conflicts
+first, then run `pnpm install` and commit the reconciled lockfile.
+
+After pulling changes, refresh dependencies and rebuild before starting:
+
+```bash
+git pull
+pnpm install --frozen-lockfile
+pnpm build
+```
+
+The [Dependency checks](.github/workflows/dependencies.yml) workflow verifies a
+frozen install, the native terminal module, and the local app build on Linux and
+macOS for every pull request and push. Maintainers should require both checks in
+the target branch's protection rules before merging. If a frozen install reports
+an outdated lockfile, the dependency change needs a matching lockfile update.
 
 `pnpm dev` starts:
 

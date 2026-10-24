@@ -115,3 +115,36 @@ test("streamed command failures are terminal and legacy JSON translations still 
     { translatedText: "hello" },
   );
 });
+
+for (const stream of [false, true]) {
+  test(`the real translation route accepts a full export over 200,000 characters using ${stream ? "streaming and polling" : "legacy JSON"}`, async () => {
+    const text = `# Codex conversation\n\n${"A complete paragraph with quotes ' and Unicode 中文 😀.\n\n".repeat(5000)}End of export.\n`;
+    assert.ok(text.length > 200_000);
+    const app = new Hono();
+    registerTranslationRoutes(app, {
+      translationCommand: "printf '%s' $PROMPT",
+    });
+    // Submit the whole export, as an already-open/older browser would. Do not
+    // mock /api/translate: its size validation caused the reported regression.
+    const response = await app.request("/api/translate", {
+      method: "POST",
+      body: JSON.stringify({ text, stream, inputLang: "en", outputLang: "zh" }),
+    });
+    assert.equal(response.status, 200);
+    if (!stream) {
+      assert.deepEqual(await response.json(), { translatedText: text });
+      return;
+    }
+    const initial = (await response.json()) as TranslateTextProgress;
+    const path = `/api/translations/${initial.translationId}`;
+    const reader = (await app.request(`${path}/stream`)).body!.getReader();
+    try {
+      const final = await readProgress(reader, (progress) => progress.done);
+      assert.equal(final.error, undefined);
+      assert.equal(final.translatedText, text);
+      assert.deepEqual(await (await app.request(path)).json(), final);
+    } finally {
+      await reader.cancel();
+    }
+  });
+}

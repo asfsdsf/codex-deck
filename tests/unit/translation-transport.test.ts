@@ -149,3 +149,151 @@ test("translation concurrency leaves room for other streams and releases slots a
     ],
   );
 });
+
+test("long translations stay below the API limit and preserve all text and separators", async () => {
+  const text = [
+    "# Codex conversation\n\n",
+    "## Assistant\n\n",
+    "A complete paragraph with Unicode 中文 😀.\n\n".repeat(7000),
+    "```ts\n",
+    "const value = true;\n".repeat(1000),
+    "```\n\nEnd of the complete export.\n",
+  ].join("");
+  assert.ok(text.length > 200_000);
+  const chunks: string[] = [];
+  const updates: string[] = [];
+  const response = await requestTranslation(
+    { text, inputLang: "en", outputLang: "zh" },
+    {
+      requestJson: async <T>(_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        assert.ok(
+          body.text.length <= 200_000,
+          "backend rejects oversized translation requests",
+        );
+        assert.ok(body.text.trim(), "backend rejects whitespace-only requests");
+        assert.equal(body.stream, true);
+        assert.equal(body.inputLang, "en");
+        assert.equal(body.outputLang, "zh");
+        chunks.push(body.text);
+        return { translatedText: body.text } as T;
+      },
+      onProgress: (value) => updates.push(value),
+    },
+  );
+  assert.ok(chunks.length > 1);
+  assert.equal(response.translatedText, text);
+  assert.equal(updates.at(-1), text);
+  for (const update of updates) assert.ok(text.startsWith(update));
+});
+
+for (const text of [
+  "a".repeat(230_000),
+  `x${"😀".repeat(115_000)}`,
+  `first${"\r\n".repeat(115_000)}last`,
+]) {
+  test(`long translations handle ${text.includes("😀") ? "surrogate pairs" : text.includes("\r") ? "blank lines" : "unbroken lines"} without loss`, async () => {
+    const response = await requestTranslation(
+      { text },
+      {
+        requestJson: async <T>(_url: string, init?: RequestInit) => {
+          const { text: chunk } = JSON.parse(String(init?.body));
+          assert.ok(chunk.length <= 200_000);
+          assert.ok(chunk.trim());
+          assert.equal(/[\uD800-\uDBFF]$/.test(chunk), false);
+          assert.equal(/^[\uDC00-\uDFFF]/.test(chunk), false);
+          return { translatedText: chunk } as T;
+        },
+      },
+    );
+    assert.equal(response.translatedText, text);
+  });
+}
+
+for (const local of [true, false]) {
+  test(`long translations combine sequential ${local ? "SSE" : "polling"} updates into one streamed result`, async () => {
+    const sources: TranslationEventSource[] = [];
+    const chunks: string[] = [];
+    const updates: string[] = [];
+    const polls: ((value: unknown) => void)[] = [];
+    const result = requestTranslation(
+      { text: `${"a".repeat(9000)}\n\n${"b".repeat(9000)}` },
+      {
+        requestJson: async <T>(url: string, init?: RequestInit) => {
+          if (url === "/api/translate") {
+            chunks.push(JSON.parse(String(init?.body)).text);
+            return { ...initial, translationId: `job-${chunks.length}` } as T;
+          }
+          return await new Promise<T>((resolve) =>
+            polls.push((value) => resolve(value as T)),
+          );
+        },
+        createEventSource: local
+          ? () => {
+              const source = new TranslationEventSource();
+              sources.push(source);
+              return source as unknown as EventSource;
+            }
+          : undefined,
+        onProgress: (value) => updates.push(value),
+      },
+    );
+    await setImmediate();
+    assert.equal(
+      chunks.length,
+      1,
+      "do not start later chunks while the first is translating",
+    );
+    if (local) {
+      sources[0].send({ ...initial, translatedText: "部分一" });
+      assert.equal(updates.at(-1), "部分一");
+      sources[0].send({ ...initial, translatedText: "完整一", done: true });
+    } else polls[0]({ ...initial, translatedText: "完整一", done: true });
+    await setImmediate();
+    assert.equal(chunks.length, 2);
+    assert.equal(updates.at(-1), "完整一\n\n");
+    if (local) {
+      sources[1].send({ ...initial, translatedText: "部分二" });
+      assert.equal(updates.at(-1), "完整一\n\n部分二");
+      sources[1].send({ ...initial, translatedText: "完整二", done: true });
+    } else polls[1]({ ...initial, translatedText: "完整二", done: true });
+    assert.deepEqual(await result, { translatedText: "完整一\n\n完整二" });
+    assert.deepEqual(chunks, ["a".repeat(9000), "b".repeat(9000)]);
+    if (local) assert.ok(sources.every((source) => source.closed));
+  });
+}
+
+test("a failed later chunk rejects the whole translation and does not submit remaining chunks", async () => {
+  let calls = 0;
+  const updates: string[] = [];
+  await assert.rejects(
+    requestTranslation(
+      { text: "x".repeat(60_000) },
+      {
+        requestJson: async <T>() => {
+          if (++calls === 2) throw new Error("second chunk failed");
+          return { translatedText: "first chunk" } as T;
+        },
+        onProgress: (value) => updates.push(value),
+      },
+    ),
+    /second chunk failed/,
+  );
+  assert.equal(calls, 2);
+  assert.equal(updates.at(-1), "first chunk");
+});
+
+test("empty output from a later chunk fails instead of silently dropping content", async () => {
+  let calls = 0;
+  await assert.rejects(
+    requestTranslation(
+      { text: "x".repeat(60_000) },
+      {
+        requestJson: async <T>() =>
+          ({ translatedText: ++calls === 1 ? "first chunk" : "" }) as T,
+      },
+    ),
+    /Translation is empty/,
+  );
+  assert.equal(calls, 2);
+});
