@@ -30,7 +30,7 @@ export function getCompletedTaskAnswers(
   return completions;
 }
 
-/** Answer text and its Markdown/commands, excluding tool records and progress. */
+/** Every assistant text block for the task, including explanations and Markdown/commands. */
 export function getCompletedTaskAnswer(
   messages: readonly ConversationMessage[],
   completion: ConversationMessage,
@@ -66,7 +66,6 @@ export function getCompletedTaskAnswer(
     if (
       message.type !== "assistant" ||
       message.streaming ||
-      message.message?.phase === "commentary" ||
       (completion.turnId &&
         message.turnId &&
         message.turnId !== completion.turnId)

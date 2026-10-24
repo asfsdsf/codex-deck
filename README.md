@@ -53,7 +53,7 @@ UI design:
 - **Block mode** - View full, detailed message content in blocks.
 - **Text mode** - Simplify less important message blocks into readable text lines.
 - **Expandable blocks** - Toggle blocks between compact and expanded views, with clean copy behavior.
-- **Translate complete answers** - Use **Translate all** after a task completes, then **Copy translation** to copy the complete translated answer. **Copy answer** preserves the original headings, text, and command/code blocks; progress messages and tool execution wrappers are excluded.
+- **Translate complete answers** - Use **Translate all** after a task completes to translate every assistant paragraph for that question, including explanations given during the work and the final answer. **Copy translation** copies the complete translated text. **Copy answer** preserves the original headings, paragraphs, and command/code blocks; tool execution wrappers, logs, private reasoning, and user prompts are excluded.
 
 Code context and inspection:
 

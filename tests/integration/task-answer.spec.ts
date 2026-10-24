@@ -406,7 +406,7 @@ test("the greeting translates every answer paragraph and copies both Chinese par
   expect(sources).toEqual([`${first}\n\n${second}`]);
 });
 
-test("copy and translation preserve the answer and commands but exclude exec wrappers and execution output", async ({
+test("copy and translation include every explanatory and final paragraph but exclude exec wrappers and execution output", async ({
   page,
   context,
   app,
@@ -415,9 +415,11 @@ test("copy and translation preserve the answer and commands but exclude exec wra
   const first =
     "# Answer\n\nThe requested fix is ready.\n\n## Commands\n\n```sh\npnpm test\npnpm build\n```";
   const second = "## Result\n\nThe full answer remains readable.";
-  const answer = `${first}\n\n${second}`;
+  const explanation =
+    "## Explanation\n\nThe answer covers the fix and the verification commands.\n\nEvery explanatory paragraph should be included.";
+  const answer = `${explanation}\n\n${first}\n\n${second}`;
   const chinese =
-    "# 回答\n\n所需的修复已完成。\n\n## 命令\n\n```sh\npnpm test\npnpm build\n```\n\n## 结果\n\n完整回答可供阅读。";
+    "## 说明\n\n回答涵盖修复及验证命令。\n\n每个说明段落都应包含在内。\n\n# 回答\n\n所需的修复已完成。\n\n## 命令\n\n```sh\npnpm test\npnpm build\n```\n\n## 结果\n\n完整回答可供阅读。";
   const wrapper =
     'const results = await Promise.allSettled([tools.view_image({path:"/private/tmp/answer-light.png"}),tools.view_image({path:"/private/tmp/answer-dark.png"})]); for (const r of results) if(r.status === "fulfilled") image(r.value.image_url);';
   await appendFile(
@@ -432,7 +434,7 @@ test("copy and translation preserve the answer and commands but exclude exec wra
         content: [
           {
             type: "output_text",
-            text: "Checking execution details and screenshots.",
+            text: explanation,
           },
         ],
       }),
@@ -486,6 +488,12 @@ test("copy and translation preserve the answer and commands but exclude exec wra
   const translated = page.getByRole("region", { name: "Translated answer" });
   await expect(translated).toHaveAttribute("aria-busy", "false");
   expect(sources).toEqual([answer]);
+  await expect(translated).toContainText("回答涵盖修复及验证命令。");
+  await expect(translated).toContainText("每个说明段落都应包含在内。");
+  await expect(translated).toContainText("所需的修复已完成。");
+  await expect(translated).toContainText("完整回答可供阅读。");
+  await expect(translated).toContainText("pnpm test");
+  await expect(translated).toContainText("pnpm build");
   const copyTranslation = actions.getByRole("button", {
     name: "Copy entire translation",
     exact: true,
@@ -496,5 +504,6 @@ test("copy and translation preserve the answer and commands but exclude exec wra
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toBe(chinese);
   await expect(translated).not.toContainText("Script completed");
-  await expect(translated).not.toContainText("Checking execution details");
+  await expect(translated).not.toContainText("Returned image");
+  await expect(translated).not.toContainText("Promise.allSettled");
 });

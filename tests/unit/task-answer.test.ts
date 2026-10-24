@@ -91,6 +91,57 @@ test("the greeting answer has no conversation heading or user question", () => {
   );
 });
 
+test("all paragraphs, list items, and commands in a single final answer are preserved", () => {
+  const completion = complete();
+  const answer = [
+    "I'm Codex, OpenAI's coding assistant.",
+    "I can help you:",
+    "- Understand the project.\n- Investigate errors.\n- Build features.",
+    "## Commands\n\n```sh\npnpm test\npnpm build\n```",
+    "Describe what you want, and I can make the changes.",
+  ].join("\n\n");
+  const message = chat("assistant", answer);
+  message.message!.phase = "final_answer";
+  assert.equal(
+    getCompletedTaskAnswer(
+      [chat("user", "Who are you?"), message, completion],
+      completion,
+    ),
+    answer,
+  );
+});
+
+test("every assistant paragraph is included regardless of commentary or final-answer phase", () => {
+  const completion = complete();
+  const explanation = chat("assistant", [
+    { type: "text", text: "## Explanation\n\nThe first part of the answer." },
+    { type: "text", text: "The second explanatory paragraph." },
+  ]);
+  explanation.message!.phase = "commentary";
+  const final = chat("assistant", "## Result\n\nThe final paragraph.");
+  final.message!.phase = "final_answer";
+  assert.equal(
+    getCompletedTaskAnswer(
+      [
+        chat("user", "Explain every step"),
+        explanation,
+        chat("assistant", [
+          {
+            type: "tool_use",
+            name: "exec",
+            input: { code: "internal script" },
+          },
+          { type: "tool_result", content: "Script completed\nReturned image" },
+        ]),
+        final,
+        completion,
+      ],
+      completion,
+    ),
+    "## Explanation\n\nThe first part of the answer.\n\nThe second explanatory paragraph.\n\n## Result\n\nThe final paragraph.",
+  );
+});
+
 test("long answers are preserved completely across multiple messages", () => {
   const completion = complete();
   const first = "All of the assistant's answer 中文 😀.\n".repeat(7000).trim();
@@ -216,7 +267,7 @@ test("the reported exec/image wrapper is excluded while answer headings and shel
         content: [
           {
             type: "output_text",
-            text: "Checking execution details and screenshots.",
+            text: "The answer covers the fix and the verification commands.",
           },
         ],
       }),
@@ -251,7 +302,7 @@ test("the reported exec/image wrapper is excluded while answer headings and shel
   )!;
   assert.equal(
     getCompletedTaskAnswer(state.messages, completion),
-    `${first}\n\n${second}`,
+    `The answer covers the fix and the verification commands.\n\n${first}\n\n${second}`,
   );
   assert.deepEqual(
     state.messages
@@ -268,11 +319,5 @@ test("legitimate command/code examples containing exec are not removed by text-p
   assert.equal(
     getCompletedTaskAnswer([chat("assistant", answer), completion], completion),
     answer,
-  );
-  const progress = chat("assistant", "Progress, not an answer.");
-  progress.message!.phase = "commentary";
-  assert.equal(
-    getCompletedTaskAnswer([progress, completion], completion),
-    null,
   );
 });
