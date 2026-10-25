@@ -1,3 +1,4 @@
+export type { CodexBackgroundTerminal } from "../background-terminals";
 import type { CodexOperationalNotification } from "../operational-notifications";
 export type { CodexOperationalNotification } from "../operational-notifications";
 import type { CodexHookRun } from "../hook-runs";
@@ -255,6 +256,7 @@ export interface CodexCollabAgentState {
 }
 
 export type CodexAppServerEvent =
+  | { type: "background_terminals_changed"; threadId: string; changeId: number }
   | {
       type: "operational_notification";
       threadId: string | null;
@@ -5832,7 +5834,11 @@ export async function getConversation(
 export async function ingestConversationLiveEvent(
   event: CodexAppServerEvent,
 ): Promise<void> {
-  if (event.type === "operational_notification" || event.type === "hook_run")
+  if (
+    event.type === "operational_notification" ||
+    event.type === "hook_run" ||
+    event.type === "background_terminals_changed"
+  )
     return;
   const filePath = await findSessionFile(event.threadId);
   if (filePath)

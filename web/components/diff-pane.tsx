@@ -1,3 +1,4 @@
+import BackgroundTerminals from "./background-terminals";
 import {
   useCallback,
   useEffect,
@@ -1051,76 +1052,85 @@ export default function DiffPane(props: DiffPaneProps) {
       {!sessionId ? (
         <EmptyState text="Select a session to view this pane." />
       ) : isTerminalRunMode ? (
-        terminalRunsLoading ? (
-          <EmptyState text="Loading terminal runs..." />
-        ) : terminalRunsError ? (
-          <EmptyState text={terminalRunsError} />
-        ) : (
-          <div className="flex-1 min-h-0 flex">
-            {isFileListVisible ? (
-              <div className="w-52 border-r border-zinc-800/60 overflow-y-auto">
-                <div className="px-3 py-2 border-b border-zinc-800/60 text-[11px] text-zinc-500 flex items-center justify-between gap-2">
-                  <span>{topStatusText}</span>
-                  <button
-                    type="button"
-                    onClick={onRefreshTerminalRuns}
-                    className="h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
-                    aria-label="Refresh terminal runs"
-                    title="Refresh terminal runs"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5 mx-auto" />
-                  </button>
-                </div>
-                {terminalRuns.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-zinc-500">
-                    No terminal runs.
+        <div className="flex min-h-0 flex-1 flex-col">
+          <BackgroundTerminals
+            key={`${props.runtimeScopeKey}:${sessionId}`}
+            threadId={sessionId}
+            onChange={onRefreshTerminalRuns}
+          />
+          {terminalRunsLoading ? (
+            <EmptyState text="Loading terminal runs..." />
+          ) : terminalRunsError ? (
+            <EmptyState text={terminalRunsError} />
+          ) : (
+            <div className="flex-1 min-h-0 flex">
+              {isFileListVisible ? (
+                <div className="w-52 border-r border-zinc-800/60 overflow-y-auto">
+                  <div className="px-3 py-2 border-b border-zinc-800/60 text-[11px] text-zinc-500 flex items-center justify-between gap-2">
+                    <span>{topStatusText}</span>
+                    <button
+                      type="button"
+                      onClick={onRefreshTerminalRuns}
+                      className="h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
+                      aria-label="Refresh terminal runs"
+                      title="Refresh terminal runs"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 mx-auto" />
+                    </button>
                   </div>
-                ) : (
-                  terminalRuns.map((run) => {
-                    const active = run.processId === selectedTerminalRunId;
-                    return (
-                      <button
-                        key={run.processId}
-                        type="button"
-                        onClick={() => onSelectTerminalRun(run.processId)}
-                        className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors ${
-                          active ? "bg-zinc-900/60" : ""
-                        }`}
-                        title={`${run.command} (${run.processId})`}
-                      >
-                        <div className="text-[11px] leading-4 text-zinc-200 break-all overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                          {getTailTruncatedPath(run.command)}
-                        </div>
-                        <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
-                          <span>{run.processId}</span>
-                          <span>•</span>
-                          <span>{run.isRunning ? "running" : "completed"}</span>
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            ) : null}
+                  {terminalRuns.length === 0 ? (
+                    <div className="px-3 py-3 text-xs text-zinc-500">
+                      No terminal runs.
+                    </div>
+                  ) : (
+                    terminalRuns.map((run) => {
+                      const active = run.processId === selectedTerminalRunId;
+                      return (
+                        <button
+                          key={run.processId}
+                          type="button"
+                          onClick={() => onSelectTerminalRun(run.processId)}
+                          className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors ${
+                            active ? "bg-zinc-900/60" : ""
+                          }`}
+                          title={`${run.command} (${run.processId})`}
+                        >
+                          <div className="text-[11px] leading-4 text-zinc-200 break-all overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                            {getTailTruncatedPath(run.command)}
+                          </div>
+                          <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
+                            <span>{run.processId}</span>
+                            <span>•</span>
+                            <span>
+                              {run.isRunning ? "running" : "completed"}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              ) : null}
 
-            <div className="flex-1 min-w-0 flex flex-col">
-              <div className="h-9 px-3 border-b border-zinc-800/60 flex items-center gap-2">
-                <Terminal className="h-3.5 w-3.5 text-zinc-400" />
-                <span className="text-xs text-zinc-300 truncate">
-                  {selectedFileLabel}
-                </span>
-              </div>
-              <div className="flex-1 min-h-0">
-                {renderTerminalOutput(
-                  selectedTerminalRunId,
-                  terminalRunOutput,
-                  terminalRunOutputLoading,
-                  terminalRunOutputError,
-                )}
+              <div className="flex-1 min-w-0 flex flex-col">
+                <div className="h-9 px-3 border-b border-zinc-800/60 flex items-center gap-2">
+                  <Terminal className="h-3.5 w-3.5 text-zinc-400" />
+                  <span className="text-xs text-zinc-300 truncate">
+                    {selectedFileLabel}
+                  </span>
+                </div>
+                <div className="flex-1 min-h-0">
+                  {renderTerminalOutput(
+                    selectedTerminalRunId,
+                    terminalRunOutput,
+                    terminalRunOutputLoading,
+                    terminalRunOutputError,
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        )
+          )}
+        </div>
       ) : isHooksMode ? (
         <HooksPane
           key={`${props.runtimeScopeKey}:${sessionId}`}

@@ -1,3 +1,4 @@
+import type { CodexBackgroundTerminal } from "@codex-deck/api";
 import type { CodexOperationalNotification } from "@codex-deck/api";
 import type { CodexHookRun } from "@codex-deck/api";
 import type { CodexMemoryStatus, CodexThreadMemory } from "@codex-deck/api";
@@ -1992,5 +1993,22 @@ export function getCodexOperationalNotifications(
 ): Promise<{ notifications: CodexOperationalNotification[] }> {
   return requestJson(
     `/api/codex/notifications${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}
+
+export function getCodexBackgroundTerminals(
+  threadId: string,
+): Promise<{ terminals: CodexBackgroundTerminal[] }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/background-terminals`,
+  );
+}
+export function terminateCodexBackgroundTerminal(
+  threadId: string,
+  processId: string,
+): Promise<{ terminated: boolean }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/background-terminals/${encodeURIComponent(processId)}/terminate`,
+    { method: "POST" },
   );
 }

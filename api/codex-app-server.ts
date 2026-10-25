@@ -1,4 +1,8 @@
 import {
+  parseBackgroundTerminal,
+  type CodexBackgroundTerminal,
+} from "./background-terminals";
+import {
   OperationalNotificationStore,
   type CodexOperationalNotification,
 } from "./operational-notifications";
@@ -893,6 +897,7 @@ class CodexAppServerClient {
     return this.hookRuns.list(threadId);
   }
 
+  private backgroundTerminalChangeId = 0;
   private liveTerminalRunsByThread = new Map<
     string,
     Map<string, CodexLiveTerminalRun>
@@ -2172,6 +2177,96 @@ class CodexAppServerClient {
     };
   }
 
+  public async listBackgroundTerminals(
+    threadId: string,
+  ): Promise<CodexBackgroundTerminal[]> {
+    const id = threadId.trim();
+    if (!id) throw new Error("threadId is required");
+    const list = async () => {
+      const terminals = new Map<string, CodexBackgroundTerminal>();
+      const seen = new Set<string>();
+      let cursor: string | null = null;
+      for (let page = 0; page < 100; page++) {
+        const result = asRecord(
+          await this.request("thread/backgroundTerminals/list", {
+            threadId: id,
+            cursor,
+            limit: 100,
+          }),
+        );
+        if (
+          !result ||
+          !Array.isArray(result.data) ||
+          (result.nextCursor !== null && typeof result.nextCursor !== "string")
+        )
+          throw new CodexAppServerTransportError(
+            "Invalid background terminal list response",
+          );
+        for (const entry of result.data) {
+          const terminal = parseBackgroundTerminal(entry);
+          terminals.set(terminal.processId, terminal);
+        }
+        cursor = result.nextCursor as string | null;
+        if (!cursor) return [...terminals.values()];
+        if (seen.has(cursor))
+          throw new CodexAppServerTransportError(
+            "Repeated background terminal cursor",
+          );
+        seen.add(cursor);
+      }
+      throw new CodexAppServerTransportError(
+        "Background terminal pagination limit exceeded",
+      );
+    };
+    try {
+      return await list();
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) throw error;
+      await this.resumeThread(id);
+      return list();
+    }
+  }
+
+  public async terminateBackgroundTerminal(
+    threadId: string,
+    processId: string,
+  ): Promise<boolean> {
+    const id = threadId.trim(),
+      process = processId.trim();
+    if (!id || !process) throw new Error("threadId and processId are required");
+    const stop = () =>
+      this.request("thread/backgroundTerminals/terminate", {
+        threadId: id,
+        processId: process,
+      });
+    let result;
+    try {
+      result = await stop();
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) throw error;
+      await this.resumeThread(id);
+      result = await stop();
+    }
+    const record = asRecord(result);
+    if (!record || typeof record.terminated !== "boolean")
+      throw new CodexAppServerTransportError(
+        "Invalid background terminal termination response",
+      );
+    if (record.terminated) {
+      const run = this.liveTerminalRunsByThread.get(id)?.get(process);
+      if (run) {
+        run.isRunning = false;
+        run.updatedAt = Date.now();
+      }
+    }
+    this.emitAppServerEvent({
+      type: "background_terminals_changed",
+      threadId: id,
+      changeId: ++this.backgroundTerminalChangeId,
+    });
+    return record.terminated;
+  }
+
   public async cleanBackgroundTerminals(threadId: string): Promise<void> {
     const normalizedThreadId = threadId.trim();
     if (!normalizedThreadId) {
@@ -2192,6 +2287,17 @@ class CodexAppServerClient {
         threadId: normalizedThreadId,
       });
     }
+    for (const run of this.liveTerminalRunsByThread
+      .get(normalizedThreadId)
+      ?.values() ?? []) {
+      run.isRunning = false;
+      run.updatedAt = Date.now();
+    }
+    this.emitAppServerEvent({
+      type: "background_terminals_changed",
+      threadId: normalizedThreadId,
+      changeId: ++this.backgroundTerminalChangeId,
+    });
   }
 
   public async getThreadState(
@@ -5992,6 +6098,13 @@ export interface CodexAppServerClientFacade {
     threadId: string,
     target: CodexReviewTarget,
   ) => Promise<CodexReviewResult>;
+  listBackgroundTerminals?: (
+    threadId: string,
+  ) => Promise<CodexBackgroundTerminal[]>;
+  terminateBackgroundTerminal?: (
+    threadId: string,
+    processId: string,
+  ) => Promise<boolean>;
   cleanBackgroundTerminals?: (threadId: string) => Promise<void>;
   listPendingElicitations?: (threadId: string) => CodexElicitationRequest[];
   submitElicitation?: (
@@ -6084,6 +6197,10 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     interruptThread: (threadId: string) => client!.interruptThread(threadId),
     startReview: (threadId: string, target: CodexReviewTarget) =>
       client!.startReview(threadId, target),
+    listBackgroundTerminals: (threadId: string) =>
+      client!.listBackgroundTerminals(threadId),
+    terminateBackgroundTerminal: (threadId: string, processId: string) =>
+      client!.terminateBackgroundTerminal(threadId, processId),
     cleanBackgroundTerminals: (threadId: string) =>
       client!.cleanBackgroundTerminals(threadId),
     listPendingElicitations: (threadId: string) =>

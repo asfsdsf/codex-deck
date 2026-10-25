@@ -209,3 +209,8 @@ The Hooks pane also shows recent execution status and output for session targets
 These runs are retained by the current Deck process (up to 100 per thread), shared
 across browsers, and refreshed after reconnecting. Workflow project targets retain
 their hook configuration view; execution belongs to each task's session.
+
+For session targets, Terminal flow includes the upstream active background-command
+list above saved terminal history. Commands can be stopped individually or all at
+once. The active list refreshes while visible and after reconnects; older Codex
+versions can still display saved history when the listing API is unavailable.

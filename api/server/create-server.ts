@@ -1,3 +1,4 @@
+import { registerBackgroundTerminalRoutes } from "./background-terminal-routes";
 import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
 import { registerMemoryInsightRoutes } from "./memory-insight-routes";
@@ -2338,6 +2339,7 @@ export function createServer(options: ServerOptions) {
   const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
     if (
+      event.type === "background_terminals_changed" ||
       event.type === "hook_run" ||
       event.type === "operational_notification"
     ) {
@@ -3067,6 +3069,7 @@ export function createServer(options: ServerOptions) {
     }
 
     try {
+      ensureAppServerEventSourceSubscribed();
       await cleanBackgroundTerminals(sessionId);
       return c.json({ ok: true });
     } catch (error) {
@@ -4964,6 +4967,9 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  registerBackgroundTerminalRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
   registerOperationalNotificationRoutes(app);
   registerHookRunRoutes(app);
   registerMemoryInsightRoutes(app);

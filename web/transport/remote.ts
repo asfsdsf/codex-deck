@@ -45,6 +45,8 @@ const REMOTE_WORKFLOW_DAEMON_STATUS_POLL_INTERVAL_MS = 5_000;
 
 function getCodexAppServerEventKey(event: CodexAppServerEvent): string {
   switch (event.type) {
+    case "background_terminals_changed":
+      return [event.type, event.threadId, event.changeId].join("|");
     case "operational_notification":
       return event.notification.id;
     case "hook_run":
