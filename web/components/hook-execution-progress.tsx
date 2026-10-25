@@ -28,30 +28,33 @@ export default function HookExecutionProgress({
   const [version, setVersion] = useState(0);
   useEffect(() => {
     let active = true;
-    let updates: CodexHookRun[] = [];
+    // Buffer only until the snapshot settles, with the same bound as the UI.
+    let updates: CodexHookRun[] | null = [];
     const unsubscribe = subscribeCodexRuntimeEvents((event) => {
       if (!event) {
         setVersion((v) => v + 1);
         return;
       }
       if (event.type !== "hook_run" || event.threadId !== threadId) return;
-      updates.push(event);
+      if (updates) updates = merge(updates, [event]);
       setRuns((current) => merge(current, [event]));
     });
     void getCodexHookRuns(threadId).then(
       ({ runs }) => {
         if (active) {
-          setRuns(merge(runs, updates));
+          setRuns(merge(runs, updates ?? []));
           setError("");
-          updates = [];
+          updates = null;
         }
       },
       (error) => {
+        updates = null;
         if (active) setError(String(error.message || error));
       },
     );
     return () => {
       active = false;
+      updates = null;
       unsubscribe();
     };
   }, [threadId, version]);

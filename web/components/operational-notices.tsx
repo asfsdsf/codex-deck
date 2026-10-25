@@ -35,7 +35,8 @@ export default function OperationalNotices({
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    let updates: CodexOperationalNotification[] = [];
+    // Buffer only until the snapshot settles, with the same bound as the UI.
+    let updates: CodexOperationalNotification[] | null = [];
     const unsubscribe = subscribeCodexRuntimeEvents((event) => {
       if (!event) {
         setVersion((v) => v + 1);
@@ -46,23 +47,25 @@ export default function OperationalNotices({
         (event.threadId && event.threadId !== threadId)
       )
         return;
-      updates.push(event.notification);
+      if (updates) updates = merge(updates, [event.notification]);
       setNotices((current) => merge(current, [event.notification]));
     });
     void getCodexOperationalNotifications(threadId).then(
       ({ notifications }) => {
         if (active) {
-          setNotices(merge(notifications, updates));
+          setNotices(merge(notifications, updates ?? []));
           setError("");
-          updates = [];
+          updates = null;
         }
       },
       (error) => {
+        updates = null;
         if (active) setError(String(error.message || error));
       },
     );
     return () => {
       active = false;
+      updates = null;
       unsubscribe();
     };
   }, [threadId, version]);
