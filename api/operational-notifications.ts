@@ -21,6 +21,7 @@ export interface CodexOperationalNotification {
 }
 export class OperationalNotificationStore {
   private notices: CodexOperationalNotification[] = [];
+  private warnings: CodexOperationalNotification[] = [];
   private sequence = 0;
   private epoch = `${Date.now()}-${Math.random()}`;
   record(method: string, params: unknown): CodexOperationalNotification | null {
@@ -57,6 +58,10 @@ export class OperationalNotificationStore {
       summary,
       details,
     };
+    if (["warning", "configWarning", "deprecationNotice"].includes(method)) {
+      this.warnings.push(notice);
+      this.warnings = this.warnings.slice(-256);
+    }
     // Progress messages replace only earlier progress for the same tool call.
     if (method === "item/mcpToolCall/progress")
       this.notices = this.notices.filter(
@@ -77,7 +82,13 @@ export class OperationalNotificationStore {
       (notice) => !notice.threadId || notice.threadId === threadId,
     );
   }
+  listWarnings(threadId?: string | null): CodexOperationalNotification[] {
+    return this.warnings.filter(
+      (notice) => !notice.threadId || notice.threadId === threadId,
+    );
+  }
   clear(): void {
     this.notices = [];
+    this.warnings = [];
   }
 }

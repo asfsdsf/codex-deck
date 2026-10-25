@@ -13,6 +13,8 @@ export function registerNativeWorkflowRoutes(
     subscribe?: () => void;
     getClient?: () => Pick<
       CodexAppServerClientFacade,
+      | "getConfigDiagnostics"
+      | "listRetainedWarnings"
       | "listMcpServers"
       | "loginMcpServer"
       | "reloadMcpServers"
@@ -44,6 +46,22 @@ export function registerNativeWorkflowRoutes(
       );
     }
   };
+  app.get("/api/codex/warnings", (c) =>
+    run(c, async (client) => {
+      if (!client.listRetainedWarnings)
+        return c.json({ error: "Retained warnings unavailable." }, 501);
+      return {
+        warnings: client.listRetainedWarnings(c.req.query("threadId") || null),
+      };
+    }),
+  );
+  app.get("/api/codex/debug-config", (c) =>
+    run(c, async (client) => {
+      if (!client.getConfigDiagnostics)
+        return c.json({ error: "Configuration diagnostics unavailable." }, 501);
+      return client.getConfigDiagnostics(c.req.query("threadId") || null);
+    }),
+  );
   app.get("/api/codex/threads/:id/daybreak", (c) =>
     run(c, async (client) => {
       if (!client.getDaybreak)

@@ -2101,3 +2101,18 @@ export function setCodexDaybreak(
     { method: "POST", body: JSON.stringify({ enabled, model }) },
   );
 }
+
+export function getCodexWarnings(
+  threadId: string | null,
+): Promise<{ warnings: CodexOperationalNotification[] }> {
+  return requestJson(
+    `/api/codex/warnings${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}
+export function getCodexConfigDiagnostics(
+  threadId: string | null,
+): Promise<import("@codex-deck/api").ConfigDiagnostics> {
+  return requestJson(
+    `/api/codex/debug-config${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}

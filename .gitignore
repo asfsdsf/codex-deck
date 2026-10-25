@@ -1,4 +1,5 @@
 # Dependencies
+docs/CODEX_CLI_PARITY_TODO.md
 .codex/
 playwright-report/
 test-results/

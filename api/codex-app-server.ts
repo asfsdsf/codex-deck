@@ -1,4 +1,9 @@
 import {
+  readConfigDiagnostics,
+  retainedWarnings,
+  type ConfigDiagnostics,
+} from "./codex-diagnostics";
+import {
   readDaybreak,
   selectCyberProgram,
   type DaybreakState,
@@ -958,6 +963,22 @@ class CodexAppServerClient {
     this.sharedSocketPath = options.sharedSocketPath;
   }
 
+  public listRetainedWarnings(
+    threadId?: string | null,
+  ): CodexOperationalNotification[] {
+    return retainedWarnings(
+      this.operationalNotifications.listWarnings(threadId),
+    );
+  }
+  public getConfigDiagnostics(
+    threadId?: string | null,
+  ): Promise<ConfigDiagnostics> {
+    return readConfigDiagnostics(
+      (method, params) => this.request(method, params),
+      threadId,
+    );
+  }
+
   public getDaybreak(
     threadId: string,
     model?: string | null,
@@ -1064,6 +1085,7 @@ class CodexAppServerClient {
       () => {
         this.readCoalescer.clearMatching(() => true);
         this.notifyNativeState("experimental");
+        this.notifyNativeState("diagnostics");
         this.notifyNativeState("daybreak");
       },
     );
@@ -1199,6 +1221,7 @@ class CodexAppServerClient {
     await this.request("config/mcpServer/reload", {});
     this.mcpUpdates = [];
     this.notifyNativeState("mcp");
+    this.notifyNativeState("diagnostics");
   }
 
   public async listModels(
@@ -2445,7 +2468,8 @@ class CodexAppServerClient {
     const params = {
       threadId: id,
       target: parseReviewTarget(target),
-      delivery: "detached",
+      // Match Codex CLI: run the native reviewer in the current conversation.
+      delivery: "inline",
     };
     await this.ensureConnected();
     await this.ensureInitialized();
@@ -2472,6 +2496,7 @@ class CodexAppServerClient {
     };
     this.clearThreadStateCache(id);
     const reviewThreadId = record.reviewThreadId ?? id;
+    this.newlyStartedThreadIds.delete(id);
     this.clearThreadStateCache(reviewThreadId);
     if (this.sharedSocket && reviewThreadId !== id) {
       await this.resumeThread(reviewThreadId);
@@ -3784,6 +3809,9 @@ class CodexAppServerClient {
         threadId: notification.threadId,
         notification,
       });
+      if (["warning", "configWarning", "deprecationNotice"].includes(method)) {
+        this.notifyNativeState("diagnostics", notification.threadId);
+      }
       return;
     }
     if (method === "account/updated" || method === "account/login/completed") {
@@ -6392,6 +6420,12 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  listRetainedWarnings?: (
+    threadId?: string | null,
+  ) => CodexOperationalNotification[];
+  getConfigDiagnostics?: (
+    threadId?: string | null,
+  ) => Promise<ConfigDiagnostics>;
   getDaybreak?: (
     threadId: string,
     model?: string | null,
@@ -6547,6 +6581,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),
+    listRetainedWarnings: (id) => client!.listRetainedWarnings(id),
+    getConfigDiagnostics: (id) => client!.getConfigDiagnostics(id),
     getDaybreak: (id, model) => client!.getDaybreak(id, model),
     setDaybreak: (id, enabled, model) =>
       client!.setDaybreak(id, enabled, model),

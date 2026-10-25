@@ -1,3 +1,7 @@
+export type {
+  ConfigDiagnostics,
+  ConfigDiagnosticLayer,
+} from "../codex-diagnostics";
 export type { DaybreakState } from "../codex-daybreak";
 export type {
   ExperimentalFeature,

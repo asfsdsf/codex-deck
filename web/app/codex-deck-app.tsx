@@ -1,3 +1,5 @@
+import ConfigDiagnostics from "../components/config-diagnostics";
+import RetainedWarnings from "../components/retained-warnings";
 import DaybreakSettings from "../components/daybreak-settings";
 import ExperimentalFeatures from "../components/experimental-features";
 import TranscriptExport from "../components/transcript-export";
@@ -3967,7 +3969,15 @@ export default function CodexDeckApp() {
     instructions: string;
   } | null>(null);
   const [nativeDialog, setNativeDialog] = useState<{
-    kind: "mcp" | "usage" | "recap" | "export" | "experimental" | "daybreak";
+    kind:
+      | "mcp"
+      | "usage"
+      | "recap"
+      | "export"
+      | "experimental"
+      | "daybreak"
+      | "warnings"
+      | "debug-config";
     model?: string | null;
     filename?: string;
     threadId: string | null;
@@ -11013,6 +11023,13 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/warnings" || commandName === "/debug-config") {
+        setNativeDialog({
+          kind: commandName === "/warnings" ? "warnings" : "debug-config",
+          threadId: commandSessionId,
+        });
+        return true;
+      }
       if (commandName === "/daybreak") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /daybreak.");
@@ -13904,21 +13921,35 @@ export default function CodexDeckApp() {
         {nativeDialog && (
           <NativeDialog
             title={
-              nativeDialog.kind === "daybreak"
-                ? "Daybreak selection"
-                : nativeDialog.kind === "experimental"
-                  ? "Experimental features"
-                  : nativeDialog.kind === "export"
-                    ? "Export transcript"
-                    : nativeDialog.kind === "recap"
-                      ? "Conversation recap"
-                      : nativeDialog.kind === "usage"
-                        ? "Usage dashboard"
-                        : "MCP administration"
+              nativeDialog.kind === "warnings"
+                ? "Retained warnings"
+                : nativeDialog.kind === "debug-config"
+                  ? "Configuration diagnostics"
+                  : nativeDialog.kind === "daybreak"
+                    ? "Daybreak selection"
+                    : nativeDialog.kind === "experimental"
+                      ? "Experimental features"
+                      : nativeDialog.kind === "export"
+                        ? "Export transcript"
+                        : nativeDialog.kind === "recap"
+                          ? "Conversation recap"
+                          : nativeDialog.kind === "usage"
+                            ? "Usage dashboard"
+                            : "MCP administration"
             }
             onClose={closeNativeDialog}
           >
-            {nativeDialog.kind === "daybreak" && nativeDialog.threadId ? (
+            {nativeDialog.kind === "warnings" ? (
+              <RetainedWarnings
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : nativeDialog.kind === "debug-config" ? (
+              <ConfigDiagnostics
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : nativeDialog.kind === "daybreak" && nativeDialog.threadId ? (
               <DaybreakSettings
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}

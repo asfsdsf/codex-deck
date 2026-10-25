@@ -199,7 +199,7 @@ for (const [description, options] of [
 }
 
 test(
-  "native review subscribes to a preloaded shared thread on its first request and after reconnect",
+  "inline review on a paginated thread broadcasts shared events before and after reconnect",
   { skip: process.platform === "win32", timeout: 10000 },
   async (t) => {
     const directory = mkdtempSync("/tmp/deck-review-sock-");
@@ -215,28 +215,43 @@ test(
         if (message.method === "initialized") return;
         let result: unknown = {};
         if (message.method === "config/read") result = { config: {} };
+        assert.notEqual(
+          message.method,
+          "thread/start",
+          "review stays in the current thread",
+        );
+        assert.notEqual(
+          message.method,
+          "thread/fork",
+          "review must not fork the current thread",
+        );
         if (message.method === "thread/resume") {
           assert.equal(message.params.threadId, "shared-thread");
           subscribed = true;
           subscriptions++;
-          result = { thread: { id: "shared-thread" } };
+          result = {
+            thread: { id: "shared-thread", historyMode: "paginated" },
+          };
         }
         if (message.method === "review/start") {
+          assert.equal(message.params.delivery, "inline");
+          assert.equal(message.params.threadId, "shared-thread");
           assert.equal(
             subscribed,
             true,
             "subscribe even when review/start would succeed without it",
           );
           reviews++;
+          const threadId = message.params.threadId;
           result = {
-            reviewThreadId: "shared-thread",
+            reviewThreadId: threadId,
             turn: { id: `review-${reviews}` },
           };
           socket.send(
             JSON.stringify({
               method: "turn/started",
               params: {
-                threadId: "shared-thread",
+                threadId,
                 turn: { id: `review-${reviews}`, status: "inProgress" },
               },
             }),
@@ -245,7 +260,7 @@ test(
             JSON.stringify({
               method: "hook/started",
               params: {
-                threadId: "shared-thread",
+                threadId,
                 turnId: `review-${reviews}`,
                 run: {
                   id: `hook-${reviews}`,
@@ -259,7 +274,7 @@ test(
             JSON.stringify({
               method: "turn/completed",
               params: {
-                threadId: "shared-thread",
+                threadId,
                 turn: { id: `review-${reviews}`, status: "completed" },
               },
             }),

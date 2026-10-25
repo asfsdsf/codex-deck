@@ -3,7 +3,8 @@ export type NativeScope =
   | "usage"
   | "recap"
   | "experimental"
-  | "daybreak";
+  | "daybreak"
+  | "diagnostics";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

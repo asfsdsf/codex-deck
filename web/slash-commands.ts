@@ -148,6 +148,15 @@ export function parseSlashCommandInvocation(
 
 export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
+    name: "/warnings",
+    description: "Read retained configuration warnings and deprecations",
+  },
+  {
+    name: "/debug-config",
+    description:
+      "Inspect configuration layers, value origins, and requirements",
+  },
+  {
     name: "/daybreak",
     description: "Manage eligible Daybreak access for new turns",
   },

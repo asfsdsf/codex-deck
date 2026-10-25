@@ -324,6 +324,117 @@ for (const theme of ["dark", "light"] as const) {
       await daybreak
         .getByRole("button", { name: "Close", exact: true })
         .click();
+      let warningRefreshes = 0;
+      await page.route("**/api/codex/warnings*", async (route) => {
+        warningRefreshes++;
+        await route.fulfill({
+          json: {
+            warnings: [
+              {
+                id: "warning-1",
+                timestamp: 1800000000000,
+                method: "configWarning",
+                threadId: null,
+                summary:
+                  "Project configuration is disabled until this project is trusted.",
+                details: { path: "/repo/.codex", password: "[redacted]" },
+              },
+              {
+                id: "warning-2",
+                timestamp: 1800000001000,
+                method: "deprecationNotice",
+                threadId: app.sessions.alpha,
+                summary: "A configured feature is deprecated.",
+                details: { feature: "legacy_feature" },
+              },
+            ],
+          },
+        });
+      });
+      await page.getByPlaceholder("Message Codex...").fill("/warnings");
+      await page.getByPlaceholder("Message Codex...").press("Enter");
+      const warnings = page.getByRole("dialog", { name: "Retained warnings" });
+      await expect(
+        warnings.getByText("2 retained warnings", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        warnings.getByText(
+          "Project configuration is disabled until this project is trusted.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      const beforeRefresh = warningRefreshes;
+      await warnings.getByRole("button", { name: "Refresh warnings" }).click();
+      await expect.poll(() => warningRefreshes).toBeGreaterThan(beforeRefresh);
+      await warnings
+        .getByText("Warning details", { exact: true })
+        .last()
+        .click();
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `warnings-${theme}-${mobile ? "mobile" : "desktop"}.png`,
+        ),
+      });
+      await warnings
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+      await page.route("**/api/codex/debug-config*", async (route) => {
+        await route.fulfill({
+          json: {
+            cwd: "/repo",
+            config: { model: "example", api_key: "[redacted]" },
+            origins: {
+              model: {
+                name: { type: "user", file: "/home/user/.codex/config.toml" },
+                version: "v1",
+              },
+            },
+            layers: [
+              {
+                name: { type: "user", file: "/home/user/.codex/config.toml" },
+                version: "v1",
+                config: { model: "example" },
+              },
+              {
+                name: { type: "project", dot_codex_folder: "/repo/.codex" },
+                version: "v2",
+                config: {},
+                disabledReason: "Project is not trusted",
+              },
+            ],
+            requirements: { allowed_approval_policies: ["never"] },
+            requirementSources: null,
+            supportsIndependentSpeedModes: true,
+            errors: [],
+          },
+        });
+      });
+      await page.getByPlaceholder("Message Codex...").fill("/debug-config");
+      await page.getByPlaceholder("Message Codex...").press("Enter");
+      const config = page.getByRole("dialog", {
+        name: "Configuration diagnostics",
+      });
+      await expect(
+        config.getByText("Disabled: Project is not trusted", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        config.getByText(
+          "Requirement sources are not exposed by the connected server.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await config
+        .getByText("Effective configuration", { exact: true })
+        .click();
+      await expect(
+        config.getByText('"api_key": "[redacted]"', { exact: false }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `config-${theme}-${mobile ? "mobile" : "desktop"}.png`,
+        ),
+      });
+      await config.getByRole("button", { name: "Close", exact: true }).click();
     });
   }
 }

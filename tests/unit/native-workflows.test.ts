@@ -90,7 +90,13 @@ test("MCP inventory subscribes shared threads, paginates, retains startup and OA
   await client.reloadMcpServers();
   assert.equal((await client.listMcpServers()).updates.length, 0);
   assert.deepEqual(events, second);
-  assert.equal(events.length, 4);
+  assert.equal(
+    events.filter(
+      (event: any) =>
+        event.type === "native_state_changed" && event.scope === "mcp",
+    ).length,
+    4,
+  );
   internal.sharedSocket = null;
   await client.close();
 });
