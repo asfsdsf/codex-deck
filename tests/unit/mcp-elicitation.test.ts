@@ -3,6 +3,7 @@ import test from "node:test";
 import { __TEST_ONLY__ } from "../../api/codex-app-server";
 import {
   elicitationFields,
+  elicitationFormContent,
   elicitationUrl,
   parseElicitationRequest,
   validateElicitationResponse,
@@ -52,6 +53,52 @@ const content = {
   choice: "a",
   colors: ["red"],
 };
+
+test("MCP form submission preserves empty string choices without converting blank numbers to zero", () => {
+  const request = parseElicitationRequest("empty", {
+    ...params,
+    requestedSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        choice: { type: "string", enum: ["", "other"], default: "" },
+        count: { type: "number" },
+      },
+      required: ["name", "choice"],
+    },
+  })!;
+  const response = {
+    action: "accept",
+    content: elicitationFormContent(
+      elicitationFields(request.requestedSchema),
+      { choice: "", count: "" },
+    ),
+  };
+  assert.deepEqual(response.content, { name: "", choice: "" });
+  validateElicitationResponse(request, response);
+});
+
+test("MCP forms reject unsupported rules inside enum choices and array items", () => {
+  for (const field of [
+    { type: "array", items: { type: "string", enum: ["a"], pattern: "^b$" } },
+    { type: "string", oneOf: [{ const: "a", minLength: 2 }] },
+    { type: "string", enum: ["a"], oneOf: [{ const: "b" }] },
+    { type: "boolean", enum: ["yes"] },
+    { type: "array", items: { type: "number", enum: ["a"] } },
+  ]) {
+    assert.throws(
+      () =>
+        validateElicitationResponse(
+          parseElicitationRequest("unsupported", {
+            ...params,
+            requestedSchema: { type: "object", properties: { field } },
+          })!,
+          { action: "accept", content: {} },
+        ),
+      /Invalid elicitation response/,
+    );
+  }
+});
 
 test("MCP forms validate required values, primitive types, constraints and enum arrays", () => {
   assert.equal(elicitationFields(schema).length, 5);
@@ -216,9 +263,10 @@ test("MCP requests share pending state, reject duplicate submissions, resolve an
     );
     release();
     await submission;
-    assert.deepEqual(responses, [
-      { id: 1, response: { action: "accept", content, _meta: null } },
-    ]);
+    assert.deepEqual(
+      [...responses],
+      [{ id: 1, response: { action: "accept", content, _meta: null } }],
+    );
     assert.equal(client.listPendingElicitations("thread").length, 0);
     await assert.rejects(
       client.submitElicitation("thread", "1", { action: "cancel" }),
@@ -250,9 +298,9 @@ test("MCP requests share pending state, reject duplicate submissions, resolve an
     assert.equal(client.listPendingElicitations("thread").length, 0);
     assert.deepEqual(first, second);
     assert.deepEqual(
-      first
-        .filter((e) => e.type === "elicitation_requests_changed")
-        .map((e) => e.pending),
+      first.flatMap((e) =>
+        e.type === "elicitation_requests_changed" ? [e.pending] : [],
+      ),
       [true, true, false, false, true, false, true, false, true, false],
     );
   } finally {

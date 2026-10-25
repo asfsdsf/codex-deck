@@ -81,3 +81,24 @@ test("URL authorization has a safe external link and verification remains declin
   assert.match(unsupported, /not supported/);
   assert.doesNotMatch(unsupported, /type="submit"/);
 });
+
+test("empty string enum values are distinct from an unanswered choice", () => {
+  const html = render({
+    mode: "form",
+    requestedSchema: {
+      type: "object",
+      properties: {
+        choice: {
+          type: "string",
+          enum: ["", "other"],
+          enumNames: ["None", "Other"],
+          default: "",
+        },
+      },
+      required: ["choice"],
+    },
+  });
+  assert.match(html, /value="">Select…/);
+  assert.match(html, /value="0" selected="">None/);
+  assert.match(html, /novalidate=""/i);
+});

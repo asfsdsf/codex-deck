@@ -5,6 +5,7 @@ import type {
 } from "@codex-deck/api";
 import {
   elicitationFields,
+  elicitationFormContent,
   elicitationUrl,
   validateElicitationResponse,
   type ElicitationField,
@@ -99,20 +100,7 @@ export function ElicitationCard({
     setValues((current) => ({ ...current, [name]: value }));
   const respond = async (action: CodexElicitationResponse["action"]) => {
     if (submitting) return;
-    const content = Object.fromEntries(
-      fields.flatMap((field) => {
-        const value = values[field.name];
-        if (value === undefined || value === "") return [];
-        return [
-          [
-            field.name,
-            field.type === "number" || field.type === "integer"
-              ? Number(value)
-              : value,
-          ],
-        ];
-      }),
-    );
+    const content = elicitationFormContent(fields, values);
     const response: CodexElicitationResponse = {
       action,
       content: action === "accept" && request.mode !== "url" ? content : null,
@@ -140,6 +128,7 @@ export function ElicitationCard({
     "w-full rounded border border-zinc-700 bg-zinc-950 p-2 text-sm text-zinc-100";
   return (
     <form
+      noValidate
       onSubmit={(event) => {
         event.preventDefault();
         void respond("accept");
@@ -210,20 +199,33 @@ export function ElicitationCard({
                 value={
                   field.type === "array"
                     ? ((values[field.name] as string[]) ?? [])
-                    : String(values[field.name] ?? "")
+                    : values[field.name] === undefined
+                      ? ""
+                      : String(
+                          field.options.findIndex(
+                            (option) => option.value === values[field.name],
+                          ),
+                        )
                 }
                 onChange={(e) =>
                   update(
                     field.name,
                     field.type === "array"
                       ? Array.from(e.target.selectedOptions, (o) => o.value)
-                      : e.target.value,
+                      : e.target.value === ""
+                        ? undefined
+                        : field.options?.[Number(e.target.value)]?.value,
                   )
                 }
               >
                 {field.type !== "array" && <option value="">Select…</option>}
-                {field.options.map((option) => (
-                  <option key={option.value} value={option.value}>
+                {field.options.map((option, index) => (
+                  <option
+                    key={option.value}
+                    value={
+                      field.type === "array" ? option.value : String(index)
+                    }
+                  >
                     {option.label}
                   </option>
                 ))}

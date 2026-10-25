@@ -93,8 +93,14 @@ export function parseElicitationRequest(
 }
 
 function options(schema: Record<string, unknown>): ElicitationField["options"] {
+  const choiceRules = ["enum", "oneOf", "anyOf"].filter(
+    (key) => schema[key] !== undefined,
+  );
+  if (choiceRules.length > 1)
+    throw new Error("Unsupported combined enum validation rules.");
   if (
     Array.isArray(schema.enum) &&
+    schema.enum.length > 0 &&
     schema.enum.every((v) => typeof v === "string")
   )
     return schema.enum.map((value, i) => ({
@@ -108,7 +114,15 @@ function options(schema: Record<string, unknown>): ElicitationField["options"] {
   const variants = schema.oneOf ?? schema.anyOf;
   if (
     Array.isArray(variants) &&
-    variants.every((v) => record(v) && typeof v.const === "string")
+    variants.length > 0 &&
+    variants.every(
+      (v) =>
+        record(v) &&
+        typeof v.const === "string" &&
+        Object.keys(v).every((key) =>
+          ["const", "title", "description"].includes(key),
+        ),
+    )
   )
     return variants.map((v) => ({
       value: v.const as string,
@@ -134,6 +148,8 @@ export function elicitationFields(
   ]);
   if (Object.keys(schema).some((k) => !topKeys.has(k)))
     throw new Error("This form uses unsupported validation rules.");
+  if (schema.required !== undefined && !Array.isArray(schema.required))
+    throw new Error("Invalid required form fields.");
   const required = Array.isArray(schema.required) ? schema.required : [];
   if (
     required.some(
@@ -151,25 +167,48 @@ export function elicitationFields(
       )
     )
       throw new Error(`Unsupported field: ${name}`);
+    const rules: Record<string, string[]> = {
+      string: [
+        "minLength",
+        "maxLength",
+        "format",
+        "enum",
+        "enumNames",
+        "oneOf",
+        "anyOf",
+      ],
+      number: ["minimum", "maximum"],
+      integer: ["minimum", "maximum"],
+      boolean: [],
+      array: ["items", "minItems", "maxItems"],
+    };
     const allowed = new Set([
       "type",
       "title",
       "description",
       "default",
-      "minLength",
-      "maxLength",
-      "format",
-      "minimum",
-      "maximum",
-      "enum",
-      "enumNames",
-      "oneOf",
-      "items",
-      "minItems",
-      "maxItems",
+      ...rules[String(field.type)],
     ]);
     if (Object.keys(field).some((k) => !allowed.has(k)))
       throw new Error(`Unsupported validation for ${name}`);
+    if (
+      field.type === "array" &&
+      record(field.items) &&
+      ((field.items.type !== undefined && field.items.type !== "string") ||
+        Object.keys(field.items).some(
+          (key) =>
+            ![
+              "type",
+              "title",
+              "description",
+              "enum",
+              "enumNames",
+              "oneOf",
+              "anyOf",
+            ].includes(key),
+        ))
+    )
+      throw new Error(`Unsupported array validation for ${name}`);
     const choices =
       field.type === "array"
         ? record(field.items)
@@ -178,7 +217,7 @@ export function elicitationFields(
         : options(field);
     if (field.type === "array" && !choices)
       throw new Error(`Unsupported array field: ${name}`);
-    if ((field.enum || field.oneOf) && !choices)
+    if ((field.enum || field.oneOf || field.anyOf) && !choices)
       throw new Error(`Invalid choices for ${name}`);
     if (
       field.format &&
@@ -196,6 +235,26 @@ export function elicitationFields(
       schema: field,
     };
   });
+}
+
+/** Preserve explicit strings, including empty enum values; blank numbers are absent. */
+export function elicitationFormContent(
+  fields: ElicitationField[],
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    fields.flatMap((field) => {
+      const value = Object.prototype.hasOwnProperty.call(values, field.name)
+        ? values[field.name]
+        : field.required && field.type === "string" && !field.options
+          ? ""
+          : undefined;
+      if (value === undefined) return [];
+      if (field.type === "number" || field.type === "integer")
+        return value === "" ? [] : [[field.name, Number(value)]];
+      return [[field.name, value]];
+    }),
+  );
 }
 
 export function validateElicitationResponse(
