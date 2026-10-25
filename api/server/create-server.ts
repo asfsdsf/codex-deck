@@ -1,3 +1,4 @@
+import { registerReviewRoutes } from "./review-routes";
 import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
 import type { CodexElicitationResponse } from "../mcp-elicitation";
@@ -4948,6 +4949,13 @@ export function createServer(options: ServerOptions) {
         responseStatusForError(error),
       );
     }
+  });
+
+  registerReviewRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+    wake: (id) => {
+      for (const listener of conversationWakeListeners) listener(id);
+    },
   });
 
   app.post("/api/codex/threads/:id/messages", async (c) => {

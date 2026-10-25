@@ -1,3 +1,4 @@
+import ReviewModal from "../components/review-modal";
 import {
   memo,
   useState,
@@ -3948,6 +3949,10 @@ export default function CodexDeckApp() {
   const [isToolbarControlsExpanded, setIsToolbarControlsExpanded] =
     useState(false);
   const [showCollabModePicker, setShowCollabModePicker] = useState(false);
+  const [reviewDialog, setReviewDialog] = useState<{
+    threadId: string;
+    instructions: string;
+  } | null>(null);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -4289,6 +4294,7 @@ export default function CodexDeckApp() {
     setTerminalDeleteMode(null);
     setDeleteTerminalTargetId(null);
     setShowCollabModePicker(false);
+    setReviewDialog(null);
     setShowStatusModal(false);
     setShowConfigModal(false);
     setShowRenameModal(false);
@@ -11292,22 +11298,11 @@ export default function CodexDeckApp() {
           return false;
         }
 
-        const reviewPrompt =
-          normalizedArgs || "Review my current changes and find issues.";
-        const sent = await sendMessageText(
-          {
-            text: reviewPrompt,
-            images: [],
-          },
-          {
-            sessionIdOverride: commandSessionId,
-            cwdOverride: commandSessionData?.project ?? null,
-          },
-        );
-        if (sent) {
-          openPaneForCommand("unstaged");
-        }
-        return sent;
+        setReviewDialog({
+          threadId: commandSessionId,
+          instructions: normalizedArgs,
+        });
+        return true;
       }
 
       if (commandName === "/diff") {
@@ -13848,6 +13843,19 @@ export default function CodexDeckApp() {
           </div>
         )}
 
+        {reviewDialog && (
+          <ReviewModal
+            key={reviewDialog.threadId}
+            {...reviewDialog}
+            onClose={() => setReviewDialog(null)}
+            onStarted={({ threadId, turnId }) => {
+              trackWebManagedSessionTurn(threadId, turnId);
+              setPendingTurn({ sessionId: threadId, turnId });
+              showCommandNoticeForDuration("Review started.");
+              void syncSessionWaitState(threadId);
+            }}
+          />
+        )}
         <MemoriesModal
           open={showMemoriesModal}
           useEnabled={memoriesUseEnabled}

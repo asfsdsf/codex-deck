@@ -1,4 +1,9 @@
 import {
+  parseReviewTarget,
+  type CodexReviewTarget,
+  type CodexReviewResult,
+} from "./codex-review";
+import {
   spawn,
   spawnSync,
   type ChildProcessWithoutNullStreams,
@@ -2038,6 +2043,36 @@ class CodexAppServerClient {
       });
       this.clearThreadStateCache(normalizedThreadId);
     }
+  }
+
+  public async startReview(
+    threadId: string,
+    target: CodexReviewTarget,
+  ): Promise<CodexReviewResult> {
+    const id = threadId.trim();
+    if (!id) throw new Error("threadId is required");
+    const params = {
+      threadId: id,
+      target: parseReviewTarget(target),
+      delivery: "inline",
+    };
+    let result: unknown;
+    try {
+      result = await this.request("review/start", params);
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) throw error;
+      await this.resumeThread(id);
+      result = await this.request("review/start", params);
+    }
+    const record = result as {
+      reviewThreadId?: string;
+      turn?: { id?: string };
+    };
+    this.clearThreadStateCache(id);
+    return {
+      threadId: record.reviewThreadId ?? id,
+      turnId: record.turn?.id ?? null,
+    };
   }
 
   public async cleanBackgroundTerminals(threadId: string): Promise<void> {
@@ -5831,6 +5866,10 @@ export interface CodexAppServerClientFacade {
   ) => Promise<CodexThreadState>;
   getLastTurnDiff: (threadId: string) => Promise<CodexLastTurnDiff>;
   interruptThread: (threadId: string) => Promise<void>;
+  startReview?: (
+    threadId: string,
+    target: CodexReviewTarget,
+  ) => Promise<CodexReviewResult>;
   cleanBackgroundTerminals?: (threadId: string) => Promise<void>;
   listPendingElicitations?: (threadId: string) => CodexElicitationRequest[];
   submitElicitation?: (
@@ -5916,6 +5955,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.getThreadState(threadId, requestedTurnId),
     getLastTurnDiff: (threadId: string) => client!.getLastTurnDiff(threadId),
     interruptThread: (threadId: string) => client!.interruptThread(threadId),
+    startReview: (threadId: string, target: CodexReviewTarget) =>
+      client!.startReview(threadId, target),
     cleanBackgroundTerminals: (threadId: string) =>
       client!.cleanBackgroundTerminals(threadId),
     listPendingElicitations: (threadId: string) =>

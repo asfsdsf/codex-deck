@@ -1,3 +1,4 @@
+import type { CodexReviewTarget, CodexReviewResult } from "@codex-deck/api";
 import type {
   DiffGuideStartRequest,
   DiffGuideStartResponse,
@@ -1942,6 +1943,24 @@ export async function setWorkflowProjectSkillEnabled(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function startCodexReview(
+  threadId: string,
+  target: CodexReviewTarget,
+): Promise<CodexReviewResult> {
+  codexThreadStateLoader.clearMatching((key) =>
+    key.startsWith(currentHomeThreadCachePrefix(threadId)),
+  );
+  return requestJsonAndNotifyConversation<CodexReviewResult>(
+    threadId,
+    `/api/codex/threads/${encodeURIComponent(threadId)}/review`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
     },
   );
 }

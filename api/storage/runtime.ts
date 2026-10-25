@@ -1,3 +1,4 @@
+export type { CodexReviewTarget, CodexReviewResult } from "../codex-review";
 import {
   isRolloutFile,
   openRollout,
