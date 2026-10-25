@@ -1,4 +1,11 @@
 import {
+  isRolloutFile,
+  openRollout,
+  statRollout,
+  readRolloutText,
+  materializeRolloutForWrite,
+} from "../rollout-files";
+import {
   readdir,
   readFile,
   stat,
@@ -1988,7 +1995,7 @@ function normalizeDisplayText(text: string): string {
 function extractSessionIdFromPath(filePath: string): string | null {
   const name = basename(filePath);
   const match = name.match(
-    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i,
+    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/i,
   );
   return match?.[1] ?? null;
 }
@@ -2769,7 +2776,7 @@ function computeContextLeftPercent(
 async function readFirstLine(filePath: string): Promise<string | null> {
   let fileHandle;
   try {
-    fileHandle = await open(filePath, "r");
+    fileHandle = await openRollout(filePath, "r");
     const buffer = Buffer.allocUnsafe(64 * 1024);
     const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, 0);
     if (bytesRead <= 0) {
@@ -2857,7 +2864,7 @@ async function collectSessionFiles(
         await collectSessionFiles(fullPath, output);
         continue;
       }
-      if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      if (entry.isFile() && isRolloutFile(entry.name)) {
         output.push(fullPath);
       }
     }
@@ -3055,7 +3062,7 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
 
 async function sessionFileExists(filePath: string): Promise<boolean> {
   try {
-    const fileStat = await stat(filePath);
+    const fileStat = await statRollout(filePath);
     return fileStat.isFile();
   } catch {
     return false;
@@ -3101,7 +3108,7 @@ async function pruneJsonlFileBySessionId(
 ): Promise<number> {
   let content: string;
   try {
-    content = await readFile(filePath, "utf-8");
+    content = await readRolloutText(filePath, "utf-8");
   } catch {
     return 0;
   }
@@ -4875,7 +4882,7 @@ function parseCodexConversation(
 async function getFirstUserMessageSnippet(filePath: string): Promise<string> {
   let fileHandle;
   try {
-    fileHandle = await open(filePath, "r");
+    fileHandle = await openRollout(filePath, "r");
     const stream = fileHandle.createReadStream({ encoding: "utf-8" });
 
     let firstMessageRole: "user" | "assistant" | null = null;
@@ -5026,7 +5033,7 @@ async function getLatestUserMessageTimestamp(
 
   let fileStat;
   try {
-    fileStat = await stat(filePath);
+    fileStat = await statRollout(filePath);
   } catch {
     return 0;
   }
@@ -5034,7 +5041,7 @@ async function getLatestUserMessageTimestamp(
   let timestamp = 0;
   let fileHandle;
   try {
-    fileHandle = await open(filePath, "r");
+    fileHandle = await openRollout(filePath, "r");
     const blockSize = 64 * 1024;
     let position = fileStat.size;
     // Keep byte fragments until a newline is reached. Concatenating and
@@ -5235,7 +5242,7 @@ export async function getSessions(): Promise<Session[]> {
       let createdAt = meta?.timestamp ?? 0;
       if (createdAt <= 0 && filePath) {
         try {
-          const fileStat = await stat(filePath);
+          const fileStat = await statRollout(filePath);
           createdAt = fileStat.birthtimeMs || fileStat.mtimeMs;
         } catch {
           createdAt = 0;
@@ -5434,14 +5441,17 @@ export async function editConversationMessage(
       throw new Error("messages cannot be edited while a turn is active");
     }
 
-    const filePath = await findSessionFile(normalizedSessionId);
+    const sourcePath = await findSessionFile(normalizedSessionId);
+    const filePath = sourcePath
+      ? await materializeRolloutForWrite(sourcePath)
+      : null;
     if (!filePath) {
       throw new Error(`session file not found: ${normalizedSessionId}`);
     }
 
     const [content, fileStat] = await Promise.all([
-      readFile(filePath, "utf-8"),
-      stat(filePath),
+      readRolloutText(filePath, "utf-8"),
+      statRollout(filePath),
     ]);
     const rawLines = content.split("\n");
     const lines: Array<{ line: string; offset: number }> = [];
@@ -5556,7 +5566,7 @@ export async function editConversationMessage(
       throw new Error("paired message history records were not found");
     }
 
-    const currentContent = await readFile(filePath, "utf-8");
+    const currentContent = await readRolloutText(filePath, "utf-8");
     if (currentContent !== content) {
       throw new Error("session file changed before the edit was saved");
     }
@@ -5681,7 +5691,7 @@ export async function getConversationRawChunk(
 
   let fileHandle;
   try {
-    const fileStat = await stat(filePath);
+    const fileStat = await statRollout(filePath);
     const fileSize = fileStat.size;
     const fileId = `${fileStat.dev}:${fileStat.ino}`;
     const normalizedMaxBytes =
@@ -5701,7 +5711,7 @@ export async function getConversationRawChunk(
     const byteCount = Math.min(normalizedMaxBytes, fileSize - fromOffset);
     const buffer = Buffer.allocUnsafe(byteCount);
 
-    fileHandle = await open(filePath, "r");
+    fileHandle = await openRollout(filePath, "r");
     const { bytesRead } = await fileHandle.read(
       buffer,
       0,
@@ -5749,7 +5759,7 @@ export async function getConversationRawWindow(
 
   let fileHandle;
   try {
-    const fileStat = await stat(filePath);
+    const fileStat = await statRollout(filePath);
     const fileSize = fileStat.size;
     const fileId = `${fileStat.dev}:${fileStat.ino}`;
     const normalizedMaxBytes =
@@ -5773,7 +5783,7 @@ export async function getConversationRawWindow(
     }
 
     let start = Math.max(0, normalizedBefore - normalizedMaxBytes);
-    fileHandle = await open(filePath, "r");
+    fileHandle = await openRollout(filePath, "r");
     // Align backwards to the start of a complete JSONL record. A tool result
     // can be larger than the requested window, including multibyte UTF-8.
     let searchEnd = start;
@@ -5885,12 +5895,15 @@ export async function fixDanglingTurns(
       throw new Error("session id is required");
     }
 
-    const filePath = await findSessionFile(normalizedSessionId);
+    const sourcePath = await findSessionFile(normalizedSessionId);
+    const filePath = sourcePath
+      ? await materializeRolloutForWrite(sourcePath)
+      : null;
     if (!filePath) {
       throw new Error(`session file not found: ${normalizedSessionId}`);
     }
 
-    const content = await readFile(filePath, "utf-8");
+    const content = await readRolloutText(filePath, "utf-8");
     const lines = content.split("\n");
     const { startedTurnIds, startedTurnOrder, endedTurnIds } =
       collectTurnLifecycle(lines);
@@ -5958,7 +5971,7 @@ export async function getSessionWaitState(
     const cached = sessionWaitStateCache.get(normalizedSessionId);
 
     try {
-      const fileStat = await stat(filePath);
+      const fileStat = await statRollout(filePath);
       if (
         cached &&
         cached.filePath === filePath &&
@@ -5968,7 +5981,7 @@ export async function getSessionWaitState(
         return cached.result;
       }
 
-      const content = await readFile(filePath, "utf-8");
+      const content = await readRolloutText(filePath, "utf-8");
       const lines = content.split("\n");
       const { startedTurnOrder, endedTurnIds } = collectTurnLifecycle(lines);
       const danglingTurnIds = startedTurnOrder.filter(
@@ -6025,7 +6038,7 @@ export async function getSessionFileStats(
     }
 
     try {
-      const fileStat = await stat(filePath);
+      const fileStat = await statRollout(filePath);
       return {
         mtimeMs: fileStat.mtimeMs,
         size: fileStat.size,
@@ -6052,7 +6065,7 @@ export async function getSessionContext(
     }
 
     try {
-      const content = await readFile(filePath, "utf-8");
+      const content = await readRolloutText(filePath, "utf-8");
       const lines = content.split("\n");
 
       let latestUsedTokens: number | null = null;
@@ -6190,7 +6203,7 @@ export async function getConversationStream(
 
   let fileHandle;
   try {
-    const fileStat = await stat(filePath);
+    const fileStat = await statRollout(filePath);
     const fileSize = fileStat.size;
     const fileId = `${fileStat.dev}:${fileStat.ino}`;
     const previousFileId = sessionStreamFileIds.get(sessionId);
@@ -6220,7 +6233,7 @@ export async function getConversationStream(
       await getConversation(sessionId);
     }
 
-    fileHandle = await open(filePath, "r");
+    fileHandle = await openRollout(filePath, "r");
     const stream = fileHandle.createReadStream({
       start: fromOffset,
       encoding: "utf-8",
@@ -6464,7 +6477,7 @@ export async function getSessionTerminalRuns(
     }
 
     try {
-      const content = await readFile(filePath, "utf-8");
+      const content = await readRolloutText(filePath, "utf-8");
       const lines = content.split("\n");
       const parsedLines: LineWithOffset[] = [];
       let offset = 0;
@@ -6527,7 +6540,7 @@ export async function getSessionTerminalRunOutput(
       }
 
       try {
-        const content = await readFile(filePath, "utf-8");
+        const content = await readRolloutText(filePath, "utf-8");
         const lines = content.split("\n");
         const parsedLines: LineWithOffset[] = [];
         let offset = 0;

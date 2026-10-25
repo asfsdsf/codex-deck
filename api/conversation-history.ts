@@ -1,4 +1,5 @@
-import { open, stat } from "node:fs/promises";
+import { openRollout, statRollout } from "./rollout-files";
+import { stat } from "node:fs/promises";
 import type { ConversationParserState } from "./conversation-parser";
 import { parseConversationTextChunk } from "./conversation-parser";
 
@@ -30,7 +31,7 @@ function parseRecord(text: string): Record<string, unknown> | null {
 }
 
 async function readMetadata(path: string) {
-  const handle = await open(path, "r");
+  const handle = await openRollout(path, "r");
   try {
     const chunks: Buffer[] = [];
     let position = 0;
@@ -93,7 +94,7 @@ export async function readInheritedHistory(
       );
     }
     if (end === undefined) return;
-    const handle = await open(path, "r");
+    const handle = await openRollout(path, "r");
     try {
       const stats = await handle.stat();
       if (end > stats.size)
@@ -183,7 +184,7 @@ export async function inheritedHistoryChanged(
 ): Promise<boolean> {
   for (const file of files) {
     try {
-      const stats = await stat(file.path);
+      const stats = await statRollout(file.path);
       if (
         identity(stats) !== file.identity ||
         stats.size < file.end ||
@@ -191,7 +192,7 @@ export async function inheritedHistoryChanged(
       )
         return true;
       if (stats.mtimeMs !== file.mtimeMs) {
-        const handle = await open(file.path, "r");
+        const handle = await openRollout(file.path, "r");
         try {
           const anchor = Buffer.alloc(file.anchor.length);
           const { bytesRead } = await handle.read(

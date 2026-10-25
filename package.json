@@ -48,6 +48,7 @@
     "chokidar": "^4.0.3",
     "commander": "^13.1.0",
     "diff": "^8.0.2",
+    "fzstd": "^0.1.1",
     "highlight.js": "^11.11.1",
     "hono": "^4.7.8",
     "katex": "^0.18.6",

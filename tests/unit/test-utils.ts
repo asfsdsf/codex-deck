@@ -99,3 +99,16 @@ export function eventMsgLine(payload: Record<string, unknown>): string {
     payload,
   });
 }
+
+/** A standards-compliant uncompressed Zstandard frame; no native encoder needed. */
+export function zstdFrame(text: string): Buffer {
+  const content = Buffer.from(text);
+  if (content.length > 131071)
+    throw new Error("Fixture exceeds one Zstandard block");
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0xfd2fb528, 0);
+  header[4] = 0xa0;
+  header.writeUInt32LE(content.length, 5);
+  header.writeUIntLE((content.length << 3) | 1, 9, 3);
+  return Buffer.concat([header, content]);
+}

@@ -1,6 +1,6 @@
+import { isRolloutFile, openRollout } from "./rollout-files";
 import { watch, type FSWatcher } from "chokidar";
 import { basename, dirname, join } from "path";
-import { open } from "fs/promises";
 import { createInterface } from "readline";
 import { isPathWithinDirectory } from "./path-utils";
 
@@ -104,7 +104,7 @@ export function shouldUsePollingForWatcherForTests(
 
 function extractSessionIdFromPath(filePath: string): string | null {
   const match = filePath.match(
-    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i,
+    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/i,
   );
   return match?.[1] ?? null;
 }
@@ -112,7 +112,7 @@ function extractSessionIdFromPath(filePath: string): string | null {
 async function readFirstLine(filePath: string): Promise<string | null> {
   let fileHandle;
   try {
-    fileHandle = await open(filePath, "r");
+    fileHandle = await openRollout(filePath, "r");
     const stream = fileHandle.createReadStream({
       start: 0,
       end: 64 * 1024,
@@ -175,7 +175,7 @@ async function emitChange(filePath: string): Promise<void> {
   }
 
   if (
-    !filePath.endsWith(".jsonl") ||
+    !isRolloutFile(filePath) ||
     !isPathWithinDirectory(filePath, sessionsDir)
   ) {
     return;

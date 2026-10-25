@@ -1,3 +1,4 @@
+import { readRolloutText } from "./rollout-files";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
@@ -277,6 +278,21 @@ export async function searchSessionContent(
     const sessionId = sessionIdByPath.get(absolutePath);
     if (sessionId) {
       matchedSessionIds.add(sessionId);
+    }
+  }
+
+  // Search tools scan plain JSONL. Decode compressed representations (including
+  // files compressed since indexing) through the same reader used by history.
+  for (const entry of options.sessionFiles) {
+    options.signal?.throwIfAborted();
+    const missingPlain =
+      !entry.filePath.endsWith(".zst") &&
+      !(await stat(entry.filePath).catch(() => null)) &&
+      !!(await stat(`${entry.filePath}.zst`).catch(() => null));
+    if (entry.filePath.endsWith(".zst") || missingPlain) {
+      const text = await readRolloutText(entry.filePath);
+      if (text.toLowerCase().includes(options.query.toLowerCase()))
+        matchedSessionIds.add(entry.sessionId);
     }
   }
 

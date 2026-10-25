@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { openRollout } from "./rollout-files";
 import { randomUUID } from "node:crypto";
 import {
   ConversationParserState,
@@ -59,7 +59,7 @@ async function refreshIndex(
   filePath: string,
   resolveSessionFile?: SessionFileResolver,
 ): Promise<ConversationIndex> {
-  const handle = await open(filePath, "r");
+  const handle = await openRollout(filePath, "r");
   try {
     const stats = await handle.stat();
     const identity = `${stats.dev}:${stats.ino}:${stats.birthtimeMs}`;

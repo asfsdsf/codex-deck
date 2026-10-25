@@ -350,3 +350,35 @@ test("watcher polling env override takes precedence over platform default", () =
     false,
   );
 });
+
+test(
+  "compressed session transitions notify every subscriber",
+  { timeout: TEST_TIMEOUT_MS },
+  async () => {
+    const { rootDir, sessionsDir, cleanup } =
+      await createTempCodexDir("watcher-compressed");
+    const id = "44444444-4444-4444-4444-444444444444";
+    const path = join(sessionsDir, `${id}.jsonl.zst`);
+    const seen: string[][] = [[], []];
+    const callbacks = seen.map((entries) => (sessionId: string) => {
+      entries.push(sessionId);
+    });
+    try {
+      initWatcher(rootDir);
+      callbacks.forEach(onSessionChange);
+      startWatcher();
+      await waitForWatcherReady();
+      const { zstdFrame } = await import("./test-utils");
+      await writeFile(
+        path,
+        zstdFrame(sessionMetaLine(id, "/repo", Date.now()) + "\n"),
+      );
+      await waitFor(() => seen.every((entries) => entries.includes(id)), 3000);
+      assert.deepEqual(seen[0], seen[1]);
+    } finally {
+      callbacks.forEach(offSessionChange);
+      stopWatcher();
+      await cleanup();
+    }
+  },
+);
