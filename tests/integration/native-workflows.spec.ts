@@ -78,7 +78,9 @@ for (const theme of ["dark", "light"] as const) {
         .getByRole("button", { name: "Reload configuration" })
         .click();
       await expect.poll(() => reloads).toBe(1);
-      await expect(dialog.getByRole("status")).toContainText("ready");
+      await expect(
+        dialog.getByText("Startup: ready", { exact: true }),
+      ).toBeVisible();
       const box = await dialog.boundingBox();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(mobile ? 390 : 1440);
@@ -89,6 +91,80 @@ for (const theme of ["dark", "light"] as const) {
       });
       await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await expect(dialog).toBeHidden();
+      let redemptions = 0;
+      await page.route("**/api/codex/usage**", async (route) => {
+        if (route.request().method() === "POST") {
+          expect(route.request().postDataJSON().idempotencyKey).toBeTruthy();
+          redemptions++;
+          await route.fulfill({ json: { outcome: "reset" } });
+        } else
+          await route.fulfill({
+            json: {
+              rates: {
+                ordinaryUsageAllowed: false,
+                rateLimits: {
+                  limitName: "Included usage",
+                  primary: {
+                    usedPercent: 85,
+                    windowDurationMins: 300,
+                    resetsAt: 1800000000,
+                  },
+                  credits: {
+                    balance: "12.5",
+                    hasCredits: true,
+                    unlimited: false,
+                  },
+                },
+                rateLimitResetCredits: {
+                  availableCount: 1,
+                  credits: [
+                    {
+                      id: "credit-1",
+                      title: "Earned reset",
+                      resetType: "codexRateLimits",
+                      status: "available",
+                      expiresAt: 1800000000,
+                    },
+                  ],
+                },
+              },
+              activity: {
+                summary: {
+                  lifetimeTokens: 42000,
+                  peakDailyTokens: 10000,
+                  currentStreakDays: 3,
+                },
+                dailyUsageBuckets: [{ startDate: "2026-10-25", tokens: 3000 }],
+              },
+              thread: {
+                estimatedUsageCreditsMicros: 1250000,
+                estimatedUsageUsdMicros: 500000,
+                groups: [],
+              },
+              errors: [],
+            },
+          });
+      });
+      await page.getByPlaceholder("Message Codex...").fill("/usage");
+      await page.getByPlaceholder("Message Codex...").press("Enter");
+      const usage = page.getByRole("dialog", { name: "Usage dashboard" });
+      await expect(usage.getByText("85% used", { exact: true })).toBeVisible();
+      await expect(
+        usage.getByText("1.25 credits · $0.5000 USD", { exact: true }),
+      ).toBeVisible();
+      await usage.getByRole("button", { name: "Redeem reset credit" }).click();
+      expect(redemptions).toBe(0);
+      await usage.getByRole("button", { name: "Confirm redeem" }).click();
+      await expect(
+        usage.getByText("Usage limits reset.", { exact: true }),
+      ).toBeVisible();
+      expect(redemptions).toBe(1);
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `usage-${theme}-${mobile ? "mobile" : "desktop"}.png`,
+        ),
+      });
+      await usage.getByRole("button", { name: "Close", exact: true }).click();
     });
   }
 }

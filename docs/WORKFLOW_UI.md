@@ -178,6 +178,8 @@ This document records the current button-to-command mapping for the Workflow pan
 
 - `/mcp` opens MCP administration for the composer’s bound session (or global inventory without a session). It lists servers, tools and schemas, authentication, resources, and retained startup/OAuth status. OAuth returns an explicit authorization link; **Reload configuration** reloads the shared registry. Snapshots reconcile across tabs and encrypted remote polling.
 
+- `/usage` opens account limits and reset times, credit balance, daily activity, and conversation credit/USD estimates when supplied by Codex. Missing capabilities show explicit availability messages. Reset redemption requires an in-dialog confirmation and retains its attempt ID across retries; account notifications and visible-page polling refresh every client.
+
 ### Workflow composer send/init
 
 - UI location: bottom composer in the main Workflow viewport

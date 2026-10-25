@@ -1,3 +1,4 @@
+import UsageDashboard from "../components/usage-dashboard";
 import NativeDialog from "../components/native-dialog";
 import McpAdmin from "../components/mcp-admin";
 import OperationalNotices from "../components/operational-notices";
@@ -3962,7 +3963,7 @@ export default function CodexDeckApp() {
     instructions: string;
   } | null>(null);
   const [nativeDialog, setNativeDialog] = useState<{
-    kind: "mcp";
+    kind: "mcp" | "usage";
     threadId: string | null;
   } | null>(null);
   const closeNativeDialog = useCallback(() => setNativeDialog(null), []);
@@ -11006,8 +11007,11 @@ export default function CodexDeckApp() {
         return true;
       }
 
-      if (commandName === "/mcp") {
-        setNativeDialog({ kind: "mcp", threadId: commandSessionId });
+      if (commandName === "/mcp" || commandName === "/usage") {
+        setNativeDialog({
+          kind: commandName === "/usage" ? "usage" : "mcp",
+          threadId: commandSessionId,
+        });
         return true;
       }
 
@@ -13856,11 +13860,25 @@ export default function CodexDeckApp() {
         )}
 
         {nativeDialog && (
-          <NativeDialog title="MCP administration" onClose={closeNativeDialog}>
-            <McpAdmin
-              key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-              threadId={nativeDialog.threadId}
-            />
+          <NativeDialog
+            title={
+              nativeDialog.kind === "usage"
+                ? "Usage dashboard"
+                : "MCP administration"
+            }
+            onClose={closeNativeDialog}
+          >
+            {nativeDialog.kind === "usage" ? (
+              <UsageDashboard
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : (
+              <McpAdmin
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            )}
           </NativeDialog>
         )}
         {reviewDialog && (

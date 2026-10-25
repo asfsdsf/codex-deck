@@ -1,4 +1,4 @@
-export type NativeScope = "mcp";
+export type NativeScope = "mcp" | "usage";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,
@@ -54,4 +54,99 @@ export async function nativePages<T>(
     seen.add(cursor);
   }
   throw new Error(`${method} pagination limit exceeded`);
+}
+
+export interface UsageWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+export interface UsageLimit {
+  limitName?: string | null;
+  limitId?: string | null;
+  primary?: UsageWindow | null;
+  secondary?: UsageWindow | null;
+  credits?: {
+    unlimited: boolean;
+    hasCredits: boolean;
+    balance: string | null;
+  } | null;
+  rateLimitReachedType?: string | null;
+}
+export interface ResetCredit {
+  id: string;
+  title: string | null;
+  description: string | null;
+  status: string;
+  resetType: string;
+  grantedAt: number;
+  expiresAt: number | null;
+}
+export interface UsageRates {
+  rateLimits: UsageLimit;
+  rateLimitsByLimitId?: Record<string, UsageLimit> | null;
+  ordinaryUsageAllowed?: boolean | null;
+  rateLimitResetCredits?: {
+    availableCount: number;
+    credits: ResetCredit[] | null;
+  } | null;
+}
+export interface UsageActivity {
+  summary: {
+    lifetimeTokens: number | null;
+    peakDailyTokens: number | null;
+    longestRunningTurnSec: number | null;
+    currentStreakDays: number | null;
+    longestStreakDays: number | null;
+  };
+  dailyUsageBuckets?: { startDate: string; tokens: number }[] | null;
+}
+export interface ThreadUsageEstimate {
+  threadId: string;
+  estimatedUsageCreditsMicros: number;
+  estimatedUsageUsdMicros: number | null;
+  groups: {
+    model: string | null;
+    reasoningEffort: string | null;
+    speed: string | null;
+    estimatedUsageCreditsMicros: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+  }[];
+}
+export interface UsageDashboardSnapshot {
+  rates: UsageRates | null;
+  activity: UsageActivity | null;
+  thread: ThreadUsageEstimate | null;
+  errors: string[];
+}
+export async function readUsageDashboard(
+  rpc: NativeRpc,
+  threadId?: string | null,
+): Promise<UsageDashboardSnapshot> {
+  const results = await Promise.allSettled([
+    rpc("account/rateLimits/read", {}),
+    rpc("account/usage/read", {}),
+    threadId ? rpc("account/usage/read", { threadId }) : Promise.resolve(null),
+  ]);
+  const errors: string[] = [];
+  const values = results.map((result, index) => {
+    if (result.status === "rejected") {
+      errors.push(
+        `${["Rate limits", "Usage history", "Conversation estimate"][index]}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+      );
+      return null;
+    }
+    return result.value;
+  });
+  return {
+    rates: values[0] as UsageRates | null,
+    activity: values[1] as UsageActivity | null,
+    thread: values[2]
+      ? ((nativeRecord(values[2]).threadUsage as ThreadUsageEstimate | null) ??
+        null)
+      : null,
+    errors,
+  };
 }

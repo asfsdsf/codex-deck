@@ -2032,3 +2032,20 @@ export function loginCodexMcpServer(
 export function reloadCodexMcpServers(): Promise<{ ok: boolean }> {
   return requestJson("/api/codex/mcp/reload", { method: "POST" });
 }
+
+export function getCodexUsageDashboard(
+  threadId: string | null,
+): Promise<import("@codex-deck/api").UsageDashboardSnapshot> {
+  return requestJson(
+    `/api/codex/usage${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}
+export function consumeCodexResetCredit(
+  idempotencyKey: string,
+  creditId: string | null,
+): Promise<{ outcome: string }> {
+  return requestJson("/api/codex/usage/reset-credit", {
+    method: "POST",
+    body: JSON.stringify({ idempotencyKey, creditId }),
+  });
+}

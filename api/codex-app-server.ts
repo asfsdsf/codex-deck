@@ -1,4 +1,8 @@
 import {
+  readUsageDashboard,
+  type UsageDashboardSnapshot,
+} from "./codex-native";
+import {
   nativePages,
   nativeRecord,
   type NativeScope,
@@ -939,6 +943,36 @@ class CodexAppServerClient {
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userAgent = options.userAgent ?? "codex-deck/0.2.4";
     this.sharedSocketPath = options.sharedSocketPath;
+  }
+
+  public readUsageDashboard(
+    threadId?: string | null,
+  ): Promise<UsageDashboardSnapshot> {
+    return readUsageDashboard(
+      (method, params) => this.request(method, params),
+      threadId,
+    );
+  }
+  public async consumeResetCredit(
+    idempotencyKey: string,
+    creditId?: string | null,
+  ): Promise<{ outcome: string }> {
+    if (!idempotencyKey.trim())
+      throw new Error("A reset attempt ID is required");
+    const result = nativeRecord(
+      await this.request("account/rateLimitResetCredit/consume", {
+        idempotencyKey,
+        ...(creditId ? { creditId } : {}),
+      }),
+    );
+    if (
+      !["reset", "nothingToReset", "noCredit", "alreadyRedeemed"].includes(
+        String(result.outcome),
+      )
+    )
+      throw new Error("Invalid reset-credit response");
+    this.notifyNativeState("usage");
+    return { outcome: String(result.outcome) };
   }
 
   private mcpUpdates: McpRuntimeUpdate[] = [];
@@ -3565,6 +3599,10 @@ class CodexAppServerClient {
   }
 
   private handleServerNotification(method: string, params: unknown): void {
+    if (method === "account/rateLimits/updated") {
+      this.notifyNativeState("usage");
+      return;
+    }
     if (
       method === "mcpServer/startupStatus/updated" ||
       method === "mcpServer/oauthLogin/completed"
@@ -6199,6 +6237,13 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  readUsageDashboard?: (
+    threadId?: string | null,
+  ) => Promise<UsageDashboardSnapshot>;
+  consumeResetCredit?: (
+    idempotencyKey: string,
+    creditId?: string | null,
+  ) => Promise<{ outcome: string }>;
   listMcpServers?: (threadId?: string | null) => Promise<McpInventorySnapshot>;
   loginMcpServer?: (
     name: string,
@@ -6329,6 +6374,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),
+    readUsageDashboard: (id) => client!.readUsageDashboard(id),
+    consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
     listMcpServers: (id) => client!.listMcpServers(id),
     loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
     reloadMcpServers: () => client!.reloadMcpServers(),

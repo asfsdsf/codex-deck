@@ -148,6 +148,10 @@ export function parseSlashCommandInvocation(
 
 export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
+    name: "/usage",
+    description: "View usage, rate limits, credit estimates, and resets",
+  },
+  {
     name: "/mcp",
     description: "Manage MCP servers, tools, and authentication",
   },
