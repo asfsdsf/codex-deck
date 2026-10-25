@@ -1,13 +1,5 @@
 import { createReadStream, createWriteStream, rmSync } from "node:fs";
-import {
-  mkdtemp,
-  open,
-  readFile,
-  rm,
-  stat,
-  link,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, open, rm, stat, link, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";

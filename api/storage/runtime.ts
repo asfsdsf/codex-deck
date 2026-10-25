@@ -9,7 +9,6 @@ import {
   readdir,
   readFile,
   stat,
-  open,
   appendFile,
   writeFile,
   rm,
@@ -19,6 +18,10 @@ import { basename, isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
 import { randomUUID } from "node:crypto";
 import { parseGeneratedImage } from "../generated-images";
+export type {
+  CodexElicitationRequest,
+  CodexElicitationResponse,
+} from "../mcp-elicitation";
 import { spawnSync } from "node:child_process";
 import {
   clearConversationIndexes,
@@ -235,7 +238,7 @@ export interface CodexCollabAgentState {
 
 export type CodexAppServerEvent =
   | {
-      type: "user_input_requests_changed";
+      type: "user_input_requests_changed" | "elicitation_requests_changed";
       threadId: string;
       requestId: string;
       pending: boolean;

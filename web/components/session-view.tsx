@@ -23,6 +23,7 @@ import type {
   CodexUserInputResponsePayload,
 } from "@codex-deck/api";
 import MessageBlock from "./message-block";
+import { PendingElicitations } from "./pending-elicitations";
 import { PendingUserInputRequests } from "./pending-user-input-requests";
 import { UserInputResizeContainer } from "./user-input-textarea";
 import {
@@ -768,6 +769,7 @@ const SessionView = memo(
       } = props;
 
       const [messages, setMessages] = useState<ConversationMessage[]>([]);
+      const [elicitationRevision, setElicitationRevision] = useState(0);
       const [pendingUserInputRequests, setPendingUserInputRequests] = useState<
         CodexUserInputRequest[]
       >([]);
@@ -1046,6 +1048,8 @@ const SessionView = memo(
           },
           {
             onCodexAppServerEvent: (event) => {
+              if (event.type === "elicitation_requests_changed")
+                setElicitationRevision((current) => current + 1);
               if (event.type === "user_input_requests_changed") {
                 refreshUserInputRequestsRef.current();
               }
@@ -3536,6 +3540,11 @@ const SessionView = memo(
                 ))}
               </div>
               <div ref={pendingUserInputRef}>
+                <PendingElicitations
+                  key={sessionId}
+                  sessionId={sessionId}
+                  revision={elicitationRevision}
+                />
                 <PendingUserInputRequests
                   requests={unattachedUserInputRequests}
                   selectedAnswers={selectedUserInputAnswers}

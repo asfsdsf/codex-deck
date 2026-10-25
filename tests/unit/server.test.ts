@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
   CodexAppServerRpcError,
+  __TEST_ONLY__ as appServerTestOnly,
   CodexAppServerTransportError,
   setCodexAppServerClientForTests,
   type CodexAppServerClientFacade,
@@ -7632,6 +7633,110 @@ test("generated image previews use persisted item identities and support saved f
     await rm(saved);
     assert.equal((await requestJson(server, prefix + "saved")).status, 404);
   } finally {
+    await cleanup();
+  }
+});
+
+test("MCP elicitation routes validate answers and synchronize remote resolution", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir("elicitation-routes");
+  const client = new appServerTestOnly.CodexAppServerClient();
+  const internal = client as unknown as {
+    handleStdoutMessage(message: Record<string, unknown>): void;
+    respondToServerRequest(
+      id: string | number,
+      response: unknown,
+    ): Promise<void>;
+  };
+  internal.respondToServerRequest = async () => {};
+  setCodexAppServerClientForTests(client);
+  const server = createServer({ port: 13181, codexDir: rootDir, open: false });
+  try {
+    await loadStorage();
+    const prefix = "/api/codex/threads/thread/requests/elicitations";
+    assert.deepEqual((await requestJson(server, prefix)).body, {
+      requests: [],
+    });
+    const before = await requestJson(server, "/api/sessions/delta");
+    const cursor = (before.body as { cursor: string }).cursor;
+    internal.handleStdoutMessage({
+      id: 11,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "thread",
+        turnId: null,
+        serverName: "example",
+        mode: "form",
+        message: "Confirm",
+        requestedSchema: {
+          type: "object",
+          properties: { ok: { type: "boolean" } },
+          required: ["ok"],
+        },
+      },
+    });
+    const list = await requestJson(server, prefix);
+    assert.equal((list.body as { requests: unknown[] }).requests.length, 1);
+    assert.deepEqual(
+      (
+        await requestJson(
+          server,
+          "/api/codex/threads/other/requests/elicitations",
+        )
+      ).body,
+      { requests: [] },
+    );
+    const post = (path: string, body: unknown) =>
+      requestJson(server, path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const path = prefix + "/11/respond";
+    assert.equal(
+      (await post(path, { action: "accept", content: { ok: "true" } })).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post(path.replace("threads/thread", "threads/other"), {
+          action: "cancel",
+        })
+      ).status,
+      404,
+    );
+    assert.equal(
+      (await post(path, { action: "accept", content: { ok: false } })).status,
+      200,
+    );
+    assert.deepEqual((await requestJson(server, prefix)).body, {
+      requests: [],
+    });
+    assert.equal((await post(path, { action: "cancel" })).status, 404);
+    const delta = await requestJson(
+      server,
+      `/api/sessions/delta?cursor=${encodeURIComponent(cursor)}&waitMs=0`,
+    );
+    const events = (
+      delta.body as {
+        codexAppServerEvents: Array<{ type: string; pending?: boolean }>;
+      }
+    ).codexAppServerEvents;
+    assert.deepEqual(
+      events
+        .filter((e) => e.type === "elicitation_requests_changed")
+        .map((e) => e.pending),
+      [true, false],
+    );
+    const invalid = await requestJson(server, path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "invalid",
+    });
+    assert.equal(invalid.status, 400);
+  } finally {
+    server.stop();
+    setCodexAppServerClientForTests(null);
+    await client.close();
     await cleanup();
   }
 });

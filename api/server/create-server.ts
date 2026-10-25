@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
+import type { CodexElicitationResponse } from "../mcp-elicitation";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { streamSSE } from "hono/streaming";
@@ -2350,6 +2351,7 @@ export function createServer(options: ServerOptions) {
     if (
       event.type === "thread_status" ||
       event.type === "user_input_requests_changed" ||
+      event.type === "elicitation_requests_changed" ||
       event.type === "subagent_activity" ||
       event.type === "collab_agent_tool_call" ||
       event.type === "error"
@@ -5199,6 +5201,49 @@ export function createServer(options: ServerOptions) {
       );
     }
   });
+
+  app.get("/api/codex/threads/:id/requests/elicitations", (c) => {
+    ensureAppServerEventSourceSubscribed();
+    const requests =
+      getCodexAppServerClient().listPendingElicitations?.(c.req.param("id")) ??
+      [];
+    return c.json({ requests });
+  });
+
+  app.post(
+    "/api/codex/threads/:id/requests/elicitations/:requestId/respond",
+    async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json(
+          { error: "Invalid elicitation response: expected JSON" },
+          400,
+        );
+      }
+      try {
+        const client = getCodexAppServerClient();
+        if (!client.submitElicitation)
+          return c.json({ error: "Elicitation is unavailable" }, 503);
+        await client.submitElicitation(
+          c.req.param("id"),
+          c.req.param("requestId"),
+          body as CodexElicitationResponse,
+        );
+        return c.json({ ok: true });
+      } catch (error) {
+        const message = toErrorMessage(error);
+        if (message.includes("request not found"))
+          return c.json({ error: message }, 404);
+        if (message.includes("already in progress"))
+          return c.json({ error: message }, 409);
+        if (message.startsWith("Invalid elicitation response:"))
+          return c.json({ error: message }, 400);
+        return c.json({ error: message }, responseStatusForError(error));
+      }
+    },
+  );
 
   app.get("/api/codex/threads/:id/requests/user-input", async (c) => {
     const threadId = c.req.param("id")?.trim();

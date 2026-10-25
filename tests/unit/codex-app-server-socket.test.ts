@@ -44,6 +44,17 @@ test(
           return;
         }
         if (message.method !== "initialize") assert.equal(initialized, true);
+        if (message.method === "initialize") {
+          assert.equal(message.params.clientInfo.name, "codex-deck");
+          assert.equal(
+            message.params.capabilities.mcpServerOpenaiFormElicitation,
+            true,
+          );
+          assert.deepEqual(message.params.capabilities.extensions, {
+            "openai/form": {},
+            "openai/elicitation": { form: {} },
+          });
+        }
         let result: unknown = {};
         if (message.method === "config/read") result = { config: {} };
         if (message.method === "thread/resume") subscribed = true;

@@ -13,6 +13,12 @@ import {
 } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import WebSocket from "ws";
+import {
+  parseElicitationRequest,
+  validateElicitationResponse,
+  type CodexElicitationRequest,
+  type CodexElicitationResponse,
+} from "./mcp-elicitation";
 import type {
   CodexAgentWaitConfig,
   CodexAppServerEvent,
@@ -851,6 +857,14 @@ class CodexAppServerClient {
   private pending = new Map<number, PendingRequest>();
   private pendingUserInputRequests = new Map<string, PendingUserInputRequest>();
   private pendingApprovalRequests = new Map<string, PendingApprovalRequest>();
+  private pendingElicitations = new Map<
+    string,
+    {
+      request: CodexElicitationRequest;
+      rawRequestId: JsonRpcRequestId;
+      responseInFlight: boolean;
+    }
+  >();
   private liveTerminalRunsByThread = new Map<
     string,
     Map<string, CodexLiveTerminalRun>
@@ -2237,6 +2251,55 @@ class CodexAppServerClient {
     }
   }
 
+  public listPendingElicitations(threadId: string): CodexElicitationRequest[] {
+    return [...this.pendingElicitations.values()]
+      .filter((pending) => pending.request.threadId === threadId.trim())
+      .map((pending) => structuredClone(pending.request));
+  }
+
+  public async submitElicitation(
+    threadId: string,
+    requestId: string,
+    response: CodexElicitationResponse,
+  ): Promise<void> {
+    const id = requestId.trim();
+    const pending = this.pendingElicitations.get(id);
+    if (!pending || pending.request.threadId !== threadId.trim())
+      throw new Error("request not found");
+    validateElicitationResponse(pending.request, response);
+    if (pending.responseInFlight)
+      throw new Error("request response already in progress");
+    pending.responseInFlight = true;
+    try {
+      await this.respondToServerRequest(pending.rawRequestId, {
+        action: response.action,
+        content: response.content ?? null,
+        _meta: null,
+      });
+      if (this.pendingElicitations.get(id) === pending)
+        this.removePendingElicitation(id);
+    } finally {
+      pending.responseInFlight = false;
+    }
+  }
+
+  private removePendingElicitation(requestId: string): void {
+    const pending = this.pendingElicitations.get(requestId);
+    if (!pending) return;
+    this.pendingElicitations.delete(requestId);
+    this.emitAppServerEvent({
+      type: "elicitation_requests_changed",
+      threadId: pending.request.threadId,
+      requestId,
+      pending: false,
+    });
+  }
+
+  private clearPendingElicitations(): void {
+    for (const id of this.pendingElicitations.keys())
+      this.removePendingElicitation(id);
+  }
+
   public async submitApproval(
     threadId: string,
     requestId: string,
@@ -2545,6 +2608,7 @@ class CodexAppServerClient {
     this.rejectAll(new CodexAppServerTransportError("app-server closed"));
     this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
+    this.clearPendingElicitations();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
     this.liveTerminalPendingDeltaByItemByThread.clear();
@@ -2951,6 +3015,11 @@ class CodexAppServerClient {
           },
           capabilities: {
             experimentalApi: true,
+            mcpServerOpenaiFormElicitation: true,
+            extensions: {
+              "openai/form": {},
+              "openai/elicitation": { form: {} },
+            },
           },
         },
         this.requestTimeoutMs,
@@ -3078,6 +3147,27 @@ class CodexAppServerClient {
     ) {
       if (method === "item/tool/requestUserInput") {
         if (this.handleRequestUserInput(idValue, message.params)) {
+          return;
+        }
+      }
+
+      if (method === "mcpServer/elicitation/request") {
+        const request = parseElicitationRequest(
+          String(idValue),
+          message.params,
+        );
+        if (request) {
+          this.pendingElicitations.set(String(idValue), {
+            request,
+            rawRequestId: idValue,
+            responseInFlight: false,
+          });
+          this.emitAppServerEvent({
+            type: "elicitation_requests_changed",
+            threadId: request.threadId,
+            requestId: request.requestId,
+            pending: true,
+          });
           return;
         }
       }
@@ -3743,6 +3833,7 @@ class CodexAppServerClient {
     }
 
     this.removePendingUserInputRequest(String(requestId));
+    this.removePendingElicitation(String(requestId));
     this.pendingApprovalRequests.delete(String(requestId));
   }
 
@@ -3863,6 +3954,7 @@ class CodexAppServerClient {
     this.liveTerminalPendingDeltaByItemByThread.clear();
     this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
+    this.clearPendingElicitations();
 
     this.rejectAll(new CodexAppServerTransportError(reason));
   }
@@ -5729,6 +5821,12 @@ export interface CodexAppServerClientFacade {
   getLastTurnDiff: (threadId: string) => Promise<CodexLastTurnDiff>;
   interruptThread: (threadId: string) => Promise<void>;
   cleanBackgroundTerminals?: (threadId: string) => Promise<void>;
+  listPendingElicitations?: (threadId: string) => CodexElicitationRequest[];
+  submitElicitation?: (
+    threadId: string,
+    requestId: string,
+    response: CodexElicitationResponse,
+  ) => Promise<void>;
   listPendingUserInputRequests: (threadId: string) => CodexUserInputRequest[];
   submitUserInput: (
     threadId: string,
@@ -5809,6 +5907,13 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     interruptThread: (threadId: string) => client!.interruptThread(threadId),
     cleanBackgroundTerminals: (threadId: string) =>
       client!.cleanBackgroundTerminals(threadId),
+    listPendingElicitations: (threadId: string) =>
+      client!.listPendingElicitations(threadId),
+    submitElicitation: (
+      threadId: string,
+      requestId: string,
+      response: CodexElicitationResponse,
+    ) => client!.submitElicitation(threadId, requestId, response),
     listPendingUserInputRequests: (threadId: string) =>
       client!.listPendingUserInputRequests(threadId),
     submitUserInput: (

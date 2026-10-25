@@ -1334,6 +1334,33 @@ export async function listCodexUserInputRequests(
   return Array.isArray(payload.requests) ? payload.requests : [];
 }
 
+export async function listCodexElicitations(
+  threadId: string,
+): Promise<import("@codex-deck/api").CodexElicitationRequest[]> {
+  const payload = await requestJson<{
+    requests: import("@codex-deck/api").CodexElicitationRequest[];
+  }>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/requests/elicitations`,
+  );
+  return payload.requests;
+}
+
+export async function respondCodexElicitation(
+  threadId: string,
+  requestId: string,
+  response: import("@codex-deck/api").CodexElicitationResponse,
+): Promise<{ ok: boolean }> {
+  return requestJsonAndNotifyConversation(
+    threadId,
+    `/api/codex/threads/${encodeURIComponent(threadId)}/requests/elicitations/${encodeURIComponent(requestId)}/respond`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(response),
+    },
+  );
+}
+
 export async function respondCodexUserInputRequest(
   threadId: string,
   requestId: string,
