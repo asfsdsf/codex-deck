@@ -35,6 +35,31 @@ export function GeneratedImage({
     };
   }, [inline, sessionId, block.id, image.savedPath]);
   const source = inline ?? preview;
+  const [imageLink, setImageLink] = useState<{
+    source: string;
+    url: string;
+  } | null>(null);
+  useEffect(() => {
+    setImageLink(null);
+    if (!source) return;
+    let cancelled = false;
+    let url: string | undefined;
+    // Browsers block top-level data: navigation. A local blob URL supports
+    // opening the preview, including context-menu and mobile interactions.
+    void fetch(source)
+      .then((response) => response.blob())
+      .then((blob) => {
+        if (cancelled) return;
+        url = URL.createObjectURL(blob);
+        setImageLink({ source, url });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [source]);
+  const href = imageLink?.source === source ? imageLink.url : undefined;
   return (
     <figure className="min-w-0 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900">
       <figcaption className="space-y-1 p-3 text-sm text-zinc-200">
@@ -52,10 +77,11 @@ export function GeneratedImage({
       </figcaption>
       {source ? (
         <a
-          href={source}
+          href={href}
           target="_blank"
           rel="noreferrer"
           aria-label="Open generated image"
+          aria-disabled={!href}
         >
           <img
             src={source}

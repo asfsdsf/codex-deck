@@ -1,5 +1,26 @@
 import type { ContentBlock } from "./storage";
 
+export function isGeneratedImageRunning(block: ContentBlock): boolean {
+  return ["inprogress", "generating", "queued"].includes(
+    (block.generatedImage?.status ?? "").replace(/_/g, "").toLowerCase(),
+  );
+}
+
+/** Lifecycle notifications and rollout records can arrive in either order. */
+export function mergeGeneratedImage(
+  previous: ContentBlock,
+  incoming: ContentBlock,
+): ContentBlock {
+  if (!isGeneratedImageRunning(previous) && isGeneratedImageRunning(incoming))
+    return previous;
+  const image = { ...previous.generatedImage! };
+  for (const [key, value] of Object.entries(incoming.generatedImage!)) {
+    if (value !== undefined && value !== "")
+      image[key as keyof typeof image] = value;
+  }
+  return { ...previous, ...incoming, generatedImage: image };
+}
+
 /** Normalize hosted, extension, and legacy image-generation lifecycle items. */
 export function parseGeneratedImage(value: unknown): ContentBlock | null {
   if (!value || typeof value !== "object") return null;

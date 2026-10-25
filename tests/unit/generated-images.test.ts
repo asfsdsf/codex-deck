@@ -138,3 +138,93 @@ test("live and persisted image lifecycle events retain one card and stable numbe
     await cleanup();
   }
 });
+
+test("persisted image completion survives a delayed live start", () => {
+  const state = new ConversationParserState();
+  parseConversationTextChunk(
+    eventMsgLine({ type: "task_started", turn_id: "turn" }) +
+      "\n" +
+      responseItemRawLine(image) +
+      "\n",
+    0,
+    undefined,
+    state,
+  );
+  state.applyStreamImage(
+    "turn",
+    "ig-1",
+    {
+      type: "imageGeneration",
+      id: "ig-1",
+      status: "in_progress",
+      result: "",
+    },
+    false,
+  );
+  const messages = state.messages.filter((m) => m.type === "assistant");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].streaming, false);
+  const blocks = messages[0].message!.content;
+  assert.ok(Array.isArray(blocks));
+  assert.equal(blocks[0].generatedImage!.result, image.result);
+  assert.equal(blocks[0].generatedImage!.status, "completed");
+});
+
+test("duplicate image records merge preview metadata and preserve lifecycle state", () => {
+  const state = new ConversationParserState();
+  const records =
+    [
+      eventMsgLine({ type: "image_generation_begin", call_id: "ig-1" }),
+      eventMsgLine({ type: "image_generation_begin", call_id: "ig-1" }),
+    ].join("\n") + "\n";
+  parseConversationTextChunk(records, 0, undefined, state);
+  assert.equal(state.messages[0].streaming, true);
+  const completion =
+    eventMsgLine({
+      ...image,
+      type: "image_generation_end",
+      call_id: image.id,
+      fileId: "file-1",
+      saved_path: "/repo/generated.png",
+    }) +
+    "\n" +
+    responseItemRawLine({ ...image, revised_prompt: null, result: "" }) +
+    "\n";
+  parseConversationTextChunk(
+    completion,
+    Buffer.byteLength(records),
+    undefined,
+    state,
+  );
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].streaming, false);
+  const blocks = state.messages[0].message!.content;
+  assert.ok(Array.isArray(blocks));
+  assert.deepEqual(blocks[0].generatedImage, {
+    status: "completed",
+    prompt: image.revised_prompt,
+    result: image.result,
+    fileId: "file-1",
+    savedPath: "/repo/generated.png",
+    failure: undefined,
+  });
+});
+
+test("turn completion stops an image without a completion notification", () => {
+  const state = new ConversationParserState();
+  state.applyStreamImage(
+    "turn",
+    "ig-1",
+    {
+      type: "imageGeneration",
+      id: "ig-1",
+      status: "in_progress",
+    },
+    false,
+  );
+  state.completeStreamTurn("turn");
+  assert.equal(state.messages[0].streaming, false);
+  const blocks = state.messages[0].message!.content;
+  assert.ok(Array.isArray(blocks));
+  assert.equal(blocks[0].generatedImage!.status, "incomplete");
+});

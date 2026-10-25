@@ -25,7 +25,7 @@ import {
 import { basename, isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
 import { randomUUID } from "node:crypto";
-import { parseGeneratedImage } from "../generated-images";
+import { mergeGeneratedImage, parseGeneratedImage } from "../generated-images";
 export type {
   CodexElicitationRequest,
   CodexElicitationResponse,
@@ -4579,8 +4579,19 @@ function parseCodexConversation(
         `${offset}:image-generation`,
         timestamp,
       );
-      if (previous >= 0) messages[previous] = message;
-      else messages.push(message);
+      if (previous >= 0) {
+        const content = messages[previous].message!.content as ContentBlock[];
+        message.message!.content = [
+          mergeGeneratedImage(
+            content.find(
+              (b) =>
+                b.type === "image_generation" && b.id === generatedImage.id,
+            )!,
+            generatedImage,
+          ),
+        ];
+        messages[previous] = message;
+      } else messages.push(message);
       continue;
     }
 
