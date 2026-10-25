@@ -15,6 +15,7 @@ function renderDiffPane(overrides: Partial<DiffPaneProps> = {}): string {
     isMobilePhone: false,
     mode: "file-tree",
     sessionId: "session-1",
+    threadId: "session-1",
     width: 420,
     loading: false,
     error: null,
@@ -63,6 +64,11 @@ function renderDiffPane(overrides: Partial<DiffPaneProps> = {}): string {
     terminalRunOutput: "",
     terminalRunOutputLoading: false,
     terminalRunOutputError: null,
+    hooksData: null,
+    hooksLoading: false,
+    hooksError: null,
+    selectedHookKey: null,
+    updatingHookKey: null,
     skillsData: null,
     skillsLoading: false,
     skillsError: null,
@@ -77,6 +83,11 @@ function renderDiffPane(overrides: Partial<DiffPaneProps> = {}): string {
     onChangeFileContentPage: () => {},
     onSelectTerminalRun: () => {},
     onRefreshTerminalRuns: () => {},
+    onSelectHookKey: () => {},
+    onToggleHookEnabled: () => {},
+    onTrustHook: () => {},
+    onTrustAllHooks: () => {},
+    onRefreshHooks: () => {},
     onSelectSkillPath: () => {},
     onToggleSkillEnabled: () => {},
     onRefreshSkills: () => {},
@@ -113,4 +124,39 @@ test("DiffPane still shows a blocking loading state before the first file tree p
   });
 
   assert.match(html, /Loading file tree/);
+});
+
+test("workflow project panes keep configuration and unavailable states without thread runtime panels", () => {
+  const project = { sessionId: "/repo/project", threadId: null };
+  const terminalHtml = renderDiffPane({
+    ...project,
+    mode: "terminal-flow",
+    terminalRunsError: "Terminal flow is unavailable for workflow projects.",
+  });
+  assert.match(
+    terminalHtml,
+    /Terminal flow is unavailable for workflow projects/,
+  );
+  assert.doesNotMatch(
+    terminalHtml,
+    /Codex background commands|Loading active commands/,
+  );
+  const hookHtml = renderDiffPane({ ...project, mode: "hooks" });
+  assert.match(hookHtml, /No hooks available/);
+  assert.doesNotMatch(
+    hookHtml,
+    /Hook executions|Recent hook executions|Refresh executions/,
+  );
+});
+
+test("session panes still mount background commands and hook execution progress", () => {
+  assert.match(
+    renderDiffPane({ mode: "terminal-flow" }),
+    /Codex background commands/,
+  );
+  assert.match(renderDiffPane({ mode: "hooks" }), /Recent hook executions/);
+  assert.doesNotMatch(
+    renderDiffPane({ mode: "hooks", collapsed: true }),
+    /Recent hook executions/,
+  );
 });

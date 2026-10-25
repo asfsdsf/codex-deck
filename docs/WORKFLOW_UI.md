@@ -217,3 +217,5 @@ For session targets, Terminal flow includes the upstream active background-comma
 list above saved terminal history. Commands can be stopped individually or all at
 once. The active list refreshes while visible and after reconnects; older Codex
 versions can still display saved history when the listing API is unavailable.
+Workflow project targets do not mount thread runtime panels or poll thread-only
+APIs. Select a task's session to inspect its running commands and hook executions.

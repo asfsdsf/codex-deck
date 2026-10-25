@@ -15366,6 +15366,9 @@ export default function CodexDeckApp() {
         isMobilePhone={isMobilePhone}
         mode={selectedPaneMode}
         sessionId={rightPaneSessionId}
+        threadId={
+          rightPaneTarget?.kind === "session" ? rightPaneTarget.sessionId : null
+        }
         width={rightPaneWidth}
         loading={loadingSessionDiff}
         error={sessionDiffError}

@@ -53,6 +53,8 @@ interface DiffPaneProps {
   isMobilePhone: boolean;
   mode: RightPaneMode;
   sessionId: string | null;
+  /** Actual Codex thread ID; null for workflow project targets. */
+  threadId: string | null;
   width: number;
   loading: boolean;
   error: string | null;
@@ -1053,11 +1055,13 @@ export default function DiffPane(props: DiffPaneProps) {
         <EmptyState text="Select a session to view this pane." />
       ) : isTerminalRunMode ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <BackgroundTerminals
-            key={`${props.runtimeScopeKey}:${sessionId}`}
-            threadId={sessionId}
-            onChange={onRefreshTerminalRuns}
-          />
+          {props.threadId && (
+            <BackgroundTerminals
+              key={`${props.runtimeScopeKey}:${props.threadId}`}
+              threadId={props.threadId}
+              onChange={onRefreshTerminalRuns}
+            />
+          )}
           {terminalRunsLoading ? (
             <EmptyState text="Loading terminal runs..." />
           ) : terminalRunsError ? (
@@ -1134,7 +1138,7 @@ export default function DiffPane(props: DiffPaneProps) {
       ) : isHooksMode ? (
         <HooksPane
           key={`${props.runtimeScopeKey}:${sessionId}`}
-          threadId={sessionId}
+          threadId={props.threadId}
           hooksData={hooksData}
           hooksLoading={hooksLoading}
           hooksError={hooksError}
