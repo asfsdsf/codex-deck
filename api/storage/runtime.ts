@@ -1,3 +1,5 @@
+import type { CodexOperationalNotification } from "../operational-notifications";
+export type { CodexOperationalNotification } from "../operational-notifications";
 import type { CodexHookRun } from "../hook-runs";
 export type { CodexHookRun } from "../hook-runs";
 export type { CodexMemoryStatus, CodexThreadMemory } from "../codex-memory";
@@ -253,6 +255,11 @@ export interface CodexCollabAgentState {
 }
 
 export type CodexAppServerEvent =
+  | {
+      type: "operational_notification";
+      threadId: string | null;
+      notification: CodexOperationalNotification;
+    }
   | ({ type: "hook_run" } & CodexHookRun)
   | {
       type: "user_input_requests_changed" | "elicitation_requests_changed";
@@ -5825,6 +5832,8 @@ export async function getConversation(
 export async function ingestConversationLiveEvent(
   event: CodexAppServerEvent,
 ): Promise<void> {
+  if (event.type === "operational_notification" || event.type === "hook_run")
+    return;
   const filePath = await findSessionFile(event.threadId);
   if (filePath)
     await applyConversationLiveEvent(filePath, event, findHistoryRollout);

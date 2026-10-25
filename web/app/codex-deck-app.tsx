@@ -1,3 +1,4 @@
+import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import ServiceTierSelect from "../components/service-tier-select";
 import { serviceTierAvailable } from "../../api/service-tiers";
@@ -13613,6 +13614,12 @@ export default function CodexDeckApp() {
       )}
 
       <main className="flex-1 overflow-hidden bg-zinc-950 flex flex-col">
+        {apiReady && (
+          <OperationalNotices
+            key={`${selectedCodexHomeId}:${activeComposerSessionId}`}
+            threadId={activeComposerSessionId}
+          />
+        )}
         <div className="pane-header-center border-b border-zinc-800/60 px-4 py-2">
           <div className="flex min-h-[34px] items-center gap-3">
             {sidebarCollapsed && (

@@ -216,6 +216,7 @@ export function createLocalTransport(): WebTransport {
           for (const subscriber of sessionsStreamSubscribers) {
             subscriber.onCodexAppServerEvent?.(payload);
           }
+          if (!payload.threadId) return;
           for (const subscriber of conversationAppServerSubscribers.get(
             payload.threadId,
           ) ?? []) {

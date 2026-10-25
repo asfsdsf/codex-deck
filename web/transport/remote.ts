@@ -45,6 +45,8 @@ const REMOTE_WORKFLOW_DAEMON_STATUS_POLL_INTERVAL_MS = 5_000;
 
 function getCodexAppServerEventKey(event: CodexAppServerEvent): string {
   switch (event.type) {
+    case "operational_notification":
+      return event.notification.id;
     case "hook_run":
       return JSON.stringify(event);
     case "user_input_requests_changed":
@@ -256,6 +258,7 @@ export function createRemoteTransport(
     }
 
     handler?.(event);
+    if (!event.threadId) return;
     for (const subscriber of conversationAppServerSubscribers.get(
       event.threadId,
     ) ?? []) {

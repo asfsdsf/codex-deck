@@ -1,3 +1,7 @@
+import {
+  OperationalNotificationStore,
+  type CodexOperationalNotification,
+} from "./operational-notifications";
 import { HookRunStore, parseHookRun, type CodexHookRun } from "./hook-runs";
 import type { CodexMemoryStatus, CodexThreadMemory } from "./codex-memory";
 import { modelServiceTiers, constrainServiceTiers } from "./service-tiers";
@@ -877,6 +881,13 @@ class CodexAppServerClient {
       responseInFlight: boolean;
     }
   >();
+  private operationalNotifications = new OperationalNotificationStore();
+  public listOperationalNotifications(
+    threadId?: string | null,
+  ): CodexOperationalNotification[] {
+    return this.operationalNotifications.list(threadId);
+  }
+
   private hookRuns = new HookRunStore();
   public listHookRuns(threadId: string): CodexHookRun[] {
     return this.hookRuns.list(threadId);
@@ -3314,6 +3325,15 @@ class CodexAppServerClient {
   }
 
   private handleServerNotification(method: string, params: unknown): void {
+    const notification = this.operationalNotifications.record(method, params);
+    if (notification) {
+      this.emitAppServerEvent({
+        type: "operational_notification",
+        threadId: notification.threadId,
+        notification,
+      });
+      return;
+    }
     if (method === "account/updated" || method === "account/login/completed") {
       // The app-server rewrites auth.json itself (for example on ChatGPT
       // token refresh). Re-baseline the fingerprint so those self-writes do
@@ -5919,6 +5939,9 @@ export interface CodexAppServerClientFacade {
   fetchProviderModels?: (cwd?: string | null) => Promise<CodexModelOption[]>;
   listCollaborationModes: () => Promise<CodexCollaborationModeOption[]>;
   getAgentWaitConfig?: (cwd?: string | null) => Promise<CodexAgentWaitConfig>;
+  listOperationalNotifications?: (
+    threadId?: string | null,
+  ) => CodexOperationalNotification[];
   listHookRuns?: (threadId: string) => CodexHookRun[];
   listHooks?: (input: CodexHooksListInput) => Promise<CodexHooksListEntry[]>;
   writeHookState?: (updates: CodexHookStateUpdate[]) => Promise<void>;
@@ -6023,6 +6046,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listSkills: (input: CodexSkillsListInput) => client!.listSkills(input),
     writeSkillConfig: (path: string, enabled: boolean) =>
       client!.writeSkillConfig(path, enabled),
+    listOperationalNotifications: (threadId?: string | null) =>
+      client!.listOperationalNotifications(threadId),
     listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),

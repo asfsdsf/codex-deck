@@ -1,3 +1,4 @@
+import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
 import { registerMemoryInsightRoutes } from "./memory-insight-routes";
 import { serviceTierAvailable } from "../service-tiers";
@@ -2336,7 +2337,10 @@ export function createServer(options: ServerOptions) {
 
   const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
-    if (event.type === "hook_run") {
+    if (
+      event.type === "hook_run" ||
+      event.type === "operational_notification"
+    ) {
       recordSessionDeltaEvent({ codexAppServerEvents: [event] });
       for (const listener of appServerEventListeners) listener(event);
       return;
@@ -2412,6 +2416,7 @@ export function createServer(options: ServerOptions) {
   });
 
   app.get("/api/sessions/delta", async (c) => {
+    ensureAppServerEventSourceSubscribed();
     const sinceVersionRaw = c.req.query("sinceVersion");
     const parsedSinceVersion =
       sinceVersionRaw !== undefined
@@ -2630,8 +2635,8 @@ export function createServer(options: ServerOptions) {
       };
       const handleDiffGuideEvent = (event: CodexAppServerEvent) => {
         if (
-          knownDiffGuideSessionIds.has(event.threadId) &&
-          (event.type === "thread_status" || event.type === "error")
+          (event.type === "thread_status" || event.type === "error") &&
+          knownDiffGuideSessionIds.has(event.threadId)
         )
           void writeDiffGuides();
       };
@@ -4959,6 +4964,7 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  registerOperationalNotificationRoutes(app);
   registerHookRunRoutes(app);
   registerMemoryInsightRoutes(app);
   registerReviewRoutes(app, {

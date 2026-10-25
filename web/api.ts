@@ -1,3 +1,4 @@
+import type { CodexOperationalNotification } from "@codex-deck/api";
 import type { CodexHookRun } from "@codex-deck/api";
 import type { CodexMemoryStatus, CodexThreadMemory } from "@codex-deck/api";
 import type { CodexReviewTarget, CodexReviewResult } from "@codex-deck/api";
@@ -1983,5 +1984,13 @@ export function getCodexHookRuns(
 ): Promise<{ runs: CodexHookRun[] }> {
   return requestJson(
     `/api/codex/threads/${encodeURIComponent(threadId)}/hook-runs`,
+  );
+}
+
+export function getCodexOperationalNotifications(
+  threadId?: string | null,
+): Promise<{ notifications: CodexOperationalNotification[] }> {
+  return requestJson(
+    `/api/codex/notifications${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
   );
 }
