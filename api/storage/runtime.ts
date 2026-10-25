@@ -1,3 +1,7 @@
+export type {
+  ExperimentalFeature,
+  ExperimentalWriteResult,
+} from "../codex-native";
 export type { ConversationRecap } from "../codex-recap";
 export type {
   UsageDashboardSnapshot,

@@ -1,4 +1,4 @@
-export type NativeScope = "mcp" | "usage" | "recap";
+export type NativeScope = "mcp" | "usage" | "recap" | "experimental";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,
@@ -148,5 +148,86 @@ export async function readUsageDashboard(
         null)
       : null,
     errors,
+  };
+}
+
+export interface ExperimentalFeature {
+  name: string;
+  stage: string;
+  displayName: string | null;
+  description: string | null;
+  announcement: string | null;
+  enabled: boolean;
+  defaultEnabled: boolean;
+}
+export interface ExperimentalWriteResult {
+  features: ExperimentalFeature[];
+  warning: string | null;
+}
+export async function readExperimentalFeatures(
+  rpc: NativeRpc,
+  threadId?: string | null,
+): Promise<ExperimentalFeature[]> {
+  const entries = await nativePages<ExperimentalFeature>(
+    rpc,
+    "experimentalFeature/list",
+    threadId ? { threadId } : {},
+  );
+  if (
+    entries.some(
+      (feature) =>
+        typeof feature?.name !== "string" ||
+        typeof feature.enabled !== "boolean" ||
+        typeof feature.stage !== "string",
+    )
+  )
+    throw new Error("Invalid experimental feature catalog");
+  return [
+    ...new Map(entries.map((feature) => [feature.name, feature])).values(),
+  ];
+}
+export async function writeExperimentalFeatures(
+  rpc: NativeRpc,
+  threadId: string | null,
+  updates: Record<string, boolean>,
+  changed: () => void,
+): Promise<ExperimentalWriteResult> {
+  const features = await readExperimentalFeatures(rpc, threadId);
+  const edits = Object.entries(updates).map(([name, enabled]) => {
+    const feature = features.find((entry) => entry.name === name);
+    if (
+      !feature ||
+      ["removed", "deprecated"].includes(feature.stage) ||
+      typeof enabled !== "boolean"
+    )
+      throw new Error(`The server does not support changing feature ${name}`);
+    return {
+      keyPath: `features.${JSON.stringify(name)}`,
+      value:
+        enabled || feature.defaultEnabled || name === "daemon_auto_start"
+          ? enabled
+          : null,
+      mergeStrategy: "replace",
+    };
+  });
+  if (!edits.length) return { features, warning: null };
+  const response = nativeRecord(
+    await rpc("config/batchWrite", { edits, reloadUserConfig: true }),
+  );
+  changed();
+  const readback = await readExperimentalFeatures(rpc, threadId);
+  const overridden =
+    response.status === "okOverridden" ||
+    Object.entries(updates).some(
+      ([name, enabled]) =>
+        !readback.some(
+          (feature) => feature.name === name && feature.enabled === enabled,
+        ),
+    );
+  return {
+    features: readback,
+    warning: overridden
+      ? "Settings were saved, but higher-priority configuration overrides one or more selections."
+      : null,
   };
 }

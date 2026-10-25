@@ -1,3 +1,9 @@
+import {
+  readExperimentalFeatures,
+  writeExperimentalFeatures,
+  type ExperimentalFeature,
+  type ExperimentalWriteResult,
+} from "./codex-native";
 import { RecapManager, type ConversationRecap } from "./codex-recap";
 import {
   readUsageDashboard,
@@ -944,6 +950,34 @@ class CodexAppServerClient {
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userAgent = options.userAgent ?? "codex-deck/0.2.4";
     this.sharedSocketPath = options.sharedSocketPath;
+  }
+
+  public listExperimentalFeatures(
+    threadId?: string | null,
+  ): Promise<ExperimentalFeature[]> {
+    return readExperimentalFeatures(
+      (method, params) => this.requestNativeThread(method, params, threadId),
+      threadId,
+    );
+  }
+  public writeExperimentalFeatures(
+    threadId: string | null,
+    updates: Record<string, boolean>,
+  ): Promise<ExperimentalWriteResult> {
+    return writeExperimentalFeatures(
+      (method, params) =>
+        this.requestNativeThread(
+          method,
+          params,
+          method === "experimentalFeature/list" ? threadId : null,
+        ),
+      threadId,
+      updates,
+      () => {
+        this.readCoalescer.clearMatching(() => true);
+        this.notifyNativeState("experimental");
+      },
+    );
   }
 
   private recaps = new RecapManager(
@@ -6262,6 +6296,13 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  listExperimentalFeatures?: (
+    threadId?: string | null,
+  ) => Promise<ExperimentalFeature[]>;
+  writeExperimentalFeatures?: (
+    threadId: string | null,
+    updates: Record<string, boolean>,
+  ) => Promise<ExperimentalWriteResult>;
   getRecap?: (threadId: string) => ConversationRecap | null;
   startRecap?: (threadId: string, history: string) => ConversationRecap;
   readUsageDashboard?: (
@@ -6401,6 +6442,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),
+    listExperimentalFeatures: (id) => client!.listExperimentalFeatures(id),
+    writeExperimentalFeatures: (id, updates) =>
+      client!.writeExperimentalFeatures(id, updates),
     getRecap: (id) => client!.getRecap(id),
     startRecap: (id, history) => client!.startRecap(id, history),
     readUsageDashboard: (id) => client!.readUsageDashboard(id),

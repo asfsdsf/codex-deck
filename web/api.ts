@@ -2065,3 +2065,20 @@ export function startCodexRecap(
     { method: "POST" },
   );
 }
+
+export function getCodexExperimentalFeatures(
+  threadId: string | null,
+): Promise<{ features: import("@codex-deck/api").ExperimentalFeature[] }> {
+  return requestJson(
+    `/api/codex/experimental${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}
+export function setCodexExperimentalFeatures(
+  threadId: string | null,
+  updates: Record<string, boolean>,
+): Promise<import("@codex-deck/api").ExperimentalWriteResult> {
+  return requestJson("/api/codex/experimental", {
+    method: "POST",
+    body: JSON.stringify({ threadId, updates }),
+  });
+}

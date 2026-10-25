@@ -55,5 +55,5 @@ export function useNativeSnapshot<T>(
       active = false;
     };
   }, [load, version]);
-  return { data, error, loading, refresh };
+  return { data, error, loading, refresh, setData };
 }

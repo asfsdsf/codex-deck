@@ -224,6 +224,49 @@ for (const theme of ["dark", "light"] as const) {
       await exported
         .getByRole("button", { name: "Close", exact: true })
         .click();
+      let featureEnabled = false;
+      const feature = () => ({
+        name: "beta_feature",
+        displayName: "Example beta",
+        description: "A feature supplied by the host.",
+        stage: "beta",
+        enabled: featureEnabled,
+        defaultEnabled: false,
+      });
+      await page.route("**/api/codex/experimental**", async (route) => {
+        if (route.request().method() === "POST") {
+          expect(route.request().postDataJSON().updates).toEqual({
+            beta_feature: true,
+          });
+          featureEnabled = true;
+        }
+        await route.fulfill({ json: { features: [feature()], warning: null } });
+      });
+      await page.getByPlaceholder("Message Codex...").fill("/experimental");
+      await page.getByPlaceholder("Message Codex...").press("Enter");
+      const experimental = page.getByRole("dialog", {
+        name: "Experimental features",
+      });
+      await experimental
+        .getByRole("checkbox", { name: "Example beta" })
+        .check();
+      await experimental
+        .getByRole("button", { name: "Save feature settings" })
+        .click();
+      await expect(
+        experimental.getByText("Feature settings saved.", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        experimental.getByRole("checkbox", { name: "Example beta" }),
+      ).toBeChecked();
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `experimental-${theme}-${mobile ? "mobile" : "desktop"}.png`,
+        ),
+      });
+      await experimental
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
     });
   }
 }

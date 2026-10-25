@@ -219,3 +219,76 @@ test("usage reads preserve partial capabilities and reset requests retain their 
   );
   await client.close();
 });
+
+test("experimental settings validate advertised keys, quote config paths, and report overrides", async () => {
+  const { readExperimentalFeatures, writeExperimentalFeatures } =
+    await import("../../api/codex-native");
+  let writes = 0,
+    changed = 0;
+  const feature = {
+    name: "beta.feature",
+    stage: "beta",
+    displayName: "Beta",
+    description: "",
+    announcement: null,
+    enabled: false,
+    defaultEnabled: false,
+  };
+  const rpc = async (method: string, params: Record<string, unknown>) => {
+    if (method === "experimentalFeature/list") {
+      assert.equal(params.threadId, "thread");
+      return { data: [feature], nextCursor: null };
+    }
+    assert.equal(method, "config/batchWrite");
+    writes++;
+    assert.deepEqual(params.edits, [
+      {
+        keyPath: 'features."beta.feature"',
+        value: true,
+        mergeStrategy: "replace",
+      },
+    ]);
+    assert.equal(params.reloadUserConfig, true);
+    return { status: "okOverridden" };
+  };
+  assert.equal((await readExperimentalFeatures(rpc, "thread")).length, 1);
+  await assert.rejects(
+    writeExperimentalFeatures(rpc, "thread", { unknown: true }, () => {}),
+    /does not support/,
+  );
+  assert.equal(writes, 0);
+  const result = await writeExperimentalFeatures(
+    rpc,
+    "thread",
+    { "beta.feature": true },
+    () => {
+      changed++;
+    },
+  );
+  assert.match(result.warning || "", /higher-priority/);
+  assert.equal(result.features[0].enabled, false);
+  assert.equal(changed, 1);
+  assert.equal(writes, 1);
+  const app = new Hono();
+  registerNativeWorkflowRoutes(app, {
+    getClient: () => ({
+      listExperimentalFeatures: async () => [feature],
+      writeExperimentalFeatures: (id, updates) =>
+        writeExperimentalFeatures(rpc, id, updates, () => {}),
+    }),
+  });
+  assert.equal(
+    (await app.request("/api/codex/experimental?threadId=thread")).status,
+    200,
+  );
+  assert.equal(
+    (
+      await app.request("/api/codex/experimental", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates: { feature: "true" } }),
+      })
+    ).status,
+    400,
+  );
+});

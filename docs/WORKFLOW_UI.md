@@ -184,6 +184,8 @@ This document records the current button-to-command mapping for the Workflow pan
 
 - `/export [file name]` opens a Markdown preview of the bound conversation’s complete available transcript. **Download Markdown** saves it through the browser, preserving message order, role/time/model details, summaries, tool calls/results, and image references. Refresh captures newer activity; the same conversation reader serves local and remote mode.
 
+- `/experimental` discovers the host’s paginated feature catalog for the bound thread. Beta features are shown first, with an option to inspect other stages. Saving writes only changed feature keys through native config APIs and reads back effective settings; managed overrides remain visible. Running tasks retain their settings, and other clients refresh after saves. Removed/deprecated entries cannot be toggled.
+
 ### Workflow composer send/init
 
 - UI location: bottom composer in the main Workflow viewport

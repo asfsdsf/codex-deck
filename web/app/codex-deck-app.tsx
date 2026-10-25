@@ -1,3 +1,4 @@
+import ExperimentalFeatures from "../components/experimental-features";
 import TranscriptExport from "../components/transcript-export";
 import ConversationRecapView from "../components/conversation-recap";
 import UsageDashboard from "../components/usage-dashboard";
@@ -3965,7 +3966,7 @@ export default function CodexDeckApp() {
     instructions: string;
   } | null>(null);
   const [nativeDialog, setNativeDialog] = useState<{
-    kind: "mcp" | "usage" | "recap" | "export";
+    kind: "mcp" | "usage" | "recap" | "export" | "experimental";
     filename?: string;
     threadId: string | null;
   } | null>(null);
@@ -11010,6 +11011,10 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/experimental") {
+        setNativeDialog({ kind: "experimental", threadId: commandSessionId });
+        return true;
+      }
       if (commandName === "/export") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /export.");
@@ -13885,17 +13890,24 @@ export default function CodexDeckApp() {
         {nativeDialog && (
           <NativeDialog
             title={
-              nativeDialog.kind === "export"
-                ? "Export transcript"
-                : nativeDialog.kind === "recap"
-                  ? "Conversation recap"
-                  : nativeDialog.kind === "usage"
-                    ? "Usage dashboard"
-                    : "MCP administration"
+              nativeDialog.kind === "experimental"
+                ? "Experimental features"
+                : nativeDialog.kind === "export"
+                  ? "Export transcript"
+                  : nativeDialog.kind === "recap"
+                    ? "Conversation recap"
+                    : nativeDialog.kind === "usage"
+                      ? "Usage dashboard"
+                      : "MCP administration"
             }
             onClose={closeNativeDialog}
           >
-            {nativeDialog.kind === "export" && nativeDialog.threadId ? (
+            {nativeDialog.kind === "experimental" ? (
+              <ExperimentalFeatures
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : nativeDialog.kind === "export" && nativeDialog.threadId ? (
               <TranscriptExport
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}
