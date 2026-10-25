@@ -3060,6 +3060,20 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
   return null;
 }
 
+// history_base.thread_id names an immutable rollout, not the logical thread.
+// Reverts retain the thread ID in metadata but use a fresh filename UUID.
+// Archived ancestors must stay readable without entering the active session list.
+async function findHistoryRollout(rolloutId: string): Promise<string | null> {
+  const files: string[] = [];
+  await Promise.all([
+    collectSessionFiles(codexSessionsDir, files),
+    collectSessionFiles(join(codexDir, "archived_sessions"), files),
+  ]);
+  return (
+    files.find((file) => extractSessionIdFromPath(file) === rolloutId) ?? null
+  );
+}
+
 async function sessionFileExists(filePath: string): Promise<boolean> {
   try {
     const fileStat = await statRollout(filePath);
@@ -5623,7 +5637,7 @@ export async function getConversation(
     try {
       const messages = await readConversationMessageSnapshot(
         filePath,
-        findSessionFile,
+        findHistoryRollout,
       );
       rememberStreamModelOutputs(sessionId, messages);
       return messages;
@@ -5639,7 +5653,7 @@ export async function ingestConversationLiveEvent(
 ): Promise<void> {
   const filePath = await findSessionFile(event.threadId);
   if (filePath)
-    await applyConversationLiveEvent(filePath, event, findSessionFile);
+    await applyConversationLiveEvent(filePath, event, findHistoryRollout);
 }
 
 export async function getConversationMessageWindow(
@@ -5648,7 +5662,11 @@ export async function getConversationMessageWindow(
 ): Promise<ConversationMessageWindow> {
   const filePath = await findSessionFile(sessionId);
   return filePath
-    ? readConversationMessageWindow(filePath, beforeSequence, findSessionFile)
+    ? readConversationMessageWindow(
+        filePath,
+        beforeSequence,
+        findHistoryRollout,
+      )
     : {
         messages: [],
         historyStartSequence: 0,
@@ -5669,7 +5687,7 @@ export async function getConversationMessageUpdates(
         filePath,
         fromOffset,
         maxPayloadBytes,
-        findSessionFile,
+        findHistoryRollout,
       )
     : { messages: [], nextOffset: 0, done: true, totalMessages: 0 };
 }

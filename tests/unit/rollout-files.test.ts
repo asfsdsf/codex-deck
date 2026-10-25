@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   readRolloutText,
@@ -8,6 +8,7 @@ import {
 } from "../../api/rollout-files";
 import {
   getConversation,
+  getConversationMessageWindow,
   getConversationRawWindow,
   getSessions,
   initStorage,
@@ -91,6 +92,91 @@ test("rollout decoder handles concatenated frames and seek-table skippable frame
     assert.equal(await readRolloutText(path), "replacement\n");
     await writeFile(path, "invalid zstandard");
     await assert.rejects(readRolloutText(path));
+  } finally {
+    await cleanup();
+  }
+});
+
+test("fork lineage resolves immutable rollout IDs in compressed archives across reverts", async () => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("archived-lineage");
+  const thread = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+  const rollout = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  const child = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+  const grandchild = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+  const archived = join(rootDir, "archived_sessions");
+  const record = (line: string, ordinal: number) =>
+    JSON.stringify({ ...JSON.parse(line), ordinal }) + "\n";
+  const answer = (text: string, ordinal: number) =>
+    record(responseItemMessageLine("assistant", text), ordinal);
+  const fork = (id: string, parent: string, ordinal: number, bytes: number) =>
+    JSON.stringify({
+      type: "session_meta",
+      ordinal,
+      payload: {
+        id,
+        cwd: "/repo",
+        history_mode: "paginated",
+        history_base: {
+          thread_id: parent,
+          end_ordinal_exclusive: ordinal,
+          end_byte_offset: bytes,
+        },
+      },
+    }) + "\n";
+  const parentPrefix =
+    record(sessionMetaLine(thread, "/repo", Date.now()), 0) +
+    answer("retained before revert", 1);
+  const childPrefix =
+    fork(child, rollout, 2, Buffer.byteLength(parentPrefix)) +
+    answer("child retained", 3);
+  try {
+    await mkdir(archived, { recursive: true });
+    await writeFile(
+      join(archived, `rollout-${rollout}.jsonl.zst`),
+      zstdFrame(parentPrefix + answer("excluded parent tail", 2)),
+    );
+    await writeFile(
+      join(sessionsDir, `rollout-${thread}.jsonl`),
+      sessionMetaLine(thread, "/repo", Date.now()) +
+        "\n" +
+        responseItemMessageLine("assistant", "new thread history") +
+        "\n",
+    );
+    await writeFile(
+      join(archived, `rollout-${child}.jsonl.zst`),
+      zstdFrame(childPrefix + answer("excluded child tail", 4)),
+    );
+    await writeFile(
+      join(sessionsDir, `rollout-${grandchild}.jsonl`),
+      fork(grandchild, child, 4, Buffer.byteLength(childPrefix)) +
+        answer("grandchild answer", 5),
+    );
+    initStorage(rootDir);
+    await loadStorage();
+    const messages = (await getConversationMessageWindow(grandchild)).messages;
+    assert.deepEqual(
+      messages.map((m) => m.messageNumber),
+      [1, 2, 3],
+    );
+    const text = JSON.stringify(messages);
+    assert.match(text, /retained before revert/);
+    assert.match(text, /child retained/);
+    assert.match(text, /grandchild answer/);
+    assert.doesNotMatch(text, /excluded|new thread history/);
+    assert.ok(messages.slice(0, 2).every((m) => m.editable === false));
+    const sessions = await getSessions();
+    assert.deepEqual(
+      sessions.map((s) => s.id).sort(),
+      [thread, grandchild].sort(),
+    );
+    // An unavailable immutable rollout must never resolve to the current thread
+    // just because its metadata still has the same logical ID.
+    await rm(join(archived, `rollout-${rollout}.jsonl.zst`));
+    await assert.rejects(
+      getConversationMessageWindow(grandchild),
+      /unavailable/,
+    );
   } finally {
     await cleanup();
   }
