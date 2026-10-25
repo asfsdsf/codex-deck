@@ -1,3 +1,5 @@
+import ServiceTierSelect from "../components/service-tier-select";
+import { serviceTierAvailable } from "../../api/service-tiers";
 import ReviewModal from "../components/review-modal";
 import {
   memo,
@@ -3860,6 +3862,7 @@ export default function CodexDeckApp() {
   const [selectedModeKey, setSelectedModeKey] =
     useState<CollaborationModeKey>(DEFAULT_MODE_KEY);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [selectedServiceTier, setSelectedServiceTier] = useState("");
   const [selectedEffort, setSelectedEffort] = useState<
     CodexReasoningEffort | ""
   >("");
@@ -7704,6 +7707,33 @@ export default function CodexDeckApp() {
       }),
     [configDefaults, models, selectedModeOption, selectedModelId],
   );
+  const selectedTierModel = models.find(
+    (model) => model.id === effectiveModelId,
+  );
+  const availableServiceTiers = selectedTierModel?.serviceTiers ?? [];
+  useEffect(() => {
+    setSelectedServiceTier("");
+  }, [effectiveModelId, selectedCodexHomeId]);
+  const serviceTierInput = useCallback(
+    (modelId?: string | null) => {
+      const model = models.find(
+        (entry) => entry.id === (modelId || effectiveModelId),
+      );
+      return selectedServiceTier &&
+        serviceTierAvailable(model, selectedServiceTier)
+        ? { serviceTier: selectedServiceTier }
+        : {};
+    },
+    [effectiveModelId, models, selectedServiceTier],
+  );
+  const tierControl = (
+    <ServiceTierSelect
+      tiers={availableServiceTiers}
+      value={selectedServiceTier}
+      onChange={setSelectedServiceTier}
+    />
+  );
+
   const effectiveModelLabel = useMemo(
     () => getModelDisplayName(models, effectiveModelId),
     [effectiveModelId, models],
@@ -7739,8 +7769,15 @@ export default function CodexDeckApp() {
     if (!threadStatusDetails) {
       return "Unavailable";
     }
-    return threadStatusDetails.fastMode ? "On" : "Off";
-  }, [threadStatusDetails]);
+    const tier = threadStatusDetails.serviceTier;
+    return (
+      models
+        .flatMap((model) => model.serviceTiers ?? [])
+        .find((entry) => entry.id === tier)?.name ??
+      tier ??
+      "Default"
+    );
+  }, [threadStatusDetails, models]);
   const statusProviderRows = useMemo(() => {
     if (!threadStatusDetails) {
       return [];
@@ -8501,6 +8538,7 @@ export default function CodexDeckApp() {
         ? message
         : `$codex-deck-flow Strict task creating mode: Please do following tasks: ${message}`;
       const response = await sendCodexMessage(sessionId, {
+        ...serviceTierInput(selectedModelId),
         input: [{ type: "text", text: promptText }],
         cwd: projectRoot,
         ...(selectedModelId ? { model: selectedModelId } : {}),
@@ -8566,6 +8604,7 @@ export default function CodexDeckApp() {
     resolveWorkflowCreateProjectRoot,
     selectedEffort,
     selectedModelId,
+    serviceTierInput,
     trackWebManagedSessionTurn,
     waitForWorkflowCreateChatTurnToSettle,
     workflowCreateChatInput,
@@ -9177,6 +9216,7 @@ export default function CodexDeckApp() {
 
         setWorkflowActionLabel("Sending workflow chat bootstrap message...");
         const response = await sendCodexMessage(created.threadId, {
+          ...serviceTierInput(selectedModelId),
           input: [
             {
               type: "text",
@@ -9231,6 +9271,7 @@ export default function CodexDeckApp() {
       selectSessionIfAvailable,
       selectedEffort,
       selectedModelId,
+      serviceTierInput,
       selectedModeKey,
       selectedWorkflowKey,
       setSessionMode,
@@ -9481,6 +9522,7 @@ export default function CodexDeckApp() {
         });
         try {
           const response = await sendCodexMessage(sessionId, {
+            ...serviceTierInput(selectedModelId),
             input: [
               {
                 type: "text",
@@ -9589,6 +9631,7 @@ export default function CodexDeckApp() {
     resolveWorkflowCreateProjectRoot,
     selectedEffort,
     selectedModelId,
+    serviceTierInput,
     trackWebManagedSessionTurn,
     workflowCreateChatSessionId,
     workflowCreateId,
@@ -9826,6 +9869,13 @@ export default function CodexDeckApp() {
             ? { effort: effectiveReasoningEffortForRequest }
             : {}),
           collaborationMode,
+          ...(selectedServiceTier &&
+          serviceTierAvailable(
+            models.find((entry) => entry.id === effectiveModelIdForRequest),
+            selectedServiceTier,
+          )
+            ? { serviceTier: selectedServiceTier }
+            : {}),
         });
 
         markSessionUserMessagedAt(sessionId, Date.now());
@@ -9869,6 +9919,7 @@ export default function CodexDeckApp() {
       normalizeModeKey,
       notifySessionUnavailable,
       selectedModelId,
+      selectedServiceTier,
       selectedEffort,
       threadSummaryById,
       enqueuePendingUserMessage,
@@ -12943,7 +12994,7 @@ export default function CodexDeckApp() {
               </span>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onPointerDown={handleToolbarTogglePointerDown}
@@ -12983,6 +13034,7 @@ export default function CodexDeckApp() {
                 inputPlaceholder="Search or enter a reasoning mode"
                 className="min-w-[140px]"
               />
+              {tierControl}
               <span className="ml-auto text-xs text-zinc-500">
                 {contextWindowText}
               </span>
@@ -13014,6 +13066,7 @@ export default function CodexDeckApp() {
               inputPlaceholder="Search or enter a reasoning mode"
               className="min-w-[140px]"
             />
+            {tierControl}
           </div>
         )}
       </div>
@@ -13780,7 +13833,7 @@ export default function CodexDeckApp() {
                   <span className="text-right">{selectedModeLabel}</span>
                 </div>
                 <div className="flex justify-between gap-3">
-                  <span className="text-zinc-500">Fast mode</span>
+                  <span className="text-zinc-500">Service tier</span>
                   <span className="text-right">{statusFastModeLabel}</span>
                 </div>
                 {statusProviderRows.map((row) => (

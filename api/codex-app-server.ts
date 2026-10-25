@@ -1,3 +1,6 @@
+import { modelServiceTiers, constrainServiceTiers } from "./service-tiers";
+import type { CodexModelServiceTier } from "./service-tiers";
+export type { CodexModelServiceTier } from "./service-tiers";
 import {
   parseReviewTarget,
   type CodexReviewTarget,
@@ -65,7 +68,7 @@ export type CodexReasoningEffort =
   | "ultra"
   | (string & {});
 
-export type CodexServiceTier = "fast" | "flex";
+export type CodexServiceTier = string;
 
 export type CodexAuthMode =
   | "apiKey"
@@ -81,6 +84,8 @@ export interface CodexModelOption {
   hidden: boolean;
   defaultReasoningEffort: CodexReasoningEffort | null;
   supportedReasoningEfforts: CodexReasoningEffort[];
+  serviceTiers?: CodexModelServiceTier[];
+  defaultServiceTier?: string | null;
 }
 
 export interface CodexCollaborationModeSettings {
@@ -954,9 +959,42 @@ class CodexAppServerClient {
               record.defaultReasoningEffort,
             ),
             supportedReasoningEfforts: supported,
+            ...(modelServiceTiers(record) !== undefined
+              ? {
+                  serviceTiers: modelServiceTiers(record),
+                  defaultServiceTier: asString(record.defaultServiceTier),
+                }
+              : {}),
           });
         }
 
+        if (models.some((model) => model.serviceTiers !== undefined)) {
+          const [config, requirements] = await Promise.all([
+            this.request("config/read", { includeLayers: false }),
+            this.request("configRequirements/read", {}).catch((error) => {
+              if (
+                error instanceof CodexAppServerRpcError &&
+                error.code === -32601
+              )
+                return {};
+              throw error;
+            }),
+          ]);
+          for (const model of models) {
+            if (!model.serviceTiers) continue;
+            model.serviceTiers = constrainServiceTiers(
+              model.serviceTiers,
+              config,
+              requirements,
+            );
+            if (
+              !model.serviceTiers.some(
+                (tier) => tier.id === model.defaultServiceTier,
+              )
+            )
+              model.defaultServiceTier = null;
+          }
+        }
         return models;
       },
     );
@@ -4119,10 +4157,9 @@ function toReasoningEffort(value: unknown): CodexReasoningEffort | null {
 }
 
 function toServiceTier(value: unknown): CodexServiceTier | null {
-  if (value === "fast" || value === "flex") {
-    return value;
-  }
-  return null;
+  return typeof value === "string" && value.trim() && value.length <= 128
+    ? value.trim()
+    : null;
 }
 
 function toAuthMode(value: unknown): CodexAuthMode | null {

@@ -1,3 +1,4 @@
+import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
 import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
@@ -5002,6 +5003,21 @@ export function createServer(options: ServerOptions) {
       const serviceTier = parseOptionalServiceTier(body.serviceTier);
       if (body.serviceTier !== undefined && serviceTier === undefined) {
         return c.json({ error: "serviceTier is invalid" }, 400);
+      }
+
+      if (serviceTier) {
+        const availableModels = await client.listModels();
+        const requestedModel = model || body.collaborationMode?.settings?.model;
+        const selectedModel =
+          availableModels.find((entry) => entry.id === requestedModel) ??
+          (!requestedModel
+            ? availableModels.find((entry) => entry.isDefault)
+            : undefined);
+        if (!serviceTierAvailable(selectedModel, serviceTier))
+          return c.json(
+            { error: "serviceTier is unavailable for this model or policy" },
+            400,
+          );
       }
 
       const collaborationMode = parseOptionalCollaborationMode(

@@ -4,6 +4,8 @@ This document records the current button-to-command mapping for the Workflow pan
 
 ## Notes
 
+- Workflow chat composers offer service-tier choices from the selected model catalog. Choices honor upstream feature and policy gates, reset when the model or Codex home changes, and apply to workflow chat sends and bootstrap messages.
+
 - The Workflow pane uses the same browser-side local/remote transport abstraction as the rest of the app, so browsing workflows, opening logs, and invoking actions work in both local and remote mode.
 - Workflow list, daemon status, and selected workflow detail all auto-refresh through the shared local/remote transport subscriptions.
 - Workflow follow-up refreshes are targeted: workflow mutations and daemon-side workflow summary changes wake the existing workflow list and selected-detail subscriptions immediately, so new scheduler/session/thread state shows up in the selected workflow viewport without waiting for a manual reselect.

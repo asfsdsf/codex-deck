@@ -1,3 +1,5 @@
+import type { CodexModelServiceTier } from "../service-tiers";
+export type { CodexModelServiceTier } from "../service-tiers";
 export type { CodexReviewTarget, CodexReviewResult } from "../codex-review";
 import {
   isRolloutFile,
@@ -109,7 +111,7 @@ export type CodexReasoningEffort =
   | "ultra"
   | (string & {});
 
-export type CodexServiceTier = "fast" | "flex";
+export type CodexServiceTier = string;
 
 export interface CodexModelOption {
   id: string;
@@ -119,6 +121,8 @@ export interface CodexModelOption {
   hidden: boolean;
   defaultReasoningEffort: CodexReasoningEffort | null;
   supportedReasoningEfforts: CodexReasoningEffort[];
+  serviceTiers?: CodexModelServiceTier[];
+  defaultServiceTier?: string | null;
 }
 
 export interface CodexCollaborationModeSettings {
