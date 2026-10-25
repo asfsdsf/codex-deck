@@ -25,6 +25,7 @@ const historyChangeListeners = new Set<HistoryChangeCallback>();
 const sessionChangeListeners = new Set<SessionChangeCallback>();
 const workflowChangeListeners = new Set<WorkflowChangeCallback>();
 const diffGuideChangeListeners = new Set<() => void>();
+const sessionIdsByPath = new Map<string, string>();
 
 export function onDiffGuideChange(callback: () => void): () => void {
   diffGuideChangeListeners.add(callback);
@@ -34,6 +35,7 @@ export function onDiffGuideChange(callback: () => void): () => void {
 }
 
 export function initWatcher(dir: string): void {
+  sessionIdsByPath.clear();
   codexDir = dir;
   historyPath = join(codexDir, "history.jsonl");
   sessionsDir = join(codexDir, "sessions");
@@ -165,14 +167,19 @@ async function emitChange(filePath: string): Promise<void> {
     return;
   }
 
-  let sessionId = extractSessionIdFromPath(filePath);
-  if (!sessionId) {
-    sessionId = await extractSessionIdFromMeta(filePath);
-  }
+  // A revert assigns a fresh rollout UUID while preserving session_meta.id.
+  // Keep the last known ID for unlink events where metadata is no longer readable.
+  const sessionId =
+    (await extractSessionIdFromMeta(filePath)) ??
+    sessionIdsByPath.get(filePath) ??
+    sessionIdsByPath.get(filePath.replace(/\.zst$/i, "")) ??
+    extractSessionIdFromPath(filePath);
 
   if (!sessionId) {
     return;
   }
+  sessionIdsByPath.set(filePath, sessionId);
+  sessionIdsByPath.set(filePath.replace(/\.zst$/i, ""), sessionId);
 
   for (const callback of sessionChangeListeners) {
     callback(sessionId, filePath);

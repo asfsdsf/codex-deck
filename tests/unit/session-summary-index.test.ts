@@ -14,6 +14,7 @@ import {
   getSessions,
   initStorage,
   loadStorage,
+  syncSessionFileIndex,
 } from "../../api/storage";
 import {
   createTempCodexDir,
@@ -26,6 +27,72 @@ const hasSqlite = spawnSync("sqlite3", ["-version"]).status === 0;
 const id = (i: number) =>
   `aaaaaaaa-aaaa-aaaa-aaaa-${String(i).padStart(12, "0")}`;
 const sqlString = (value: string) => "'" + value.replace(/'/g, "''") + "'";
+
+test(
+  "reverted threads select SQLite's current rollout rather than an old immutable file",
+  { skip: !hasSqlite },
+  async () => {
+    const { rootDir, sessionsDir, cleanup } =
+      await createTempCodexDir("revert-current");
+    const thread = id(10);
+    const currentPath = join(sessionsDir, `000-${id(11)}.jsonl`);
+    const oldPath = join(sessionsDir, `zzz-${thread}.jsonl`);
+    const db = join(rootDir, "state_5.sqlite");
+    try {
+      for (const [path, text] of [
+        [currentPath, "Selected reverted history"],
+        [oldPath, "Obsolete old history"],
+      ]) {
+        await writeFile(
+          path,
+          sessionMetaLine(thread, "/repo", Date.now()) +
+            "\n" +
+            responseItemMessageLine("user", text) +
+            "\n",
+        );
+      }
+      execFileSync("sqlite3", [
+        db,
+        `CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT); INSERT INTO threads VALUES (${sqlString(thread)}, ${sqlString(currentPath)}, '/repo');`,
+      ]);
+      initStorage(rootDir);
+      await loadStorage();
+      const assertSelected = async () => {
+        const messages = JSON.stringify(
+          (await getConversationMessageWindow(thread)).messages,
+        );
+        assert.match(messages, /Selected reverted history/);
+        assert.doesNotMatch(messages, /Obsolete old history/);
+        assert.deepEqual(
+          (await getSessions()).map((s) => s.id),
+          [thread],
+        );
+      };
+      await assertSelected();
+      // Compression of an older immutable source must not switch the active thread.
+      await syncSessionFileIndex(thread, oldPath);
+      await assertSelected();
+      execFileSync("sqlite3", [
+        db,
+        `ALTER TABLE threads ADD COLUMN history_mode TEXT; UPDATE threads SET history_mode = 'paginated', rollout_path = ${sqlString(join(sessionsDir, "missing.jsonl"))};`,
+      ]);
+      await loadStorage();
+      assert.deepEqual(
+        (await getConversationMessageWindow(thread)).messages,
+        [],
+      );
+      // Native archive moves the current file; older immutable files may remain.
+      execFileSync("sqlite3", [
+        db,
+        `ALTER TABLE threads ADD COLUMN archived INTEGER; UPDATE threads SET archived = 1, rollout_path = ${sqlString(join(rootDir, "archived_sessions", "current.jsonl"))};`,
+      ]);
+      await loadStorage();
+      assert.deepEqual(await getSessions(), []);
+    } finally {
+      await cleanup();
+    }
+  },
+);
 
 test("compressed discovery and fallback summaries never hydrate transcript bodies", async () => {
   const { rootDir, sessionsDir, cleanup } =

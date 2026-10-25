@@ -11,6 +11,7 @@ export interface SessionSummary {
   createdAt: number;
   recencyAt: number;
   archivedAt: number;
+  historyMode: string | null;
   display: string;
 }
 
@@ -43,6 +44,7 @@ export async function readSessionSummaryIndex(
       "updated_at_ms",
       "archived",
       "archived_at",
+      "history_mode",
       "first_user_message",
       "preview",
       "title",
@@ -77,6 +79,8 @@ export async function readSessionSummaryIndex(
           time(row.updated_at_ms) ||
           time(row.updated_at),
         archivedAt: row.archived ? time(row.archived_at) || 1 : 0,
+        historyMode:
+          typeof row.history_mode === "string" ? row.history_mode : null,
         display: display ?? "",
       };
       result.set(plainRolloutPath(summary.path), summary);

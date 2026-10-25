@@ -320,8 +320,9 @@ test("session listing scans once for history-only entries and discovers new roll
         .length,
       1,
     );
+    const discoveryReads = readdirSpy.mock.calls.length;
     assert.deepEqual(await getSessions(), sessions);
-    assert.equal(readdirSpy.mock.calls.length, 1);
+    assert.equal(readdirSpy.mock.calls.length, discoveryReads);
 
     await appendFile(
       join(rootDir, "history.jsonl"),

@@ -352,6 +352,36 @@ test("watcher polling env override takes precedence over platform default", () =
 });
 
 test(
+  "reverted rollout changes broadcast the logical thread ID to every subscriber",
+  { timeout: TEST_TIMEOUT_MS },
+  async () => {
+    const { rootDir, sessionsDir, cleanup } =
+      await createTempCodexDir("watcher-revert");
+    const threadId = "55555555-5555-5555-5555-555555555555";
+    const rolloutId = "66666666-6666-6666-6666-666666666666";
+    const path = await writeSessionFile(sessionsDir, `${rolloutId}.jsonl`, [
+      sessionMetaLine(threadId, "/repo", Date.now()),
+    ]);
+    const seen: string[][] = [[], []];
+    const callbacks = seen.map((events) => (id: string) => events.push(id));
+    try {
+      initWatcher(rootDir);
+      callbacks.forEach(onSessionChange);
+      startWatcher();
+      await waitForWatcherReady();
+      await appendFile(path, "{}\n");
+      await waitFor(() => seen.every((events) => events.length > 0), 3000);
+      assert.deepEqual(seen[0], seen[1]);
+      assert.ok(seen[0].every((id) => id === threadId));
+    } finally {
+      callbacks.forEach(offSessionChange);
+      stopWatcher();
+      await cleanup();
+    }
+  },
+);
+
+test(
   "compressed session transitions notify every subscriber",
   { timeout: TEST_TIMEOUT_MS },
   async () => {

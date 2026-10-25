@@ -2891,29 +2891,46 @@ async function collectSessionFiles(
 
 async function buildFileIndex(invalidateSessionList = true): Promise<void> {
   if (invalidateSessionList) invalidateSessionsCache();
-  fileIndex.clear();
-  sessionMetaIndex.clear();
-  sessionWaitStateCache.clear();
+  const nextFileIndex = new Map<string, string>();
+  const nextMetaIndex = new Map<string, SessionMeta>();
 
   const files: string[] = [];
   await collectSessionFiles(codexSessionsDir, files);
 
-  const stateDb = files.some((file) => file.endsWith(".zst"))
-    ? await findVersionedDbPath(
-        await resolveSqliteHome(codexDir),
-        STATE_DB_FILE_REGEX,
-        LEGACY_STATE_DB_FILE,
-      )
-    : null;
-  sessionSummaryIndex = stateDb
+  const stateDb = await findVersionedDbPath(
+    await resolveSqliteHome(codexDir),
+    STATE_DB_FILE_REGEX,
+    LEGACY_STATE_DB_FILE,
+  );
+  const summaries = stateDb
     ? await readSessionSummaryIndex(stateDb)
-    : new Map();
+    : new Map<string, SessionSummary>();
+  const availablePaths = new Set(files.map(plainRolloutPath));
+  const selectedRollouts = new Map(
+    [...summaries.values()]
+      .filter(
+        (summary) =>
+          summary.archivedAt ||
+          summary.historyMode === "paginated" ||
+          availablePaths.has(plainRolloutPath(summary.path)),
+      )
+      .map((summary) => [summary.id, plainRolloutPath(summary.path)]),
+  );
+  for (const summary of summaries.values()) {
+    if (summary.archivedAt)
+      nextMetaIndex.set(summary.id, {
+        id: summary.id,
+        cwd: summary.cwd,
+        timestamp: summary.createdAt,
+        archivedAt: summary.archivedAt,
+      });
+  }
 
   for (const filePath of files) {
     const fileSessionId = extractSessionIdFromPath(filePath);
 
     let sessionId = fileSessionId;
-    const summary = sessionSummaryIndex.get(plainRolloutPath(filePath));
+    const summary = summaries.get(plainRolloutPath(filePath));
     const meta = summary
       ? {
           id: summary.id,
@@ -2923,14 +2940,34 @@ async function buildFileIndex(invalidateSessionList = true): Promise<void> {
         }
       : await readSessionMetaFromFile(filePath);
     if (meta) {
-      sessionMetaIndex.set(meta.id, meta);
       sessionId = meta.id;
     }
 
     if (sessionId) {
-      fileIndex.set(sessionId, filePath);
+      // Reverts leave the old immutable source beside the replacement. Codex's
+      // current rollout pointer takes precedence over filesystem iteration order.
+      const selectedPath = selectedRollouts.get(sessionId);
+      if (selectedPath && selectedPath !== plainRolloutPath(filePath)) continue;
+      const previous = nextMetaIndex.get(sessionId);
+      if (
+        !selectedPath &&
+        previous &&
+        meta &&
+        previous.timestamp > meta.timestamp
+      )
+        continue;
+      if (meta) nextMetaIndex.set(sessionId, meta);
+      nextFileIndex.set(sessionId, filePath);
     }
   }
+  // Publish together so concurrent readers/watch callbacks never see a partial
+  // scan and mistake a changed ancestor for a newly discovered active thread.
+  fileIndex.clear();
+  sessionMetaIndex.clear();
+  for (const [id, path] of nextFileIndex) fileIndex.set(id, path);
+  for (const [id, meta] of nextMetaIndex) sessionMetaIndex.set(id, meta);
+  sessionSummaryIndex = summaries;
+  sessionWaitStateCache.clear();
 }
 
 function collectTurnLifecycle(lines: Iterable<string>): {
@@ -5248,6 +5285,16 @@ async function updateSessionFileIndex(
 
   const normalizedFilePath = filePath.trim();
   if (normalizedFilePath && (await sessionFileExists(normalizedFilePath))) {
+    const currentPath = fileIndex.get(normalizedSessionId);
+    if (
+      currentPath &&
+      plainRolloutPath(currentPath) !== plainRolloutPath(normalizedFilePath)
+    ) {
+      // A changed ancestor is still owned by the logical thread, but must not
+      // replace its selected rollout. Re-read the pointer on a possible revert.
+      await buildFileIndex();
+      return fileIndex.has(normalizedSessionId) ? "updated" : "removed";
+    }
     addToFileIndex(normalizedSessionId, normalizedFilePath);
     return "updated";
   }
