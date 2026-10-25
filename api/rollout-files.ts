@@ -24,6 +24,49 @@ export async function resolveRolloutSource(path: string): Promise<string> {
   return `${plain}.zst`;
 }
 
+/** Read discovery metadata without decoding or caching the rest of a rollout. */
+export async function readRolloutPrefix(
+  path: string,
+  maxBytes = 64 * 1024,
+): Promise<Buffer> {
+  const source = await resolveRolloutSource(path);
+  if (!source.endsWith(".zst")) {
+    const handle = await open(source, "r");
+    try {
+      const buffer = Buffer.allocUnsafe(maxBytes);
+      const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0);
+      return buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+  }
+  const chunks: Buffer[] = [];
+  let remaining = maxBytes;
+  const complete = Symbol("prefix complete");
+  const decoder = new Decompress((chunk) => {
+    const length = Math.min(remaining, chunk.length);
+    chunks.push(Buffer.from(chunk.subarray(0, length)));
+    remaining -= length;
+    if (!remaining) throw complete;
+  });
+  try {
+    for await (const chunk of createReadStream(source, {
+      highWaterMark: 4096,
+    })) {
+      decoder.push(chunk);
+    }
+    decoder.push(new Uint8Array(), true);
+  } catch (error) {
+    if (error !== complete) throw error;
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Source stats are cheap; decoded stats require reading the complete history. */
+export async function statRolloutSource(path: string) {
+  return stat(await resolveRolloutSource(path));
+}
+
 let cacheDirectory: Promise<string> | undefined;
 const cache = new Map<string, string>();
 const pending = new Map<string, Promise<string>>();

@@ -2083,7 +2083,10 @@ class CodexAppServerClient {
       ),
       THREAD_STATE_CACHE_TTL_MS,
       async () => {
-        const result = await this.readThreadWithTurns(normalizedThreadId);
+        const result = await this.readThreadWithTurns(
+          normalizedThreadId,
+          false,
+        );
 
         const turns = extractTurnsFromThreadReadResult(result);
         let activeTurnId: string | null = null;
@@ -2531,7 +2534,10 @@ class CodexAppServerClient {
     }
   }
 
-  private async readThreadWithTurns(threadId: string): Promise<unknown> {
+  private async readThreadWithTurns(
+    threadId: string,
+    includeItems = true,
+  ): Promise<unknown> {
     const metadata = (await this.readThread(threadId, false)) as {
       thread?: Record<string, unknown>;
     };
@@ -2577,6 +2583,11 @@ class CodexAppServerClient {
           throw new Error("Invalid history turn");
         turns.set(turn.id, { ...turn, items: [] });
       }
+      if (!includeItems)
+        return {
+          ...metadata,
+          thread: { ...metadata.thread, turns: [...turns.values()] },
+        };
       const items = new Map<string, Map<string, unknown>>();
       for (const entry of await pages("thread/items/list", {})) {
         const item = entry.item as Record<string, unknown> | undefined;

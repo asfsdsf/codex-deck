@@ -1,7 +1,6 @@
-import { isRolloutFile, openRollout } from "./rollout-files";
+import { isRolloutFile, readRolloutPrefix } from "./rollout-files";
 import { watch, type FSWatcher } from "chokidar";
 import { basename, dirname, join } from "path";
-import { createInterface } from "readline";
 import { isPathWithinDirectory } from "./path-utils";
 
 type HistoryChangeCallback = () => void;
@@ -110,31 +109,16 @@ function extractSessionIdFromPath(filePath: string): string | null {
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
-  let fileHandle;
   try {
-    fileHandle = await openRollout(filePath, "r");
-    const stream = fileHandle.createReadStream({
-      start: 0,
-      end: 64 * 1024,
-      encoding: "utf-8",
-    });
-
-    const rl = createInterface({
-      input: stream,
-      crlfDelay: Infinity,
-    });
-
-    for await (const line of rl) {
-      return line;
-    }
-
-    return null;
+    const prefix = await readRolloutPrefix(filePath);
+    const newline = prefix.indexOf(10);
+    return (
+      prefix
+        .subarray(0, newline < 0 ? prefix.length : newline)
+        .toString("utf8") || null
+    );
   } catch {
     return null;
-  } finally {
-    if (fileHandle) {
-      await fileHandle.close();
-    }
   }
 }
 

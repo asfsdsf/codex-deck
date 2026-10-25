@@ -4,7 +4,15 @@ import {
   statRollout,
   readRolloutText,
   materializeRolloutForWrite,
+  plainRolloutPath,
+  readRolloutPrefix,
+  statRolloutSource,
+  resolveRolloutSource,
 } from "../rollout-files";
+import {
+  readSessionSummaryIndex,
+  type SessionSummary,
+} from "../session-summary-index";
 import {
   readdir,
   readFile,
@@ -1740,6 +1748,7 @@ let codexSessionsDir = join(codexDir, "sessions");
 
 const fileIndex = new Map<string, string>();
 const sessionMetaIndex = new Map<string, SessionMeta>();
+let sessionSummaryIndex = new Map<string, SessionSummary>();
 const sessionDisplayCache = new Map<string, string>();
 const sessionWaitStateCache = new Map<string, SessionWaitStateCacheEntry>();
 const sessionUserMessageTimestampCache = new Map<
@@ -1773,6 +1782,7 @@ const sessionStreamTokenUsageUpdates = new Map<
 
 export function initStorage(dir?: string): void {
   invalidateSessionsCache();
+  sessionDisplayCache.clear();
   clearConversationIndexes();
   sessionStreamPendingModelOutputs.clear();
   sessionStreamModelMetadata.clear();
@@ -1783,6 +1793,7 @@ export function initStorage(dir?: string): void {
   codexSessionsDir = join(codexDir, "sessions");
   sessionWaitStateCache.clear();
   sessionUserMessageTimestampCache.clear();
+  sessionSummaryIndex.clear();
 }
 
 export function getCodexDir(): string {
@@ -1808,6 +1819,7 @@ export function invalidateHistoryCache(): void {
 
 export function addToFileIndex(sessionId: string, filePath: string): void {
   invalidateSessionsCache();
+  sessionSummaryIndex.delete(plainRolloutPath(filePath));
   fileIndex.set(sessionId, filePath);
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
@@ -2787,26 +2799,17 @@ function computeContextLeftPercent(
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
-  let fileHandle;
   try {
-    fileHandle = await openRollout(filePath, "r");
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead <= 0) {
+    const chunk = await readRolloutPrefix(filePath);
+    if (!chunk.length) {
       return null;
     }
-
-    const chunk = buffer.subarray(0, bytesRead);
     const newlineIndex = chunk.indexOf(0x0a);
     return chunk
       .subarray(0, newlineIndex === -1 ? chunk.length : newlineIndex)
       .toString("utf-8");
   } catch {
     return null;
-  } finally {
-    if (fileHandle) {
-      await fileHandle.close();
-    }
   }
 }
 
@@ -2895,11 +2898,30 @@ async function buildFileIndex(invalidateSessionList = true): Promise<void> {
   const files: string[] = [];
   await collectSessionFiles(codexSessionsDir, files);
 
+  const stateDb = files.some((file) => file.endsWith(".zst"))
+    ? await findVersionedDbPath(
+        await resolveSqliteHome(codexDir),
+        STATE_DB_FILE_REGEX,
+        LEGACY_STATE_DB_FILE,
+      )
+    : null;
+  sessionSummaryIndex = stateDb
+    ? await readSessionSummaryIndex(stateDb)
+    : new Map();
+
   for (const filePath of files) {
     const fileSessionId = extractSessionIdFromPath(filePath);
 
     let sessionId = fileSessionId;
-    const meta = await readSessionMetaFromFile(filePath);
+    const summary = sessionSummaryIndex.get(plainRolloutPath(filePath));
+    const meta = summary
+      ? {
+          id: summary.id,
+          cwd: summary.cwd,
+          timestamp: summary.createdAt,
+          archivedAt: summary.archivedAt,
+        }
+      : await readSessionMetaFromFile(filePath);
     if (meta) {
       sessionMetaIndex.set(meta.id, meta);
       sessionId = meta.id;
@@ -3089,7 +3111,7 @@ async function findHistoryRollout(rolloutId: string): Promise<string | null> {
 
 async function sessionFileExists(filePath: string): Promise<boolean> {
   try {
-    const fileStat = await statRollout(filePath);
+    const fileStat = await statRolloutSource(filePath);
     return fileStat.isFile();
   } catch {
     return false;
@@ -4934,11 +4956,17 @@ function parseCodexConversation(
   return messages;
 }
 
-async function getFirstUserMessageSnippet(filePath: string): Promise<string> {
+async function getFirstUserMessageSnippet(
+  filePath: string,
+  prefixOnly = false,
+): Promise<string> {
   let fileHandle;
   try {
-    fileHandle = await openRollout(filePath, "r");
-    const stream = fileHandle.createReadStream({ encoding: "utf-8" });
+    const stream = prefixOnly
+      ? [(await readRolloutPrefix(filePath, 256 * 1024)).toString("utf8")]
+      : (fileHandle = await openRollout(filePath, "r")).createReadStream({
+          encoding: "utf-8",
+        });
 
     let firstMessageRole: "user" | "assistant" | null = null;
     let firstUserText: string | null = null;
@@ -5162,7 +5190,26 @@ async function getLatestUserMessageTimestamp(
   return timestamp;
 }
 
+async function getPrefixUserMessageTimestamp(
+  filePath: string,
+): Promise<number> {
+  try {
+    const prefix = await readRolloutPrefix(filePath, 256 * 1024);
+    return prefix
+      .toString("utf8")
+      .split("\n")
+      .reduce(
+        (latest, line) =>
+          Math.max(latest, getUserMessageTimestampFromLine(line)),
+        0,
+      );
+  } catch {
+    return 0;
+  }
+}
+
 export async function loadStorage(): Promise<void> {
+  sessionDisplayCache.clear();
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
 }
 
@@ -5269,6 +5316,16 @@ export async function getSessions(): Promise<Session[]> {
 
     const readSession = async (sessionId: string): Promise<Session | null> => {
       const filePath = fileIndex.get(sessionId) ?? null;
+      // Like native thread/list, summaries must not hydrate transcript history.
+      // Resolve representation changes before trusting an immutable summary.
+      const source = filePath
+        ? await resolveRolloutSource(filePath).catch(() => null)
+        : null;
+      const compressed = source?.endsWith(".zst") ?? false;
+      const summary =
+        compressed && filePath
+          ? sessionSummaryIndex.get(plainRolloutPath(filePath))
+          : undefined;
 
       let meta: SessionMeta | null = sessionMetaIndex.get(sessionId) ?? null;
       if (!meta && filePath) {
@@ -5286,9 +5343,13 @@ export async function getSessions(): Promise<Session[]> {
       const historyUserMessageTimestamp = historyEntry
         ? toEpochMilliseconds(historyEntry.timestamp)
         : 0;
-      const fileUserMessageTimestamp = filePath
-        ? await getLatestUserMessageTimestamp(sessionId, filePath)
-        : 0;
+      const fileUserMessageTimestamp =
+        summary?.recencyAt ??
+        (filePath
+          ? compressed
+            ? await getPrefixUserMessageTimestamp(filePath)
+            : await getLatestUserMessageTimestamp(sessionId, filePath)
+          : 0);
       const latestUserMessageTimestamp = Math.max(
         historyUserMessageTimestamp,
         fileUserMessageTimestamp,
@@ -5297,7 +5358,7 @@ export async function getSessions(): Promise<Session[]> {
       let createdAt = meta?.timestamp ?? 0;
       if (createdAt <= 0 && filePath) {
         try {
-          const fileStat = await statRollout(filePath);
+          const fileStat = await statRolloutSource(filePath);
           createdAt = fileStat.birthtimeMs || fileStat.mtimeMs;
         } catch {
           createdAt = 0;
@@ -5313,8 +5374,13 @@ export async function getSessions(): Promise<Session[]> {
       const cachedDisplay = sessionDisplayCache.get(sessionId);
       if (cachedDisplay) {
         display = cachedDisplay;
+      } else if (summary?.display) {
+        display = normalizeDisplayText(summary.display);
+        sessionDisplayCache.set(sessionId, display);
       } else if (filePath) {
-        display = await getFirstUserMessageSnippet(filePath);
+        display = await getFirstUserMessageSnippet(filePath, compressed);
+        if (display === "(no prompt text)" && historyEntry)
+          display = normalizeDisplayText(historyEntry.text);
         sessionDisplayCache.set(sessionId, display);
       } else if (historyEntry) {
         display = normalizeDisplayText(historyEntry.text);

@@ -2071,6 +2071,11 @@ test("paginated history reads all turn and item pages in chronological order", a
       (await client.getThreadState("thread")).activeTurnId,
       "second",
     );
+    assert.equal(
+      calls.filter((method) => method === "thread/items/list").length,
+      2,
+      "state reads must not fetch transcript item pages",
+    );
   } finally {
     await client.close();
   }
