@@ -1,3 +1,4 @@
+import type { CodexMemoryStatus, CodexThreadMemory } from "@codex-deck/api";
 import type { CodexReviewTarget, CodexReviewResult } from "@codex-deck/api";
 import type {
   DiffGuideStartRequest,
@@ -1962,5 +1963,16 @@ export async function startCodexReview(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ target }),
     },
+  );
+}
+
+export function getCodexMemoryStatus(): Promise<CodexMemoryStatus> {
+  return requestJson("/api/codex/memories/status");
+}
+export function getCodexThreadMemory(
+  threadId: string,
+): Promise<CodexThreadMemory> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/memory`,
   );
 }

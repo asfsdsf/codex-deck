@@ -13910,6 +13910,8 @@ export default function CodexDeckApp() {
           />
         )}
         <MemoriesModal
+          threadId={activeComposerSessionId}
+          homeId={selectedCodexHomeId}
           open={showMemoriesModal}
           useEnabled={memoriesUseEnabled}
           generateEnabled={memoriesGenerateEnabled}

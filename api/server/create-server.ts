@@ -1,3 +1,4 @@
+import { registerMemoryInsightRoutes } from "./memory-insight-routes";
 import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
 import { Hono } from "hono";
@@ -4952,6 +4953,7 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  registerMemoryInsightRoutes(app);
   registerReviewRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
     wake: (id) => {

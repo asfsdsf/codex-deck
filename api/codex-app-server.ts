@@ -1,3 +1,4 @@
+import type { CodexMemoryStatus, CodexThreadMemory } from "./codex-memory";
 import { modelServiceTiers, constrainServiceTiers } from "./service-tiers";
 import type { CodexModelServiceTier } from "./service-tiers";
 export type { CodexModelServiceTier } from "./service-tiers";
@@ -1420,6 +1421,47 @@ class CodexAppServerClient {
       threadId: normalizedThreadId,
       mode,
     });
+  }
+
+  public async readThreadMemory(threadId: string): Promise<CodexThreadMemory> {
+    const id = threadId.trim();
+    if (!id) throw new Error("threadId is required");
+    const read = () => this.request("thread/memory/read", { threadId: id });
+    let result;
+    try {
+      result = await read();
+    } catch (error) {
+      if (!shouldRetryAfterResume(error)) throw error;
+      await this.resumeThread(id);
+      result = await read();
+    }
+    const record = asRecord(result);
+    if (
+      !record ||
+      (record.summary !== null && typeof record.summary !== "string")
+    ) {
+      throw new CodexAppServerTransportError(
+        "Invalid thread/memory/read response",
+      );
+    }
+    return { summary: record.summary as string | null };
+  }
+
+  public async readMemoryStatus(): Promise<CodexMemoryStatus> {
+    const record = asRecord(await this.request("memory/status", {}));
+    if (
+      !record ||
+      typeof record.v2Ready !== "boolean" ||
+      typeof record.v2ConsolidatedThreads !== "number" ||
+      !Number.isSafeInteger(record.v2ConsolidatedThreads) ||
+      record.v2ConsolidatedThreads < 0
+    ) {
+      throw new CodexAppServerTransportError("Invalid memory/status response");
+    }
+    return {
+      v2Ready: record.v2Ready,
+      v2ConsolidatedThreads: record.v2ConsolidatedThreads,
+    };
   }
 
   public async resetMemories(): Promise<void> {
@@ -5875,6 +5917,8 @@ export interface CodexAppServerClientFacade {
     threadId: string,
     mode: CodexThreadMemoryMode,
   ) => Promise<void>;
+  readThreadMemory?: (threadId: string) => Promise<CodexThreadMemory>;
+  readMemoryStatus?: () => Promise<CodexMemoryStatus>;
   resetMemories?: () => Promise<void>;
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
@@ -5961,6 +6005,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listSkills: (input: CodexSkillsListInput) => client!.listSkills(input),
     writeSkillConfig: (path: string, enabled: boolean) =>
       client!.writeSkillConfig(path, enabled),
+    readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
+    readMemoryStatus: () => client!.readMemoryStatus(),
     readMemorySettings: (cwd?: string | null) =>
       client!.readMemorySettings(cwd),
     writeMemorySettings: (settings: CodexMemoriesSettings) =>

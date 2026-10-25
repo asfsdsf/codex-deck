@@ -1,3 +1,4 @@
+export type { CodexMemoryStatus, CodexThreadMemory } from "../codex-memory";
 import type { CodexModelServiceTier } from "../service-tiers";
 export type { CodexModelServiceTier } from "../service-tiers";
 export type { CodexReviewTarget, CodexReviewResult } from "../codex-review";

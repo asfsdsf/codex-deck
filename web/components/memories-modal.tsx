@@ -1,7 +1,10 @@
+import MemoryInsights from "./memory-insights";
 import CenteredConfirmDialog from "./centered-confirm-dialog";
 
 interface MemoriesModalProps {
   open: boolean;
+  threadId?: string | null;
+  homeId?: string;
   useEnabled: boolean;
   generateEnabled: boolean;
   loading: boolean;
@@ -50,7 +53,7 @@ export default function MemoriesModal(props: MemoriesModalProps) {
           onClose();
         }}
       >
-        <div className="w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-2xl backdrop-blur">
+        <div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-2xl backdrop-blur">
           <div className="border-b border-zinc-800 px-4 py-3">
             <div className="text-sm font-semibold text-zinc-100">Memories</div>
             <div className="mt-1 text-xs text-zinc-400">
@@ -58,6 +61,10 @@ export default function MemoriesModal(props: MemoriesModalProps) {
             </div>
           </div>
           <div className="space-y-3 p-4">
+            <MemoryInsights
+              key={`${props.homeId}:${props.threadId}`}
+              threadId={props.threadId ?? null}
+            />
             {loading ? (
               <div className="rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400">
                 Loading memory settings...
@@ -68,7 +75,9 @@ export default function MemoriesModal(props: MemoriesModalProps) {
                   <input
                     type="checkbox"
                     checked={useEnabled}
-                    onChange={(event) => onChangeUseEnabled(event.target.checked)}
+                    onChange={(event) =>
+                      onChangeUseEnabled(event.target.checked)
+                    }
                     disabled={saving || resetting}
                     className="mt-0.5 h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500"
                   />
@@ -96,7 +105,8 @@ export default function MemoriesModal(props: MemoriesModalProps) {
                       Generate memories
                     </span>
                     <span className="mt-1 block text-xs leading-relaxed text-zinc-400">
-                      Generate memories from following threads. Current thread included.
+                      Generate memories from following threads. Current thread
+                      included.
                     </span>
                   </span>
                 </label>
