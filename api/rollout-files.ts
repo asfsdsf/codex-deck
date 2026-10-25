@@ -1,8 +1,8 @@
 import { createReadStream, createWriteStream, rmSync } from "node:fs";
 import { mkdtemp, open, rm, stat, link, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -68,8 +68,22 @@ export async function statRolloutSource(path: string) {
 }
 
 let cacheDirectory: Promise<string> | undefined;
-const cache = new Map<string, string>();
+const cache = new Map<string, { path: string; source: string }>();
 const pending = new Map<string, Promise<string>>();
+const opening = new Map<string, number>();
+
+async function evictRollouts(): Promise<void> {
+  const removals: Promise<unknown>[] = [];
+  for (const [key, entry] of cache) {
+    if (cache.size <= 32) break;
+    if (opening.has(entry.source)) continue;
+    cache.delete(key);
+    // Already-open handles remain readable. Unique filenames prevent a later
+    // decode from racing deletion of an earlier cache entry.
+    removals.push(rm(entry.path, { force: true }).catch(() => {}));
+  }
+  await Promise.all(removals);
+}
 
 function directory(): Promise<string> {
   return (cacheDirectory ??= mkdtemp(
@@ -81,21 +95,22 @@ function directory(): Promise<string> {
 }
 
 /** Decode to a private temporary file so all existing byte-window readers stay bounded. */
-export async function readableRolloutPath(path: string): Promise<string> {
+async function readableRolloutPath(path: string): Promise<string> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const source = await resolveRolloutSource(path);
     if (!source.endsWith(".zst")) return source;
     const stats = await stat(source);
     const signature = `${source}:${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
     const cached = cache.get(signature);
-    if (cached) return cached;
+    if (cached) {
+      cache.delete(signature);
+      cache.set(signature, cached);
+      return cached.path;
+    }
     const active = pending.get(signature);
     if (active) return active;
     const task = (async () => {
-      const target = join(
-        await directory(),
-        createHash("sha256").update(signature).digest("hex") + ".jsonl",
-      );
+      const target = join(await directory(), randomUUID() + ".jsonl");
       const decoder = new Transform({
         transform(chunk, _encoding, callback) {
           try {
@@ -129,13 +144,11 @@ export async function readableRolloutPath(path: string): Promise<string> {
           current.ctimeMs !== stats.ctimeMs
         )
           throw new Error("Rollout changed during decompression");
-        cache.set(signature, target);
-        // Open handles remain readable after eviction on Unix; Windows may defer removal.
-        while (cache.size > 32) {
-          const [key, oldPath] = cache.entries().next().value!;
-          cache.delete(key);
-          await rm(oldPath, { force: true }).catch(() => {});
-        }
+        cache.set(signature, {
+          path: target,
+          source: resolve(plainRolloutPath(source)),
+        });
+        await evictRollouts();
         return target;
       } catch (error) {
         await rm(target, { force: true });
@@ -155,14 +168,23 @@ export async function readableRolloutPath(path: string): Promise<string> {
 }
 
 export async function openRollout(path: string, _flags: "r" = "r") {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await open(await readableRolloutPath(path), "r");
-    } catch (error) {
-      if (attempt >= 2 || (error as NodeJS.ErrnoException).code !== "ENOENT")
-        throw error;
-      await delay(25);
+  const source = resolve(plainRolloutPath(path));
+  opening.set(source, (opening.get(source) ?? 0) + 1);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await open(await readableRolloutPath(path), "r");
+      } catch (error) {
+        if (attempt >= 2 || (error as NodeJS.ErrnoException).code !== "ENOENT")
+          throw error;
+        await delay(25);
+      }
     }
+  } finally {
+    const remaining = opening.get(source)! - 1;
+    if (remaining) opening.set(source, remaining);
+    else opening.delete(source);
+    await evictRollouts();
   }
 }
 export async function statRollout(path: string) {

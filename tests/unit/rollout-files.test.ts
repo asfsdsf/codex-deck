@@ -97,6 +97,27 @@ test("rollout decoder handles concatenated frames and seek-table skippable frame
   }
 });
 
+test("concurrent compressed readers remain readable across cache eviction", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "compressed-concurrent",
+  );
+  try {
+    const paths = Array.from({ length: 128 }, (_, i) =>
+      join(rootDir, `${i}.jsonl.zst`),
+    );
+    await Promise.all(
+      paths.map((path, i) => writeFile(path, zstdFrame(`record-${i}\n`))),
+    );
+    const texts = await Promise.all(paths.map((path) => readRolloutText(path)));
+    assert.deepEqual(
+      texts,
+      paths.map((_, i) => `record-${i}\n`),
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
 test("fork lineage resolves immutable rollout IDs in compressed archives across reverts", async () => {
   const { rootDir, sessionsDir, cleanup } =
     await createTempCodexDir("archived-lineage");
