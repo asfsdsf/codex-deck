@@ -62,3 +62,14 @@ export function serviceTierAvailable(
     ? model.serviceTiers.some((entry) => entry.id === tier)
     : ["fast", "flex"].includes(tier);
 }
+
+// Null explicitly requests the configured/catalog default, instead of preserving
+// the last tier persisted in a loaded thread by thread/settings/update.
+export function serviceTierOverride(
+  model: { serviceTiers?: CodexModelServiceTier[] } | undefined,
+  selectedTier: string,
+): string | null {
+  return selectedTier && serviceTierAvailable(model, selectedTier)
+    ? selectedTier
+    : null;
+}

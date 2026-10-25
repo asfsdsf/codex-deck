@@ -4,6 +4,7 @@ import {
   modelServiceTiers,
   constrainServiceTiers,
   serviceTierAvailable,
+  serviceTierOverride,
 } from "../../api/service-tiers";
 import { __TEST_ONLY__ } from "../../api/codex-app-server";
 
@@ -119,5 +120,82 @@ test("message routes accept catalog tiers and reject unsupported selections", as
     server.stop();
     await client.close();
     await cleanup();
+  }
+});
+
+test("speed selection explicitly requests default for empty or unavailable choices", () => {
+  const model = { serviceTiers: tiers };
+  assert.equal(serviceTierOverride(model, "ultrafast"), "ultrafast");
+  assert.equal(serviceTierOverride(model, "default"), "default");
+  assert.equal(serviceTierOverride(model, ""), null);
+  assert.equal(serviceTierOverride(model, "unavailable"), null);
+});
+
+test("default speed overwrites a persisted tier with the configured, catalog, or standard default", async (t) => {
+  for (const scenario of [
+    { configured: null, catalog: null, expected: "default" },
+    { configured: null, catalog: "flex", expected: "flex" },
+    { configured: "priority", catalog: "flex", expected: "priority" },
+  ]) {
+    await t.test(JSON.stringify(scenario), async () => {
+      const client = new __TEST_ONLY__.CodexAppServerClient();
+      let persistedTier: unknown;
+      const turns: unknown[] = [];
+      client.listModels = async () => [
+        {
+          id: "model",
+          displayName: "Model",
+          description: "",
+          isDefault: true,
+          hidden: false,
+          defaultReasoningEffort: null,
+          supportedReasoningEfforts: [],
+          serviceTiers: tiers,
+          defaultServiceTier: scenario.catalog,
+        },
+      ];
+      (
+        client as unknown as {
+          request(
+            method: string,
+            params: Record<string, unknown>,
+          ): Promise<unknown>;
+        }
+      ).request = async (method, params) => {
+        if (method === "config/read")
+          return {
+            config: { model: "model", model_service_tier: scenario.configured },
+          };
+        if (method === "thread/settings/update") {
+          persistedTier = params.serviceTier;
+          return {};
+        }
+        assert.equal(method, "turn/start");
+        // Match upstream: omission leaves the previous thread override active.
+        if (params.serviceTier !== undefined)
+          persistedTier = params.serviceTier;
+        turns.push(persistedTier);
+        return { turn: { id: `turn-${turns.length}` } };
+      };
+      try {
+        await client.sendMessage({
+          threadId: "thread",
+          text: "Fast turn",
+          serviceTier: serviceTierOverride(
+            { serviceTiers: tiers },
+            "ultrafast",
+          ),
+        });
+        await client.sendMessage({
+          threadId: "thread",
+          text: "Default turn",
+          serviceTier: serviceTierOverride({ serviceTiers: tiers }, ""),
+        });
+        assert.deepEqual(turns, ["ultrafast", scenario.expected]);
+        assert.equal(persistedTier, scenario.expected);
+      } finally {
+        await client.close();
+      }
+    });
   }
 });

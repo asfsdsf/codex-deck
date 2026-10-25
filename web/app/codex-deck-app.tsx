@@ -1,7 +1,7 @@
 import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import ServiceTierSelect from "../components/service-tier-select";
-import { serviceTierAvailable } from "../../api/service-tiers";
+import { serviceTierOverride } from "../../api/service-tiers";
 import ReviewModal from "../components/review-modal";
 import {
   memo,
@@ -7723,10 +7723,7 @@ export default function CodexDeckApp() {
       const model = models.find(
         (entry) => entry.id === (modelId || effectiveModelId),
       );
-      return selectedServiceTier &&
-        serviceTierAvailable(model, selectedServiceTier)
-        ? { serviceTier: selectedServiceTier }
-        : {};
+      return { serviceTier: serviceTierOverride(model, selectedServiceTier) };
     },
     [effectiveModelId, models, selectedServiceTier],
   );
@@ -9873,13 +9870,7 @@ export default function CodexDeckApp() {
             ? { effort: effectiveReasoningEffortForRequest }
             : {}),
           collaborationMode,
-          ...(selectedServiceTier &&
-          serviceTierAvailable(
-            models.find((entry) => entry.id === effectiveModelIdForRequest),
-            selectedServiceTier,
-          )
-            ? { serviceTier: selectedServiceTier }
-            : {}),
+          ...serviceTierInput(effectiveModelIdForRequest),
         });
 
         markSessionUserMessagedAt(sessionId, Date.now());
@@ -9923,7 +9914,7 @@ export default function CodexDeckApp() {
       normalizeModeKey,
       notifySessionUnavailable,
       selectedModelId,
-      selectedServiceTier,
+      serviceTierInput,
       selectedEffort,
       threadSummaryById,
       enqueuePendingUserMessage,

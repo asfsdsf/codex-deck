@@ -165,6 +165,7 @@ export interface SendCodexMessageRequest {
   input?: SendCodexMessageInputItem[];
   cwd?: string;
   model?: string | null;
+  /** Null restores the current configured/catalog default. */
   serviceTier?: CodexServiceTier | null;
   effort?: CodexReasoningEffort | null;
   collaborationMode?: CodexCollaborationModeInput | null;

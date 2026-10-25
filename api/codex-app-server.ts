@@ -2060,7 +2060,26 @@ class CodexAppServerClient {
     if (typeof params.model !== "string" && activeConfig.model) {
       params.model = activeConfig.model;
     }
-    if (params.serviceTier === undefined && activeConfig.serviceTier !== null) {
+    if (input.serviceTier === null) {
+      // An explicit reset must overwrite any tier stored on this thread. A
+      // missing turn/start tier would preserve the previous selection.
+      if (activeConfig.serviceTier !== null) {
+        params.serviceTier = activeConfig.serviceTier;
+      } else {
+        const models = await this.listModels();
+        const requestedModel =
+          input.model?.trim() ||
+          input.collaborationMode?.settings?.model?.trim() ||
+          activeConfig.model;
+        const model = requestedModel
+          ? models.find((entry) => entry.id === requestedModel)
+          : models.find((entry) => entry.isDefault);
+        params.serviceTier = model?.defaultServiceTier ?? "default";
+      }
+    } else if (
+      params.serviceTier === undefined &&
+      activeConfig.serviceTier !== null
+    ) {
       params.serviceTier = activeConfig.serviceTier;
     }
     if (typeof params.effort !== "string" && activeConfig.reasoningEffort) {
