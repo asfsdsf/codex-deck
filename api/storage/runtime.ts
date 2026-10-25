@@ -1,3 +1,5 @@
+import type { CodexHookRun } from "../hook-runs";
+export type { CodexHookRun } from "../hook-runs";
 export type { CodexMemoryStatus, CodexThreadMemory } from "../codex-memory";
 import type { CodexModelServiceTier } from "../service-tiers";
 export type { CodexModelServiceTier } from "../service-tiers";
@@ -251,6 +253,7 @@ export interface CodexCollabAgentState {
 }
 
 export type CodexAppServerEvent =
+  | ({ type: "hook_run" } & CodexHookRun)
   | {
       type: "user_input_requests_changed" | "elicitation_requests_changed";
       threadId: string;

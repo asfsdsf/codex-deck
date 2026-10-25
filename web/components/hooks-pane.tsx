@@ -1,3 +1,4 @@
+import HookExecutionProgress from "./hook-execution-progress";
 import { RefreshCw } from "lucide-react";
 import type { CodexHookMetadata, SessionHooksResponse } from "@codex-deck/api";
 
@@ -20,7 +21,9 @@ function hookIsRunnable(hook: CodexHookMetadata): boolean {
   return hook.enabled && !hookNeedsReview(hook);
 }
 
-function formatHookEventName(eventName: CodexHookMetadata["eventName"]): string {
+function formatHookEventName(
+  eventName: CodexHookMetadata["eventName"],
+): string {
   switch (eventName) {
     case "preToolUse":
       return "PreToolUse";
@@ -60,7 +63,9 @@ function formatHookSource(source: CodexHookMetadata["source"]): string {
     case "sessionFlags":
       return "Session flags";
     default:
-      return source.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+      return source
+        .replace(/([A-Z])/g, " $1")
+        .replace(/^./, (c) => c.toUpperCase());
   }
 }
 
@@ -90,7 +95,8 @@ function HookDetails(props: {
     return <EmptyState text="Select a hook to inspect its details." />;
   }
 
-  const isUpdating = updatingHookKey === hook.key || updatingHookKey === "__all__";
+  const isUpdating =
+    updatingHookKey === hook.key || updatingHookKey === "__all__";
   const needsReview = hookNeedsReview(hook);
   const canToggle = !hook.isManaged;
   const canTrust = !hook.isManaged && needsReview;
@@ -204,6 +210,7 @@ function HookDetails(props: {
 }
 
 interface HooksPaneProps {
+  threadId?: string | null;
   hooksData: SessionHooksResponse | null;
   hooksLoading: boolean;
   hooksError: string | null;
@@ -218,7 +225,7 @@ interface HooksPaneProps {
   onTrustAllHooks: () => void;
 }
 
-export default function HooksPane(props: HooksPaneProps) {
+function HooksConfigurationPane(props: HooksPaneProps) {
   const {
     hooksData,
     hooksLoading,
@@ -349,6 +356,15 @@ export default function HooksPane(props: HooksPaneProps) {
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+export default function HooksPane(props: HooksPaneProps) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {props.threadId && <HookExecutionProgress threadId={props.threadId} />}
+      <HooksConfigurationPane {...props} />
     </div>
   );
 }

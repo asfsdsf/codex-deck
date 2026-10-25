@@ -1,3 +1,4 @@
+import { HookRunStore, parseHookRun, type CodexHookRun } from "./hook-runs";
 import type { CodexMemoryStatus, CodexThreadMemory } from "./codex-memory";
 import { modelServiceTiers, constrainServiceTiers } from "./service-tiers";
 import type { CodexModelServiceTier } from "./service-tiers";
@@ -876,6 +877,11 @@ class CodexAppServerClient {
       responseInFlight: boolean;
     }
   >();
+  private hookRuns = new HookRunStore();
+  public listHookRuns(threadId: string): CodexHookRun[] {
+    return this.hookRuns.list(threadId);
+  }
+
   private liveTerminalRunsByThread = new Map<
     string,
     Map<string, CodexLiveTerminalRun>
@@ -2735,6 +2741,7 @@ class CodexAppServerClient {
     this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
     this.clearPendingElicitations();
+    this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
     this.liveTerminalPendingDeltaByItemByThread.clear();
@@ -3331,6 +3338,15 @@ class CodexAppServerClient {
     }
 
     if (!params || typeof params !== "object") {
+      return;
+    }
+
+    if (method === "hook/started" || method === "hook/completed") {
+      const event = parseHookRun(params);
+      if (event) {
+        this.hookRuns.record(event);
+        this.emitAppServerEvent({ type: "hook_run", ...event });
+      }
       return;
     }
 
@@ -4075,6 +4091,7 @@ class CodexAppServerClient {
     this.process = null;
     this.initialized = false;
     this.initializeInFlight = null;
+    this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
     this.liveTerminalPendingDeltaByItemByThread.clear();
@@ -5902,6 +5919,7 @@ export interface CodexAppServerClientFacade {
   fetchProviderModels?: (cwd?: string | null) => Promise<CodexModelOption[]>;
   listCollaborationModes: () => Promise<CodexCollaborationModeOption[]>;
   getAgentWaitConfig?: (cwd?: string | null) => Promise<CodexAgentWaitConfig>;
+  listHookRuns?: (threadId: string) => CodexHookRun[];
   listHooks?: (input: CodexHooksListInput) => Promise<CodexHooksListEntry[]>;
   writeHookState?: (updates: CodexHookStateUpdate[]) => Promise<void>;
   listSkills?: (input: CodexSkillsListInput) => Promise<CodexSkillsListEntry[]>;
@@ -6005,6 +6023,7 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listSkills: (input: CodexSkillsListInput) => client!.listSkills(input),
     writeSkillConfig: (path: string, enabled: boolean) =>
       client!.writeSkillConfig(path, enabled),
+    listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),
     readMemorySettings: (cwd?: string | null) =>

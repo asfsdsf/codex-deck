@@ -1,3 +1,4 @@
+import { registerHookRunRoutes } from "./hook-run-routes";
 import { registerMemoryInsightRoutes } from "./memory-insight-routes";
 import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
@@ -2335,6 +2336,11 @@ export function createServer(options: ServerOptions) {
 
   const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
+    if (event.type === "hook_run") {
+      recordSessionDeltaEvent({ codexAppServerEvents: [event] });
+      for (const listener of appServerEventListeners) listener(event);
+      return;
+    }
     const previous =
       conversationEventQueues.get(event.threadId) ?? Promise.resolve();
     const work = previous
@@ -4953,6 +4959,7 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  registerHookRunRoutes(app);
   registerMemoryInsightRoutes(app);
   registerReviewRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,

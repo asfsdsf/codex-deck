@@ -204,3 +204,8 @@ This document records the current button-to-command mapping for the Workflow pan
 - UI button: right-edge toggle in the main Workflow viewport header
 - Behavior: expands or collapses the shared right pane for the selected workflow project
 - No `codex-deck-flow` script command is invoked
+
+The Hooks pane also shows recent execution status and output for session targets.
+These runs are retained by the current Deck process (up to 100 per thread), shared
+across browsers, and refreshed after reconnecting. Workflow project targets retain
+their hook configuration view; execution belongs to each task's session.

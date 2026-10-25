@@ -46,6 +46,7 @@ export type RightPaneMode =
   | "hooks";
 
 interface DiffPaneProps {
+  runtimeScopeKey?: string;
   collapsed: boolean;
   revealFileListVersion: number;
   isMobilePhone: boolean;
@@ -922,15 +923,15 @@ export default function DiffPane(props: DiffPaneProps) {
     ? `${terminalRuns.length} runs`
     : isHooksMode
       ? `${hooks.length} hooks`
-    : isSkillsMode
-      ? `${skills.length} skills`
-      : isFileTreeMode
-        ? `${fileTreeNodesData?.nodes.length ?? 0}${
-            fileTreeNodesData?.nextCursor !== null ? "+" : ""
-          } entries`
-        : diffData?.mode === "last-turn" && diffData.turnId
-          ? `Turn ${diffData.turnId}`
-          : `${diffFiles.length} files`;
+      : isSkillsMode
+        ? `${skills.length} skills`
+        : isFileTreeMode
+          ? `${fileTreeNodesData?.nodes.length ?? 0}${
+              fileTreeNodesData?.nextCursor !== null ? "+" : ""
+            } entries`
+          : diffData?.mode === "last-turn" && diffData.turnId
+            ? `Turn ${diffData.turnId}`
+            : `${diffFiles.length} files`;
   const fileTreeDirLabel = (() => {
     if (!isFileTreeMode) {
       return "";
@@ -1122,6 +1123,8 @@ export default function DiffPane(props: DiffPaneProps) {
         )
       ) : isHooksMode ? (
         <HooksPane
+          key={`${props.runtimeScopeKey}:${sessionId}`}
+          threadId={sessionId}
           hooksData={hooksData}
           hooksLoading={hooksLoading}
           hooksError={hooksError}

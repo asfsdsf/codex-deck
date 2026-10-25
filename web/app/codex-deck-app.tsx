@@ -1,3 +1,4 @@
+import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import ServiceTierSelect from "../components/service-tier-select";
 import { serviceTierAvailable } from "../../api/service-tiers";
 import ReviewModal from "../components/review-modal";
@@ -6950,6 +6951,7 @@ export default function CodexDeckApp() {
 
   const handleCodexAppServerEvent = useCallback(
     (event: CodexAppServerEvent) => {
+      publishCodexRuntimeEvent(event);
       const updateThreadStatus = (
         threadId: string,
         status: CodexThreadSummary["status"],
@@ -7113,6 +7115,7 @@ export default function CodexDeckApp() {
           data: JSON.stringify(sessions),
         });
         handleSessionsFull(event);
+        publishCodexRuntimeEvent(null);
       },
       onSessionsUpdate: (sessions) => {
         if (codexHomeGenerationRef.current !== generation) return;
@@ -15359,6 +15362,7 @@ export default function CodexDeckApp() {
         </div>
       </main>
       <DiffPane
+        runtimeScopeKey={selectedCodexHomeId}
         collapsed={diffPaneCollapsed}
         revealFileListVersion={filePathLinkRevealVersion}
         isMobilePhone={isMobilePhone}
