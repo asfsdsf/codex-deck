@@ -186,6 +186,8 @@ This document records the current button-to-command mapping for the Workflow pan
 
 - `/experimental` discovers the host’s paginated feature catalog for the bound thread. Beta features are shown first, with an option to inspect other stages. Saving writes only changed feature keys through native config APIs and reads back effective settings; managed overrides remain visible. Running tasks retain their settings, and other clients refresh after saves. Removed/deprecated entries cannot be toggled.
 
+- `/daybreak` checks the OpenAI provider, account type, effective Daybreak feature gates, and advertised per-model access programs. A selection uses native thread metadata and applies only to new turns; the send bridge revalidates the actual turn model and selects an advertised Daybreak or standard program. Missing eligibility never implies access, and disabling remains available when prior eligibility disappears. Selection changes refresh all clients.
+
 ### Workflow composer send/init
 
 - UI location: bottom composer in the main Workflow viewport

@@ -2082,3 +2082,22 @@ export function setCodexExperimentalFeatures(
     body: JSON.stringify({ threadId, updates }),
   });
 }
+
+export function getCodexDaybreak(
+  threadId: string,
+  model: string | null,
+): Promise<import("@codex-deck/api").DaybreakState> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/daybreak${model ? `?model=${encodeURIComponent(model)}` : ""}`,
+  );
+}
+export function setCodexDaybreak(
+  threadId: string,
+  enabled: boolean,
+  model: string | null,
+): Promise<import("@codex-deck/api").DaybreakState> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/daybreak`,
+    { method: "POST", body: JSON.stringify({ enabled, model }) },
+  );
+}

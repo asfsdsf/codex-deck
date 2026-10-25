@@ -1,3 +1,4 @@
+export type { DaybreakState } from "../codex-daybreak";
 export type {
   ExperimentalFeature,
   ExperimentalWriteResult,

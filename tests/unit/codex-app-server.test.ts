@@ -808,6 +808,7 @@ test("app-server client updates loaded thread settings before starting a turn", 
     }
   ).request = async (method, params) => {
     requests.push({ method, params });
+    if (method === "thread/read") return { thread: {} };
     if (method === "config/read") {
       return {
         config: {
@@ -853,8 +854,9 @@ test("app-server client updates loaded thread settings before starting a turn", 
 
     assert.deepEqual(result, { turnId: "turn-1" });
     assert.equal(requests[0]?.method, "config/read");
-    assert.equal(requests[1]?.method, "thread/settings/update");
-    assert.deepEqual(requests[1]?.params, {
+    assert.equal(requests[1]?.method, "thread/read");
+    assert.equal(requests[2]?.method, "thread/settings/update");
+    assert.deepEqual(requests[2]?.params, {
       threadId: "thread-1",
       model: "gpt-5.1-codex-mini",
       serviceTier: "fast",
@@ -867,7 +869,7 @@ test("app-server client updates loaded thread settings before starting a turn", 
         },
       },
     });
-    assert.equal(requests[2]?.method, "turn/start");
+    assert.equal(requests[3]?.method, "turn/start");
   } finally {
     await client.close();
   }
@@ -886,6 +888,7 @@ test("app-server client starts first turn for new thread without pre-resume", as
     }
   ).request = async (method, params) => {
     requests.push({ method, params });
+    if (method === "thread/read") return { thread: {} };
     if (method === "config/read") {
       return {
         config: {
@@ -928,6 +931,7 @@ test("app-server client starts first turn for new thread without pre-resume", as
         "config/read",
         "thread/start",
         "config/read",
+        "thread/read",
         "thread/settings/update",
         "turn/start",
       ],
@@ -1121,6 +1125,7 @@ test("app-server client restarts before send when provider base_url has changed"
   };
   internals.request = async (method, params) => {
     requests.push({ method, params });
+    if (method === "thread/read") return { thread: {} };
     if (method === "config/read") {
       return {
         config: {
@@ -1158,6 +1163,7 @@ test("app-server client restarts before send when provider base_url has changed"
       [
         "config/read",
         "thread/loaded/list",
+        "thread/read",
         "thread/settings/update",
         "turn/start",
       ],
@@ -1382,6 +1388,7 @@ test("app-server client does not restart on send when provider is unchanged", as
   };
   internals.request = async (method, params) => {
     requests.push({ method, params });
+    if (method === "thread/read") return { thread: {} };
     if (method === "config/read") {
       return {
         config: {
@@ -1408,7 +1415,7 @@ test("app-server client does not restart on send when provider is unchanged", as
 
     assert.deepEqual(result, { turnId: "turn-1" });
     assert.equal(closeCount, 0);
-    // Provider unchanged so no thread/loaded/list or thread/read
+    // Provider unchanged so no thread/loaded/list
     assert.equal(
       requests.some((r) => r.method === "thread/loaded/list"),
       false,
@@ -1446,6 +1453,7 @@ test("app-server client restarts before send when provider has changed", async (
   };
   internals.request = async (method, params) => {
     requests.push({ method, params });
+    if (method === "thread/read") return { thread: {} };
     if (method === "config/read") {
       return {
         config: {
@@ -1480,6 +1488,7 @@ test("app-server client restarts before send when provider has changed", async (
       [
         "config/read",
         "thread/loaded/list",
+        "thread/read",
         "thread/settings/update",
         "turn/start",
       ],
@@ -1521,6 +1530,7 @@ test("app-server client rechecks auth after reading updated provider config", as
   };
   internals.request = async (method, params) => {
     requests.push({ method, params });
+    if (method === "thread/read") return { thread: {} };
     if (method === "config/read") {
       return {
         config: {
@@ -1555,6 +1565,7 @@ test("app-server client rechecks auth after reading updated provider config", as
       requests.map((request) => request.method),
       [
         "config/read",
+        "thread/read",
         "thread/loaded/list",
         "thread/settings/update",
         "turn/start",
@@ -1590,6 +1601,7 @@ test("app-server client does not fail send when thread resume sees an unmaterial
   };
   internals.request = async (method, params) => {
     requests.push({ method, params });
+    if (method === "thread/read") return { thread: {} };
     if (method === "config/read") {
       return {
         config: {
@@ -1624,7 +1636,13 @@ test("app-server client does not fail send when thread resume sees an unmaterial
     );
     assert.deepEqual(
       requests.map((r) => r.method),
-      ["config/read", "thread/settings/update", "turn/start", "thread/resume"],
+      [
+        "config/read",
+        "thread/read",
+        "thread/settings/update",
+        "turn/start",
+        "thread/resume",
+      ],
     );
   } finally {
     await client.close();

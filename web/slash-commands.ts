@@ -148,6 +148,10 @@ export function parseSlashCommandInvocation(
 
 export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
+    name: "/daybreak",
+    description: "Manage eligible Daybreak access for new turns",
+  },
+  {
     name: "/experimental",
     description: "Discover and configure experimental features",
   },

@@ -1,4 +1,9 @@
-export type NativeScope = "mcp" | "usage" | "recap" | "experimental";
+export type NativeScope =
+  | "mcp"
+  | "usage"
+  | "recap"
+  | "experimental"
+  | "daybreak";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

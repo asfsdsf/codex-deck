@@ -162,6 +162,7 @@ test("default speed overwrites a persisted tier with the configured, catalog, or
           ): Promise<unknown>;
         }
       ).request = async (method, params) => {
+        if (method === "thread/read") return { thread: {} };
         if (method === "config/read")
           return {
             config: { model: "model", model_service_tier: scenario.configured },

@@ -267,6 +267,63 @@ for (const theme of ["dark", "light"] as const) {
       await experimental
         .getByRole("button", { name: "Close", exact: true })
         .click();
+      let daybreakEnabled = false;
+      let daybreakEligible = true;
+      await page.route("**/api/codex/threads/*/daybreak*", async (route) => {
+        if (route.request().method() === "POST") {
+          daybreakEnabled = route.request().postDataJSON().enabled;
+        }
+        await route.fulfill({
+          json: {
+            enabled: daybreakEnabled,
+            eligible: daybreakEligible,
+            model: "example",
+            models: [
+              {
+                id: "example",
+                name: "Example",
+                programs: ["standard", "daybreakBlue"],
+              },
+            ],
+            reason: daybreakEligible
+              ? null
+              : "Daybreak eligibility is unavailable.",
+          },
+        });
+      });
+      await page.getByPlaceholder("Message Codex...").fill("/daybreak");
+      await page.getByPlaceholder("Message Codex...").press("Enter");
+      const daybreak = page.getByRole("dialog", { name: "Daybreak selection" });
+      await daybreak.getByRole("button", { name: "Turn Daybreak on" }).click();
+      await expect(
+        daybreak.getByText(
+          "Daybreak enabled for new turns in this conversation.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      expect(daybreakEnabled).toBe(true);
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `daybreak-${theme}-${mobile ? "mobile" : "desktop"}.png`,
+        ),
+      });
+      daybreakEligible = false;
+      await daybreak
+        .getByRole("button", { name: "Refresh eligibility" })
+        .click();
+      await expect(
+        daybreak.getByText("Daybreak eligibility is unavailable.", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await daybreak.getByRole("button", { name: "Turn Daybreak off" }).click();
+      await expect(
+        daybreak.getByRole("button", { name: "Turn Daybreak on" }),
+      ).toBeDisabled();
+      expect(daybreakEnabled).toBe(false);
+      await daybreak
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
     });
   }
 }

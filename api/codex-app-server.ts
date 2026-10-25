@@ -1,4 +1,9 @@
 import {
+  readDaybreak,
+  selectCyberProgram,
+  type DaybreakState,
+} from "./codex-daybreak";
+import {
   readExperimentalFeatures,
   writeExperimentalFeatures,
   type ExperimentalFeature,
@@ -532,6 +537,7 @@ interface AppServerThreadResumeRecord {
 }
 
 interface ActiveCodexConfig {
+  daybreakEnabled?: boolean;
   model: string | null;
   modelProvider: string | null;
   reasoningEffort: CodexReasoningEffort | null;
@@ -952,6 +958,88 @@ class CodexAppServerClient {
     this.sharedSocketPath = options.sharedSocketPath;
   }
 
+  public getDaybreak(
+    threadId: string,
+    model?: string | null,
+  ): Promise<DaybreakState> {
+    return readDaybreak(
+      (method, params) =>
+        this.requestNativeThread(
+          method,
+          params,
+          method === "experimentalFeature/list" ? threadId : null,
+        ),
+      threadId,
+      model,
+    );
+  }
+  public async setDaybreak(
+    threadId: string,
+    enabled: boolean,
+    model?: string | null,
+  ): Promise<DaybreakState> {
+    const state = await this.getDaybreak(threadId, model);
+    if (enabled) selectCyberProgram(state, true, model || state.model);
+    await this.request("thread/metadata/update", {
+      threadId,
+      daybreakEnabled: enabled,
+    });
+    this.notifyNativeState("daybreak", threadId);
+    return { ...state, enabled };
+  }
+  private async applyDaybreakToTurn(
+    threadId: string,
+    params: Record<string, unknown>,
+    config: ActiveCodexConfig,
+  ): Promise<void> {
+    let thread: Record<string, unknown> | null = null;
+    try {
+      thread = asRecord(
+        asRecord(
+          await this.request("thread/read", { threadId, includeTurns: false }),
+        )?.thread,
+      );
+    } catch (error) {
+      if (
+        !(
+          error instanceof CodexAppServerRpcError &&
+          (error.code === -32601 || shouldRetryAfterResume(error))
+        )
+      )
+        throw error;
+      // A new thread may not have a persisted rollout yet. Its configured
+      // default still applies; old servers retain their automatic behavior.
+    }
+    const enabled =
+      typeof thread?.daybreakEnabled === "boolean"
+        ? thread.daybreakEnabled
+        : config.daybreakEnabled;
+    if (enabled === undefined || thread?.ephemeral === true) return;
+    const collaboration = asRecord(params.collaborationMode);
+    const settings = asRecord(collaboration?.settings);
+    const model =
+      asString(settings?.model) || asString(params.model) || config.model;
+    const state = await readDaybreak(
+      (method, payload) =>
+        method === "thread/read" && thread
+          ? Promise.resolve({ thread })
+          : this.requestNativeThread(
+              method,
+              payload,
+              method === "experimentalFeature/list" ? threadId : null,
+            ),
+      threadId,
+      model,
+      config.modelProvider,
+    );
+    const program = selectCyberProgram(
+      { ...state, enabled },
+      enabled,
+      model || state.model,
+    );
+    if (program) params.cyberAccessProgram = program;
+  }
+
   public listExperimentalFeatures(
     threadId?: string | null,
   ): Promise<ExperimentalFeature[]> {
@@ -976,6 +1064,7 @@ class CodexAppServerClient {
       () => {
         this.readCoalescer.clearMatching(() => true);
         this.notifyNativeState("experimental");
+        this.notifyNativeState("daybreak");
       },
     );
   }
@@ -2265,6 +2354,8 @@ class CodexAppServerClient {
       params.effort = activeConfig.reasoningEffort;
     }
     await this.reloadProviderIfChanged(activeConfig);
+
+    await this.applyDaybreakToTurn(threadId, params, activeConfig);
 
     // Provider-switching tools commonly write config.toml before auth.json.
     // Re-check after reading the new provider config so a credential update
@@ -3700,6 +3791,8 @@ class CodexAppServerClient {
       // token refresh). Re-baseline the fingerprint so those self-writes do
       // not trigger a needless subprocess restart.
       this.rebaselineAuthFileFingerprint();
+      this.notifyNativeState("daybreak");
+      this.notifyNativeState("usage");
       return;
     }
 
@@ -5723,6 +5816,9 @@ function extractActiveConfigFromConfigReadResult(
   return {
     model: asTrimmedString(config.model),
     modelProvider,
+    ...(typeof config.daybreak === "boolean"
+      ? { daybreakEnabled: config.daybreak }
+      : {}),
     reasoningEffort: toReasoningEffort(config.model_reasoning_effort),
     serviceTier: toServiceTier(config.model_service_tier),
     providerBaseUrl: extractProviderBaseUrlFromConfigReadResult(
@@ -6296,6 +6392,15 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  getDaybreak?: (
+    threadId: string,
+    model?: string | null,
+  ) => Promise<DaybreakState>;
+  setDaybreak?: (
+    threadId: string,
+    enabled: boolean,
+    model?: string | null,
+  ) => Promise<DaybreakState>;
   listExperimentalFeatures?: (
     threadId?: string | null,
   ) => Promise<ExperimentalFeature[]>;
@@ -6442,6 +6547,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),
+    getDaybreak: (id, model) => client!.getDaybreak(id, model),
+    setDaybreak: (id, enabled, model) =>
+      client!.setDaybreak(id, enabled, model),
     listExperimentalFeatures: (id) => client!.listExperimentalFeatures(id),
     writeExperimentalFeatures: (id, updates) =>
       client!.writeExperimentalFeatures(id, updates),

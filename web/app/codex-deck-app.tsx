@@ -1,3 +1,4 @@
+import DaybreakSettings from "../components/daybreak-settings";
 import ExperimentalFeatures from "../components/experimental-features";
 import TranscriptExport from "../components/transcript-export";
 import ConversationRecapView from "../components/conversation-recap";
@@ -3966,7 +3967,8 @@ export default function CodexDeckApp() {
     instructions: string;
   } | null>(null);
   const [nativeDialog, setNativeDialog] = useState<{
-    kind: "mcp" | "usage" | "recap" | "export" | "experimental";
+    kind: "mcp" | "usage" | "recap" | "export" | "experimental" | "daybreak";
+    model?: string | null;
     filename?: string;
     threadId: string | null;
   } | null>(null);
@@ -11011,6 +11013,18 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/daybreak") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /daybreak.");
+          return false;
+        }
+        setNativeDialog({
+          kind: "daybreak",
+          threadId: commandSessionId,
+          model: selectedModeOption?.model || selectedModelId || null,
+        });
+        return true;
+      }
       if (commandName === "/experimental") {
         setNativeDialog({ kind: "experimental", threadId: commandSessionId });
         return true;
@@ -13890,19 +13904,27 @@ export default function CodexDeckApp() {
         {nativeDialog && (
           <NativeDialog
             title={
-              nativeDialog.kind === "experimental"
-                ? "Experimental features"
-                : nativeDialog.kind === "export"
-                  ? "Export transcript"
-                  : nativeDialog.kind === "recap"
-                    ? "Conversation recap"
-                    : nativeDialog.kind === "usage"
-                      ? "Usage dashboard"
-                      : "MCP administration"
+              nativeDialog.kind === "daybreak"
+                ? "Daybreak selection"
+                : nativeDialog.kind === "experimental"
+                  ? "Experimental features"
+                  : nativeDialog.kind === "export"
+                    ? "Export transcript"
+                    : nativeDialog.kind === "recap"
+                      ? "Conversation recap"
+                      : nativeDialog.kind === "usage"
+                        ? "Usage dashboard"
+                        : "MCP administration"
             }
             onClose={closeNativeDialog}
           >
-            {nativeDialog.kind === "experimental" ? (
+            {nativeDialog.kind === "daybreak" && nativeDialog.threadId ? (
+              <DaybreakSettings
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+                model={nativeDialog.model || null}
+              />
+            ) : nativeDialog.kind === "experimental" ? (
               <ExperimentalFeatures
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}
