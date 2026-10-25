@@ -88,7 +88,10 @@ import {
 } from "../hooks/use-block-translation";
 import { SafeMarkdown } from "./safe-markdown";
 
+import { GeneratedImage } from "./generated-image";
+
 interface MessageBlockProps {
+  sessionId?: string;
   message: ConversationMessage;
   userTone?: "default" | "pending";
   isAgentsBootstrap?: boolean;
@@ -1871,6 +1874,7 @@ function getBlockTranslationSource(block: ContentBlock): string | null {
 const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const {
     message,
+    sessionId,
     userTone = "default",
     isAgentsBootstrap = false,
     searchForcePrimaryExpanded = false,
@@ -2071,7 +2075,12 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     if (!content || typeof content === "string") {
       return [];
     }
-    return content.filter((b) => b.type === "text" || b.type === "image");
+    return content.filter(
+      (b) =>
+        b.type === "text" ||
+        b.type === "image" ||
+        b.type === "image_generation",
+    );
   };
 
   const getAuxiliaryBlocks = (): ContentBlock[] => {
@@ -2110,6 +2119,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
             parseTerminalRestartNoticeMessage(block.text) !== null)
         );
       }
+      if (block.type === "image_generation") return !!block.generatedImage;
       return (
         block.type === "image" &&
         typeof block.image_url === "string" &&
@@ -2227,6 +2237,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
       <div className="flex flex-col gap-1 py-0.5">
         {auxiliaryBlocks.map((block, index) => (
           <ContentBlockRenderer
+            sessionId={sessionId}
             key={index}
             block={block}
             blockIndex={Array.isArray(content) ? content.indexOf(block) : null}
@@ -2358,6 +2369,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
             <div className="flex flex-col gap-1 mt-1.5">
               {auxiliaryBlocks.map((block, index) => (
                 <ContentBlockRenderer
+                  sessionId={sessionId}
                   key={index}
                   block={block}
                   blockIndex={
@@ -2410,6 +2422,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
           <div className="flex flex-col gap-1 mt-1.5">
             {auxiliaryBlocks.map((block, index) => (
               <ContentBlockRenderer
+                sessionId={sessionId}
                 key={index}
                 block={block}
                 blockIndex={
@@ -2460,6 +2473,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
           <div className="flex flex-col gap-1 mt-1.5">
             {auxiliaryBlocks.map((block, index) => (
               <ContentBlockRenderer
+                sessionId={sessionId}
                 key={index}
                 block={block}
                 blockIndex={
@@ -2510,6 +2524,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
           <div className="flex flex-col gap-1 mt-1.5">
             {auxiliaryBlocks.map((block, index) => (
               <ContentBlockRenderer
+                sessionId={sessionId}
                 key={index}
                 block={block}
                 blockIndex={
@@ -2684,6 +2699,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
               <div className="flex flex-col gap-1 mt-1.5">
                 {auxiliaryBlocks.map((block, index) => (
                   <ContentBlockRenderer
+                    sessionId={sessionId}
                     key={index}
                     block={block}
                     blockIndex={
@@ -2814,6 +2830,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
               <div className="flex flex-col gap-1">
                 {visiblePrimaryBlocks.map((block, index) => (
                   <ContentBlockRenderer
+                    sessionId={sessionId}
                     key={index}
                     block={block}
                     blockIndex={
@@ -2956,6 +2973,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
           <div className="flex flex-col gap-1 mt-1.5">
             {auxiliaryBlocks.map((block, index) => (
               <ContentBlockRenderer
+                sessionId={sessionId}
                 key={index}
                 block={block}
                 blockIndex={
@@ -2995,6 +3013,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
 });
 
 interface ContentBlockRendererProps {
+  sessionId?: string;
   block: ContentBlock;
   blockIndex?: number | null;
   forceExpanded?: boolean;
@@ -4607,6 +4626,12 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
         content={block.text}
         onFilePathLinkClick={onFilePathLinkClick}
       />,
+    );
+  }
+
+  if (block.type === "image_generation" && block.generatedImage) {
+    return wrapSearchableBlock(
+      <GeneratedImage block={block} sessionId={props.sessionId} />,
     );
   }
 

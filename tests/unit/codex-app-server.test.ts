@@ -2118,3 +2118,34 @@ test("paginated history only falls back for unsupported RPC methods", async () =
     }
   }
 });
+
+test("app-server broadcasts native image lifecycle items to every subscriber", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const first: unknown[] = [];
+  const second: unknown[] = [];
+  client.subscribeAppServerEvents((event) => first.push(event));
+  client.subscribeAppServerEvents((event) => second.push(event));
+  const rpc = client as unknown as {
+    handleServerNotification(method: string, params: unknown): void;
+  };
+  try {
+    for (const method of ["item/started", "item/completed"])
+      rpc.handleServerNotification(method, {
+        threadId: "thread",
+        turnId: "turn",
+        item: {
+          type: "imageGeneration",
+          id: "image",
+          status: method === "item/started" ? "in_progress" : "completed",
+          result: "",
+        },
+      });
+    assert.deepEqual(first, second);
+    assert.deepEqual(
+      first.map((event) => (event as { type: string }).type),
+      ["image_generation_updated", "item_completed"],
+    );
+  } finally {
+    await client.close();
+  }
+});

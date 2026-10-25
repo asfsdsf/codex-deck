@@ -18,6 +18,7 @@ import {
 import { basename, isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
 import { randomUUID } from "node:crypto";
+import { parseGeneratedImage } from "../generated-images";
 import { spawnSync } from "node:child_process";
 import {
   clearConversationIndexes,
@@ -240,7 +241,7 @@ export type CodexAppServerEvent =
       pending: boolean;
     }
   | {
-      type: "item_completed";
+      type: "item_completed" | "image_generation_updated";
       threadId: string;
       turnId: string;
       itemId: string;
@@ -1561,6 +1562,7 @@ export interface ContentBlock {
   type:
     | "text"
     | "image"
+    | "image_generation"
     | "thinking"
     | "tool_use"
     | "tool_result"
@@ -1570,6 +1572,14 @@ export interface ContentBlock {
     | "collab_agent_tool_call";
   text?: string;
   image_url?: string;
+  generatedImage?: {
+    status: string;
+    prompt?: string;
+    result?: string;
+    fileId?: string;
+    savedPath?: string;
+    failure?: string;
+  };
   thinking?: string;
   id?: string;
   name?: string;
@@ -4520,6 +4530,34 @@ function parseCodexConversation(
 
     const payload = record.payload as Record<string, unknown>;
     const payloadType = typeof payload.type === "string" ? payload.type : "";
+
+    const generatedImage = parseGeneratedImage(
+      record.type === "event_msg" &&
+        /item_completed|item_started/.test(payloadType)
+        ? payload.item
+        : payload,
+    );
+    if (generatedImage) {
+      const previous = generatedImage.id
+        ? messages.findIndex(
+            (m) =>
+              Array.isArray(m.message?.content) &&
+              m.message.content.some(
+                (b) =>
+                  b.type === "image_generation" && b.id === generatedImage.id,
+              ),
+          )
+        : -1;
+      const message = createChatMessage(
+        "assistant",
+        [generatedImage],
+        `${offset}:image-generation`,
+        timestamp,
+      );
+      if (previous >= 0) messages[previous] = message;
+      else messages.push(message);
+      continue;
+    }
 
     if (record.type === "turn_context") {
       modelMetadata = parseConversationModelMetadata(payload);

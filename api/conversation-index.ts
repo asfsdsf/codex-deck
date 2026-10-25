@@ -307,6 +307,9 @@ export async function applyConversationLiveEvent(
     case "item_completed":
       state.completeStreamItem(event.turnId, event.itemId, event.item);
       break;
+    case "image_generation_updated":
+      state.applyStreamImage(event.turnId, event.itemId, event.item, false);
+      break;
     case "thread_status":
       if (
         event.turnId &&

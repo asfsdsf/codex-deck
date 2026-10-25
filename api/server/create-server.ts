@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { generatedImageDataUrl } from "../generated-images";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { streamSSE } from "hono/streaming";
@@ -3391,6 +3392,41 @@ export function createServer(options: ServerOptions) {
         unavailableReason: "Failed to search project files.",
       };
       return c.json(response);
+    }
+  });
+
+  app.get("/api/sessions/:id/generated-image/:itemId", async (c) => {
+    const messages = await getConversation(c.req.param("id"));
+    const itemId = c.req.param("itemId");
+    const block = messages
+      .flatMap((m) =>
+        Array.isArray(m.message?.content) ? m.message.content : [],
+      )
+      .find((b) => b.type === "image_generation" && b.id === itemId);
+    if (!block?.generatedImage)
+      return c.json({ error: "Generated image not found" }, 404);
+    const inline = generatedImageDataUrl(block.generatedImage.result);
+    if (inline) return c.json({ dataUrl: inline });
+    const savedPath = block.generatedImage.savedPath;
+    if (!savedPath || !/\.(png|jpe?g|webp|gif|avif)$/i.test(savedPath)) {
+      return c.json(
+        {
+          error:
+            "Image preview is unavailable; no local raster image was saved",
+        },
+        404,
+      );
+    }
+    try {
+      const page = await readProjectFilePage(savedPath, 1);
+      if (!page.previewDataUrl)
+        return c.json(
+          { error: page.previewUnavailableReason ?? "Image unavailable" },
+          413,
+        );
+      return c.json({ dataUrl: page.previewDataUrl });
+    } catch {
+      return c.json({ error: "Saved image is unavailable" }, 404);
     }
   });
 

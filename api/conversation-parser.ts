@@ -1,4 +1,5 @@
 import { isVisibleConversationMessage } from "./conversation-pagination";
+import { parseGeneratedImage } from "./generated-images";
 import {
   attachTokenUsageToModelOutputs,
   parseConversationModelMetadata,
@@ -156,6 +157,34 @@ export class ConversationParserState {
   }
 
   reconcilePersisted(message: ConversationMessage): boolean {
+    const image =
+      Array.isArray(message.message?.content) &&
+      message.message.content.find((b) => b.type === "image_generation");
+    if (image && image.id) {
+      const index = this.messages.findIndex(
+        (m) =>
+          Array.isArray(m.message?.content) &&
+          m.message.content.some(
+            (b) => b.type === "image_generation" && b.id === image.id,
+          ),
+      );
+      if (index >= 0) {
+        const previous = this.messages[index];
+        // The rollout may contain begin, end, and response records for one item.
+        if (
+          image.generatedImage?.status === "in_progress" &&
+          !previous.streaming
+        )
+          return true;
+        this.messages[index] = {
+          ...message,
+          turnId: message.turnId ?? previous.turnId,
+          itemId: image.id,
+          streaming: false,
+        };
+        return true;
+      }
+    }
     const turnId = message.turnId ?? this.currentTurnId;
     if (!turnId || !this.isTextMessage(message)) return false;
     const key = this.kindKey(turnId, message.type);
@@ -255,6 +284,10 @@ export class ConversationParserState {
     itemId: string,
     item?: Record<string, unknown>,
   ): void {
+    if (item && parseGeneratedImage(item)) {
+      this.applyStreamImage(turnId, itemId, item, true);
+      return;
+    }
     this.completedItems.add(JSON.stringify([turnId, itemId]));
     const itemType =
       typeof item?.type === "string"
@@ -319,6 +352,39 @@ export class ConversationParserState {
           : {}),
       };
     }
+  }
+
+  applyStreamImage(
+    turnId: string,
+    itemId: string,
+    item: Record<string, unknown>,
+    completed: boolean,
+  ): void {
+    const block = parseGeneratedImage(item);
+    if (!block) return;
+    if (!completed && this.completedItems.has(JSON.stringify([turnId, itemId])))
+      return;
+    const index = this.messages.findIndex(
+      (m) =>
+        Array.isArray(m.message?.content) &&
+        m.message.content.some(
+          (b) => b.type === "image_generation" && b.id === itemId,
+        ),
+    );
+    const message: ConversationMessage = {
+      type: "assistant",
+      turnId,
+      itemId,
+      streaming: !completed,
+      uuid: `stream:${turnId}:${itemId}:image`,
+      timestamp: new Date().toISOString(),
+      message: { role: "assistant", content: [{ ...block, id: itemId }] },
+    };
+    this.sourceStreaming = true;
+    if (index >= 0) this.messages[index] = message;
+    else this.messages.push(message);
+    this.sourceStreaming = false;
+    if (completed) this.completedItems.add(JSON.stringify([turnId, itemId]));
   }
 
   completeStreamTurn(turnId: string): void {
@@ -1441,6 +1507,29 @@ function parseCodexConversation(
     if (record.type === "turn_context") {
       modelMetadata = parseConversationModelMetadata(payload);
       if (state) state.modelMetadata = modelMetadata;
+      continue;
+    }
+
+    const generatedImage = parseGeneratedImage(
+      record.type === "event_msg" &&
+        ["itemcompleted", "itemstarted"].includes(normalizedPayloadType)
+        ? payload.item
+        : payload,
+    );
+    if (generatedImage) {
+      const imageMessage = createChatMessage(
+        "assistant",
+        [generatedImage],
+        `${offset}:image-generation`,
+        timestamp,
+      );
+      imageMessage.itemId = generatedImage.id;
+      imageMessage.streaming = [
+        "in_progress",
+        "inProgress",
+        "generating",
+      ].includes(generatedImage.generatedImage!.status);
+      pushConversationMessage(messages, imageMessage);
       continue;
     }
 

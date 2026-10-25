@@ -2643,6 +2643,7 @@ const SessionView = memo(
             >
               <MessageBlock
                 message={message}
+                sessionId={sessionId}
                 aiTerminalContext={aiTerminalContext}
                 isAgentsBootstrap={message === agentsBootstrapMessage}
                 searchForcePrimaryExpanded={

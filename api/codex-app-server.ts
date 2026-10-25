@@ -3348,6 +3348,22 @@ class CodexAppServerClient {
       return;
     }
 
+    const turnId = asTrimmedString(notification.turnId ?? notification.turn_id);
+    const itemId = asTrimmedString(item.id);
+    if (
+      turnId &&
+      itemId &&
+      String(item.type).replace(/_/g, "").toLowerCase() === "imagegeneration"
+    ) {
+      this.emitAppServerEvent({
+        type: "image_generation_updated",
+        threadId,
+        turnId,
+        itemId,
+        item,
+      });
+    }
+
     this.emitCollabAgentItemEvent(
       threadId,
       asTrimmedString(notification.turnId ?? notification.turn_id),
@@ -3403,7 +3419,9 @@ class CodexAppServerClient {
     if (
       turnId &&
       itemId &&
-      ["agentmessage", "reasoning", "plan"].includes(completedType ?? "")
+      ["agentmessage", "reasoning", "plan", "imagegeneration"].includes(
+        completedType ?? "",
+      )
     )
       this.emitAppServerEvent({
         type: "item_completed",

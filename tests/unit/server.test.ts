@@ -7589,3 +7589,49 @@ test("numbered conversation SSE fans out streaming and completion under the same
     await cleanup();
   }
 });
+
+test("generated image previews use persisted item identities and support saved files", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "generated-image-preview",
+  );
+  const server = createServer({ port: 13180, codexDir: rootDir, open: false });
+  try {
+    const saved = join(rootDir, "image.png");
+    await writeFile(saved, Buffer.from("iVBORw0KGgo=", "base64"));
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, rootDir, Date.now()),
+      responseItemRawLine({
+        type: "image_generation_call",
+        id: "inline",
+        status: "completed",
+        result: "aW1hZ2U=",
+      }),
+      eventMsgLine({
+        type: "image_generation_end",
+        call_id: "saved",
+        status: "completed",
+        fileId: "file-1",
+        saved_path: saved,
+      }),
+    ]);
+    await loadStorage();
+    const prefix = `/api/sessions/${SESSION_ID}/generated-image/`;
+    const inline = await requestJson(server, prefix + "inline");
+    assert.equal(inline.status, 200);
+    assert.equal(
+      (inline.body as { dataUrl: string }).dataUrl,
+      "data:image/png;base64,aW1hZ2U=",
+    );
+    const local = await requestJson(server, prefix + "saved");
+    assert.equal(local.status, 200);
+    assert.equal(
+      (local.body as { dataUrl: string }).dataUrl,
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    assert.equal((await requestJson(server, prefix + "unknown")).status, 404);
+    await rm(saved);
+    assert.equal((await requestJson(server, prefix + "saved")).status, 404);
+  } finally {
+    await cleanup();
+  }
+});

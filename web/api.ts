@@ -1851,6 +1851,15 @@ export async function getSessionFileContent(
   );
 }
 
+export async function getGeneratedImage(
+  sessionId: string,
+  itemId: string,
+): Promise<{ dataUrl: string }> {
+  return requestJson(
+    `/api/sessions/${encodeURIComponent(sessionId)}/generated-image/${encodeURIComponent(itemId)}`,
+  );
+}
+
 export async function getWorkflowProjectFileContent(
   workflowKey: string,
   path: string,

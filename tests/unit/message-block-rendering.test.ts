@@ -982,3 +982,28 @@ test("MessageBlock offers editing only for messages marked editable", () => {
   });
   assert.doesNotMatch(toolHtml, /aria-label="Edit history message"/);
 });
+
+test("MessageBlock renders generated images with prompt and status", () => {
+  const html = renderMessageBlock({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "image_generation",
+          id: "ig-1",
+          generatedImage: {
+            status: "completed",
+            prompt: "A blue square",
+            result: "aW1hZ2U=",
+          },
+        },
+      ],
+    },
+  });
+  assert.match(html, /Generated image/);
+  assert.match(html, /completed/);
+  assert.match(html, /A blue square/);
+  assert.match(html, /src="data:image\/png;base64,aW1hZ2U="/);
+  assert.match(html, /bg-zinc-900/);
+});
