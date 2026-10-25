@@ -87,6 +87,8 @@ import {
   type BlockTranslationState,
 } from "../hooks/use-block-translation";
 import { SafeMarkdown } from "./safe-markdown";
+import { parseReviewReport } from "../review-report";
+import { ReviewReportRenderer } from "./review-report";
 
 import { GeneratedImage } from "./generated-image";
 
@@ -2144,6 +2146,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const hasAuxiliary = auxiliaryBlocks.length > 0;
   const messageCopyText = getMessageCopyText(content);
   const rawMessageText = getMessageRawText(content);
+  const reviewReport = parseReviewReport(rawMessageText ?? "");
   const showMessageCopyButton =
     (isUser || message.type === "assistant") && !!messageCopyText;
   const canEditMessage =
@@ -2743,16 +2746,24 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   }
 
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} min-w-0`}>
-      <div className={isUser ? "max-w-[85%] min-w-0" : "w-full min-w-0"}>
+    <div
+      className={`flex ${isUser && !reviewReport ? "justify-end" : "justify-start"} min-w-0`}
+    >
+      <div
+        className={
+          isUser && !reviewReport ? "max-w-[85%] min-w-0" : "w-full min-w-0"
+        }
+      >
         <div className="group relative">
           <div
             className={`px-4 py-3 rounded-2xl overflow-hidden ${
-              isUser
-                ? isPendingUserTone
-                  ? "border border-zinc-700/60 bg-zinc-800/50 text-zinc-200 rounded-br-md"
-                  : "border border-indigo-500/30 bg-indigo-500/15 text-zinc-100 rounded-br-md"
-                : "border border-zinc-800/60 bg-zinc-900/40 text-zinc-100 rounded-bl-md"
+              reviewReport
+                ? "border border-zinc-700/60 bg-zinc-900/40 text-zinc-100"
+                : isUser
+                  ? isPendingUserTone
+                    ? "border border-zinc-700/60 bg-zinc-800/50 text-zinc-200 rounded-br-md"
+                    : "border border-indigo-500/30 bg-indigo-500/15 text-zinc-100 rounded-br-md"
+                  : "border border-zinc-800/60 bg-zinc-900/40 text-zinc-100 rounded-bl-md"
             }`}
           >
             {editing ? (
@@ -2785,6 +2796,17 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
             ) : typeof content === "string" ? (
               (() => {
                 const sanitized = sanitizeText(content);
+                const review = parseReviewReport(sanitized);
+                if (review) {
+                  return (
+                    <ReviewReportRenderer
+                      report={review}
+                      raw={content}
+                      forceExpanded={searchForcePrimaryExpanded}
+                      onFilePathLinkClick={onFilePathLinkClick}
+                    />
+                  );
+                }
                 const aiTerminalMessage = parseAiTerminalMessage(sanitized);
                 if (aiTerminalMessage) {
                   return (
@@ -4586,6 +4608,17 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     const sanitized = sanitizeText(block.text);
     if (!sanitized && !parsedRestartNotice) {
       return null;
+    }
+    const review = parseReviewReport(sanitized);
+    if (review) {
+      return wrapSearchableBlock(
+        <ReviewReportRenderer
+          report={review}
+          raw={block.text}
+          forceExpanded={forceExpanded}
+          onFilePathLinkClick={onFilePathLinkClick}
+        />,
+      );
     }
     const aiTerminalMessage = parseAiTerminalMessage(sanitized);
     if (aiTerminalMessage) {

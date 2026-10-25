@@ -4,12 +4,55 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ConversationMessage } from "@codex-deck/api";
 import { parseConversationTextChunk } from "../../api/conversation-parser";
+import {
+  reviewReportFixture,
+  reviewUserActionFixture,
+} from "../fixtures/review-report";
 import MessageBlock, {
   shouldClearAiTerminalPendingAction,
   shouldRenderAiTerminalStepActions,
 } from "../../web/components/message-block";
 
 (globalThis as { React?: typeof React }).React = React;
+
+test("MessageBlock renders wrapped and final review reports as finding cards for string and text-block content", () => {
+  for (const [type, text] of [
+    ["user", reviewUserActionFixture],
+    ["assistant", JSON.stringify(reviewReportFixture)],
+  ] as const) {
+    for (const content of [text, [{ type: "text" as const, text }]]) {
+      const html = renderMessageBlock({
+        type,
+        message: { role: type, content },
+      });
+      assert.match(html, /aria-label="Code review"/);
+      assert.equal((html.match(/<article /g) ?? []).length, 4);
+      assert.match(html, /4 findings/);
+      assert.match(html, /#L9880/);
+      assert.match(html, /Original review/);
+      const formatted = html.replace(/<details>[\s\S]*?<\/details>/g, "");
+      assert.doesNotMatch(formatted, /overall_correctness|&lt;user_action&gt;/);
+      assert.match(formatted, /<code[^>]*>serviceTier<\/code>/);
+      if (type === "assistant") assert.match(formatted, /Changes requested/);
+      if (Array.isArray(content))
+        assert.match(html, /data-search-block-index="0"/);
+    }
+  }
+});
+
+test("review search focus can reveal the original source payload", () => {
+  const html = renderMessageBlock(
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: JSON.stringify(reviewReportFixture),
+      },
+    },
+    { searchForcePrimaryExpanded: true },
+  );
+  assert.match(html, /<details open="">/);
+});
 
 function renderMessageBlock(
   message: ConversationMessage,

@@ -6142,9 +6142,8 @@ export default function CodexDeckApp() {
           return;
         }
         setSessionFileContent(response);
-        if (pendingFilePathLinkTargetRef.current === response.path) {
-          pendingFilePathLinkTargetRef.current = null;
-        }
+        // Keep a linked file selected until navigation changes. The file-tree
+        // snapshot may arrive after its content and omit this nested file.
         setSelectedFileContentPage(response.page);
 
         if (
