@@ -1,3 +1,4 @@
+import ConversationRecapView from "../components/conversation-recap";
 import UsageDashboard from "../components/usage-dashboard";
 import NativeDialog from "../components/native-dialog";
 import McpAdmin from "../components/mcp-admin";
@@ -3963,7 +3964,7 @@ export default function CodexDeckApp() {
     instructions: string;
   } | null>(null);
   const [nativeDialog, setNativeDialog] = useState<{
-    kind: "mcp" | "usage";
+    kind: "mcp" | "usage" | "recap";
     threadId: string | null;
   } | null>(null);
   const closeNativeDialog = useCallback(() => setNativeDialog(null), []);
@@ -11007,6 +11008,14 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/recap") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /recap.");
+          return false;
+        }
+        setNativeDialog({ kind: "recap", threadId: commandSessionId });
+        return true;
+      }
       if (commandName === "/mcp" || commandName === "/usage") {
         setNativeDialog({
           kind: commandName === "/usage" ? "usage" : "mcp",
@@ -13862,13 +13871,20 @@ export default function CodexDeckApp() {
         {nativeDialog && (
           <NativeDialog
             title={
-              nativeDialog.kind === "usage"
-                ? "Usage dashboard"
-                : "MCP administration"
+              nativeDialog.kind === "recap"
+                ? "Conversation recap"
+                : nativeDialog.kind === "usage"
+                  ? "Usage dashboard"
+                  : "MCP administration"
             }
             onClose={closeNativeDialog}
           >
-            {nativeDialog.kind === "usage" ? (
+            {nativeDialog.kind === "recap" && nativeDialog.threadId ? (
+              <ConversationRecapView
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : nativeDialog.kind === "usage" ? (
               <UsageDashboard
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}

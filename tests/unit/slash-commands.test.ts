@@ -64,7 +64,7 @@ test("getSlashPaletteCommands only returns visible matching commands", () => {
   );
   assert.deepEqual(
     commands.map((command) => command.name),
-    ["/rename", "/resume", "/review"],
+    ["/recap", "/rename", "/resume", "/review"],
   );
 
   const hiddenAlias = getSlashPaletteCommands(

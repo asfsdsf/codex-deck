@@ -1,3 +1,4 @@
+import { RecapManager, type ConversationRecap } from "./codex-recap";
 import {
   readUsageDashboard,
   type UsageDashboardSnapshot,
@@ -943,6 +944,17 @@ class CodexAppServerClient {
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userAgent = options.userAgent ?? "codex-deck/0.2.4";
     this.sharedSocketPath = options.sharedSocketPath;
+  }
+
+  private recaps = new RecapManager(
+    (method, params) => this.request(method, params),
+    (id) => this.notifyNativeState("recap", id),
+  );
+  public getRecap(threadId: string): ConversationRecap | null {
+    return this.recaps.get(threadId);
+  }
+  public startRecap(threadId: string, history: string): ConversationRecap {
+    return this.recaps.start(threadId, history);
   }
 
   public readUsageDashboard(
@@ -3026,6 +3038,7 @@ class CodexAppServerClient {
     this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
     this.clearPendingElicitations();
+    this.recaps.cancelAll();
     this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
@@ -3563,6 +3576,16 @@ class CodexAppServerClient {
       method &&
       Object.prototype.hasOwnProperty.call(message, "params")
     ) {
+      if (this.recaps.rejectInteraction(message.params)) {
+        void this.writeMessage({
+          id: idValue,
+          error: {
+            code: -32600,
+            message: "Interactions are disabled for isolated recaps.",
+          },
+        }).catch(() => {});
+        return;
+      }
       if (method === "item/tool/requestUserInput") {
         if (this.handleRequestUserInput(idValue, message.params)) {
           return;
@@ -3599,6 +3622,7 @@ class CodexAppServerClient {
   }
 
   private handleServerNotification(method: string, params: unknown): void {
+    if (this.recaps.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
       return;
@@ -4414,6 +4438,7 @@ class CodexAppServerClient {
     this.process = null;
     this.initialized = false;
     this.initializeInFlight = null;
+    this.recaps.cancelAll();
     this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
@@ -6237,6 +6262,8 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  getRecap?: (threadId: string) => ConversationRecap | null;
+  startRecap?: (threadId: string, history: string) => ConversationRecap;
   readUsageDashboard?: (
     threadId?: string | null,
   ) => Promise<UsageDashboardSnapshot>;
@@ -6374,6 +6401,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),
+    getRecap: (id) => client!.getRecap(id),
+    startRecap: (id, history) => client!.startRecap(id, history),
     readUsageDashboard: (id) => client!.readUsageDashboard(id),
     consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
     listMcpServers: (id) => client!.listMcpServers(id),

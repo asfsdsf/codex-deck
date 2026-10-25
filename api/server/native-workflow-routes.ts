@@ -1,3 +1,5 @@
+import { getConversation } from "../storage";
+import { recapHistory } from "../codex-recap";
 import type { Hono } from "hono";
 import {
   getCodexAppServerClient,
@@ -16,6 +18,8 @@ export function registerNativeWorkflowRoutes(
       | "reloadMcpServers"
       | "readUsageDashboard"
       | "consumeResetCredit"
+      | "getRecap"
+      | "startRecap"
     >;
   } = {},
 ) {
@@ -36,6 +40,21 @@ export function registerNativeWorkflowRoutes(
       );
     }
   };
+  app.get("/api/codex/threads/:id/recap", (c) =>
+    run(c, async (client) => ({
+      recap: client.getRecap?.(c.req.param("id")) ?? null,
+    })),
+  );
+  app.post("/api/codex/threads/:id/recap", (c) =>
+    run(c, async (client) => {
+      if (!client.startRecap)
+        return c.json({ error: "Conversation recaps unavailable." }, 501);
+      const id = c.req.param("id");
+      return {
+        recap: client.startRecap(id, recapHistory(await getConversation(id))),
+      };
+    }),
+  );
   app.get("/api/codex/usage", (c) =>
     run(c, async (client) => {
       if (!client.readUsageDashboard)

@@ -147,6 +147,7 @@ export function parseSlashCommandInvocation(
 }
 
 export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
+  { name: "/recap", description: "Generate a brief conversation catch-up" },
   {
     name: "/usage",
     description: "View usage, rate limits, credit estimates, and resets",

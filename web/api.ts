@@ -2049,3 +2049,19 @@ export function consumeCodexResetCredit(
     body: JSON.stringify({ idempotencyKey, creditId }),
   });
 }
+
+export function getCodexRecap(
+  threadId: string,
+): Promise<{ recap: import("@codex-deck/api").ConversationRecap | null }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/recap`,
+  );
+}
+export function startCodexRecap(
+  threadId: string,
+): Promise<{ recap: import("@codex-deck/api").ConversationRecap }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/recap`,
+    { method: "POST" },
+  );
+}

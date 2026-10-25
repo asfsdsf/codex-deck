@@ -180,6 +180,8 @@ This document records the current button-to-command mapping for the Workflow pan
 
 - `/usage` opens account limits and reset times, credit balance, daily activity, and conversation credit/USD estimates when supplied by Codex. Missing capabilities show explicit availability messages. Reset redemption requires an in-dialog confirmation and retains its attempt ID across retries; account notifications and visible-page polling refresh every client.
 
+- `/recap` generates a bounded catch-up in an ephemeral thread using the conversation model/provider, inherited permission restrictions, and disabled tools. The dialog shows preparation/generation, summary, next action, and failures. Concurrent requests for the same session share one job; results and progress reconcile across clients. Jobs time out, detach temporary threads, and remain available for the lifetime of the Deck process.
+
 ### Workflow composer send/init
 
 - UI location: bottom composer in the main Workflow viewport

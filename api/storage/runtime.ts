@@ -1,3 +1,4 @@
+export type { ConversationRecap } from "../codex-recap";
 export type {
   UsageDashboardSnapshot,
   UsageWindow,

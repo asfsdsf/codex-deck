@@ -165,6 +165,41 @@ for (const theme of ["dark", "light"] as const) {
         ),
       });
       await usage.getByRole("button", { name: "Close", exact: true }).click();
+      let recapStarted = false;
+      await page.route("**/api/codex/threads/*/recap*", async (route) => {
+        if (route.request().method() === "POST") recapStarted = true;
+        await route.fulfill({
+          json: {
+            recap: recapStarted
+              ? {
+                  threadId: app.sessions.alpha,
+                  status: "completed",
+                  phase: "Summary ready",
+                  summary: "The launch checklist is ready and validated.",
+                  nextAction: "Publish the launch notes.",
+                  error: null,
+                }
+              : null,
+          },
+        });
+      });
+      await page.getByPlaceholder("Message Codex...").fill("/recap");
+      await page.getByPlaceholder("Message Codex...").press("Enter");
+      const recap = page.getByRole("dialog", { name: "Conversation recap" });
+      await expect(
+        recap.getByText("The launch checklist is ready and validated.", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        recap.getByText("Publish the launch notes.", { exact: true }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `recap-${theme}-${mobile ? "mobile" : "desktop"}.png`,
+        ),
+      });
+      await recap.getByRole("button", { name: "Close", exact: true }).click();
     });
   }
 }
