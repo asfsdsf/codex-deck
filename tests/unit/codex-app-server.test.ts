@@ -2000,3 +2000,121 @@ test("app-server client re-baselines auth fingerprint on account/updated", async
     rmSync(codexHome, { recursive: true, force: true });
   }
 });
+
+test("paginated history reads all turn and item pages in chronological order", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const rpc = client as unknown as {
+    request(method: string, params: Record<string, unknown>): Promise<unknown>;
+    readThreadWithTurns(id: string): Promise<unknown>;
+  };
+  const calls: string[] = [];
+  rpc.request = async (method, params) => {
+    calls.push(method);
+    assert.equal(params.threadId, "thread");
+    if (method === "thread/read") {
+      assert.equal(params.includeTurns, false);
+      return {
+        thread: {
+          id: "thread",
+          historyMode: "paginated",
+          status: { type: "active" },
+        },
+      };
+    }
+    assert.equal(params.sortDirection, "asc");
+    if (method === "thread/turns/list") {
+      assert.equal(params.itemsView, "notLoaded");
+      return params.cursor
+        ? { data: [{ id: "second", status: "inProgress" }], nextCursor: null }
+        : {
+            data: [{ id: "first", status: "completed" }],
+            nextCursor: "turn-page",
+          };
+    }
+    assert.equal(method, "thread/items/list");
+    const first = {
+      turnId: "first",
+      item: { id: "item-1", type: "agentMessage", text: "hello" },
+    };
+    return params.cursor
+      ? {
+          data: [
+            first,
+            {
+              turnId: "second",
+              item: { id: "item-2", type: "agentMessage", text: "world" },
+            },
+          ],
+          nextCursor: null,
+        }
+      : { data: [first], nextCursor: "item-page" };
+  };
+  try {
+    const result = (await rpc.readThreadWithTurns("thread")) as {
+      thread: { turns: Array<{ id: string; items: Array<{ id: string }> }> };
+    };
+    assert.deepEqual(
+      result.thread.turns.map((t) => [t.id, t.items.map((i) => i.id)]),
+      [
+        ["first", ["item-1"]],
+        ["second", ["item-2"]],
+      ],
+    );
+    assert.deepEqual(calls, [
+      "thread/read",
+      "thread/turns/list",
+      "thread/turns/list",
+      "thread/items/list",
+      "thread/items/list",
+    ]);
+    assert.equal(
+      (await client.getThreadState("thread")).activeTurnId,
+      "second",
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("paginated history only falls back for unsupported RPC methods", async () => {
+  for (const failure of [
+    new CodexAppServerRpcError(-32601, "unsupported"),
+    new CodexAppServerRpcError(-32000, "storage unavailable"),
+    "loop",
+  ]) {
+    const client = new __TEST_ONLY__.CodexAppServerClient();
+    const rpc = client as unknown as {
+      request(
+        method: string,
+        params: Record<string, unknown>,
+      ): Promise<unknown>;
+      readThreadWithTurns(id: string): Promise<unknown>;
+    };
+    let legacy = 0;
+    rpc.request = async (method, params) => {
+      if (method === "thread/read") {
+        if (params.includeTurns) legacy++;
+        return { thread: { historyMode: "paginated", turns: [] } };
+      }
+      if (failure === "loop") return { data: [], nextCursor: "repeat" };
+      throw failure;
+    };
+    try {
+      if (
+        failure instanceof CodexAppServerRpcError &&
+        failure.code === -32601
+      ) {
+        await rpc.readThreadWithTurns("thread");
+        assert.equal(legacy, 1);
+      } else {
+        await assert.rejects(
+          rpc.readThreadWithTurns("thread"),
+          failure === "loop" ? /Non-advancing/ : /storage unavailable/,
+        );
+        assert.equal(legacy, 0);
+      }
+    } finally {
+      await client.close();
+    }
+  }
+});

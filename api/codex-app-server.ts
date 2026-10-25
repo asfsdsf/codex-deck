@@ -2469,7 +2469,76 @@ class CodexAppServerClient {
   }
 
   private async readThreadWithTurns(threadId: string): Promise<unknown> {
-    return this.readThread(threadId, true);
+    const metadata = (await this.readThread(threadId, false)) as {
+      thread?: Record<string, unknown>;
+    };
+    if (metadata?.thread?.historyMode !== "paginated") {
+      return this.readThread(threadId, true);
+    }
+
+    // Request ascending pages explicitly: state and diff readers inspect the
+    // newest turn last. Never treat a failed page as a complete history.
+    const pages = async (method: string, extra: Record<string, unknown>) => {
+      const records: Record<string, unknown>[] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const page = (await this.request(method, {
+          threadId,
+          limit: 100,
+          sortDirection: "asc",
+          ...extra,
+          ...(cursor ? { cursor } : {}),
+        })) as { data?: Record<string, unknown>[]; nextCursor?: string | null };
+        if (!Array.isArray(page?.data)) {
+          throw new Error(`Invalid ${method} history page`);
+        }
+        records.push(...page.data);
+        cursor = page.nextCursor ?? undefined;
+        if (cursor !== undefined) {
+          if (typeof cursor !== "string" || !cursor || seen.has(cursor)) {
+            throw new Error(`Non-advancing ${method} history cursor`);
+          }
+          seen.add(cursor);
+        }
+      } while (cursor !== undefined);
+      return records;
+    };
+
+    try {
+      const turns = new Map<string, Record<string, unknown>>();
+      for (const turn of await pages("thread/turns/list", {
+        itemsView: "notLoaded",
+      })) {
+        if (typeof turn.id !== "string")
+          throw new Error("Invalid history turn");
+        turns.set(turn.id, { ...turn, items: [] });
+      }
+      const items = new Map<string, Map<string, unknown>>();
+      for (const entry of await pages("thread/items/list", {})) {
+        const item = entry.item as Record<string, unknown> | undefined;
+        if (typeof entry.turnId !== "string" || typeof item?.id !== "string") {
+          throw new Error("Invalid history item");
+        }
+        const turnItems = items.get(entry.turnId) ?? new Map();
+        turnItems.set(item.id, item);
+        items.set(entry.turnId, turnItems);
+      }
+      for (const [id, turn] of turns) {
+        turn.items = [...(items.get(id)?.values() ?? [])];
+      }
+      return {
+        ...metadata,
+        thread: { ...metadata.thread, turns: [...turns.values()] },
+      };
+    } catch (error) {
+      // Transitional servers may advertise paginated storage before exposing
+      // both methods. Other failures must remain visible to callers.
+      if (error instanceof CodexAppServerRpcError && error.code === -32601) {
+        return this.readThread(threadId, true);
+      }
+      throw error;
+    }
   }
 
   public async close(): Promise<void> {
