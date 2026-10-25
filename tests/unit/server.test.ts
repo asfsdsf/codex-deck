@@ -6429,6 +6429,10 @@ test("thread management routes forward rename/fork/archive/compact/agent request
       (sideResponse.body as { parentThreadId?: string }).parentThreadId,
       "thread-main",
     );
+    assert.equal(
+      existsSync(join(rootDir, "codex-deck", "session-origins")),
+      false,
+    );
     assert.deepEqual(threadManagementCalls.slice(1, 3), [
       "fork:thread-main",
       "fork:thread-main",

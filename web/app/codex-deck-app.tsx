@@ -353,13 +353,11 @@ interface SessionHeaderProps {
   railCollapsedByDefault: boolean;
   conversationSearchOpen: boolean;
   resolvedTheme: ResolvedTheme;
-  sideContext: SideThreadContext | null;
   onCopySessionId: (sessionId: string) => void;
   onCopyProjectPath: (projectPath: string) => void;
   onToggleConversationSearch: () => void;
   onToggleRailCollapsedByDefault: () => void;
   onToggleTheme: () => void;
-  onReturnFromSideConversation: () => void;
 }
 
 interface ThemeToggleButtonProps {
@@ -661,11 +659,6 @@ interface PendingTurn {
 
 interface SideThreadState {
   parentThreadId: string;
-}
-
-interface SideThreadContext {
-  parentThreadId: string;
-  parentDisplay: string;
 }
 
 interface AgentActivityEntry {
@@ -3891,9 +3884,17 @@ export default function CodexDeckApp() {
   const [threadNameOverrides, setThreadNameOverrides] = useState<
     Record<string, string>
   >({});
-  const [sideThreadsById, setSideThreadsById] = useState<
-    Record<string, SideThreadState>
-  >({});
+  const sideThreadsById = useMemo<Record<string, SideThreadState>>(() => {
+    const sideThreads: Record<string, SideThreadState> = {};
+    for (const session of sessions) {
+      if (session.origin?.kind === "side") {
+        sideThreads[session.id] = {
+          parentThreadId: session.origin.parentSessionId,
+        };
+      }
+    }
+    return sideThreads;
+  }, [sessions]);
   const [fixingDangling, setFixingDangling] = useState(false);
   const [showFixDanglingConfirm, setShowFixDanglingConfirm] = useState(false);
   const [fixDanglingTargetSessionId, setFixDanglingTargetSessionId] = useState<
@@ -4286,7 +4287,6 @@ export default function CodexDeckApp() {
     connectionFailureNoticeRef.current = null;
     setCommandNotice(null);
     setThreadNameOverrides({});
-    setSideThreadsById({});
     setFixingDangling(false);
     setShowFixDanglingConfirm(false);
     setFixDanglingTargetSessionId(null);
@@ -5300,7 +5300,9 @@ export default function CodexDeckApp() {
         return {
           ...session,
           display: override || session.display,
-          isDiffGuide: !!diffGuidesBySession[session.id],
+          sessionType: diffGuidesBySession[session.id]
+            ? ("diff-guide" as const)
+            : session.origin?.kind,
           workflowRoleLabel:
             getTerminalSessionRoleLabel(terminalRole) ??
             getWorkflowSessionRoleLabel(
@@ -5328,24 +5330,11 @@ export default function CodexDeckApp() {
       sessionsWithThreadNames.find((s) => s.id === selectedSession) || null
     );
   }, [sessionsWithThreadNames, selectedSession]);
-  const selectedSideThreadContext = useMemo((): SideThreadContext | null => {
-    if (!selectedSession) {
-      return null;
-    }
-
-    const sideThread = sideThreadsById[selectedSession];
-    if (!sideThread) {
-      return null;
-    }
-
-    const parentSession = sessionsWithThreadNames.find(
-      (session) => session.id === sideThread.parentThreadId,
-    );
-    return {
-      parentThreadId: sideThread.parentThreadId,
-      parentDisplay: parentSession?.display || sideThread.parentThreadId,
-    };
-  }, [selectedSession, sessionsWithThreadNames, sideThreadsById]);
+  const selectedSessionOriginId = selectedSession
+    ? (diffGuidesBySession[selectedSession]?.parentSessionId ??
+      selectedSessionData?.origin?.parentSessionId ??
+      null)
+    : null;
   const selectedSessionTerminalRole = selectedSession
     ? (sessionTerminalRolesById[selectedSession] ?? null)
     : null;
@@ -8131,6 +8120,7 @@ export default function CodexDeckApp() {
         existing
           ? {
               ...session,
+              origin: session.origin ?? existing.origin,
               createdAt: existing.createdAt,
               lastUserMessageAt: existing.lastUserMessageAt,
               timestamp: existing.timestamp,
@@ -10145,6 +10135,7 @@ export default function CodexDeckApp() {
           existing
             ? {
                 ...nextSession,
+                origin: existing.origin,
                 createdAt: existing.createdAt,
                 lastUserMessageAt: existing.lastUserMessageAt,
                 timestamp: existing.timestamp,
@@ -10172,9 +10163,7 @@ export default function CodexDeckApp() {
   const handleRenameThread = useCallback(
     async (threadId: string, rawName: string): Promise<boolean> => {
       if (sideThreadsById[threadId]) {
-        setInteractionError(
-          "Side conversations are ephemeral and cannot be renamed.",
-        );
+        setInteractionError("Side conversations cannot be renamed.");
         return false;
       }
 
@@ -10273,21 +10262,6 @@ export default function CodexDeckApp() {
       refreshSelectedWorkflow,
     ],
   );
-
-  const handleReturnFromSideConversation = useCallback(() => {
-    const sideContext =
-      selectedSession && sideThreadsById[selectedSession]
-        ? sideThreadsById[selectedSession]
-        : null;
-    if (!sideContext) {
-      return;
-    }
-
-    setSelectedSession(sideContext.parentThreadId);
-    setCenterView("session");
-    setInteractionError(null);
-    showCommandNoticeForDuration("Returned to the main thread.");
-  }, [selectedSession, showCommandNoticeForDuration, sideThreadsById]);
 
   const refreshAgentThreads = useCallback(
     async (rootThreadId: string): Promise<CodexThreadSummary[]> => {
@@ -11213,12 +11187,6 @@ export default function CodexDeckApp() {
         try {
           const result = await startCodexSideThread(commandSessionId);
           upsertSessionFromThreadSummary(result.thread);
-          setSideThreadsById((current) => ({
-            ...current,
-            [result.thread.threadId]: {
-              parentThreadId: result.parentThreadId,
-            },
-          }));
           setSelectedSession(result.thread.threadId);
           setCenterView("session");
           showCommandNoticeForDuration("Started side conversation.");
@@ -13108,13 +13076,11 @@ export default function CodexDeckApp() {
       railCollapsedByDefault,
       conversationSearchOpen,
       resolvedTheme,
-      sideContext,
       onCopySessionId,
       onCopyProjectPath,
       onToggleConversationSearch,
       onToggleRailCollapsedByDefault,
       onToggleTheme,
-      onReturnFromSideConversation,
     } = props;
 
     return (
@@ -13160,26 +13126,8 @@ export default function CodexDeckApp() {
           <span className="text-xs text-zinc-600 shrink-0">
             {formatTime(session.timestamp)}
           </span>
-          {sideContext && (
-            <span
-              className="min-w-0 shrink rounded border border-amber-500/35 bg-amber-500/12 px-2 py-1 text-[11px] text-amber-100"
-              title={`Side conversation from ${sideContext.parentDisplay}`}
-            >
-              Side
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {sideContext && (
-            <button
-              type="button"
-              onClick={onReturnFromSideConversation}
-              className="h-8 rounded border border-amber-500/35 bg-amber-500/12 px-2.5 text-xs text-amber-100 transition-colors hover:bg-amber-500/20"
-              title={`Return to ${sideContext.parentDisplay}`}
-            >
-              Return
-            </button>
-          )}
           <button
             type="button"
             onClick={onToggleConversationSearch}
@@ -13695,7 +13643,6 @@ export default function CodexDeckApp() {
                 railCollapsedByDefault={railCollapsedByDefault}
                 conversationSearchOpen={conversationSearchOpen}
                 resolvedTheme={resolvedTheme}
-                sideContext={selectedSideThreadContext}
                 onCopySessionId={handleCopySessionId}
                 onCopyProjectPath={handleCopyProjectPath}
                 onToggleConversationSearch={handleToggleConversationSearch}
@@ -13703,7 +13650,6 @@ export default function CodexDeckApp() {
                   setRailCollapsedByDefault((current) => !current)
                 }
                 onToggleTheme={handleToggleTheme}
-                onReturnFromSideConversation={handleReturnFromSideConversation}
               />
             ) : (
               <>
@@ -13903,6 +13849,24 @@ export default function CodexDeckApp() {
             {...reviewDialog}
             onClose={() => setReviewDialog(null)}
             onStarted={({ threadId, turnId }) => {
+              if (threadId !== reviewDialog.threadId) {
+                const parent = sessions.find(
+                  (session) => session.id === reviewDialog.threadId,
+                );
+                const createdAt = Date.now();
+                upsertSessionInLocalState({
+                  id: threadId,
+                  display: `Review: ${parent?.display || reviewDialog.threadId}`,
+                  createdAt,
+                  lastUserMessageAt: createdAt,
+                  timestamp: createdAt,
+                  project: parent?.project ?? "",
+                  projectName: parent?.projectName ?? "",
+                });
+                setSelectedSession(threadId);
+                setCenterView("session");
+                if (isMobilePhone) setSidebarCollapsed(true);
+              }
               trackWebManagedSessionTurn(threadId, turnId);
               setPendingTurn({ sessionId: threadId, turnId });
               showCommandNoticeForDuration("Review started.");
@@ -15228,16 +15192,13 @@ export default function CodexDeckApp() {
                       : null
                   }
                   originSessionShortcut={
-                    diffGuidesBySession[selectedSession]?.parentSessionId
+                    selectedSessionOriginId
                       ? {
                           label: "Origin session",
                           title:
-                            "Open the session this diff guide was forked from",
+                            "Open the session this conversation was started from",
                           onClick: () =>
-                            handleSelectSession(
-                              diffGuidesBySession[selectedSession]
-                                .parentSessionId,
-                            ),
+                            handleSelectSession(selectedSessionOriginId),
                         }
                       : null
                   }

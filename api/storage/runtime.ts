@@ -65,6 +65,8 @@ import {
 } from "../conversation-edit-records";
 import { splitPathSegments } from "../path-utils";
 import type { ConversationHoverSettings } from "../conversation-hover-settings";
+import { getSessionOrigin, type SessionOrigin } from "../session-origins";
+export type { SessionOrigin } from "../session-origins";
 
 export interface HistoryEntry {
   sessionId: string;
@@ -81,6 +83,7 @@ export interface Session {
   timestamp: number;
   project: string;
   projectName: string;
+  origin?: SessionOrigin;
 }
 
 export type SessionContentSearchCommand = "rg" | "ag" | "ack" | "grep";
@@ -1683,6 +1686,7 @@ interface SessionMeta {
   cwd: string;
   timestamp: number;
   archivedAt: number | null;
+  origin?: SessionOrigin;
 }
 
 interface SessionHistory {
@@ -1836,14 +1840,17 @@ export function invalidateHistoryCache(): void {
   invalidateSessionsCache();
 }
 
-export function addToFileIndex(sessionId: string, filePath: string): void {
+export function addToFileIndex(
+  sessionId: string,
+  filePath: string,
+): Promise<void> {
   invalidateSessionsCache();
   sessionSummaryIndex.delete(plainRolloutPath(filePath));
   fileIndex.set(sessionId, filePath);
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
   sessionUserMessageTimestampCache.delete(sessionId);
-  void hydrateSessionMeta(sessionId, filePath);
+  return hydrateSessionMeta(sessionId, filePath);
 }
 
 function clearSessionCaches(sessionId: string): void {
@@ -2817,22 +2824,10 @@ function computeContextLeftPercent(
   return Math.max(0, Math.min(100, percent));
 }
 
-async function readFirstLine(filePath: string): Promise<string | null> {
-  try {
-    const chunk = await readRolloutPrefix(filePath);
-    if (!chunk.length) {
-      return null;
-    }
-    const newlineIndex = chunk.indexOf(0x0a);
-    return chunk
-      .subarray(0, newlineIndex === -1 ? chunk.length : newlineIndex)
-      .toString("utf-8");
-  } catch {
-    return null;
-  }
-}
-
-function parseSessionMetaLine(line: string): SessionMeta | null {
+function parseSessionMetaLine(
+  line: string,
+  followingLines: Iterable<string>,
+): SessionMeta | null {
   const parsed = safeJsonParse(line);
   if (!parsed || typeof parsed !== "object") {
     return null;
@@ -2851,6 +2846,7 @@ function parseSessionMetaLine(line: string): SessionMeta | null {
 
   return {
     id,
+    origin: getSessionOrigin(record.payload, followingLines),
     cwd:
       typeof record.payload.cwd === "string" ? record.payload.cwd.trim() : "",
     timestamp: parseTimestamp(record.payload.timestamp),
@@ -2866,21 +2862,19 @@ function parseSessionMetaLine(line: string): SessionMeta | null {
 async function readSessionMetaFromFile(
   filePath: string,
 ): Promise<SessionMeta | null> {
-  const firstLine = await readFirstLine(filePath);
-  if (!firstLine) {
+  try {
+    const prefix = await readRolloutPrefix(filePath);
+    const [firstLine, ...followingLines] = prefix.toString("utf8").split("\n");
+    return firstLine ? parseSessionMetaLine(firstLine, followingLines) : null;
+  } catch {
     return null;
   }
-  return parseSessionMetaLine(firstLine);
 }
 
 async function hydrateSessionMeta(
   sessionId: string,
   filePath: string,
 ): Promise<void> {
-  if (sessionMetaIndex.has(sessionId)) {
-    return;
-  }
-
   const meta = await readSessionMetaFromFile(filePath);
   if (meta) {
     sessionMetaIndex.set(sessionId, meta);
@@ -2950,14 +2944,16 @@ async function buildFileIndex(invalidateSessionList = true): Promise<void> {
 
     let sessionId = fileSessionId;
     const summary = summaries.get(plainRolloutPath(filePath));
+    const rolloutMeta = await readSessionMetaFromFile(filePath);
     const meta = summary
       ? {
           id: summary.id,
           cwd: summary.cwd,
           timestamp: summary.createdAt,
           archivedAt: summary.archivedAt,
+          origin: rolloutMeta?.origin,
         }
-      : await readSessionMetaFromFile(filePath);
+      : rolloutMeta;
     if (meta) {
       sessionId = meta.id;
     }
@@ -5314,7 +5310,7 @@ async function updateSessionFileIndex(
       await buildFileIndex();
       return fileIndex.has(normalizedSessionId) ? "updated" : "removed";
     }
-    addToFileIndex(normalizedSessionId, normalizedFilePath);
+    await addToFileIndex(normalizedSessionId, normalizedFilePath);
     return "updated";
   }
 
@@ -5466,6 +5462,7 @@ export async function getSessions(): Promise<Session[]> {
       }
 
       const project = meta?.cwd ?? "";
+      const origin = meta?.origin;
 
       return {
         id: sessionId,
@@ -5475,6 +5472,7 @@ export async function getSessions(): Promise<Session[]> {
         timestamp: lastUserMessageAt,
         project,
         projectName: getProjectName(project),
+        ...(origin ? { origin } : {}),
       };
     };
 

@@ -166,6 +166,13 @@ This document records the current button-to-command mapping for the Workflow pan
 - Deleting a diff session offers **Cancel**, **Delete session only**, and **Delete session + diff guide**. Deleting only the session retains its saved guide files in the original artifact directory, including the standalone HTML; choosing both removes that directory. The source/parent session is preserved. The dialog wraps its actions on narrow screens and disables them while deletion is running.
 - Guide HTML travels through the app's JSON transport in both local and encrypted remote mode and runs inside an isolated iframe. Comment export remains available when embedded browser storage is unavailable. Persistent roles and readiness recover after reload/reconnect/tab wake and update across clients. Archiving preserves artifacts. Session deletion defaults to artifact cleanup for existing API callers; `deleteDiffGuide=false` explicitly retains the files in both local and remote mode.
 
+### Review and side sessions
+
+- `/review` opens the review target dialog and starts a detached review session. The app opens that session and tracks its running turn, while preserving the source conversation.
+- Review and `/side` sessions show **review** and **side** badges using the same session-list style as **diff guide**. Both reuse the sticky **Origin session** button in the conversation, with the same theme, narrow-screen layout, and session-availability checks. The side-session Return button and Side badge no longer appear in the top bar.
+- Reviews are recognized only from Codex's native `session_meta.source` (`subagent: review`) and `parent_thread_id`. Starting a review creates no Deck-specific marker or saved origin metadata. Reviews created by either Deck or the native Codex CLI use the same read-only detection, including SQLite-backed and compressed session listings through bounded metadata reads.
+- Side origins are derived from the native fork parent (`forked_from_id` or `history_base.thread_id`) and the existing side-conversation boundary at the start of the fork's own user messages. Ordinary forks are not labeled as side sessions. No Deck origin markers are written or read for either review or side sessions. Badges and return navigation survive reloads and update across browser tabs through local SSE or encrypted remote polling; deleting a child preserves the source session.
+
 ### Workflow composer send/init
 
 - UI location: bottom composer in the main Workflow viewport

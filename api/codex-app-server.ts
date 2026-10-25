@@ -2175,7 +2175,7 @@ class CodexAppServerClient {
     const params = {
       threadId: id,
       target: parseReviewTarget(target),
-      delivery: "inline",
+      delivery: "detached",
     };
     await this.ensureConnected();
     await this.ensureInitialized();
@@ -2201,8 +2201,13 @@ class CodexAppServerClient {
       turn?: { id?: string };
     };
     this.clearThreadStateCache(id);
+    const reviewThreadId = record.reviewThreadId ?? id;
+    this.clearThreadStateCache(reviewThreadId);
+    if (this.sharedSocket && reviewThreadId !== id) {
+      await this.resumeThread(reviewThreadId);
+    }
     return {
-      threadId: record.reviewThreadId ?? id,
+      threadId: reviewThreadId,
       turnId: record.turn?.id ?? null,
     };
   }
