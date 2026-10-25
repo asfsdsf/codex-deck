@@ -10,6 +10,12 @@ import { registerReviewRoutes } from "../../api/server/review-routes";
 
 test("native review validates all targets and sends inline review RPCs", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
+  const connection = client as unknown as {
+    ensureConnected(): Promise<void>;
+    ensureInitialized(): Promise<void>;
+  };
+  connection.ensureConnected = async () => {};
+  connection.ensureInitialized = async () => {};
   const calls: unknown[] = [];
   (
     client as unknown as {

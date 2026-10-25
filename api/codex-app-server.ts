@@ -2177,6 +2177,17 @@ class CodexAppServerClient {
       target: parseReviewTarget(target),
       delivery: "inline",
     };
+    await this.ensureConnected();
+    await this.ensureInitialized();
+    if (
+      this.sharedSocket &&
+      !this.newlyStartedThreadIds.has(id) &&
+      !this.sharedThreadSubscriptions.has(id)
+    ) {
+      // A loaded shared thread can accept review/start without subscribing our
+      // connection. Subscribe first so every browser receives review events.
+      await this.resumeThread(id);
+    }
     let result: unknown;
     try {
       result = await this.request("review/start", params);

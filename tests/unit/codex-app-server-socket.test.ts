@@ -197,3 +197,122 @@ for (const [description, options] of [
     }
   });
 }
+
+test(
+  "native review subscribes to a preloaded shared thread on its first request and after reconnect",
+  { skip: process.platform === "win32", timeout: 10000 },
+  async (t) => {
+    const directory = mkdtempSync("/tmp/deck-review-sock-");
+    const socketPath = join(directory, "control.sock");
+    const server = createServer();
+    const sockets = new WebSocketServer({ server });
+    let subscriptions = 0;
+    let reviews = 0;
+    sockets.on("connection", (socket) => {
+      let subscribed = false;
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (message.method === "initialized") return;
+        let result: unknown = {};
+        if (message.method === "config/read") result = { config: {} };
+        if (message.method === "thread/resume") {
+          assert.equal(message.params.threadId, "shared-thread");
+          subscribed = true;
+          subscriptions++;
+          result = { thread: { id: "shared-thread" } };
+        }
+        if (message.method === "review/start") {
+          assert.equal(
+            subscribed,
+            true,
+            "subscribe even when review/start would succeed without it",
+          );
+          reviews++;
+          result = {
+            reviewThreadId: "shared-thread",
+            turn: { id: `review-${reviews}` },
+          };
+          socket.send(
+            JSON.stringify({
+              method: "turn/started",
+              params: {
+                threadId: "shared-thread",
+                turn: { id: `review-${reviews}`, status: "inProgress" },
+              },
+            }),
+          );
+          socket.send(
+            JSON.stringify({
+              method: "hook/started",
+              params: {
+                threadId: "shared-thread",
+                turnId: `review-${reviews}`,
+                run: {
+                  id: `hook-${reviews}`,
+                  status: "running",
+                  eventName: "preModelRequest",
+                },
+              },
+            }),
+          );
+          socket.send(
+            JSON.stringify({
+              method: "turn/completed",
+              params: {
+                threadId: "shared-thread",
+                turn: { id: `review-${reviews}`, status: "completed" },
+              },
+            }),
+          );
+        }
+        socket.send(JSON.stringify({ id: message.id, result }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const client = new __TEST_ONLY__.CodexAppServerClient({
+      sharedSocketPath: socketPath,
+      env: { CODEX_HOME: directory },
+    });
+    t.after(async () => {
+      await client.close();
+      for (const socket of sockets.clients) socket.terminate();
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(directory, { recursive: true, force: true });
+    });
+    const first: unknown[] = [],
+      second: unknown[] = [];
+    client.subscribeAppServerEvents((event) => first.push(event));
+    client.subscribeAppServerEvents((event) => second.push(event));
+    assert.deepEqual(
+      await client.startReview("shared-thread", { type: "uncommittedChanges" }),
+      { threadId: "shared-thread", turnId: "review-1" },
+    );
+    assert.deepEqual(
+      await client.startReview("shared-thread", {
+        type: "baseBranch",
+        branch: "main",
+      }),
+      { threadId: "shared-thread", turnId: "review-2" },
+    );
+    assert.equal(
+      subscriptions,
+      1,
+      "reuse the current connection's subscription",
+    );
+    assert.deepEqual(first, second);
+    assert.equal(
+      first.length,
+      6,
+      "both browsers receive lifecycle and hook events",
+    );
+    await client.close();
+    assert.deepEqual(
+      await client.startReview("shared-thread", { type: "uncommittedChanges" }),
+      { threadId: "shared-thread", turnId: "review-3" },
+    );
+    assert.equal(subscriptions, 2, "subscribe again after reconnecting");
+    assert.deepEqual(first, second);
+    assert.equal(first.length, 9);
+  },
+);
