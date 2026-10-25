@@ -174,6 +174,10 @@ This document records the current button-to-command mapping for the Workflow pan
 - Side origins are derived from the native fork parent (`forked_from_id` or `history_base.thread_id`) and the existing side-conversation boundary at the start of the fork's own user messages. Ordinary forks are not labeled as side sessions. No Deck origin markers are written or read for either review or side sessions. Badges and return navigation survive reloads and update across browser tabs through local SSE or encrypted remote polling; deleting a child preserves the source session.
 - Review feedback wrapped in `<user_action>` and structured final review JSON render as review cards in conversations and latest-session previews. Cards show the summary, verdict when provided, finding count, priority labels, Markdown explanations, and file/line links that use the normal file viewer. **Original review** exposes the complete source payload; existing message copy, translation, and editing remain available. Cards follow the app theme and wrap on mobile. Incomplete, malformed, and unrelated messages retain their normal rendering.
 
+### Native workflow commands
+
+- `/mcp` opens MCP administration for the composer’s bound session (or global inventory without a session). It lists servers, tools and schemas, authentication, resources, and retained startup/OAuth status. OAuth returns an explicit authorization link; **Reload configuration** reloads the shared registry. Snapshots reconcile across tabs and encrypted remote polling.
+
 ### Workflow composer send/init
 
 - UI location: bottom composer in the main Workflow viewport

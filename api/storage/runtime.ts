@@ -1,3 +1,8 @@
+export type {
+  NativeScope,
+  McpInventorySnapshot,
+  McpServerInventory,
+} from "../codex-native";
 export type { CodexBackgroundTerminal } from "../background-terminals";
 import type { CodexOperationalNotification } from "../operational-notifications";
 export type { CodexOperationalNotification } from "../operational-notifications";
@@ -260,6 +265,12 @@ export interface CodexCollabAgentState {
 }
 
 export type CodexAppServerEvent =
+  | {
+      type: "native_state_changed";
+      scope: import("../codex-native").NativeScope;
+      threadId: string | null;
+      revision: string;
+    }
   | { type: "background_terminals_changed"; threadId: string; changeId: number }
   | {
       type: "operational_notification";
@@ -5834,6 +5845,7 @@ export async function ingestConversationLiveEvent(
   event: CodexAppServerEvent,
 ): Promise<void> {
   if (
+    event.type === "native_state_changed" ||
     event.type === "operational_notification" ||
     event.type === "hook_run" ||
     event.type === "background_terminals_changed"

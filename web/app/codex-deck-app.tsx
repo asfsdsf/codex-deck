@@ -1,3 +1,5 @@
+import NativeDialog from "../components/native-dialog";
+import McpAdmin from "../components/mcp-admin";
 import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import ServiceTierSelect from "../components/service-tier-select";
@@ -3959,6 +3961,11 @@ export default function CodexDeckApp() {
     threadId: string;
     instructions: string;
   } | null>(null);
+  const [nativeDialog, setNativeDialog] = useState<{
+    kind: "mcp";
+    threadId: string | null;
+  } | null>(null);
+  const closeNativeDialog = useCallback(() => setNativeDialog(null), []);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -4299,6 +4306,7 @@ export default function CodexDeckApp() {
     setTerminalDeleteMode(null);
     setDeleteTerminalTargetId(null);
     setShowCollabModePicker(false);
+    setNativeDialog(null);
     setReviewDialog(null);
     setShowStatusModal(false);
     setShowConfigModal(false);
@@ -10998,6 +11006,11 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/mcp") {
+        setNativeDialog({ kind: "mcp", threadId: commandSessionId });
+        return true;
+      }
+
       if (commandName === "/status") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /status.");
@@ -13842,6 +13855,14 @@ export default function CodexDeckApp() {
           </div>
         )}
 
+        {nativeDialog && (
+          <NativeDialog title="MCP administration" onClose={closeNativeDialog}>
+            <McpAdmin
+              key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+              threadId={nativeDialog.threadId}
+            />
+          </NativeDialog>
+        )}
         {reviewDialog && (
           <ReviewModal
             key={reviewDialog.threadId}

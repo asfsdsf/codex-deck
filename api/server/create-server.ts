@@ -1,3 +1,4 @@
+import { registerNativeWorkflowRoutes } from "./native-workflow-routes";
 import { registerBackgroundTerminalRoutes } from "./background-terminal-routes";
 import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
@@ -2329,6 +2330,7 @@ export function createServer(options: ServerOptions) {
   const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
     if (
+      event.type === "native_state_changed" ||
       event.type === "background_terminals_changed" ||
       event.type === "hook_run" ||
       event.type === "operational_notification"
@@ -4972,6 +4974,9 @@ export function createServer(options: ServerOptions) {
   registerOperationalNotificationRoutes(app);
   registerHookRunRoutes(app);
   registerMemoryInsightRoutes(app);
+  registerNativeWorkflowRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
   registerReviewRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
     wake: (id) => {

@@ -1,4 +1,12 @@
 import {
+  nativePages,
+  nativeRecord,
+  type NativeScope,
+  type McpInventorySnapshot,
+  type McpServerInventory,
+  type McpRuntimeUpdate,
+} from "./codex-native";
+import {
   parseBackgroundTerminal,
   type CodexBackgroundTerminal,
 } from "./background-terminals";
@@ -931,6 +939,97 @@ class CodexAppServerClient {
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userAgent = options.userAgent ?? "codex-deck/0.2.4";
     this.sharedSocketPath = options.sharedSocketPath;
+  }
+
+  private mcpUpdates: McpRuntimeUpdate[] = [];
+  private notifyNativeState(
+    scope: NativeScope,
+    threadId: string | null = null,
+  ) {
+    this.emitAppServerEvent({
+      type: "native_state_changed",
+      scope,
+      threadId,
+      revision: randomUUID(),
+    });
+  }
+  private async requestNativeThread(
+    method: string,
+    params: Record<string, unknown>,
+    threadId?: string | null,
+  ): Promise<unknown> {
+    if (threadId) {
+      await this.ensureConnected();
+      await this.ensureInitialized();
+      if (
+        this.sharedSocket &&
+        !this.newlyStartedThreadIds.has(threadId) &&
+        !this.sharedThreadSubscriptions.has(threadId)
+      )
+        await this.resumeThread(threadId);
+    }
+    try {
+      return await this.request(method, params);
+    } catch (error) {
+      if (!threadId || !shouldRetryAfterResume(error)) throw error;
+      await this.resumeThread(threadId);
+      return this.request(method, params);
+    }
+  }
+  public async listMcpServers(
+    threadId?: string | null,
+  ): Promise<McpInventorySnapshot> {
+    const id = threadId?.trim() || null;
+    const servers = await nativePages<McpServerInventory>(
+      (method, params) => this.requestNativeThread(method, params, id),
+      "mcpServerStatus/list",
+      { ...(id ? { threadId: id } : {}), detail: "full" },
+    );
+    for (const server of servers) {
+      if (
+        typeof server?.name !== "string" ||
+        !server.tools ||
+        typeof server.tools !== "object" ||
+        !Array.isArray(server.resources) ||
+        !Array.isArray(server.resourceTemplates)
+      )
+        throw new Error("Invalid MCP server inventory");
+    }
+    return {
+      servers,
+      updates: this.mcpUpdates.filter(
+        (update) => !update.threadId || update.threadId === id,
+      ),
+    };
+  }
+  public async loginMcpServer(
+    name: string,
+    threadId?: string | null,
+  ): Promise<{ authorizationUrl: string; loginId?: string }> {
+    const result = nativeRecord(
+      await this.requestNativeThread(
+        "mcpServer/oauth/login",
+        { name: name.trim(), ...(threadId ? { threadId } : {}) },
+        threadId,
+      ),
+    );
+    if (
+      typeof result.authorizationUrl !== "string" ||
+      !/^https?:\/\//i.test(result.authorizationUrl)
+    )
+      throw new Error("Invalid MCP authorization URL");
+    this.notifyNativeState("mcp", threadId || null);
+    return {
+      authorizationUrl: result.authorizationUrl,
+      ...(typeof result.loginId === "string"
+        ? { loginId: result.loginId }
+        : {}),
+    };
+  }
+  public async reloadMcpServers(): Promise<void> {
+    await this.request("config/mcpServer/reload", {});
+    this.mcpUpdates = [];
+    this.notifyNativeState("mcp");
   }
 
   public async listModels(
@@ -3466,6 +3565,31 @@ class CodexAppServerClient {
   }
 
   private handleServerNotification(method: string, params: unknown): void {
+    if (
+      method === "mcpServer/startupStatus/updated" ||
+      method === "mcpServer/oauthLogin/completed"
+    ) {
+      const value = asRecord(params);
+      if (value && typeof value.name === "string") {
+        const update = {
+          ...value,
+          name: value.name,
+          threadId: typeof value.threadId === "string" ? value.threadId : null,
+        } as McpRuntimeUpdate;
+        this.mcpUpdates = this.mcpUpdates.filter(
+          (old) =>
+            !(
+              old.name === update.name &&
+              old.threadId === update.threadId &&
+              (old.status !== undefined) === (update.status !== undefined)
+            ),
+        );
+        this.mcpUpdates.push(update);
+        this.mcpUpdates = this.mcpUpdates.slice(-256);
+        this.notifyNativeState("mcp", update.threadId);
+      }
+      return;
+    }
     const notification = this.operationalNotifications.record(method, params);
     if (notification) {
       this.emitAppServerEvent({
@@ -6075,6 +6199,12 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  listMcpServers?: (threadId?: string | null) => Promise<McpInventorySnapshot>;
+  loginMcpServer?: (
+    name: string,
+    threadId?: string | null,
+  ) => Promise<{ authorizationUrl: string; loginId?: string }>;
+  reloadMcpServers?: () => Promise<void>;
   restartAppServer?: () => Promise<boolean>;
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
   fetchProviderModels?: (cwd?: string | null) => Promise<CodexModelOption[]>;
@@ -6199,6 +6329,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listHookRuns: (threadId: string) => client!.listHookRuns(threadId),
     readThreadMemory: (threadId: string) => client!.readThreadMemory(threadId),
     readMemoryStatus: () => client!.readMemoryStatus(),
+    listMcpServers: (id) => client!.listMcpServers(id),
+    loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
+    reloadMcpServers: () => client!.reloadMcpServers(),
     readMemorySettings: (cwd?: string | null) =>
       client!.readMemorySettings(cwd),
     writeMemorySettings: (settings: CodexMemoriesSettings) =>

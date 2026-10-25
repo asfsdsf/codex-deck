@@ -2012,3 +2012,23 @@ export function terminateCodexBackgroundTerminal(
     { method: "POST" },
   );
 }
+
+export function getCodexMcpInventory(
+  threadId: string | null,
+): Promise<import("@codex-deck/api").McpInventorySnapshot> {
+  return requestJson(
+    `/api/codex/mcp${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}
+export function loginCodexMcpServer(
+  name: string,
+  threadId: string | null,
+): Promise<{ authorizationUrl: string; loginId?: string }> {
+  return requestJson("/api/codex/mcp/login", {
+    method: "POST",
+    body: JSON.stringify({ name, threadId }),
+  });
+}
+export function reloadCodexMcpServers(): Promise<{ ok: boolean }> {
+  return requestJson("/api/codex/mcp/reload", { method: "POST" });
+}
