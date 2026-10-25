@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect } from "./helpers/codex-deck-fixture";
 import { CodexDeckPage } from "./pages/codex-deck-page";
 
@@ -200,6 +201,29 @@ for (const theme of ["dark", "light"] as const) {
         ),
       });
       await recap.getByRole("button", { name: "Close", exact: true }).click();
+      await page
+        .getByPlaceholder("Message Codex...")
+        .fill("/export launch-notes.md");
+      await page.getByPlaceholder("Message Codex...").press("Enter");
+      const exported = page.getByRole("dialog", { name: "Export transcript" });
+      await expect(
+        exported.getByRole("textbox", { name: "Markdown preview" }),
+      ).toContainText("The deployment steps are ready.");
+      const downloadPromise = page.waitForEvent("download");
+      await exported.getByRole("button", { name: "Download Markdown" }).click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe("launch-notes.md");
+      const markdown = await readFile((await download.path())!, "utf8");
+      expect(markdown).toContain("## User");
+      expect(markdown).toContain("The deployment steps are ready.");
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `export-${theme}-${mobile ? "mobile" : "desktop"}.png`,
+        ),
+      });
+      await exported
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
     });
   }
 }

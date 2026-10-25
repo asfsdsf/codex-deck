@@ -182,6 +182,8 @@ This document records the current button-to-command mapping for the Workflow pan
 
 - `/recap` generates a bounded catch-up in an ephemeral thread using the conversation model/provider, inherited permission restrictions, and disabled tools. The dialog shows preparation/generation, summary, next action, and failures. Concurrent requests for the same session share one job; results and progress reconcile across clients. Jobs time out, detach temporary threads, and remain available for the lifetime of the Deck process.
 
+- `/export [file name]` opens a Markdown preview of the bound conversation’s complete available transcript. **Download Markdown** saves it through the browser, preserving message order, role/time/model details, summaries, tool calls/results, and image references. Refresh captures newer activity; the same conversation reader serves local and remote mode.
+
 ### Workflow composer send/init
 
 - UI location: bottom composer in the main Workflow viewport

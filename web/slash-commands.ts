@@ -147,6 +147,11 @@ export function parseSlashCommandInvocation(
 }
 
 export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
+  {
+    name: "/export",
+    description: "Export the conversation as Markdown",
+    supportsInlineArgs: true,
+  },
   { name: "/recap", description: "Generate a brief conversation catch-up" },
   {
     name: "/usage",

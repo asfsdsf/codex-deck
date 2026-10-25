@@ -1,3 +1,4 @@
+import TranscriptExport from "../components/transcript-export";
 import ConversationRecapView from "../components/conversation-recap";
 import UsageDashboard from "../components/usage-dashboard";
 import NativeDialog from "../components/native-dialog";
@@ -3964,7 +3965,8 @@ export default function CodexDeckApp() {
     instructions: string;
   } | null>(null);
   const [nativeDialog, setNativeDialog] = useState<{
-    kind: "mcp" | "usage" | "recap";
+    kind: "mcp" | "usage" | "recap" | "export";
+    filename?: string;
     threadId: string | null;
   } | null>(null);
   const closeNativeDialog = useCallback(() => setNativeDialog(null), []);
@@ -11008,6 +11010,18 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/export") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /export.");
+          return false;
+        }
+        setNativeDialog({
+          kind: "export",
+          threadId: commandSessionId,
+          filename: normalizedArgs,
+        });
+        return true;
+      }
       if (commandName === "/recap") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /recap.");
@@ -13871,15 +13885,23 @@ export default function CodexDeckApp() {
         {nativeDialog && (
           <NativeDialog
             title={
-              nativeDialog.kind === "recap"
-                ? "Conversation recap"
-                : nativeDialog.kind === "usage"
-                  ? "Usage dashboard"
-                  : "MCP administration"
+              nativeDialog.kind === "export"
+                ? "Export transcript"
+                : nativeDialog.kind === "recap"
+                  ? "Conversation recap"
+                  : nativeDialog.kind === "usage"
+                    ? "Usage dashboard"
+                    : "MCP administration"
             }
             onClose={closeNativeDialog}
           >
-            {nativeDialog.kind === "recap" && nativeDialog.threadId ? (
+            {nativeDialog.kind === "export" && nativeDialog.threadId ? (
+              <TranscriptExport
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+                filename={nativeDialog.filename}
+              />
+            ) : nativeDialog.kind === "recap" && nativeDialog.threadId ? (
               <ConversationRecapView
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}
