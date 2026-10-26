@@ -212,7 +212,6 @@ import {
   fetchCodexModels,
   listCodexHomes,
   listRemoteAdminSetupTokens,
-  listProjects,
   getWorkflowBySession as getWorkflowBySessionRequest,
   getWorkflowLog as getWorkflowLogRequest,
   getWorkflowDetail as getWorkflowDetailRequest,
@@ -3635,7 +3634,13 @@ export default function CodexDeckApp() {
     useState<boolean>(() => isRemoteLatencyLoggingEnabled());
 
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [projects, setProjects] = useState<string[]>([]);
+  const projects = useMemo(
+    () =>
+      [
+        ...new Set(sessions.map((session) => session.project).filter(Boolean)),
+      ].sort(),
+    [sessions],
+  );
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [terminals, setTerminals] = useState<TerminalSummary[]>([]);
@@ -4201,7 +4206,6 @@ export default function CodexDeckApp() {
     setActiveCodexHomeId(normalizedHomeId);
     setSelectedCodexHomeId(normalizedHomeId);
     setSessions([]);
-    setProjects([]);
     setSelectedProject(null);
     setSelectedSession(null);
     setTerminals([]);
@@ -6640,23 +6644,6 @@ export default function CodexDeckApp() {
     }
 
     const generation = codexHomeGenerationRef.current;
-    listProjects()
-      .then((nextProjects) => {
-        if (codexHomeGenerationRef.current === generation) {
-          setProjects(nextProjects);
-        }
-      })
-      .catch((error) => {
-        console.error(error);
-      });
-  }, [apiReady, selectedCodexHomeId]);
-
-  useEffect(() => {
-    if (!apiReady) {
-      return;
-    }
-
-    const generation = codexHomeGenerationRef.current;
     listActiveTerminals()
       .then((nextTerminals) => {
         if (codexHomeGenerationRef.current !== generation) {
@@ -8098,6 +8085,7 @@ export default function CodexDeckApp() {
         return false;
       }
 
+      const generation = codexHomeGenerationRef.current;
       setCreatingSession(true);
       setInteractionError(null);
 
@@ -8107,6 +8095,31 @@ export default function CodexDeckApp() {
           ...(selectedModelId ? { model: selectedModelId } : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
         });
+        if (codexHomeGenerationRef.current !== generation) {
+          return false;
+        }
+
+        // A rollout may not exist until the first turn. Show the session and
+        // its project immediately, without overwriting an earlier stream update.
+        const createdAt = Date.now();
+        const session: Session = {
+          id: created.threadId,
+          display: "(new session)",
+          createdAt,
+          lastUserMessageAt: createdAt,
+          timestamp: createdAt,
+          project: cwd,
+          projectName: getPathBaseName(cwd),
+        };
+        setSessions((current) =>
+          current.some((item) => item.id === session.id)
+            ? current
+            : [session, ...current].sort(
+                (left, right) =>
+                  getSessionLastUserMessageAt(right) -
+                  getSessionLastUserMessageAt(left),
+              ),
+        );
 
         // A brand-new thread may not have a materialized rollout yet.
         // Suppress wait-state polling until the first user message is sent.
@@ -8118,12 +8131,16 @@ export default function CodexDeckApp() {
         }
         return true;
       } catch (error) {
-        setInteractionError(
-          error instanceof Error ? error.message : String(error),
-        );
+        if (codexHomeGenerationRef.current === generation) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
         return false;
       } finally {
-        setCreatingSession(false);
+        if (codexHomeGenerationRef.current === generation) {
+          setCreatingSession(false);
+        }
       }
     },
     [
@@ -8157,13 +8174,6 @@ export default function CodexDeckApp() {
           getSessionLastUserMessageAt(left),
       );
     });
-    if (session.project) {
-      setProjects((current) =>
-        current.includes(session.project)
-          ? current
-          : [...current, session.project].sort(),
-      );
-    }
   }, []);
 
   const ensureSessionVisibleInLocalState = useCallback(
