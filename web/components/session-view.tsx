@@ -25,6 +25,7 @@ import type {
 import MessageBlock from "./message-block";
 import { PendingElicitations } from "./pending-elicitations";
 import { PendingUserInputRequests } from "./pending-user-input-requests";
+import { PendingApprovalRequests } from "./pending-approval-requests";
 import { UserInputResizeContainer } from "./user-input-textarea";
 import {
   buildAsyncUserInputMessage,
@@ -581,22 +582,6 @@ function messageUsesUserInputState(message: ConversationMessage): boolean {
   );
 }
 
-function messageUsesApprovalState(message: ConversationMessage): boolean {
-  const content = message.message?.content;
-  if (!Array.isArray(content)) {
-    return false;
-  }
-
-  return content.some(
-    (block) =>
-      block.type === "tool_use" &&
-      typeof block.name === "string" &&
-      (block.name.toLowerCase() === "exec_command" ||
-        block.name.toLowerCase() === "apply_patch" ||
-        block.name.toLowerCase() === "request_permissions"),
-  );
-}
-
 function buildPendingApprovalByItemId(
   pendingApprovalRequests: readonly CodexApprovalRequest[],
 ): Map<string, CodexApprovalRequest> {
@@ -779,6 +764,9 @@ const SessionView = memo(
       const [pendingApprovalRequests, setPendingApprovalRequests] = useState<
         CodexApprovalRequest[]
       >([]);
+      const [approvalErrors, setApprovalErrors] = useState<
+        Record<string, string>
+      >({});
       const [selectedUserInputAnswers, setSelectedUserInputAnswers] = useState<
         Record<string, Record<string, UserInputAnswerDraft>>
       >({});
@@ -874,6 +862,7 @@ const SessionView = memo(
       const userInputPollInFlightRef = useRef(false);
       const userInputPollRerunRequestedRef = useRef(false);
       const approvalPollInFlightRef = useRef(false);
+      const approvalGenerationRef = useRef(0);
       const approvalPollRerunRequestedRef = useRef(false);
       const submittingApprovalRequestIdsRef = useRef<Set<string>>(new Set());
       const railButtonRefsRef = useRef<Map<string, HTMLButtonElement>>(
@@ -1108,6 +1097,7 @@ const SessionView = memo(
         setPendingUserInputRequests([]);
         setUserInputErrors({});
         setPendingApprovalRequests([]);
+        setApprovalErrors({});
         setSelectedUserInputAnswers({});
         setSubmittingUserInputRequestIds([]);
         setSubmittingApprovalRequestIds([]);
@@ -1127,6 +1117,7 @@ const SessionView = memo(
         userInputPollInFlightRef.current = false;
         userInputPollRerunRequestedRef.current = false;
         approvalPollInFlightRef.current = false;
+        approvalGenerationRef.current += 1;
         approvalPollRerunRequestedRef.current = false;
         submittingApprovalRequestIdsRef.current.clear();
         railButtonRefsRef.current.clear();
@@ -1286,9 +1277,13 @@ const SessionView = memo(
         }
 
         approvalPollInFlightRef.current = true;
+        const generation = approvalGenerationRef.current;
         try {
           const requests = await listCodexApprovalRequests(sessionId);
-          if (!mountedRef.current) {
+          if (
+            !mountedRef.current ||
+            generation !== approvalGenerationRef.current
+          ) {
             return;
           }
 
@@ -1310,6 +1305,13 @@ const SessionView = memo(
           const activeIds = new Set(
             requests.map((request) => request.requestId),
           );
+          setApprovalErrors((previous) => {
+            if (Object.keys(previous).every((id) => activeIds.has(id)))
+              return previous;
+            return Object.fromEntries(
+              Object.entries(previous).filter(([id]) => activeIds.has(id)),
+            );
+          });
           setSubmittingApprovalRequestIds((previous) =>
             pruneSubmittingIds(previous, activeIds),
           );
@@ -1328,6 +1330,7 @@ const SessionView = memo(
         } catch {
           // Keep UI state as-is on transient polling failures.
         } finally {
+          if (generation !== approvalGenerationRef.current) return;
           approvalPollInFlightRef.current = false;
           if (
             approvalPollRerunRequestedRef.current &&
@@ -1425,16 +1428,37 @@ const SessionView = memo(
             return;
           }
 
+          const generation = approvalGenerationRef.current;
           submittingApprovalRequestIdsRef.current.add(requestId);
+          setApprovalErrors((previous) => {
+            const next = { ...previous };
+            delete next[requestId];
+            return next;
+          });
           setSubmittingApprovalRequestIds((previous) =>
             previous.includes(requestId) ? previous : [...previous, requestId],
           );
 
           try {
             await respondCodexApprovalRequest(sessionId, requestId, response);
-          } catch {
-            // Let polling keep the request visible if submission fails.
+          } catch (error) {
+            if (
+              mountedRef.current &&
+              generation === approvalGenerationRef.current
+            ) {
+              setApprovalErrors((previous) => ({
+                ...previous,
+                [requestId]: `Could not send your approval response: ${
+                  error instanceof Error ? error.message : String(error)
+                }. Try again.`,
+              }));
+            }
           } finally {
+            if (
+              !mountedRef.current ||
+              generation !== approvalGenerationRef.current
+            )
+              return;
             submittingApprovalRequestIdsRef.current.delete(requestId);
             setSubmittingApprovalRequestIds((previous) =>
               previous.filter((id) => id !== requestId),
@@ -2668,21 +2692,11 @@ const SessionView = memo(
                 pendingUserInputRequests={
                   usesUserInputState ? answerableUserInputRequests : undefined
                 }
-                pendingApprovalRequests={
-                  messageUsesApprovalState(message)
-                    ? pendingApprovalRequests
-                    : undefined
-                }
                 selectedUserInputAnswers={
                   usesUserInputState ? selectedUserInputAnswers : undefined
                 }
                 submittingUserInputRequestIds={
                   usesUserInputState ? submittingUserInputRequestIds : undefined
-                }
-                submittingApprovalRequestIds={
-                  messageUsesApprovalState(message)
-                    ? submittingApprovalRequestIds
-                    : undefined
                 }
                 onSelectUserInputOption={
                   usesUserInputState ? handleSelectUserInputOption : undefined
@@ -2694,11 +2708,6 @@ const SessionView = memo(
                 }
                 onSubmitUserInputAnswers={
                   usesUserInputState ? handleSubmitUserInputAnswers : undefined
-                }
-                onRespondApprovalRequest={
-                  messageUsesApprovalState(message)
-                    ? submitApprovalResponse
-                    : undefined
                 }
                 resolvedUserInputAnswersByItemId={
                   resolvedUserInputAnswersByItemId
@@ -2744,12 +2753,9 @@ const SessionView = memo(
           onPlanAction,
           onRejectAiTerminalStep,
           answerableUserInputRequests,
-          pendingApprovalRequests,
           resolvedUserInputAnswersByItemId,
           sessionId,
-          submitApprovalResponse,
           selectedUserInputAnswers,
-          submittingApprovalRequestIds,
           submittingUserInputRequestIds,
           suppressedRequestUserInputResultIds,
           toolInputMapByCallId,
@@ -2876,6 +2882,8 @@ const SessionView = memo(
         messages,
         pendingUserMessages,
         pendingUserInputRequests,
+        pendingApprovalRequests,
+        approvalErrors,
         autoScroll,
         isLatestPage,
         pagesHeight,
@@ -3540,6 +3548,12 @@ const SessionView = memo(
                 ))}
               </div>
               <div ref={pendingUserInputRef}>
+                <PendingApprovalRequests
+                  requests={pendingApprovalRequests}
+                  submittingRequestIds={submittingApprovalRequestIds}
+                  errors={approvalErrors}
+                  onRespond={submitApprovalResponse}
+                />
                 <PendingElicitations
                   key={sessionId}
                   sessionId={sessionId}
