@@ -27,6 +27,10 @@ import {
   getEditableResponseItem,
   getEditableEventRecord,
 } from "./conversation-edit-records";
+import {
+  CODEX_DECK_TOOL_NAMESPACE,
+  qualifyCodexDeckToolName,
+} from "./codex-dynamic-tool-names";
 
 interface LineWithOffset {
   line: string;
@@ -1453,12 +1457,19 @@ function parseToolUseFromPayload(
     input = toToolInput(payload.action);
   }
 
-  const name =
+  const baseName =
     payloadType === "web_search_call"
       ? "web_search"
       : typeof payload.name === "string"
         ? payload.name
         : "unknown_tool";
+  // Deck-hosted dynamic tools keep their namespace so the UI can render them
+  // distinctly (e.g. "codex_deck.read_thread"); other namespaces are unchanged.
+  const name =
+    payloadType === "function_call" &&
+    payload.namespace === CODEX_DECK_TOOL_NAMESPACE
+      ? qualifyCodexDeckToolName(baseName)
+      : baseName;
 
   const callId =
     typeof payload.call_id === "string" && payload.call_id

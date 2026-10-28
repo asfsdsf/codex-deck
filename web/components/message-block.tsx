@@ -31,7 +31,16 @@ import {
   Target,
   Languages,
   Loader2,
+  ListChecks,
 } from "lucide-react";
+import {
+  getCodexDeckToolLabel,
+  getCodexDeckToolPreview,
+  getCodexDeckToolResultPreview,
+  isCodexDeckToolFailureOutput,
+  parseCodexDeckToolName,
+} from "../codex-deck-tools";
+import { CodexDeckToolResultRenderer } from "./tool-renderers/codex-deck-tool-renderer";
 import { shouldDefaultExpandToolUse } from "../message-block-utils";
 import { getTokenLimitNoticeRepeatCount } from "../token-limit-notices";
 import {
@@ -3108,6 +3117,9 @@ const TOOL_ICON_PATTERNS: Array<{ patterns: string[]; icon: typeof Wrench }> = [
 ];
 
 function getToolIcon(toolName: string) {
+  if (parseCodexDeckToolName(toolName)) {
+    return ListChecks;
+  }
   const name = toolName.toLowerCase();
 
   if (TOOL_ICONS[name]) {
@@ -4007,6 +4019,10 @@ function getToolPreview(
     return null;
   }
 
+  if (parseCodexDeckToolName(toolName)) {
+    return getCodexDeckToolPreview(toolName, input);
+  }
+
   const name = toolName.toLowerCase();
   const handler = TOOL_PREVIEW_HANDLERS[name];
 
@@ -4172,6 +4188,10 @@ function getToolResultPreview(
   toolName: string,
   content: string,
 ): string | null {
+  if (parseCodexDeckToolName(toolName)) {
+    return getCodexDeckToolResultPreview(toolName, content);
+  }
+
   const name = toolName.toLowerCase();
   const parsed = tryParseJson(content);
 
@@ -4243,6 +4263,15 @@ function getToolResultPreview(
 }
 
 function ToolResultRenderer(props: ToolResultRendererProps) {
+  if (parseCodexDeckToolName(props.toolName)) {
+    return (
+      <CodexDeckToolResultRenderer
+        toolName={props.toolName}
+        content={props.content}
+        embedded={props.embedded}
+      />
+    );
+  }
   return <FunctionToolResultRenderer {...props} />;
 }
 
@@ -4806,7 +4835,10 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
               }`}
             >
               <Icon size={12} className="opacity-60" />
-              <span className="font-medium">{normalized.name}</span>
+              <span className="font-medium" title={normalized.name}>
+                {getCodexDeckToolLabel(normalized.name, input) ??
+                  normalized.name}
+              </span>
               {expandedLabel && isExpanded && (
                 <span className="font-normal text-slate-400">
                   {expandedLabel}
@@ -4902,7 +4934,6 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
   }
 
   if (block.type === "tool_result") {
-    const isError = block.is_error;
     const rawContent =
       typeof block.content === "string"
         ? block.content
@@ -4917,6 +4948,9 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
           fallbackToolMap?.get(block.tool_use_id) ||
           ""
         : "");
+    // Deck task tools return JSON on success and plain text on failure.
+    const isError =
+      block.is_error ?? isCodexDeckToolFailureOutput(toolName, resultContent);
     const toolInput = block.tool_use_id
       ? toolInputMap?.get(block.tool_use_id) ||
         fallbackToolInputMap?.get(block.tool_use_id)
