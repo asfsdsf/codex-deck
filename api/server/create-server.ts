@@ -1,5 +1,6 @@
 import { registerNativeWorkflowRoutes } from "./native-workflow-routes";
 import { registerThreadQueueRoutes } from "./thread-queue-routes";
+import { parseOutputSchemaInput } from "../codex-output-schema";
 import { registerBackgroundTerminalRoutes } from "./background-terminal-routes";
 import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
@@ -5062,6 +5063,11 @@ export function createServer(options: ServerOptions) {
         return c.json({ error: "collaborationMode is invalid" }, 400);
       }
 
+      const outputSchema = parseOutputSchemaInput(body.outputSchema);
+      if (!outputSchema.ok) {
+        return c.json({ error: outputSchema.error }, 400);
+      }
+
       if (client.getThreadSummary) {
         const threadSummary = await client.getThreadSummary(threadId);
         if (threadSummary.canAcceptDirectInput === false) {
@@ -5089,6 +5095,7 @@ export function createServer(options: ServerOptions) {
         body.expectedTurnId.trim()
           ? { expectedTurnId: body.expectedTurnId.trim() }
           : {}),
+        ...(outputSchema.value ? { outputSchema: outputSchema.value } : {}),
       });
 
       for (const listener of conversationWakeListeners) {

@@ -5214,6 +5214,17 @@ test("codex thread creation and message endpoints validate payloads", async () =
     );
     assert.equal(invalidMsgEffort.status, 400);
 
+    const invalidOutputSchema = await requestJson(
+      server,
+      "/api/codex/threads/thread/messages",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "hello", outputSchema: ["object"] }),
+      },
+    );
+    assert.equal(invalidOutputSchema.status, 400);
+
     const invalidServiceTier = await requestJson(
       server,
       "/api/codex/threads/thread/messages",

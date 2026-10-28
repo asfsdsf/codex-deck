@@ -307,6 +307,8 @@ export interface SendCodexMessageInput {
   steerActiveTurn?: boolean;
   /** Turn the caller believes is running; the steer precondition. */
   expectedTurnId?: string | null;
+  /** JSON Schema constraining this turn's final answer (turn/start only). */
+  outputSchema?: Record<string, unknown> | null;
 }
 
 export type CodexRawResponseItem = Record<string, unknown>;
@@ -2383,6 +2385,10 @@ class CodexAppServerClient {
       params.effort = input.effort;
     }
 
+    if (input.outputSchema) {
+      params.outputSchema = input.outputSchema;
+    }
+
     if (input.collaborationMode === null) {
       params.collaborationMode = null;
     } else if (input.collaborationMode !== undefined) {
@@ -2441,7 +2447,8 @@ class CodexAppServerClient {
       await this.resumeThread(threadId, activeConfig);
     }
 
-    if (input.steerActiveTurn) {
+    // turn/steer cannot carry an output schema; it applies to a new turn.
+    if (input.steerActiveTurn && !input.outputSchema) {
       const steered = await this.steerActiveTurn(
         threadId,
         params.input,

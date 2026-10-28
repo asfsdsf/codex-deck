@@ -10,6 +10,13 @@ import McpAdmin from "../components/mcp-admin";
 import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import RunningTurnComposerActions from "../components/running-turn-composer-actions";
+import {
+  OutputSchemaChip,
+  OutputSchemaPanel,
+  OutputSchemaToggleButton,
+  type AttachedOutputSchema,
+} from "../components/output-schema-attachment";
+import { OUTPUT_SCHEMA_RUNNING_TURN_ERROR } from "../output-schema";
 import { useNativeSnapshot } from "../hooks/use-native-snapshot";
 import {
   mergeSharedQueueIntoPending,
@@ -763,6 +770,8 @@ interface HistoryNavigationState {
 interface MessageComposerSubmitPayload {
   text: string;
   images: string[];
+  /** Final-answer JSON schema for the turn this message starts. */
+  outputSchema?: Record<string, unknown>;
 }
 
 interface ComposerImageAttachment {
@@ -801,6 +810,8 @@ interface MessageComposerProps {
     | null;
   onRunSlashCommand: (commandName: string, args: string) => Promise<boolean>;
   onStopConversation: () => Promise<void>;
+  /** Offer attaching a final-answer JSON schema to the next turn. */
+  allowOutputSchema?: boolean;
 }
 
 type ComposerSendTrigger = "textarea-enter" | "send-button" | "other";
@@ -2010,8 +2021,17 @@ const MessageComposer = memo(function MessageComposer(
     onInterruptAndSend,
     onRunSlashCommand,
     onStopConversation,
+    allowOutputSchema = false,
   } = props;
   const composerResetKey = draftResetKey ?? sessionId ?? "";
+  const [outputSchema, setOutputSchema] = useState<AttachedOutputSchema | null>(
+    null,
+  );
+  const [outputSchemaEditorOpen, setOutputSchemaEditorOpen] = useState(false);
+  useEffect(() => {
+    setOutputSchema(null);
+    setOutputSchemaEditorOpen(false);
+  }, [composerResetKey]);
   const [draft, setDraft] = useState("");
   const [draftTranslation, setDraftTranslation] = useState<{
     status: "idle" | "loading" | "active" | "error";
@@ -2323,6 +2343,8 @@ const MessageComposer = memo(function MessageComposer(
     setDismissedSkillSelectorQuery(null);
     setSelectedSkillSelectorIndex(0);
     clearImageAttachments();
+    setOutputSchema(null);
+    setOutputSchemaEditorOpen(false);
   }, [clearImageAttachments, resetDraftTranslation]);
 
   const focusComposerInput = useCallback(() => {
@@ -2843,7 +2865,13 @@ const MessageComposer = memo(function MessageComposer(
         return;
       }
 
-      const sent = await submit({ text: draft, images: imageDataUrls });
+      const sent = await submit({
+        text: draft,
+        images: imageDataUrls,
+        ...(allowOutputSchema && outputSchema
+          ? { outputSchema: outputSchema.value }
+          : {}),
+      });
       if (!sent) {
         return;
       }
@@ -2854,12 +2882,14 @@ const MessageComposer = memo(function MessageComposer(
       }
     },
     [
+      allowOutputSchema,
       clearAfterSendSuccess,
       draft,
       focusComposerInput,
       hasMessageContent,
       normalizedImageFiles,
       onSendMessage,
+      outputSchema,
       slashCommands,
       executeSlashCommand,
     ],
@@ -3006,6 +3036,29 @@ const MessageComposer = memo(function MessageComposer(
               ))}
             </div>
           )}
+          {allowOutputSchema && outputSchemaEditorOpen ? (
+            <OutputSchemaPanel
+              key={outputSchema?.text ?? "new"}
+              attached={outputSchema}
+              onAttach={(schema) => {
+                setOutputSchema(schema);
+                setOutputSchemaEditorOpen(false);
+                focusComposerInput();
+              }}
+              onRemove={() => {
+                setOutputSchema(null);
+                setOutputSchemaEditorOpen(false);
+              }}
+              onClose={() => setOutputSchemaEditorOpen(false)}
+            />
+          ) : allowOutputSchema && outputSchema ? (
+            <OutputSchemaChip
+              schema={outputSchema}
+              disabled={composerBusy}
+              onEdit={() => setOutputSchemaEditorOpen(true)}
+              onRemove={() => setOutputSchema(null)}
+            />
+          ) : null}
           {showRunningTurnActions && (
             <RunningTurnComposerActions
               touch={isMobilePhone}
@@ -3412,6 +3465,14 @@ const MessageComposer = memo(function MessageComposer(
               </svg>
             </button>
           </div>
+          {allowOutputSchema ? (
+            <OutputSchemaToggleButton
+              attached={!!outputSchema}
+              open={outputSchemaEditorOpen}
+              disabled={isSendingLocked || composerBusy}
+              onClick={() => setOutputSchemaEditorOpen((open) => !open)}
+            />
+          ) : null}
           <button
             type="button"
             onClick={handleTranslateDraft}
@@ -10029,6 +10090,10 @@ export default function CodexDeckApp() {
           intent: options?.intent ?? "default",
         });
         steerRunningTurn = steerRunningTurn || route === "steer";
+        if (payload.outputSchema && route !== "start") {
+          setInteractionError(OUTPUT_SCHEMA_RUNNING_TURN_ERROR);
+          return false;
+        }
         // The app-server drains its shared queue itself; a local backlog
         // keeps using the local queue so the two never interleave.
         if (
@@ -10142,6 +10207,9 @@ export default function CodexDeckApp() {
             : {}),
           collaborationMode,
           ...serviceTierInput(effectiveModelIdForRequest),
+          ...(payload.outputSchema
+            ? { outputSchema: payload.outputSchema }
+            : {}),
           ...(steerRunningTurn
             ? {
                 steerActiveTurn: true,
@@ -13438,6 +13506,7 @@ export default function CodexDeckApp() {
       | null;
     onRunSlashCommand: (commandName: string, args: string) => Promise<boolean>;
     onStopConversation: () => Promise<void>;
+    allowOutputSchema?: boolean;
     idlePrimaryActionLabel?: string;
     idlePrimaryActionBusy?: boolean;
     idlePrimaryActionBusyLabel?: string;
@@ -13481,6 +13550,7 @@ export default function CodexDeckApp() {
             onInterruptAndSend={input.onInterruptAndSend}
             onRunSlashCommand={input.onRunSlashCommand}
             onStopConversation={input.onStopConversation}
+            allowOutputSchema={input.allowOutputSchema}
           />
         )}
         <div
@@ -15962,6 +16032,7 @@ export default function CodexDeckApp() {
                 onSendMessage: handleSendMessage,
                 onQueueMessage: handleQueueMessage,
                 onInterruptAndSend: handleInterruptAndSendMessage,
+                allowOutputSchema: true,
                 onRunSlashCommand: handleRunSlashCommand,
                 onStopConversation: handleStopConversation,
                 composerDisabledReason:

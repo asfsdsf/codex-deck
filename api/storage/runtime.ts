@@ -205,6 +205,8 @@ export interface SendCodexMessageRequest {
   steerActiveTurn?: boolean;
   /** Running turn the caller expects to steer (`turn/steer` precondition). */
   expectedTurnId?: string;
+  /** JSON Schema object for this turn's final answer (`turn/start`). */
+  outputSchema?: Record<string, unknown> | null;
 }
 
 export type SendCodexMessageInputItem =
