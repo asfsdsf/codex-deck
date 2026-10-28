@@ -81,6 +81,7 @@ import type {
   CodexCollabAgentStatus,
   CodexTurnError,
 } from "./storage";
+import { CodexDeckDynamicToolHost } from "./codex-dynamic-tools";
 import {
   buildHookStateBatchWriteInput,
   parseHooksListResult,
@@ -967,6 +968,12 @@ class CodexAppServerClient {
   private lastKnownProviderBaseUrl: string | null = null;
   private providerReloadInFlight: Promise<void> | null = null;
   private appServerRestartInFlight: Promise<boolean> | null = null;
+  // Client-provided dynamic tools (`codex_deck` namespace); see api/codex-dynamic-tools.ts.
+  private readonly dynamicTools = new CodexDeckDynamicToolHost({
+    request: (method, params) => this.request(method, params),
+    setThreadName: (threadId, name) => this.setThreadName(threadId, name),
+    archiveThread: (threadId) => this.archiveThread(threadId),
+  });
 
   public constructor(options: CodexAppServerClientOptions = {}) {
     this.executablePath =
@@ -1894,7 +1901,11 @@ class CodexAppServerClient {
       };
     }
 
-    const result = await this.request("thread/start", params);
+    const result = await this.dynamicTools.requestThreadStart(
+      params,
+      cwd,
+      (startParams) => this.request("thread/start", startParams),
+    );
     if (!result || typeof result !== "object") {
       throw new CodexAppServerTransportError(
         "Invalid thread/start response from codex app-server",
@@ -3918,6 +3929,16 @@ class CodexAppServerClient {
         return;
       }
 
+      if (method === "item/tool/call") {
+        // Answered once by the backend (never by browsers), including failures.
+        void this.dynamicTools.handleToolCallRequest(
+          idValue,
+          message.params,
+          (response) => this.respondToServerRequest(idValue, response),
+        );
+        return;
+      }
+
       void this.respondMethodNotFound(idValue, method);
     }
   }
@@ -3978,6 +3999,7 @@ class CodexAppServerClient {
 
     if (method === "thread/status/changed") {
       this.handleThreadStatusChangedNotification(params);
+      this.dynamicTools.handleThreadStatusChanged(params);
       return;
     }
 
@@ -4759,6 +4781,7 @@ class CodexAppServerClient {
     this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
     this.clearPendingElicitations();
+    this.dynamicTools.reset();
 
     this.rejectAll(new CodexAppServerTransportError(reason));
   }
