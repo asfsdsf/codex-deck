@@ -369,23 +369,6 @@ function unwrapShellCommand(command: string): string {
   return command.trim();
 }
 
-function findLikelyFilePath(command: string): string | null {
-  const firstSegment = command.split("|")[0] ?? command;
-  const tokens = shellLikeTokenize(firstSegment);
-  const candidate = [...tokens]
-    .reverse()
-    .find(
-      (token) =>
-        token.length > 0 &&
-        token !== "&&" &&
-        token !== ";" &&
-        !token.startsWith("-") &&
-        !token.startsWith("$") &&
-        (token.includes("/") || token.includes("\\") || token.includes(".")),
-    );
-  return candidate ?? null;
-}
-
 function parseSedPrintRange(
   script: string,
 ): { start: number; end: number } | null {

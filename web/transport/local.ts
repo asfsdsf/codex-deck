@@ -539,11 +539,16 @@ export function createLocalTransport(): WebTransport {
         configure: (eventSource) => {
           eventSource.addEventListener("terminal", (message) => {
             const event = parseTerminalEvent(message.data);
+            // Bootstrap and reset are authoritative snapshots (their seq may
+            // be lower after a backend restart). Ownership is idempotent and
+            // shares its seq with the reset it follows.
             if (
               !event ||
-              (event.type === "bootstrap"
-                ? event.seq < fromSeq
-                : event.seq <= fromSeq)
+              (event.type !== "bootstrap" &&
+                event.type !== "reset" &&
+                (event.type === "ownership"
+                  ? event.seq < fromSeq
+                  : event.seq <= fromSeq))
             ) {
               return;
             }

@@ -16,6 +16,7 @@ import {
   memo,
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   useRef,
@@ -2025,6 +2026,34 @@ const MessageComposer = memo(function MessageComposer(
   const dragDepthRef = useRef(0);
   const imageAttachmentsRef = useRef<ComposerImageAttachment[]>([]);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const composerActionsRef = useRef<HTMLDivElement | null>(null);
+
+  // The toolbar below the textarea reserves room for the floating action
+  // buttons; labeled buttons (Run, Continue, Sending...) are wider than the
+  // icon-only Send/Stop, so publish the real width to the composer card.
+  useLayoutEffect(() => {
+    const actions = composerActionsRef.current;
+    const card = actions?.closest<HTMLElement>(".composer-card");
+    if (!actions || !card) {
+      return;
+    }
+    const update = () => {
+      card.style.setProperty(
+        "--composer-actions-width",
+        `${actions.offsetWidth}px`,
+      );
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      return () => card.style.removeProperty("--composer-actions-width");
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(actions);
+    return () => {
+      observer.disconnect();
+      card.style.removeProperty("--composer-actions-width");
+    };
+  }, []);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -3230,7 +3259,10 @@ const MessageComposer = memo(function MessageComposer(
             className="block w-full min-h-[36px] resize-none border-0 bg-transparent px-4 pt-1.5 pb-1 text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
           />
         </div>
-        <div className="composer-actions absolute bottom-2 right-2 z-10 flex items-center gap-1">
+        <div
+          ref={composerActionsRef}
+          className="composer-actions absolute bottom-2 right-2 z-10 flex items-center gap-1"
+        >
           <div className="relative flex">
             <input
               ref={cameraInputRef}
@@ -9957,6 +9989,7 @@ export default function CodexDeckApp() {
         ) {
           // Like Codex CLI, a rejected steer waits in the queue for the turn
           // to finish instead of being dropped.
+          queueAutosendSuppressSessionsRef.current.delete(sessionId);
           setPendingUserMessagesBySession((current) =>
             updatePendingUserMessageStatus(
               current,
@@ -13048,7 +13081,9 @@ export default function CodexDeckApp() {
         )}
         <div
           className={`composer-toolbar px-2 pb-2 pt-1 ${
-            input.composerDisabledReason ? "" : "pr-[7.5rem]"
+            input.composerDisabledReason
+              ? ""
+              : "pr-[calc(var(--composer-actions-width,6.5rem)+1rem)]"
           }`}
         >
           <div ref={toolbarWidthRef} className="relative">
@@ -15457,7 +15492,7 @@ export default function CodexDeckApp() {
                     <div
                       className={
                         selectedSessionConnectionFailureNotice
-                          ? "inline-flex max-w-[min(34rem,calc(100vw-1.5rem))] items-center gap-2 rounded border border-amber-300/80 bg-amber-50/95 px-2.5 py-1.5 text-sm text-amber-900 shadow-lg dark:border-amber-500/45 dark:bg-amber-950/82 dark:text-amber-100"
+                          ? "inline-flex max-w-[min(34rem,calc(100vw-1.5rem))] items-center gap-2 rounded border border-amber-500/45 bg-amber-950/82 px-2.5 py-1.5 text-sm text-amber-100 shadow-lg"
                           : "inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg"
                       }
                       title={
@@ -15470,7 +15505,7 @@ export default function CodexDeckApp() {
                       }
                     >
                       {selectedSessionConnectionFailureNotice ? (
-                        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500 dark:bg-amber-300" />
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-300" />
                       ) : (
                         <span className="thinking-dot" />
                       )}
@@ -15482,7 +15517,7 @@ export default function CodexDeckApp() {
                           {selectedSessionConnectionFailureNotice.detail &&
                             selectedSessionConnectionFailureNotice.detail !==
                               selectedSessionConnectionFailureNotice.message && (
-                              <span className="mt-0.5 block truncate text-xs text-amber-700 dark:text-amber-200/85">
+                              <span className="mt-0.5 block truncate text-xs text-amber-200/85">
                                 {selectedSessionConnectionFailureNotice.detail}
                               </span>
                             )}

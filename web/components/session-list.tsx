@@ -41,10 +41,10 @@ function SessionStatusIcon({ status }: { status: SessionStatus }) {
       title={label}
       className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center ${
         status === "running"
-          ? "text-cyan-600 dark:text-cyan-400"
+          ? "text-cyan-400"
           : status === "unreviewed"
-            ? "text-amber-600 dark:text-amber-400"
-            : "text-emerald-600/90 dark:text-emerald-500/80"
+            ? "text-amber-400"
+            : "text-emerald-500/80"
       }`}
     >
       {status === "running" ? (

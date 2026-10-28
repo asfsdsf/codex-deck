@@ -1,4 +1,4 @@
-import { isAbsolute, normalize, relative, resolve } from "node:path";
+import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
 
 function normalizeForComparison(inputPath: string): string {
   const normalized = normalize(resolve(inputPath));
@@ -26,5 +26,7 @@ export function isPathWithinDirectory(
     return true;
   }
 
-  return !rel.startsWith("..") && !isAbsolute(rel);
+  // Only a leading ".." segment escapes; a child named "..foo" is inside.
+  const escapesDirectory = rel === ".." || rel.startsWith(`..${sep}`);
+  return !escapesDirectory && !isAbsolute(rel);
 }

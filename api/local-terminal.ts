@@ -221,6 +221,12 @@ class TerminalInstance {
       ? Math.max(0, Math.floor(fromSeq))
       : 0;
 
+    // A client ahead of us saw an earlier process (e.g. before a backend
+    // restart); its seq means nothing here, so it needs a fresh snapshot.
+    if (normalizedFromSeq > this.seq) {
+      return { events: [], requiresReset: true };
+    }
+
     if (this.bufferedEvents.length === 0) {
       return { events: [], requiresReset: false };
     }

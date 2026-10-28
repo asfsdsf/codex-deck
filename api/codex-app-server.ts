@@ -501,6 +501,7 @@ interface PendingApprovalRequest {
   cwd: string | null;
   permissions: Record<string, unknown> | null;
   availableDecisions: PendingApprovalDecisionOption[];
+  responseInFlight?: boolean;
 }
 
 interface AppServerTurnRecord {
@@ -2953,7 +2954,30 @@ class CodexAppServerClient {
     }
 
     validateApprovalResponsePayload(response);
+    const result = this.buildApprovalResult(pendingRequest, response);
 
+    // Another client may be answering the same request; only one response
+    // may reach the app-server for a given request id.
+    if (pendingRequest.responseInFlight) {
+      throw new Error("request response already in progress");
+    }
+    pendingRequest.responseInFlight = true;
+    try {
+      await this.respondToServerRequest(pendingRequest.rawRequestId, result);
+      if (
+        this.pendingApprovalRequests.get(normalizedRequestId) === pendingRequest
+      ) {
+        this.pendingApprovalRequests.delete(normalizedRequestId);
+      }
+    } finally {
+      pendingRequest.responseInFlight = false;
+    }
+  }
+
+  private buildApprovalResult(
+    pendingRequest: PendingApprovalRequest,
+    response: CodexApprovalResponsePayload,
+  ): unknown {
     if (pendingRequest.kind === "permissions") {
       const grant = response.grant;
       if (grant !== "allow" && grant !== "deny") {
@@ -2965,16 +2989,13 @@ class CodexAppServerClient {
         throw new Error("response.scope must be 'turn' or 'session'");
       }
 
-      const result = {
+      return {
         scope,
         permissions:
           grant === "allow"
             ? (pendingRequest.permissions ?? {})
             : ({} as Record<string, unknown>),
       };
-      await this.respondToServerRequest(pendingRequest.rawRequestId, result);
-      this.pendingApprovalRequests.delete(normalizedRequestId);
-      return;
     }
 
     const decisionId = asTrimmedString(response.decisionId);
@@ -2989,10 +3010,7 @@ class CodexAppServerClient {
       throw new Error("response.decisionId is invalid");
     }
 
-    await this.respondToServerRequest(pendingRequest.rawRequestId, {
-      decision: selectedDecision.decision,
-    });
-    this.pendingApprovalRequests.delete(normalizedRequestId);
+    return { decision: selectedDecision.decision };
   }
 
   public listLiveTerminalRuns(threadId: string): CodexLiveTerminalRun[] {

@@ -277,7 +277,18 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       setConnected(true);
       setError(null);
 
-      if (!event || typeof event !== "object" || event.seq <= seqRef.current) {
+      if (!event || typeof event !== "object") {
+        return;
+      }
+      // Resets are authoritative snapshots (their seq can go backwards after
+      // a backend restart); ownership shares its seq with the reset before it.
+      const isStale =
+        event.type === "reset"
+          ? false
+          : event.type === "ownership"
+            ? event.seq < seqRef.current
+            : event.seq <= seqRef.current;
+      if (isStale) {
         return;
       }
 

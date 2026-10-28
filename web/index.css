@@ -645,7 +645,8 @@ select option {
 .pane-header-right,
 .pane-left .border-zinc-800\/60,
 .pane-left .border-zinc-800\/40,
-.pane-right .border-zinc-800\/60 {
+.pane-right .border-zinc-800\/60,
+.pane-right .border-zinc-900 {
   border-color: var(--app-border-subtle);
 }
 

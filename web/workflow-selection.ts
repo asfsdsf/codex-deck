@@ -16,7 +16,7 @@ interface ResolveWorkflowSelectionResult {
 function workflowDetailMatchesSelection(
   selectedWorkflowKey: string | null,
   workflowDetail: WorkflowDetailResponse | null,
-): boolean {
+): workflowDetail is WorkflowDetailResponse {
   return (
     typeof selectedWorkflowKey === "string" &&
     workflowDetail?.summary.key === selectedWorkflowKey

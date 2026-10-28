@@ -845,7 +845,7 @@ export class RemoteClient {
   }
 
   public async callRemote<T>(
-    method: string,
+    _method: string,
     body: unknown,
     timeoutMs: number = DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
   ): Promise<T> {

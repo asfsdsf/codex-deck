@@ -38,7 +38,7 @@ function clampTerminalSize(
   max: number,
   fallback: number,
 ): number {
-  if (!Number.isFinite(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return fallback;
   }
 

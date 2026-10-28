@@ -690,8 +690,11 @@ function extractMessageText(message: ConversationMessage): string {
   }
 
   const textParts = content
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
-    .map((block) => block.text.trim())
+    .flatMap((block) =>
+      block?.type === "text" && typeof block.text === "string"
+        ? [block.text.trim()]
+        : [],
+    )
     .filter((text) => text.length > 0);
   return textParts.join("\n").trim();
 }

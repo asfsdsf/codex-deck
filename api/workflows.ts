@@ -1217,7 +1217,7 @@ async function runCodexDeckCommand(
   options?: { codexHome?: string | null },
 ): Promise<string> {
   return await new Promise((resolvePromise, reject) => {
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...(options?.codexHome ? { CODEX_HOME: options.codexHome } : {}),
       CODEX_DECK_RUNNER: "api",

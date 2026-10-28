@@ -1,4 +1,4 @@
-import { useEffect, useState, memo } from "react";
+import { useEffect, useState, memo, type JSX } from "react";
 import type {
   ConversationMessage,
   ContentBlock,
@@ -2178,7 +2178,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
       }
       return;
     }
-    if (nextText === message.editText) {
+    if (nextText === (message.editText ?? "").trim()) {
       setEditing(false);
       setEditError(null);
       return;
@@ -2789,7 +2789,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 autoFocus
                 disabled={editSaving}
                 aria-label="Edit history message"
-                className="block min-h-24 w-full resize-y rounded-lg border border-zinc-500/40 bg-zinc-950/30 py-2 pl-3 pr-24 font-mono text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400/70 disabled:cursor-wait disabled:opacity-70"
+                className="block min-h-24 w-full resize-y rounded-lg border border-zinc-500/40 bg-zinc-950/30 py-2 pl-3 pr-3 font-mono md:pr-24 text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400/70 disabled:cursor-wait disabled:opacity-70"
               />
             ) : translatedMessageText !== null ? (
               <SafeMarkdown
@@ -3574,7 +3574,7 @@ function renderFormattedToolInput(
         <div className="space-y-3">
           {calls.map((call, index) => (
             <div key={index} className="space-y-1">
-              <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+              <div className="text-xs font-medium text-zinc-400">
                 {call.name}
               </div>
               {renderFormattedToolInput(
@@ -3590,7 +3590,7 @@ function renderFormattedToolInput(
       );
     }
     return (
-      <pre className="whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300">
+      <pre className="whitespace-pre-wrap break-words text-xs text-zinc-300">
         {rawInput}
       </pre>
     );

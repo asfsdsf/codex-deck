@@ -462,6 +462,14 @@ export function registerTerminalRoutes(app: Hono): void {
           unsubscribeBindings = null;
         }
       };
+      // Register before any await so a disconnect during the first write
+      // still unsubscribes.
+      stream.onAbort(cleanup);
+      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
+      if (stream.aborted || c.req.raw.signal.aborted) {
+        cleanup();
+        return;
+      }
 
       // Writes are serialized through a chain and always read the current
       // terminal list, so a change that lands while an earlier write is
@@ -493,8 +501,6 @@ export function registerTerminalRoutes(app: Hono): void {
         void scheduleWriteTerminals();
       });
       await scheduleWriteTerminals();
-      stream.onAbort(cleanup);
-      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
 
       while (isConnected) {
         await waitForAbortableTimeout(30000, disconnectController.signal);
@@ -1234,6 +1240,15 @@ export function registerTerminalRoutes(app: Hono): void {
           manager.releaseWrite(terminalId, streamClientId);
         }
       };
+      // Register before the replay awaits: Hono swallows write errors, so a
+      // disconnect during replay would otherwise leak the subscription and
+      // keep write ownership for a dead client.
+      stream.onAbort(cleanup);
+      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
+      if (stream.aborted || c.req.raw.signal.aborted) {
+        cleanup();
+        return;
+      }
 
       const writeTerminalEvent = async (event: TerminalStreamEvent) => {
         if (!isConnected) {
@@ -1321,9 +1336,6 @@ export function registerTerminalRoutes(app: Hono): void {
         }
       }
       replayComplete = true;
-
-      stream.onAbort(cleanup);
-      c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
 
       try {
         while (isConnected) {
