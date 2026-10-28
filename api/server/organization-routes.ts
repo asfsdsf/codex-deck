@@ -4,7 +4,7 @@ import type { CodexOrganizationService } from "../codex-organization";
 import { responseStatusForError, toErrorMessage } from "./utils";
 
 type OrganizationService = Partial<
-  Pick<CodexOrganizationService, "readState" | "remoteControl">
+  Pick<CodexOrganizationService, "readState" | "remoteControl" | "environments">
 >;
 
 class RouteInputError extends Error {}
@@ -34,6 +34,13 @@ function optionalBoolean(value: unknown, label: string): boolean {
 function optionalCode(value: unknown, label: string): string | null {
   if (value === undefined || value === null || value === "") return null;
   return requireId(value, label);
+}
+
+function optionalText(value: unknown, label: string, max = 4096) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || value.length > max)
+    invalid(`Expected ${label} to be a string.`);
+  return value;
 }
 
 export function requireId(value: unknown, label: string): string {
@@ -138,6 +145,78 @@ export function registerOrganizationRoutes(
         requireId(body.environmentId, "environment ID"),
         requireId(body.clientId, "client ID"),
       );
+      return { ok: true };
+    }),
+  );
+
+  app.get("/api/codex/environments", (c) =>
+    run(c, "environments", (environments) =>
+      environments.snapshot(c.req.query("threadId") || null),
+    ),
+  );
+  app.post("/api/codex/environments", (c) =>
+    run(c, "environments", async (environments) => {
+      const body = await readBody(c);
+      const environmentId = requireId(body.environmentId, "environment ID");
+      if (!/^[A-Za-z0-9._:-]+$/.test(environmentId))
+        invalid(
+          "Environment IDs may contain letters, digits, '.', '_', ':', and '-'.",
+        );
+      const execServerUrl = requireId(body.execServerUrl, "exec-server URL");
+      let url: URL;
+      try {
+        url = new URL(execServerUrl);
+      } catch {
+        invalid("Expected a ws:// or wss:// exec-server URL.");
+      }
+      if (url.protocol !== "ws:" && url.protocol !== "wss:")
+        invalid("Expected a ws:// or wss:// exec-server URL.");
+      const timeout = body.connectTimeoutMs;
+      if (
+        timeout != null &&
+        (typeof timeout !== "number" ||
+          !Number.isInteger(timeout) ||
+          timeout <= 0 ||
+          timeout > 600_000)
+      )
+        invalid("Expected a connection timeout between 1 and 600000 ms.");
+      const skills = body.requiredSkills;
+      if (
+        skills != null &&
+        (!Array.isArray(skills) ||
+          skills.length > 100 ||
+          skills.some((skill) => typeof skill !== "string" || !skill.trim()))
+      )
+        invalid("Expected required skills to be a list of names.");
+      return {
+        registration: await environments.add({
+          environmentId,
+          execServerUrl,
+          authBearerToken: optionalText(body.authBearerToken, "bearer token"),
+          connectTimeoutMs: (timeout as number | null | undefined) ?? null,
+          requiredSkills: ((skills as string[] | null) ?? []).map((skill) =>
+            skill.trim(),
+          ),
+        }),
+      };
+    }),
+  );
+  app.post("/api/codex/threads/:id/environment-selection", (c) =>
+    run(c, "environments", async (environments) => {
+      const body = await readBody(c);
+      const threadId = requireId(c.req.param("id"), "thread ID");
+      if (body.environmentId == null) {
+        environments.setPendingSelection(threadId, null);
+        return { ok: true };
+      }
+      const cwd = optionalText(body.cwd, "working directory");
+      if (!cwd?.trim()) invalid("A working directory is required.");
+      environments.setPendingSelection(threadId, [
+        {
+          environmentId: requireId(body.environmentId, "environment ID"),
+          cwd: cwd.trim(),
+        },
+      ]);
       return { ok: true };
     }),
   );

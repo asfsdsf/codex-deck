@@ -1,4 +1,6 @@
 import type {
+  EnvironmentRegistration,
+  EnvironmentsSnapshot,
   RemoteControlPairing,
   RemoteControlSnapshot,
   RemoteControlStatus,
@@ -71,5 +73,34 @@ export function revokeCodexRemoteControlClient(
   return requestJson(
     "/api/codex/remote-control/clients/revoke",
     post({ environmentId, clientId }),
+  );
+}
+
+// Upstream execution environments (`environment/*`).
+export function getCodexEnvironments(
+  threadId: string | null,
+): Promise<EnvironmentsSnapshot> {
+  return requestJson(
+    `/api/codex/environments${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}
+
+export function addCodexEnvironment(input: {
+  environmentId: string;
+  execServerUrl: string;
+  authBearerToken: string | null;
+  connectTimeoutMs: number | null;
+  requiredSkills: string[];
+}): Promise<{ registration: EnvironmentRegistration }> {
+  return requestJson("/api/codex/environments", post(input));
+}
+
+export function setCodexThreadEnvironmentSelection(
+  threadId: string,
+  selection: { environmentId: string; cwd: string } | null,
+): Promise<{ ok: boolean }> {
+  return requestJson(
+    `${threadPath(threadId)}/environment-selection`,
+    post(selection ?? { environmentId: null }),
   );
 }

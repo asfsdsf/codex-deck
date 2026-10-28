@@ -220,6 +220,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
       "Pair devices with Codex remote control (separate from Deck remote access)",
   },
   {
+    name: "/environments",
+    description: "Register, inspect, and select remote execution environments",
+  },
+  {
     name: "/model",
     description: "Choose what model and reasoning effort to use",
   },

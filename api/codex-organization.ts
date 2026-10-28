@@ -1,6 +1,16 @@
 import type { NativeRpc } from "./codex-native";
 import { ThreadReadStateService } from "./codex-read-state";
 import { RemoteControlService } from "./codex-remote-control";
+import { EnvironmentService } from "./codex-environments";
+export type {
+  EnvironmentConnectionEvent,
+  EnvironmentEntry,
+  EnvironmentRegistration,
+  EnvironmentStatusKind,
+  EnvironmentsSnapshot,
+  ThreadEnvironmentSnapshot,
+  TurnEnvironmentSelection,
+} from "./codex-environments";
 export type {
   RemoteControlClientInfo,
   RemoteControlConnectionStatus,
@@ -17,7 +27,7 @@ export type {
 } from "./codex-read-state";
 
 /** `native_state_changed` scopes owned by the organization/remote services. */
-export type OrganizationScope = "readState" | "remoteControl";
+export type OrganizationScope = "readState" | "remoteControl" | "environments";
 
 export interface CodexOrganizationDeps {
   rpc: NativeRpc;
@@ -32,6 +42,7 @@ export interface CodexOrganizationDeps {
 export class CodexOrganizationService {
   public readonly readState: ThreadReadStateService;
   public readonly remoteControl: RemoteControlService;
+  public readonly environments: EnvironmentService;
 
   public constructor(deps: CodexOrganizationDeps) {
     this.readState = new ThreadReadStateService(deps.rpc, (threadId) =>
@@ -40,13 +51,17 @@ export class CodexOrganizationService {
     this.remoteControl = new RemoteControlService(deps.rpc, () =>
       deps.notify("remoteControl", null),
     );
+    this.environments = new EnvironmentService(deps.rpc, (threadId) =>
+      deps.notify("environments", threadId),
+    );
   }
 
   /** Returns true when the notification was consumed. */
   public handleNotification(method: string, params: unknown): boolean {
     return (
       this.readState.handleNotification(method, params) ||
-      this.remoteControl.handleNotification(method)
+      this.remoteControl.handleNotification(method) ||
+      this.environments.handleNotification(method, params)
     );
   }
 }

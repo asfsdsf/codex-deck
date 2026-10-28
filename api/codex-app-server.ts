@@ -2602,6 +2602,7 @@ class CodexAppServerClient {
     await this.reloadProviderIfChanged(activeConfig);
 
     await this.applyDaybreakToTurn(threadId, params, activeConfig);
+    this.organization.environments.applyPendingSelection(threadId, params);
 
     // Provider-switching tools commonly write config.toml before auth.json.
     // Re-check after reading the new provider config so a credential update
@@ -2634,6 +2635,7 @@ class CodexAppServerClient {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
       const result = await this.request("turn/start", params);
+      this.organization.environments.confirmSelection(threadId, params);
       this.newlyStartedThreadIds.delete(threadId);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
@@ -2648,6 +2650,7 @@ class CodexAppServerClient {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
       const result = await this.request("turn/start", params);
+      this.organization.environments.confirmSelection(threadId, params);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
       };
