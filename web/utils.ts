@@ -1,5 +1,6 @@
 import type { CodexThreadStateResponse } from "@codex-deck/api";
 import { getAsyncQuestionReplyDisplayText } from "./async-question-reply";
+import { stripIdeContextPrefix } from "./ide-context";
 
 export interface WaitStatePendingTurn {
   sessionId: string;
@@ -324,7 +325,9 @@ const SANITIZE_PATTERNS = [
 
 export function sanitizeText(text: string): string {
   // Show async question answers the way the Codex TUI does.
-  let result = getAsyncQuestionReplyDisplayText(text) ?? text;
+  // Like Codex CLI, hide `/ide` context and show only the user's request.
+  let result =
+    getAsyncQuestionReplyDisplayText(text) ?? stripIdeContextPrefix(text);
   for (const pattern of SANITIZE_PATTERNS) {
     result = result.replace(pattern, "");
   }

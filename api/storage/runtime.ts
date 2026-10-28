@@ -207,6 +207,43 @@ export interface SendCodexMessageRequest {
   expectedTurnId?: string;
   /** JSON Schema object for this turn's final answer (`turn/start`). */
   outputSchema?: Record<string, unknown> | null;
+  /**
+   * Fetch IDE context (active file, selection, open tabs) from the local IDE
+   * IPC router and prepend it like Codex CLI `/ide` does.
+   */
+  ideContext?: boolean;
+}
+
+export interface CodexIdeContextFile {
+  label: string;
+  path: string;
+}
+
+/** Browser-safe summary of IDE context; selection text stays on the backend. */
+export interface CodexIdeContextSummary {
+  activeFile: CodexIdeContextFile | null;
+  /** 1-based positions, matching the prompt rendering. */
+  selections: Array<{
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  }>;
+  selectionChars: number;
+  openTabs: CodexIdeContextFile[];
+  openTabCount: number;
+  hasPromptContext: boolean;
+}
+
+export type CodexIdeContextStatus =
+  | { available: true; summary: CodexIdeContextSummary }
+  | { available: false; reason: string; hint: string };
+
+export interface SendCodexMessageIdeContextResult {
+  applied: boolean;
+  summary?: CodexIdeContextSummary;
+  /** Upstream "IDE context was skipped for this message." hint. */
+  skippedHint?: string;
 }
 
 export type SendCodexMessageInputItem =
@@ -224,6 +261,7 @@ export interface SendCodexMessageResponse {
   turnId: string | null;
   /** True when the input joined the running turn instead of starting one. */
   steered?: boolean;
+  ideContext?: SendCodexMessageIdeContextResult;
 }
 
 export type CodexTurnStatus =

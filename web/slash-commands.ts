@@ -204,6 +204,12 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Manage MCP servers, tools, and authentication",
   },
   {
+    name: "/ide",
+    description:
+      "Include current selection, open files, and other context from your IDE",
+    supportsInlineArgs: true,
+  },
+  {
     name: "/model",
     description: "Choose what model and reasoning effort to use",
   },

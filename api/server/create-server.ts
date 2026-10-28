@@ -190,6 +190,10 @@ import {
 } from "../pets";
 import { registerWorkflowRoutes } from "./workflow-routes";
 import { registerHooksRoutes } from "./hooks-routes";
+import {
+  applyIdeContextForSend,
+  registerIdeContextRoutes,
+} from "./ide-context-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
 import { CodexHomeRuntimeManager } from "../codex-home-runtime-manager";
 import {
@@ -4989,6 +4993,7 @@ export function createServer(options: ServerOptions) {
   registerExtensionRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
+  registerIdeContextRoutes(app);
   registerReviewRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
     wake: (id) => {
@@ -5072,6 +5077,7 @@ export function createServer(options: ServerOptions) {
         return c.json({ error: outputSchema.error }, 400);
       }
 
+      let threadCwd: string | null = null;
       if (client.getThreadSummary) {
         const threadSummary = await client.getThreadSummary(threadId);
         if (threadSummary.canAcceptDirectInput === false) {
@@ -5083,11 +5089,18 @@ export function createServer(options: ServerOptions) {
             403,
           );
         }
+        threadCwd = threadSummary.cwd?.trim() || null;
       }
+
+      // Codex CLI `/ide`: fetch fresh IDE context for this turn.
+      const withIdeContext =
+        body.ideContext === true
+          ? await applyIdeContextForSend(input, normalizedCwd || threadCwd)
+          : null;
 
       const result = await client.sendMessage({
         threadId,
-        input,
+        input: withIdeContext?.input ?? input,
         ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
         ...(model !== undefined ? { model } : {}),
         ...(serviceTier !== undefined ? { serviceTier } : {}),
@@ -5110,6 +5123,7 @@ export function createServer(options: ServerOptions) {
         ok: true,
         turnId: result.turnId,
         ...(result.steered ? { steered: true } : {}),
+        ...(withIdeContext ? { ideContext: withIdeContext.ideContext } : {}),
       };
       return c.json(response);
     } catch (error) {

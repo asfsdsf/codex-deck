@@ -154,6 +154,8 @@ import SlashCommandPalette from "../components/slash-command-palette";
 import SkillSelectorPalette from "../components/skill-selector-palette";
 import { usePageVisibility } from "../hooks/use-page-visibility";
 import { useCodexMemories } from "../hooks/use-codex-memories";
+import { useIdeContext } from "../hooks/use-ide-context";
+import { IdeContextIndicator } from "../components/ide-context-indicator";
 import { useCodexPets } from "../hooks/use-codex-pets";
 import { useSessionHooksPane } from "../hooks/use-session-hooks-pane";
 import {
@@ -5762,6 +5764,12 @@ export default function CodexDeckApp() {
       ) ?? null
     );
   }, [activeComposerSessionId, sessionsWithThreadNames]);
+  const ideContext = useIdeContext({
+    threadId: activeComposerSessionId,
+    cwd: activeComposerSessionData?.project,
+    showNotice: showCommandNoticeForDuration,
+    showError: setInteractionError,
+  });
   const {
     showMemoriesModal,
     setShowMemoriesModal,
@@ -10226,7 +10234,9 @@ export default function CodexDeckApp() {
                   : {}),
               }
             : {}),
+          ...(ideContext.enabledRef.current ? { ideContext: true } : {}),
         });
+        ideContext.handleSendResult(response.ideContext);
 
         markSessionUserMessagedAt(sessionId, Date.now());
         setSessionMode(sessionId, modeToUse);
@@ -10311,6 +10321,8 @@ export default function CodexDeckApp() {
       threadSummaryById,
       enqueuePendingUserMessage,
       enqueueSharedQueueMessage,
+      ideContext.enabledRef,
+      ideContext.handleSendResult,
       markPendingUserMessageAwaitingConfirmation,
       markSessionUserMessagedAt,
       removePendingUserMessageById,
@@ -11672,6 +11684,9 @@ export default function CodexDeckApp() {
         setExtensionDialog({ kind: "apps", threadId: commandSessionId });
         return true;
       }
+      if (commandName === "/ide") {
+        return ideContext.runCommand(normalizedArgs);
+      }
       if (commandName === "/mcp" || commandName === "/usage") {
         setNativeDialog({
           kind: commandName === "/usage" ? "usage" : "mcp",
@@ -12095,6 +12110,7 @@ export default function CodexDeckApp() {
       return false;
     },
     [
+      ideContext.runCommand,
       selectedSessionData?.project,
       selectedSessionData?.display,
       selectedTerminalData?.cwd,
@@ -13573,6 +13589,14 @@ export default function CodexDeckApp() {
   }) => (
     <div className="composer-shell shrink-0 bg-zinc-950 px-3 pb-3 pt-1 md:px-5">
       <div className="composer-card relative mx-auto w-full max-w-4xl">
+        {ideContext.enabled && !input.composerDisabledReason ? (
+          <IdeContextIndicator
+            summary={ideContext.summary}
+            checking={ideContext.checking}
+            onRefresh={() => void ideContext.refresh()}
+            onDisable={ideContext.disable}
+          />
+        ) : null}
         {input.composerDisabledReason ? (
           <div className="px-4 pt-3 pb-1 text-xs text-amber-200">
             {input.composerDisabledReason}
