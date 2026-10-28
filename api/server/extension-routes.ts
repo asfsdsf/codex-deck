@@ -122,4 +122,25 @@ export function registerExtensionRoutes(
   app.post("/api/codex/account/gateway/cancel", (c) =>
     run(c, (target) => target.account.cancelGatewayLogin()),
   );
+
+  // External-agent migration (`/import`).
+  app.get("/api/codex/import", (c) =>
+    run(c, async (target) => target.imports.snapshot()),
+  );
+  app.get("/api/codex/import/detect", (c) =>
+    run(c, (target) => target.imports.detect(c.req.query("cwd") || null)),
+  );
+  app.post("/api/codex/import", (c) =>
+    run(c, async (target) => {
+      const input = await body(c);
+      return target.imports.start(
+        input.source,
+        input.items,
+        optionalString(input.cwd, "cwd"),
+      );
+    }),
+  );
+  app.post("/api/codex/import/dismiss", (c) =>
+    run(c, async (target) => target.imports.dismiss((await body(c)).id)),
+  );
 }

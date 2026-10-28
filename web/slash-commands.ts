@@ -179,6 +179,11 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Run or save reusable prompts and slash commands",
   },
   {
+    name: "/import",
+    description:
+      "Import setup, this project, and recent chats from Claude Code",
+  },
+  {
     name: "/login",
     description: "Sign in to your Codex account or set up a provider",
   },

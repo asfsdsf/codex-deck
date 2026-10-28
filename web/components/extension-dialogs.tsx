@@ -1,4 +1,5 @@
 import CodexAccount from "./codex-account";
+import ImportMigration from "./import-migration";
 import NativeDialog from "./native-dialog";
 import PresetsAdmin from "./presets-admin";
 
@@ -15,11 +16,13 @@ export type ExtensionDialogState =
       threadId: string | null;
       /** `/logout` opens with the logout confirmation showing. */
       confirmLogout?: boolean;
-    };
+    }
+  | { kind: "import"; threadId: string | null; cwd: string | null };
 
 const TITLES: Record<ExtensionDialogState["kind"], string> = {
   presets: "Presets",
   account: "Codex account",
+  import: "Import setup",
 };
 
 /**
@@ -59,6 +62,9 @@ export default function ExtensionDialogs({
       )}
       {dialog.kind === "account" && (
         <CodexAccount key={key} confirmLogout={dialog.confirmLogout} />
+      )}
+      {dialog.kind === "import" && (
+        <ImportMigration key={key} cwd={dialog.cwd} />
       )}
     </NativeDialog>
   );

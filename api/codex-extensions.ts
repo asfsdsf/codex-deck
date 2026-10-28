@@ -1,5 +1,6 @@
 import type { NativeScope } from "./codex-native";
 import { CodexAccountManager } from "./codex-account";
+import { CodexImportManager } from "./codex-import";
 import {
   readPresets,
   writePreset,
@@ -41,8 +42,15 @@ export class CodexExtensions {
     () => this.notify("account"),
   );
 
+  /** External-agent setup migration (`/import`). */
+  readonly imports = new CodexImportManager(
+    (method, params, options) => this.rpc(method, params, options),
+    () => this.notify("import"),
+  );
+
   /** Returns true when the notification was fully consumed. */
   handleNotification(method: string, params: unknown): boolean {
+    if (this.imports.observe(method, params)) return true;
     // Account notifications are observed but left for the existing auth
     // fingerprint/usage handlers.
     if (this.account.observe(method, params))

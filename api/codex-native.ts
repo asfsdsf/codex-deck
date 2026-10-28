@@ -7,7 +7,8 @@ export type NativeScope =
   | "diagnostics"
   | "queue"
   | "presets"
-  | "account";
+  | "account"
+  | "import";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

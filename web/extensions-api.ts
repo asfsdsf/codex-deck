@@ -95,3 +95,29 @@ export function cancelCodexGatewayLogin(): Promise<AccountSnapshot> {
     body: "{}",
   });
 }
+
+type ImportSnapshot = import("../api/codex-import").ImportSnapshot;
+export function getCodexImport(): Promise<ImportSnapshot> {
+  return requestJson("/api/codex/import");
+}
+export function detectCodexImport(
+  cwd: string | null,
+): Promise<import("../api/codex-import").ImportDetection> {
+  return requestJson(`/api/codex/import/detect${query({ cwd })}`);
+}
+export function startCodexImport(
+  source: string,
+  items: import("../api/codex-import").ImportMigrationItem[],
+  cwd: string | null,
+): Promise<ImportSnapshot> {
+  return requestJson("/api/codex/import", {
+    method: "POST",
+    body: JSON.stringify({ source, items, cwd }),
+  });
+}
+export function dismissCodexImport(id: string): Promise<ImportSnapshot> {
+  return requestJson("/api/codex/import/dismiss", {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}

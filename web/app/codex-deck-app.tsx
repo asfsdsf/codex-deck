@@ -11660,6 +11660,14 @@ export default function CodexDeckApp() {
         });
         return true;
       }
+      if (commandName === "/import") {
+        setExtensionDialog({
+          kind: "import",
+          threadId: commandSessionId,
+          cwd: commandSessionData?.project ?? null,
+        });
+        return true;
+      }
       if (commandName === "/mcp" || commandName === "/usage") {
         setNativeDialog({
           kind: commandName === "/usage" ? "usage" : "mcp",

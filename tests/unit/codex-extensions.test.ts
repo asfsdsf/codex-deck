@@ -320,3 +320,171 @@ test("gateway OAuth sign-in runs in the background and surfaces the authorizatio
   assert.equal(done.gateway?.status, "succeeded");
   assert.equal(done.gateway?.authUrl, null);
 });
+
+const detectedItems = [
+  {
+    itemType: "CONFIG",
+    description: "Migrate /h/.claude/settings.json into /h/.codex/config.toml",
+    cwd: null,
+    details: null,
+  },
+  {
+    itemType: "AGENTS_MD",
+    description: "Migrate /repo/CLAUDE.md to /repo/AGENTS.md",
+    cwd: "/repo",
+    details: null,
+  },
+];
+
+test("/import only forwards detected items, guards concurrent runs, and tracks progress for every client", async () => {
+  const { calls, notified, extensions, app } = harness((method, params) => {
+    if (method === "externalAgentConfig/detect")
+      return (params as Record<string, unknown>).migrationSource ===
+        "claude-code"
+        ? { items: detectedItems, connectors: [] }
+        : { items: [], connectors: [] };
+    if (method === "externalAgentConfig/import") {
+      // Progress can arrive before the import response.
+      extensions.handleNotification("externalAgentConfig/import/progress", {
+        importId: "imp-1",
+        itemTypeResults: [
+          {
+            itemType: "CONFIG",
+            successes: [{ itemType: "CONFIG", cwd: null, target: "x" }],
+            failures: [],
+          },
+        ],
+      });
+      return { importId: "imp-1" };
+    }
+    throw new Error(`unexpected ${method}`);
+  });
+
+  const detection = await (
+    await app.request("/api/codex/import/detect?cwd=/repo")
+  ).json();
+  assert.deepEqual(
+    detection.sources.map((source: { id: string }) => source.id),
+    ["claude-code"],
+  );
+  assert.deepEqual(calls[0].params, {
+    includeHome: true,
+    cwds: ["/repo"],
+    migrationSource: "claude-code",
+  });
+
+  const forged = await app.request("/api/codex/import", {
+    method: "POST",
+    body: JSON.stringify({
+      source: "claude-code",
+      cwd: "/repo",
+      items: [{ ...detectedItems[0], description: "Migrate /etc/passwd" }],
+    }),
+  });
+  assert.equal(forged.status, 400);
+  assert.match((await forged.json()).error, /no longer available/);
+
+  const started = await app.request("/api/codex/import", {
+    method: "POST",
+    body: JSON.stringify({
+      source: "claude-code",
+      cwd: "/repo",
+      items: [detectedItems[1]],
+    }),
+  });
+  const run = (await started.json()).run;
+  assert.equal(run.status, "running");
+  assert.equal(run.importId, "imp-1");
+  assert.equal(run.remainingItemCount, 1);
+  assert.equal(run.results[0].successes.length, 1);
+  const importCall = calls.find(
+    (call) => call.method === "externalAgentConfig/import",
+  );
+  assert.deepEqual(importCall?.params, {
+    migrationItems: [detectedItems[1]],
+    source: "codex-deck",
+    providerId: "claude-code",
+    migrationSource: "claude-code",
+  });
+
+  const second = await app.request("/api/codex/import", {
+    method: "POST",
+    body: JSON.stringify({
+      source: "claude-code",
+      items: [detectedItems[0]],
+    }),
+  });
+  assert.equal(second.status, 400);
+  assert.match((await second.json()).error, /still running/);
+
+  // Completions for other imports (e.g. Codex CLI on a shared daemon) are ignored.
+  extensions.handleNotification("externalAgentConfig/import/completed", {
+    importId: "other",
+    itemTypeResults: [],
+  });
+  assert.equal(extensions.imports.snapshot().run?.status, "running");
+  assert.equal(
+    extensions.handleNotification("externalAgentConfig/import/completed", {
+      importId: "imp-1",
+      itemTypeResults: [
+        {
+          itemType: "AGENTS_MD",
+          successes: [],
+          failures: [
+            {
+              itemType: "AGENTS_MD",
+              failureStage: "write",
+              message: "exists",
+            },
+          ],
+        },
+      ],
+    }),
+    true,
+  );
+  const finished = (await (await app.request("/api/codex/import")).json()).run;
+  assert.equal(finished.status, "completed");
+  assert.equal(finished.results[0].failures[0].message, "exists");
+  assert.ok(notified.filter((scope) => scope === "import").length >= 3);
+
+  const dismissed = await app.request("/api/codex/import/dismiss", {
+    method: "POST",
+    body: JSON.stringify({ id: finished.id }),
+  });
+  assert.equal((await dismissed.json()).run, null);
+});
+
+test("/import display helpers follow upstream grouping and wording", async () => {
+  const model = await import("../../web/import-migration-model");
+  const items = [
+    ...detectedItems,
+    {
+      itemType: "SESSIONS",
+      description: "Migrate recent sessions",
+      cwd: null,
+      details: {
+        sessions: [
+          { path: "/a", cwd: "/a", title: "First" },
+          { path: "/b", cwd: "/b", title: null },
+        ],
+      },
+    },
+  ];
+  assert.deepEqual(
+    model.importGroups(items).map((group) => [group.label, group.indices]),
+    [
+      ["Tools & setup", [0]],
+      ["Current project", [1]],
+      ["Chat sessions (2)", [2]],
+    ],
+  );
+  assert.equal(
+    model.importItemDescription(detectedItems[1]),
+    "Import CLAUDE.md to AGENTS.md",
+  );
+  assert.equal(model.importItemDetail(items[2]), "2 chat sessions: First");
+  assert.equal(
+    model.remainingItemsHandoff(2),
+    "2 additional items remain. After it finishes, run /import again to review them.",
+  );
+});
