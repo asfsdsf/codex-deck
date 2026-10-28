@@ -394,6 +394,8 @@ import {
   readBrowserTitleMode,
   type BrowserTitleMode,
 } from "../browser-title";
+import { useThreadReadStates } from "../hooks/use-thread-read-states";
+import { getReadReceipt, resolveSessionReadStatus } from "../thread-read-state";
 import {
   getSessionStatusStorageKey,
   getSessionStatus,
@@ -4239,6 +4241,11 @@ export default function CodexDeckApp() {
   const resolvedRemoteServerUrl = remoteLoginTarget.serverUrl;
   const remoteTrustPins = remoteLoginTarget.pins;
   const apiReady = connectionMode === "local" || remoteConnected;
+  const threadReadStates = useThreadReadStates(
+    apiReady,
+    selectedCodexHomeId,
+    sessions,
+  );
   const [contextRefreshVersion, setContextRefreshVersion] = useState(0);
   const [isTouchResizeOverlayVisible, setIsTouchResizeOverlayVisible] =
     useState(false);
@@ -5627,10 +5634,15 @@ export default function CodexDeckApp() {
             getWorkflowSessionRoleLabel(
               sessionWorkflowRolesById[session.id] ?? null,
             ),
-          status: getSessionStatus(trackedSessionStatuses, session.id),
+          status: resolveSessionReadStatus(
+            getSessionStatus(trackedSessionStatuses, session.id),
+            getReadReceipt(threadReadStates.snapshot, session.id),
+          ),
+          readReceipt: getReadReceipt(threadReadStates.snapshot, session.id),
         };
       }),
     [
+      threadReadStates.snapshot,
       sessionTerminalRolesById,
       sessionWorkflowRolesById,
       sessions,
@@ -5962,6 +5974,45 @@ export default function CodexDeckApp() {
     showWorkflowCreateModal,
     workflowCreateChatSessionId,
   ]);
+
+  const { markViewed: markThreadReadStateViewed } = threadReadStates;
+  useEffect(() => {
+    markThreadReadStateViewed(
+      showWorkflowCreateModal && workflowCreateChatSessionId
+        ? workflowCreateChatSessionId
+        : activeWaitSessionId,
+      isPageVisible,
+    );
+  }, [
+    activeWaitSessionId,
+    isPageVisible,
+    markThreadReadStateViewed,
+    showWorkflowCreateModal,
+    threadReadStates.snapshot,
+    workflowCreateChatSessionId,
+  ]);
+  const { setUnread: setThreadUnread } = threadReadStates;
+  const handleToggleReadReceipt = useCallback(
+    (sessionId: string, unread: boolean) => {
+      void setThreadUnread(sessionId, unread).then(
+        (status) => {
+          if (status === "conflict")
+            showCommandNoticeForDuration(
+              "Read state changed in another Codex client. Showing the latest state.",
+            );
+          else if (status === "unavailable")
+            showCommandNoticeForDuration(
+              "Shared read state is unavailable on this Codex server.",
+            );
+        },
+        (error) =>
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          ),
+      );
+    },
+    [setThreadUnread, showCommandNoticeForDuration],
+  );
 
   useEffect(() => {
     if (!apiReady || !isPageVisible) {
@@ -14479,6 +14530,9 @@ export default function CodexDeckApp() {
               }
               onSelectSession={handleSelectLeftPaneItem}
               onRequestDeleteSession={handleRequestDeleteLeftPaneItem}
+              onToggleReadReceipt={
+                centerView === "session" ? handleToggleReadReceipt : undefined
+              }
               loading={
                 centerView === "terminal"
                   ? loadingTerminals

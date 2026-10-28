@@ -1,3 +1,4 @@
+import { registerOrganizationRoutes } from "./organization-routes";
 import { registerNativeWorkflowRoutes } from "./native-workflow-routes";
 import { registerThreadQueueRoutes } from "./thread-queue-routes";
 import { parseOutputSchemaInput } from "../codex-output-schema";
@@ -5022,6 +5023,9 @@ export function createServer(options: ServerOptions) {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
   registerRealtimeVoiceRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
+  registerOrganizationRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
   registerReviewRoutes(app, {

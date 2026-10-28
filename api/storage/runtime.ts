@@ -1,3 +1,4 @@
+export type * from "../codex-organization";
 export type {
   CodexWorktreeEntry,
   CodexWorktreeList,

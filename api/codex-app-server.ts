@@ -1,3 +1,4 @@
+import { CodexOrganizationService } from "./codex-organization";
 import {
   readConfigDiagnostics,
   retainedWarnings,
@@ -1205,6 +1206,10 @@ class CodexAppServerClient {
     (method, params) => this.request(method, params),
     (id) => this.notifyNativeState("recap", id),
   );
+  public readonly organization = new CodexOrganizationService({
+    rpc: (method, params) => this.request(method, params),
+    notify: (scope, id) => this.notifyNativeState(scope, id),
+  });
   public getRecap(threadId: string): ConversationRecap | null {
     return this.recaps.get(threadId);
   }
@@ -4090,6 +4095,7 @@ class CodexAppServerClient {
     this.permissions.handleNotification(method, params);
     if (this.guardianReviews.handleNotification(method, params)) return;
     if (this.extensions.handleNotification(method, params)) return;
+    if (this.organization.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
       return;
@@ -6779,6 +6785,7 @@ export interface CodexAppServerClientFacade {
     threadId: string,
     selection: CodexPermissionSelection,
   ) => Promise<CodexPermissionSnapshot>;
+  organization?: () => CodexOrganizationService;
   listRetainedWarnings?: (
     threadId?: string | null,
   ) => CodexOperationalNotification[];
@@ -7038,6 +7045,7 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
     reloadMcpServers: () => client!.reloadMcpServers(),
     getExtensions: () => client!.getExtensions(),
+    organization: () => client!.organization,
     readMemorySettings: (cwd?: string | null) =>
       client!.readMemorySettings(cwd),
     writeMemorySettings: (settings: CodexMemoriesSettings) =>

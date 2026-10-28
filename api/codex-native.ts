@@ -14,7 +14,8 @@ export type NativeScope =
   | "permissions"
   | "guardian"
   | "worktrees"
-  | "voice";
+  | "voice"
+  | import("./codex-organization").OrganizationScope;
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,
