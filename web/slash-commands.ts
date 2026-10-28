@@ -215,6 +215,11 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     supportsInlineArgs: true,
   },
   {
+    name: "/remote-control",
+    description:
+      "Pair devices with Codex remote control (separate from Deck remote access)",
+  },
+  {
     name: "/model",
     description: "Choose what model and reasoning effort to use",
   },

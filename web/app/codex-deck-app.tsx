@@ -28,6 +28,12 @@ import ExtensionDialogs, {
   type ExtensionDialogState,
 } from "../components/extension-dialogs";
 import McpAdmin from "../components/mcp-admin";
+import OrganizationDialogBody, {
+  getOrganizationDialogForCommand,
+  getOrganizationDialogTitle,
+  isOrganizationDialogKind,
+  type OrganizationDialogKind,
+} from "../components/organization-dialog";
 import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import RunningTurnComposerActions from "../components/running-turn-composer-actions";
@@ -4267,7 +4273,8 @@ export default function CodexDeckApp() {
       | "daybreak"
       | "warnings"
       | "debug-config"
-      | "voice-settings";
+      | "voice-settings"
+      | OrganizationDialogKind;
     model?: string | null;
     filename?: string;
     threadId: string | null;
@@ -11878,6 +11885,14 @@ export default function CodexDeckApp() {
       if (commandName === "/ide") {
         return ideContext.runCommand(normalizedArgs);
       }
+      const organizationDialog = getOrganizationDialogForCommand(commandName);
+      if (organizationDialog) {
+        setNativeDialog({
+          kind: organizationDialog,
+          threadId: commandSessionId,
+        });
+        return true;
+      }
       if (commandName === "/mcp" || commandName === "/usage") {
         setNativeDialog({
           kind: commandName === "/usage" ? "usage" : "mcp",
@@ -14925,7 +14940,8 @@ export default function CodexDeckApp() {
                             ? "Voice settings"
                             : nativeDialog.kind === "usage"
                               ? "Usage dashboard"
-                              : "MCP administration"
+                              : (getOrganizationDialogTitle(nativeDialog.kind) ??
+                                "MCP administration")
             }
             onClose={closeNativeDialog}
           >
@@ -14969,6 +14985,12 @@ export default function CodexDeckApp() {
             ) : nativeDialog.kind === "usage" ? (
               <UsageDashboard
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : isOrganizationDialogKind(nativeDialog.kind) ? (
+              <OrganizationDialogBody
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                kind={nativeDialog.kind}
                 threadId={nativeDialog.threadId}
               />
             ) : (
