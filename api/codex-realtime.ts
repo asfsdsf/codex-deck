@@ -249,7 +249,6 @@ export class RealtimeVoiceManager {
     const overridden =
       response.status === "okOverridden" ||
       (normalized !== null && readback.configuredVoice !== normalized);
-    for (const id of this.sessions.keys()) this.notifySoon(id, true);
     return {
       ...readback,
       warning: overridden

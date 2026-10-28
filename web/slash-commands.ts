@@ -210,6 +210,11 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     supportsInlineArgs: true,
   },
   {
+    name: "/voice",
+    description: "Start or stop voice; use /voice settings to choose a voice",
+    supportsInlineArgs: true,
+  },
+  {
     name: "/model",
     description: "Choose what model and reasoning effort to use",
   },

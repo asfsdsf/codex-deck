@@ -27,6 +27,13 @@ export type {
 } from "../codex-native";
 export type { ConversationRecap } from "../codex-recap";
 export type {
+  RealtimeTranscriptEntry,
+  RealtimeVoiceCatalog,
+  RealtimeVoicePhase,
+  RealtimeVoiceSessionView,
+  RealtimeVoiceSnapshot,
+} from "../codex-realtime";
+export type {
   UsageDashboardSnapshot,
   UsageWindow,
   UsageLimit,

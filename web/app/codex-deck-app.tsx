@@ -6,6 +6,10 @@ import ConfigDiagnostics from "../components/config-diagnostics";
 import RetainedWarnings from "../components/retained-warnings";
 import DaybreakSettings from "../components/daybreak-settings";
 import ExperimentalFeatures from "../components/experimental-features";
+import VoiceSessionBar from "../components/voice-session-bar";
+import VoiceSettings from "../components/voice-settings";
+import { getVoiceController } from "../voice/voice-controller";
+import { parseVoiceCommandArgs, VOICE_USAGE } from "../voice/voice-support";
 import TranscriptExport from "../components/transcript-export";
 import ConversationRecapView from "../components/conversation-recap";
 import UsageDashboard from "../components/usage-dashboard";
@@ -4196,7 +4200,8 @@ export default function CodexDeckApp() {
       | "experimental"
       | "daybreak"
       | "warnings"
-      | "debug-config";
+      | "debug-config"
+      | "voice-settings";
     model?: string | null;
     filename?: string;
     threadId: string | null;
@@ -11661,6 +11666,56 @@ export default function CodexDeckApp() {
         });
         return true;
       }
+      if (commandName === "/voice") {
+        const action = parseVoiceCommandArgs(normalizedArgs);
+        const voice = getVoiceController();
+        if (!action) {
+          setInteractionError(VOICE_USAGE);
+          return false;
+        }
+        if (action === "settings") {
+          setNativeDialog({
+            kind: "voice-settings",
+            threadId: commandSessionId,
+          });
+          return true;
+        }
+        if (action === "mute") {
+          if (!voice.toggleMute()) {
+            setInteractionError("Voice is not running on this page.");
+            return false;
+          }
+          return true;
+        }
+        if (action === "stop" || voice.getState().status !== "idle") {
+          await (commandSessionId && action === "stop"
+            ? voice.stopThread(commandSessionId)
+            : voice.stop());
+          return true;
+        }
+        if (!commandSessionId) {
+          setInteractionError("Start a conversation before using voice mode.");
+          return false;
+        }
+        if (sideThreadsById[commandSessionId]) {
+          setInteractionError(
+            "Voice mode is unavailable in side conversations. Return to the main thread first.",
+          );
+          return false;
+        }
+        if (
+          threadSummaryById.get(commandSessionId)?.canAcceptDirectInput ===
+          false
+        ) {
+          setInteractionError(
+            "This sub-agent is controlled by its parent. Voice is disabled.",
+          );
+          return false;
+        }
+        // Not awaited: progress and errors appear in the voice bar.
+        void voice.start(commandSessionId);
+        return true;
+      }
       if (commandName === "/recap") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /recap.");
@@ -12271,6 +12326,7 @@ export default function CodexDeckApp() {
       sideThreadsById,
       pendingTurn?.sessionId,
       isMobilePhone,
+      threadSummaryById,
     ],
   );
 
@@ -13711,6 +13767,12 @@ export default function CodexDeckApp() {
     composerDisabledReason?: string | null;
   }) => (
     <div className="composer-shell shrink-0 bg-zinc-950 px-3 pb-3 pt-1 md:px-5">
+      <VoiceSessionBar
+        threadId={input.sessionId}
+        onOpenSettings={(threadId) =>
+          setNativeDialog({ kind: "voice-settings", threadId })
+        }
+      />
       <div className="composer-card relative mx-auto w-full max-w-4xl">
         {ideContext.enabled && !input.composerDisabledReason ? (
           <IdeContextIndicator
@@ -14732,9 +14794,11 @@ export default function CodexDeckApp() {
                         ? "Export transcript"
                         : nativeDialog.kind === "recap"
                           ? "Conversation recap"
-                          : nativeDialog.kind === "usage"
-                            ? "Usage dashboard"
-                            : "MCP administration"
+                          : nativeDialog.kind === "voice-settings"
+                            ? "Voice settings"
+                            : nativeDialog.kind === "usage"
+                              ? "Usage dashboard"
+                              : "MCP administration"
             }
             onClose={closeNativeDialog}
           >
@@ -14767,6 +14831,11 @@ export default function CodexDeckApp() {
               />
             ) : nativeDialog.kind === "recap" && nativeDialog.threadId ? (
               <ConversationRecapView
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : nativeDialog.kind === "voice-settings" ? (
+              <VoiceSettings
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}
               />
