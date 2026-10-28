@@ -488,3 +488,273 @@ test("/import display helpers follow upstream grouping and wording", async () =>
     "2 additional items remain. After it finishes, run /import again to review them.",
   );
 });
+
+function pluginSummary(overrides: Record<string, unknown>) {
+  return {
+    id: "demo@local",
+    name: "demo",
+    remotePluginId: null,
+    source: { type: "local", path: "/m/plugins/demo" },
+    installed: false,
+    enabled: false,
+    installPolicy: "AVAILABLE",
+    authPolicy: "ON_INSTALL",
+    availability: "AVAILABLE",
+    interface: { displayName: "Demo", shortDescription: "Demo plugin" },
+    keywords: ["demo"],
+    ...overrides,
+  };
+}
+
+test("/plugins derives install targets server-side, hides CLI-only marketplaces, and guards admin policies", async () => {
+  const { calls, notified, app } = harness((method, params) => {
+    if (method === "experimentalFeature/list")
+      return {
+        data: [{ name: "plugins", stage: "stable", enabled: true }],
+        nextCursor: null,
+      };
+    if (method === "config/read")
+      return {
+        config: {},
+        layers: [
+          {
+            name: { type: "user", file: "/u/config.toml", profile: null },
+            config: { marketplaces: { local: { source_type: "git" } } },
+          },
+        ],
+      };
+    if (method === "plugin/list")
+      return {
+        marketplaces: [
+          { name: "openai-bundled", path: "/b", plugins: [pluginSummary({})] },
+          {
+            name: "local",
+            path: "/m/marketplace.json",
+            interface: { displayName: "Local" },
+            plugins: [
+              pluginSummary({}),
+              pluginSummary({
+                id: "admin@local",
+                name: "admin",
+                installed: true,
+                enabled: true,
+                installPolicy: "INSTALLED_BY_DEFAULT",
+              }),
+            ],
+          },
+          {
+            name: "remote-catalog",
+            path: null,
+            plugins: [
+              pluginSummary({
+                id: "remote@catalog",
+                name: "remote",
+                remotePluginId: "plugins~abc",
+                source: { type: "remote" },
+                installed: true,
+                enabled: true,
+              }),
+            ],
+          },
+        ],
+        marketplaceLoadErrors: [],
+        featuredPluginIds: ["demo@local"],
+      };
+    if (method === "plugin/install")
+      return {
+        authPolicy: "ON_INSTALL",
+        appsNeedingAuth: [
+          {
+            id: "cal",
+            name: "Calendar",
+            installUrl: "https://chatgpt.com/apps/cal",
+          },
+          { id: "bad", name: "Bad", installUrl: "javascript:alert(1)" },
+        ],
+      };
+    if (method === "plugin/uninstall") return {};
+    if (method === "config/value/write") return { status: "ok" };
+    if (method === "marketplace/remove")
+      return { marketplaceName: "local", installedRoot: null };
+    throw new Error(`unexpected ${method}`);
+  });
+
+  const listed = await (
+    await app.request("/api/codex/plugins?cwd=/repo")
+  ).json();
+  assert.deepEqual(
+    listed.marketplaces.map((m: { name: string }) => m.name),
+    ["local", "remote-catalog"],
+  );
+  const [demo, admin] = listed.marketplaces[0].plugins;
+  assert.equal(demo.featured, true);
+  assert.equal(demo.canInstall, true);
+  assert.equal(admin.statusLabel, "Installed by admin");
+  assert.equal(admin.canUninstall, false);
+  assert.equal(admin.canToggle, false);
+  assert.equal(listed.marketplaces[0].removable, true);
+  assert.equal(listed.marketplaces[0].upgradable, true);
+  assert.equal(listed.marketplaces[1].removable, false);
+
+  const installed = await app.request("/api/codex/plugins/install", {
+    method: "POST",
+    body: JSON.stringify({
+      pluginId: "demo@local",
+      marketplaceName: "local",
+      cwd: "/repo",
+      // Client-supplied paths are ignored.
+      marketplacePath: "/evil",
+    }),
+  });
+  const result = await installed.json();
+  assert.deepEqual(
+    result.appsNeedingAuth.map(
+      (a: { installUrl: string | null }) => a.installUrl,
+    ),
+    ["https://chatgpt.com/apps/cal", null],
+  );
+  const install = calls.find((call) => call.method === "plugin/install");
+  assert.equal(
+    (install?.params as Record<string, unknown>).marketplacePath,
+    "/m/marketplace.json",
+  );
+  assert.equal((install?.params as Record<string, unknown>).pluginName, "demo");
+  assert.ok((install?.options as { timeoutMs?: number }).timeoutMs);
+  assert.ok(notified.includes("plugins") && notified.includes("apps"));
+
+  const blocked = await app.request("/api/codex/plugins/uninstall", {
+    method: "POST",
+    body: JSON.stringify({ pluginId: "admin@local", marketplaceName: "local" }),
+  });
+  assert.equal(blocked.status, 400);
+  assert.match((await blocked.json()).error, /workspace admin/);
+
+  await app.request("/api/codex/plugins/uninstall", {
+    method: "POST",
+    body: JSON.stringify({
+      pluginId: "remote@catalog",
+      marketplaceName: "remote-catalog",
+    }),
+  });
+  assert.deepEqual(
+    calls.find((call) => call.method === "plugin/uninstall")?.params,
+    { pluginId: "plugins~abc" },
+  );
+
+  await app.request("/api/codex/plugins/enabled", {
+    method: "POST",
+    body: JSON.stringify({
+      pluginId: "remote@catalog",
+      marketplaceName: "remote-catalog",
+      enabled: false,
+    }),
+  });
+  assert.deepEqual(
+    calls.find((call) => call.method === "config/value/write")?.params,
+    {
+      keyPath: 'plugins."remote@catalog"',
+      value: { enabled: false },
+      mergeStrategy: "upsert",
+    },
+  );
+
+  const missing = await app.request("/api/codex/plugins/install", {
+    method: "POST",
+    body: JSON.stringify({ pluginId: "nope", marketplaceName: "local" }),
+  });
+  assert.equal(missing.status, 400);
+  const notConfigured = await app.request("/api/codex/marketplaces/remove", {
+    method: "POST",
+    body: JSON.stringify({ marketplaceName: "remote-catalog" }),
+  });
+  assert.equal(notConfigured.status, 400);
+  const removed = await app.request("/api/codex/marketplaces/remove", {
+    method: "POST",
+    body: JSON.stringify({ marketplaceName: "local" }),
+  });
+  assert.equal(removed.status, 200);
+});
+
+test("/apps requires ChatGPT, paginates app/list, and writes upstream enablement keys", async () => {
+  let account: unknown = null;
+  const { calls, extensions, app } = harness((method, params) => {
+    if (method === "experimentalFeature/list")
+      return { data: [{ name: "apps", stage: "stable", enabled: true }] };
+    if (method === "account/read") return { account };
+    if (method === "app/list")
+      return (params as Record<string, unknown>).cursor
+        ? {
+            data: [
+              {
+                id: "drive",
+                name: "Drive",
+                isAccessible: true,
+                isEnabled: false,
+                installUrl: "https://chatgpt.com/apps/drive",
+              },
+            ],
+            nextCursor: null,
+          }
+        : {
+            data: [
+              {
+                id: "cal",
+                name: "Calendar",
+                isAccessible: false,
+                isEnabled: true,
+                installUrl: "ftp://bad",
+              },
+            ],
+            nextCursor: "p2",
+          };
+    if (method === "config/batchWrite") return { status: "ok" };
+    throw new Error(`unexpected ${method}`);
+  });
+  const signedOut = await (await app.request("/api/codex/apps")).json();
+  assert.equal(signedOut.enabled, false);
+  assert.match(signedOut.disabledReason, /ChatGPT/);
+
+  account = { type: "chatgpt", email: null, planType: "plus" };
+  const listed = await (
+    await app.request("/api/codex/apps?threadId=t1&refresh=1")
+  ).json();
+  assert.deepEqual(
+    listed.apps.map((a: Record<string, unknown>) => [
+      a.id,
+      a.statusLabel,
+      a.installUrl,
+    ]),
+    [
+      ["cal", "Can be installed", null],
+      ["drive", "Installed · Disabled", "https://chatgpt.com/apps/drive"],
+    ],
+  );
+  const list = calls.find((call) => call.method === "app/list");
+  assert.deepEqual(list?.options, { threadId: "t1" });
+  assert.equal((list?.params as Record<string, unknown>).forceRefetch, true);
+
+  await app.request("/api/codex/apps/enabled", {
+    method: "POST",
+    body: JSON.stringify({ appId: "drive", enabled: false }),
+  });
+  assert.deepEqual(
+    (
+      calls.find((call) => call.method === "config/batchWrite")?.params as {
+        edits: unknown[];
+      }
+    ).edits,
+    [
+      {
+        keyPath: 'apps."drive".enabled',
+        value: false,
+        mergeStrategy: "replace",
+      },
+      {
+        keyPath: 'apps."drive".disabled_reason',
+        value: "user",
+        mergeStrategy: "replace",
+      },
+    ],
+  );
+  assert.equal(extensions.handleNotification("app/list/updated", {}), true);
+});

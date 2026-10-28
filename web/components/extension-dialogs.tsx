@@ -1,6 +1,8 @@
 import CodexAccount from "./codex-account";
+import AppsAdmin from "./apps-admin";
 import ImportMigration from "./import-migration";
 import NativeDialog from "./native-dialog";
+import PluginsAdmin from "./plugins-admin";
 import PresetsAdmin from "./presets-admin";
 
 export type ExtensionDialogState =
@@ -17,12 +19,16 @@ export type ExtensionDialogState =
       /** `/logout` opens with the logout confirmation showing. */
       confirmLogout?: boolean;
     }
-  | { kind: "import"; threadId: string | null; cwd: string | null };
+  | { kind: "import"; threadId: string | null; cwd: string | null }
+  | { kind: "apps"; threadId: string | null }
+  | { kind: "plugins"; threadId: string | null; cwd: string | null };
 
 const TITLES: Record<ExtensionDialogState["kind"], string> = {
   presets: "Presets",
   account: "Codex account",
   import: "Import setup",
+  apps: "Apps",
+  plugins: "Plugins",
 };
 
 /**
@@ -66,6 +72,10 @@ export default function ExtensionDialogs({
       {dialog.kind === "import" && (
         <ImportMigration key={key} cwd={dialog.cwd} />
       )}
+      {dialog.kind === "apps" && (
+        <AppsAdmin key={key} threadId={dialog.threadId} />
+      )}
+      {dialog.kind === "plugins" && <PluginsAdmin key={key} cwd={dialog.cwd} />}
     </NativeDialog>
   );
 }

@@ -8,7 +8,9 @@ export type NativeScope =
   | "queue"
   | "presets"
   | "account"
-  | "import";
+  | "import"
+  | "apps"
+  | "plugins";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

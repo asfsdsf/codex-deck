@@ -143,4 +143,103 @@ export function registerExtensionRoutes(
   app.post("/api/codex/import/dismiss", (c) =>
     run(c, async (target) => target.imports.dismiss((await body(c)).id)),
   );
+
+  // Apps (connectors).
+  app.get("/api/codex/apps", (c) =>
+    run(c, (target) =>
+      target.plugins.listApps(
+        c.req.query("threadId") || null,
+        c.req.query("refresh") === "1",
+      ),
+    ),
+  );
+  app.post("/api/codex/apps/enabled", (c) =>
+    run(c, async (target) => {
+      const input = await body(c);
+      await target.plugins.setAppEnabled(input.appId, input.enabled);
+      return { ok: true };
+    }),
+  );
+
+  // Plugins and marketplaces. Mutations re-derive targets server-side.
+  app.get("/api/codex/plugins", (c) =>
+    run(c, (target) =>
+      target.plugins.listPlugins(
+        c.req.query("cwd") || null,
+        c.req.query("refresh") === "1",
+      ),
+    ),
+  );
+  app.get("/api/codex/plugins/search", (c) =>
+    run(c, (target) =>
+      target.plugins.searchPlugins(
+        c.req.query("cwd") || null,
+        c.req.query("q"),
+      ),
+    ),
+  );
+  const pluginAction =
+    (
+      work: (
+        target: CodexExtensions,
+        input: Record<string, unknown>,
+        cwd: string | null,
+      ) => Promise<unknown>,
+    ) =>
+    (c: Context) =>
+      run(c, async (target) => {
+        const input = await body(c);
+        return work(target, input, optionalString(input.cwd, "cwd"));
+      });
+  app.post(
+    "/api/codex/plugins/read",
+    pluginAction((target, input, cwd) =>
+      target.plugins.readPlugin(cwd, input.pluginId, input.marketplaceName),
+    ),
+  );
+  app.post(
+    "/api/codex/plugins/install",
+    pluginAction((target, input, cwd) =>
+      target.plugins.installPlugin(cwd, input.pluginId, input.marketplaceName),
+    ),
+  );
+  app.post(
+    "/api/codex/plugins/uninstall",
+    pluginAction((target, input, cwd) =>
+      target.plugins.uninstallPlugin(
+        cwd,
+        input.pluginId,
+        input.marketplaceName,
+      ),
+    ),
+  );
+  app.post(
+    "/api/codex/plugins/enabled",
+    pluginAction((target, input, cwd) =>
+      target.plugins.setPluginEnabled(
+        cwd,
+        input.pluginId,
+        input.marketplaceName,
+        input.enabled,
+      ),
+    ),
+  );
+  app.post(
+    "/api/codex/marketplaces/add",
+    pluginAction((target, input, cwd) =>
+      target.plugins.addMarketplace(cwd, input.source, input.refName),
+    ),
+  );
+  app.post(
+    "/api/codex/marketplaces/remove",
+    pluginAction((target, input, cwd) =>
+      target.plugins.removeMarketplace(cwd, input.marketplaceName),
+    ),
+  );
+  app.post(
+    "/api/codex/marketplaces/upgrade",
+    pluginAction((target, input, cwd) =>
+      target.plugins.upgradeMarketplaces(cwd, input.marketplaceName),
+    ),
+  );
 }

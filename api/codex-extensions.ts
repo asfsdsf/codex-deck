@@ -1,6 +1,7 @@
 import type { NativeScope } from "./codex-native";
 import { CodexAccountManager } from "./codex-account";
 import { CodexImportManager } from "./codex-import";
+import { CodexPluginsManager } from "./codex-plugins";
 import {
   readPresets,
   writePreset,
@@ -48,9 +49,20 @@ export class CodexExtensions {
     () => this.notify("import"),
   );
 
+  /** Apps (connectors), plugins, and marketplaces (`/apps`, `/plugins`). */
+  readonly plugins = new CodexPluginsManager(
+    (method, params, options) => this.rpc(method, params, options),
+    () => {
+      // Plugin installs can bundle apps, so both views refresh together.
+      this.notify("plugins");
+      this.notify("apps");
+    },
+  );
+
   /** Returns true when the notification was fully consumed. */
   handleNotification(method: string, params: unknown): boolean {
     if (this.imports.observe(method, params)) return true;
+    if (this.plugins.observe(method)) return true;
     // Account notifications are observed but left for the existing auth
     // fingerprint/usage handlers.
     if (this.account.observe(method, params))

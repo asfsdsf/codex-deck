@@ -11660,12 +11660,16 @@ export default function CodexDeckApp() {
         });
         return true;
       }
-      if (commandName === "/import") {
+      if (commandName === "/import" || commandName === "/plugins") {
         setExtensionDialog({
-          kind: "import",
+          kind: commandName === "/import" ? "import" : "plugins",
           threadId: commandSessionId,
           cwd: commandSessionData?.project ?? null,
         });
+        return true;
+      }
+      if (commandName === "/apps") {
+        setExtensionDialog({ kind: "apps", threadId: commandSessionId });
         return true;
       }
       if (commandName === "/mcp" || commandName === "/usage") {

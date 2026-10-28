@@ -121,3 +121,89 @@ export function dismissCodexImport(id: string): Promise<ImportSnapshot> {
     body: JSON.stringify({ id }),
   });
 }
+
+type PluginsSnapshot = import("../api/codex-plugins").CodexPluginsSnapshot;
+type PluginTarget = { pluginId: string; marketplaceName: string };
+const post = <T>(url: string, payload: unknown): Promise<T> =>
+  requestJson(url, { method: "POST", body: JSON.stringify(payload) });
+
+export function getCodexApps(
+  threadId: string | null,
+  refresh = false,
+): Promise<import("../api/codex-plugins").CodexAppsSnapshot> {
+  return requestJson(
+    `/api/codex/apps${query({ threadId, refresh: refresh ? "1" : null })}`,
+  );
+}
+export function setCodexAppEnabled(
+  appId: string,
+  enabled: boolean,
+): Promise<{ ok: boolean }> {
+  return post("/api/codex/apps/enabled", { appId, enabled });
+}
+export function getCodexPlugins(
+  cwd: string | null,
+  refresh = false,
+): Promise<PluginsSnapshot> {
+  return requestJson(
+    `/api/codex/plugins${query({ cwd, refresh: refresh ? "1" : null })}`,
+  );
+}
+export function searchCodexPlugins(
+  cwd: string | null,
+  q: string,
+): Promise<{ results: PluginTarget[] }> {
+  return requestJson(`/api/codex/plugins/search${query({ cwd, q })}`);
+}
+export function readCodexPlugin(
+  cwd: string | null,
+  target: PluginTarget,
+): Promise<import("../api/codex-plugins").CodexPluginDetailView> {
+  return post("/api/codex/plugins/read", { ...target, cwd });
+}
+export function installCodexPlugin(
+  cwd: string | null,
+  target: PluginTarget,
+): Promise<import("../api/codex-plugins").CodexPluginInstallResult> {
+  return post("/api/codex/plugins/install", { ...target, cwd });
+}
+export function uninstallCodexPlugin(
+  cwd: string | null,
+  target: PluginTarget,
+): Promise<PluginsSnapshot> {
+  return post("/api/codex/plugins/uninstall", { ...target, cwd });
+}
+export function setCodexPluginEnabled(
+  cwd: string | null,
+  target: PluginTarget,
+  enabled: boolean,
+): Promise<PluginsSnapshot> {
+  return post("/api/codex/plugins/enabled", { ...target, enabled, cwd });
+}
+export function addCodexMarketplace(
+  cwd: string | null,
+  source: string,
+  refName: string | null,
+): Promise<{
+  snapshot: PluginsSnapshot;
+  marketplaceName: string;
+  alreadyAdded: boolean;
+}> {
+  return post("/api/codex/marketplaces/add", { source, refName, cwd });
+}
+export function removeCodexMarketplace(
+  cwd: string | null,
+  marketplaceName: string,
+): Promise<PluginsSnapshot> {
+  return post("/api/codex/marketplaces/remove", { marketplaceName, cwd });
+}
+export function upgradeCodexMarketplaces(
+  cwd: string | null,
+  marketplaceName: string | null,
+): Promise<{
+  snapshot: PluginsSnapshot;
+  upgraded: string[];
+  errors: { marketplaceName: string; message: string }[];
+}> {
+  return post("/api/codex/marketplaces/upgrade", { marketplaceName, cwd });
+}

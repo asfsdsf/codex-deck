@@ -179,6 +179,14 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Run or save reusable prompts and slash commands",
   },
   {
+    name: "/apps",
+    description: "Manage apps",
+  },
+  {
+    name: "/plugins",
+    description: "Browse plugins",
+  },
+  {
     name: "/import",
     description:
       "Import setup, this project, and recent chats from Claude Code",
