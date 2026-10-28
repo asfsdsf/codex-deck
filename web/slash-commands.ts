@@ -274,6 +274,15 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Fork the current chat",
   },
   {
+    name: "/cd",
+    description: "Change the current working directory",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/pwd",
+    description: "Show the current working directory",
+  },
+  {
     name: "/codex-deck-diff",
     description: "Fork this session and generate a guided Git diff tour",
     supportsInlineArgs: true,

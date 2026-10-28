@@ -1994,17 +1994,22 @@ class CodexAppServerClient {
     }
   }
 
-  public async forkThread(threadId: string): Promise<CodexThreadSummary> {
+  public async forkThread(
+    threadId: string,
+    options: { cwd?: string } = {},
+  ): Promise<CodexThreadSummary> {
     const normalizedThreadId = threadId.trim();
     if (!normalizedThreadId) {
       throw new Error("threadId is required");
     }
+    const params = {
+      threadId: normalizedThreadId,
+      persistExtendedHistory: true,
+      ...(options.cwd ? { cwd: options.cwd, deferGoalContinuation: true } : {}),
+    };
 
     try {
-      const result = await this.request("thread/fork", {
-        threadId: normalizedThreadId,
-        persistExtendedHistory: true,
-      });
+      const result = await this.request("thread/fork", params);
       return extractThreadSummaryFromResult(result);
     } catch (error) {
       if (!shouldRetryAfterResume(error)) {
@@ -2012,10 +2017,7 @@ class CodexAppServerClient {
       }
 
       await this.resumeThread(normalizedThreadId);
-      const result = await this.request("thread/fork", {
-        threadId: normalizedThreadId,
-        persistExtendedHistory: true,
-      });
+      const result = await this.request("thread/fork", params);
       return extractThreadSummaryFromResult(result);
     }
   }
@@ -6753,7 +6755,10 @@ export interface CodexAppServerClientFacade {
   resetMemories?: () => Promise<void>;
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
-  forkThread?: (threadId: string) => Promise<CodexThreadSummary>;
+  forkThread?: (
+    threadId: string,
+    options?: { cwd?: string },
+  ) => Promise<CodexThreadSummary>;
   injectThreadItems?: (
     threadId: string,
     items: CodexRawResponseItem[],
@@ -6902,7 +6907,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.createThread(input),
     setThreadName: (threadId: string, name: string) =>
       client!.setThreadName(threadId, name),
-    forkThread: (threadId: string) => client!.forkThread(threadId),
+    forkThread: (threadId: string, options?: { cwd?: string }) =>
+      client!.forkThread(threadId, options),
     injectThreadItems: (threadId: string, items: CodexRawResponseItem[]) =>
       client!.injectThreadItems(threadId, items),
     compactThread: (threadId: string) => client!.compactThread(threadId),

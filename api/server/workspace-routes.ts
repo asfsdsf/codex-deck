@@ -1,0 +1,70 @@
+import type { Context, Hono } from "hono";
+import {
+  getCodexAppServerClient,
+  type CodexAppServerClientFacade,
+} from "../codex-app-server";
+import {
+  changeThreadWorkingDirectory,
+  CodexWorkspaceError,
+} from "../codex-working-directory";
+import { responseStatusForError, toErrorMessage } from "./utils";
+
+type WorkspaceClient = Pick<
+  CodexAppServerClientFacade,
+  "getThreadSummary" | "forkThread" | "archiveThread"
+>;
+
+export function registerWorkspaceRoutes(
+  app: Hono,
+  deps: {
+    subscribe?: () => void;
+    getClient?: () => WorkspaceClient;
+  } = {},
+) {
+  const run = async (
+    c: Context,
+    work: (client: WorkspaceClient) => Promise<unknown>,
+  ) => {
+    try {
+      deps.subscribe?.();
+      const result = await work((deps.getClient ?? getCodexAppServerClient)());
+      return result instanceof Response ? result : c.json(result);
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        error instanceof CodexWorkspaceError
+          ? error.status
+          : responseStatusForError(error),
+      );
+    }
+  };
+
+  app.post("/api/codex/threads/:id/working-directory", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      const body = await c.req.json().catch(() => null);
+      if (
+        !threadId ||
+        !body ||
+        typeof body.path !== "string" ||
+        (body.currentCwd != null && typeof body.currentCwd !== "string")
+      )
+        return c.json(
+          { error: "Thread ID and a directory path are required." },
+          400,
+        );
+      if (!client.getThreadSummary || !client.forkThread)
+        throw new Error("Changing directories is unavailable on this server.");
+      return changeThreadWorkingDirectory(
+        {
+          getThreadSummary: client.getThreadSummary,
+          forkThread: client.forkThread,
+          archiveThread: client.archiveThread,
+        },
+        threadId,
+        body.path,
+        body.currentCwd,
+      );
+    }),
+  );
+}

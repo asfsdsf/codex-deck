@@ -307,6 +307,7 @@ import {
   sendTerminalInput as sendTerminalInputRequest,
   setCodexThreadName,
   forkCodexThread,
+  changeCodexWorkingDirectory,
   startDiffGuide,
   getDiffGuides,
   startCodexSideThread,
@@ -11847,6 +11848,58 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/pwd") {
+        if (normalizedArgs) {
+          setInteractionError("Usage: /pwd");
+          return false;
+        }
+        const cwd = commandSessionData?.project?.trim();
+        if (!commandSessionId || !cwd) {
+          setInteractionError("Select a session before using /pwd.");
+          return false;
+        }
+        showCommandNoticeForDuration(`Current working directory: ${cwd}`);
+        return true;
+      }
+
+      if (commandName === "/cd") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /cd.");
+          return false;
+        }
+        if (
+          sideThreadsById[commandSessionId] ||
+          pendingTurn?.sessionId === commandSessionId ||
+          pendingUserMessagesBySessionRef.current[commandSessionId]?.some(
+            (entry) => entry.status === "queued",
+          )
+        ) {
+          setInteractionError(
+            "Changing directories requires an idle primary session without queued input.",
+          );
+          return false;
+        }
+        try {
+          const result = await changeCodexWorkingDirectory(
+            commandSessionId,
+            normalizedArgs || "~",
+            commandSessionData?.project ?? null,
+          );
+          upsertSessionFromThreadSummary(result.thread);
+          setSelectedSession(result.thread.threadId);
+          setCenterView("session");
+          showCommandNoticeForDuration(
+            `Working directory changed to: ${result.cwd}`,
+          );
+          return true;
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+          return false;
+        }
+      }
+
       if (commandName === "/fork") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /fork.");
@@ -12147,6 +12200,7 @@ export default function CodexDeckApp() {
       sendMessageText,
       trackWebManagedSessionTurn,
       sideThreadsById,
+      pendingTurn?.sessionId,
       isMobilePhone,
     ],
   );

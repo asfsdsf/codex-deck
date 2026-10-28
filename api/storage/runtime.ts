@@ -1,3 +1,4 @@
+export type { WorkingDirectoryChangeResult } from "../codex-working-directory";
 export type {
   ConfigDiagnostics,
   ConfigDiagnosticLayer,

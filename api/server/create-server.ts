@@ -1,6 +1,7 @@
 import { registerNativeWorkflowRoutes } from "./native-workflow-routes";
 import { registerThreadQueueRoutes } from "./thread-queue-routes";
 import { parseOutputSchemaInput } from "../codex-output-schema";
+import { registerWorkspaceRoutes } from "./workspace-routes";
 import { registerBackgroundTerminalRoutes } from "./background-terminal-routes";
 import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
@@ -4996,6 +4997,9 @@ export function createServer(options: ServerOptions) {
   });
   registerIdeContextRoutes(app);
   registerMcpAppRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
+  registerWorkspaceRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
   registerReviewRoutes(app, {

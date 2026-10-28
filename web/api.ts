@@ -2233,3 +2233,14 @@ export function getCodexConfigDiagnostics(
     `/api/codex/debug-config${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
   );
 }
+
+export function changeCodexWorkingDirectory(
+  threadId: string,
+  path: string,
+  currentCwd: string | null,
+): Promise<import("@codex-deck/api").WorkingDirectoryChangeResult> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/working-directory`,
+    { method: "POST", body: JSON.stringify({ path, currentCwd }) },
+  );
+}
