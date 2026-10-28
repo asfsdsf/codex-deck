@@ -1587,6 +1587,15 @@ export function isCodexDeckDynamicToolsEnabledByEnv(
 
 type JsonRpcRequestId = string | number;
 
+/**
+ * Where thread/start registration learns the configured MCP server names: a
+ * cwd (the host runs config/read), or names already read by the caller.
+ */
+export type CodexDeckThreadStartConfigSource =
+  | string
+  | null
+  | { cwd: string | null; mcpServerNames?: readonly string[] | null };
+
 export class CodexDeckDynamicToolHost {
   private readonly rpc: CodexDeckDynamicToolRpc;
   private readonly enabled: boolean;
@@ -1616,8 +1625,16 @@ export class CodexDeckDynamicToolHost {
 
   /** Whether a configured MCP server owns the Deck namespace (upstream refuses to register then). */
   private async namespaceOwnedByMcpServer(
-    cwd: string | null,
+    source: CodexDeckThreadStartConfigSource,
   ): Promise<boolean> {
+    if (typeof source === "object" && source !== null) {
+      if (Array.isArray(source.mcpServerNames)) {
+        // Callers that already read the effective config skip a second config/read.
+        return source.mcpServerNames.includes(CODEX_DECK_TOOL_NAMESPACE);
+      }
+      return this.namespaceOwnedByMcpServer(source.cwd);
+    }
+    const cwd = source;
     try {
       const response = asObject(
         await this.rpc.request("config/read", {
@@ -1638,7 +1655,7 @@ export class CodexDeckDynamicToolHost {
    */
   public async configureThreadStart(
     params: JsonRecord,
-    cwd: string | null,
+    cwd: CodexDeckThreadStartConfigSource,
   ): Promise<boolean> {
     if (!this.enabled) {
       delete params.dynamicTools;
@@ -1658,7 +1675,7 @@ export class CodexDeckDynamicToolHost {
   /** thread/start with Deck tools, retrying without them on servers that reject `dynamicTools`. */
   public async requestThreadStart(
     params: JsonRecord,
-    cwd: string | null,
+    cwd: CodexDeckThreadStartConfigSource,
     send: (params: JsonRecord) => Promise<unknown>,
   ): Promise<unknown> {
     const registered = await this.configureThreadStart(params, cwd);

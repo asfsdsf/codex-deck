@@ -565,6 +565,7 @@ interface ActiveCodexConfig {
   reasoningEffort: CodexReasoningEffort | null;
   serviceTier: CodexServiceTier | null;
   providerBaseUrl: string | null;
+  mcpServerNames?: string[];
 }
 
 interface ProviderRequestConfig {
@@ -1903,7 +1904,7 @@ class CodexAppServerClient {
 
     const result = await this.dynamicTools.requestThreadStart(
       params,
-      cwd,
+      { cwd, mcpServerNames: activeConfig.mcpServerNames },
       (startParams) => this.request("thread/start", startParams),
     );
     if (!result || typeof result !== "object") {
@@ -6034,6 +6035,7 @@ function extractActiveConfigFromConfigReadResult(
       result,
       modelProvider,
     ),
+    mcpServerNames: Object.keys(asRecord(config.mcp_servers) ?? {}),
   };
 }
 

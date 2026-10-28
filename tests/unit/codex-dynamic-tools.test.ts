@@ -827,6 +827,31 @@ test("thread/start registers tools, skips on MCP namespace collision, and falls 
     isDynamicToolsUnsupportedError(new RpcError(-32603, "dynamicTools")),
     false,
   );
+
+  // Precomputed MCP server names skip the extra config/read round trip.
+  const precomputed = createRpc({});
+  const fastHost = new CodexDeckDynamicToolHost(precomputed.rpc, {
+    enabled: true,
+    warn: () => {},
+  });
+  const owned: Record<string, unknown> = {};
+  assert.equal(
+    await fastHost.configureThreadStart(owned, {
+      cwd: "/repo",
+      mcpServerNames: ["codex_deck"],
+    }),
+    false,
+  );
+  const free: Record<string, unknown> = {};
+  assert.equal(
+    await fastHost.configureThreadStart(free, {
+      cwd: "/repo",
+      mcpServerNames: ["docs"],
+    }),
+    true,
+  );
+  assert.ok(free.dynamicTools);
+  assert.equal(precomputed.calls.length, 0);
 });
 
 test("app-server client answers item/tool/call over stdin exactly once", async () => {
