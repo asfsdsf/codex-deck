@@ -88,6 +88,13 @@ import { mergePendingConversationMessages } from "../pending-conversation-messag
 import { getCompletedTaskAnswers } from "../task-answer";
 import { TaskAnswerActions } from "./task-answer-actions";
 import {
+  collectTurnPrompts,
+  getMessageTurnRole,
+  latestTurnId,
+  messageTurnId,
+  type ConversationTurnAction,
+} from "../conversation-turn-actions";
+import {
   captureConversationScrollAnchor,
   restoreConversationScrollAnchor,
   type ConversationScrollAnchor,
@@ -330,6 +337,14 @@ interface SessionViewProps {
     step: AiTerminalStepDirective;
     reason: string;
   }) => Promise<boolean>;
+  /** Whether the session has a running turn, which limits history actions. */
+  turnActionsRunning?: boolean;
+  /** Enables per-message fork/rewind actions for messages with turn IDs. */
+  onTurnAction?: (
+    sessionId: string,
+    message: ConversationMessage,
+    action: ConversationTurnAction,
+  ) => void;
 }
 
 function clearConversationSearchHighlights(root: ParentNode): void {
@@ -774,6 +789,8 @@ const SessionView = memo(
         aiTerminalTerminalId = null,
         onApproveAiTerminalStep,
         onRejectAiTerminalStep,
+        turnActionsRunning = false,
+        onTurnAction,
       } = props;
 
       const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -2303,6 +2320,18 @@ const SessionView = memo(
         chatMessages[1].type === "user"
           ? chatMessages[0]
           : null;
+      const turnPrompts = useMemo(
+        () => collectTurnPrompts(chatMessages, agentsBootstrapMessage),
+        [chatMessages, agentsBootstrapMessage],
+      );
+      const inProgressTurnId = turnActionsRunning
+        ? latestTurnId(chatMessages)
+        : null;
+      const handleTurnAction = useCallback(
+        (message: ConversationMessage, action: ConversationTurnAction) =>
+          onTurnAction?.(sessionId, message, action),
+        [onTurnAction, sessionId],
+      );
       const conversationSearchMatches = useMemo<
         ConversationSearchMatchTarget[]
       >(() => {
@@ -2741,6 +2770,17 @@ const SessionView = memo(
                 onPlanAction={onPlanAction ? handlePlanAction : undefined}
                 onFilePathLinkClick={onFilePathLinkClick}
                 onEditMessage={handleEditMessage}
+                turnActionRole={
+                  onTurnAction ? getMessageTurnRole(message, turnPrompts) : null
+                }
+                turnActionBusy={
+                  !turnActionsRunning
+                    ? "idle"
+                    : messageTurnId(message) === inProgressTurnId
+                      ? "turn"
+                      : "thread"
+                }
+                onTurnAction={onTurnAction ? handleTurnAction : undefined}
                 pendingUserInputRequests={
                   usesUserInputState ? answerableUserInputRequests : undefined
                 }
@@ -2796,6 +2836,11 @@ const SessionView = memo(
           handleEditMessage,
           handlePlanAction,
           handleSelectUserInputOption,
+          handleTurnAction,
+          inProgressTurnId,
+          onTurnAction,
+          turnActionsRunning,
+          turnPrompts,
           handleSubmitUserInputAnswers,
           latestAiTerminalPlanEntryKey,
           onApproveAiTerminalStep,

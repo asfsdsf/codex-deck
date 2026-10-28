@@ -1109,6 +1109,20 @@ export async function forkCodexThread(
   );
 }
 
+export async function forkCodexThreadAtTurn(
+  threadId: string,
+  boundary: { lastTurnId: string } | { beforeTurnId: string },
+): Promise<CodexThreadForkResponse> {
+  return requestJson<CodexThreadForkResponse>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/fork-at`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(boundary),
+    },
+  );
+}
+
 export function startDiffGuide(
   input: DiffGuideStartRequest,
 ): Promise<DiffGuideStartResponse> {

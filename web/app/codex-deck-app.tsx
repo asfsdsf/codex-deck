@@ -164,6 +164,7 @@ import CodexValuePicker, {
   type CodexValuePickerOption,
 } from "../components/codex-value-picker";
 import CenteredConfirmDialog from "../components/centered-confirm-dialog";
+import type { ConversationTurnAction } from "../conversation-turn-actions";
 import { PetCompanion, PetPicker } from "../components/pet-companion";
 import MemoriesModal from "../components/memories-modal";
 import ConfigModal from "../components/config-modal";
@@ -333,6 +334,7 @@ import {
   forkCodexThread,
   changeCodexWorkingDirectory,
   setCodexPermissions,
+  forkCodexThreadAtTurn,
   startDiffGuide,
   getDiffGuides,
   startCodexSideThread,
@@ -12732,6 +12734,44 @@ export default function CodexDeckApp() {
 
   const isGeneratingForSelectedSession =
     !!selectedSession && pendingTurn?.sessionId === selectedSession;
+  const turnActionInFlightRef = useRef(false);
+  const handleTurnAction = useCallback(
+    (
+      sessionId: string,
+      message: ConversationMessage,
+      action: ConversationTurnAction,
+    ) => {
+      const turnId = message.turnId?.trim();
+      if (!turnId || turnActionInFlightRef.current) return;
+      turnActionInFlightRef.current = true;
+      void (async () => {
+        try {
+          const result = await forkCodexThreadAtTurn(
+            sessionId,
+            action === "fork-through"
+              ? { lastTurnId: turnId }
+              : { beforeTurnId: turnId },
+          );
+          upsertSessionFromThreadSummary(result.thread);
+          setSelectedSession(result.thread.threadId);
+          setCenterView("session");
+          setInteractionError(null);
+          showCommandNoticeForDuration(
+            action === "fork-through"
+              ? "Forked from the selected turn."
+              : "Forked before the selected turn.",
+          );
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+        } finally {
+          turnActionInFlightRef.current = false;
+        }
+      })();
+    },
+    [showCommandNoticeForDuration, upsertSessionFromThreadSummary],
+  );
   const selectedSessionConnectionFailureNotice =
     selectedSession && connectionFailureNotice?.sessionId === selectedSession
       ? connectionFailureNotice
@@ -16439,6 +16479,8 @@ export default function CodexDeckApp() {
                   }
                   onApproveAiTerminalStep={handleApproveAiTerminalStep}
                   onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                  turnActionsRunning={isGeneratingForSelectedSession}
+                  onTurnAction={handleTurnAction}
                 />
                 {(isGeneratingForSelectedSession ||
                   selectedSessionConnectionFailureNotice) && (

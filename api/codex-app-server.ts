@@ -15,6 +15,7 @@ import {
   type ExperimentalFeature,
   type ExperimentalWriteResult,
 } from "./codex-native";
+import type { CodexForkBoundary } from "./codex-thread-history";
 import { RecapManager, type ConversationRecap } from "./codex-recap";
 import * as threadQueue from "./codex-thread-queue";
 import type {
@@ -2103,7 +2104,7 @@ class CodexAppServerClient {
 
   public async forkThread(
     threadId: string,
-    options: { cwd?: string } = {},
+    options: { cwd?: string; lastTurnId?: string; beforeTurnId?: string } = {},
   ): Promise<CodexThreadSummary> {
     const normalizedThreadId = threadId.trim();
     if (!normalizedThreadId) {
@@ -2113,6 +2114,8 @@ class CodexAppServerClient {
       threadId: normalizedThreadId,
       persistExtendedHistory: true,
       ...(options.cwd ? { cwd: options.cwd, deferGoalContinuation: true } : {}),
+      ...(options.lastTurnId ? { lastTurnId: options.lastTurnId } : {}),
+      ...(options.beforeTurnId ? { beforeTurnId: options.beforeTurnId } : {}),
     };
 
     try {
@@ -6899,7 +6902,7 @@ export interface CodexAppServerClientFacade {
   setThreadName?: (threadId: string, name: string) => Promise<void>;
   forkThread?: (
     threadId: string,
-    options?: { cwd?: string },
+    options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string },
   ) => Promise<CodexThreadSummary>;
   injectThreadItems?: (
     threadId: string,
@@ -7060,7 +7063,7 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.createThread(input),
     setThreadName: (threadId: string, name: string) =>
       client!.setThreadName(threadId, name),
-    forkThread: (threadId: string, options?: { cwd?: string }) =>
+    forkThread: (threadId: string, options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string }) =>
       client!.forkThread(threadId, options),
     injectThreadItems: (threadId: string, items: CodexRawResponseItem[]) =>
       client!.injectThreadItems(threadId, items),

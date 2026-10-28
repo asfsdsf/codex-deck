@@ -102,6 +102,12 @@ import { ReviewReportRenderer } from "./review-report";
 import { GeneratedImage } from "./generated-image";
 import { ApprovalRequestRenderer } from "./approval-request";
 import { McpAppWidget } from "./mcp-app-widget";
+import { MessageTurnActions } from "./message-turn-actions";
+import type {
+  ConversationTurnAction,
+  MessageTurnBusyState,
+  MessageTurnRole,
+} from "../conversation-turn-actions";
 
 interface MessageBlockProps {
   sessionId?: string;
@@ -116,6 +122,13 @@ interface MessageBlockProps {
   onPlanAction?: (action: "implement" | "stay") => void;
   onFilePathLinkClick?: (href: string) => boolean;
   onEditMessage?: (message: ConversationMessage, text: string) => Promise<void>;
+  /** Fork/rewind menu; omitted when the message's turn ID is unknown. */
+  turnActionRole?: MessageTurnRole | null;
+  turnActionBusy?: MessageTurnBusyState;
+  onTurnAction?: (
+    message: ConversationMessage,
+    action: ConversationTurnAction,
+  ) => void;
   pendingUserInputRequests?: CodexUserInputRequest[];
   pendingApprovalRequests?: CodexApprovalRequest[];
   selectedUserInputAnswers?: Record<
@@ -1899,6 +1912,9 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     aiTerminalContext,
     onFilePathLinkClick,
     onEditMessage,
+    turnActionRole = null,
+    turnActionBusy = "idle",
+    onTurnAction,
     pendingUserInputRequests = [],
     pendingApprovalRequests = [],
     selectedUserInputAnswers,
@@ -2172,6 +2188,12 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     message.editText.length > 0 &&
     (message.type === "user" || message.type === "assistant") &&
     typeof onEditMessage === "function";
+
+  const showTurnActions =
+    !isPendingUserTone &&
+    !isAgentsBootstrap &&
+    turnActionRole !== null &&
+    typeof onTurnAction === "function";
 
   const cancelEditing = () => {
     if (editSaving) {
@@ -2906,7 +2928,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
               </div>
             )}
           </div>
-          {(showMessageCopyButton || canEditMessage) && (
+          {(showMessageCopyButton || canEditMessage || showTurnActions) && (
             <div
               className={`mt-1 flex items-center justify-end gap-1 transition-opacity md:absolute md:right-2 md:top-2 md:mt-0 ${
                 editing
@@ -2939,6 +2961,14 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 </>
               ) : (
                 <>
+                  {showTurnActions && turnActionRole && onTurnAction && (
+                    <MessageTurnActions
+                      role={turnActionRole}
+                      busy={turnActionBusy}
+                      onAction={(action) => onTurnAction(message, action)}
+                      buttonClassName="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 hover:text-zinc-100"
+                    />
+                  )}
                   {canEditMessage && (
                     <button
                       type="button"
