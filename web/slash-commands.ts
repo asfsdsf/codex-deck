@@ -359,7 +359,8 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   },
   {
     name: "/permissions",
-    description: "Show current permission settings",
+    description: "Choose what Codex is allowed to do",
+    supportsInlineArgs: true,
   },
   {
     name: "/memories",

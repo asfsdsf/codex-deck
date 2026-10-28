@@ -10,7 +10,8 @@ export type NativeScope =
   | "account"
   | "import"
   | "apps"
-  | "plugins";
+  | "plugins"
+  | "permissions";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

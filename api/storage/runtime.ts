@@ -1,3 +1,10 @@
+export type {
+  CodexApprovalPolicy,
+  CodexApprovalsReviewer,
+  CodexPermissionOption,
+  CodexPermissionSelection,
+  CodexPermissionSnapshot,
+} from "../codex-permissions";
 export type { WorkingDirectoryChangeResult } from "../codex-working-directory";
 export type {
   ConfigDiagnostics,

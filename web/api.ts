@@ -2244,3 +2244,20 @@ export function changeCodexWorkingDirectory(
     { method: "POST", body: JSON.stringify({ path, currentCwd }) },
   );
 }
+
+export function getCodexPermissions(
+  threadId: string,
+): Promise<import("@codex-deck/api").CodexPermissionSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/permissions`,
+  );
+}
+export function setCodexPermissions(
+  threadId: string,
+  selection: import("@codex-deck/api").CodexPermissionSelection,
+): Promise<import("@codex-deck/api").CodexPermissionSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/permissions`,
+    { method: "POST", body: JSON.stringify(selection) },
+  );
+}

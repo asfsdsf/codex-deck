@@ -27,6 +27,11 @@ import {
   type UsageDashboardSnapshot,
 } from "./codex-native";
 import {
+  PermissionManager,
+  type CodexPermissionSelection,
+  type CodexPermissionSnapshot,
+} from "./codex-permissions";
+import {
   nativePages,
   nativeRecord,
   type NativeRpc,
@@ -1115,6 +1120,20 @@ class CodexAppServerClient {
     );
   }
 
+  private permissions = new PermissionManager(
+    (method, params, threadId) =>
+      this.requestNativeThread(method, params, threadId),
+    (id) => this.notifyNativeState("permissions", id),
+  );
+  public readPermissions(threadId: string): Promise<CodexPermissionSnapshot> {
+    return this.permissions.read(threadId);
+  }
+  public applyPermissions(
+    threadId: string,
+    selection: CodexPermissionSelection,
+  ): Promise<CodexPermissionSnapshot> {
+    return this.permissions.apply(threadId, selection);
+  }
   private recaps = new RecapManager(
     (method, params) => this.request(method, params),
     (id) => this.notifyNativeState("recap", id),
@@ -3983,6 +4002,7 @@ class CodexAppServerClient {
 
   private handleServerNotification(method: string, params: unknown): void {
     if (this.recaps.handleNotification(method, params)) return;
+    this.permissions.handleNotification(method, params);
     if (this.extensions.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
@@ -6648,6 +6668,11 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  readPermissions?: (threadId: string) => Promise<CodexPermissionSnapshot>;
+  applyPermissions?: (
+    threadId: string,
+    selection: CodexPermissionSelection,
+  ) => Promise<CodexPermissionSnapshot>;
   listRetainedWarnings?: (
     threadId?: string | null,
   ) => CodexOperationalNotification[];
@@ -6865,6 +6890,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     startRecap: (id, history) => client!.startRecap(id, history),
     readUsageDashboard: (id) => client!.readUsageDashboard(id),
     consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
+    readPermissions: (id) => client!.readPermissions(id),
+    applyPermissions: (id, selection) =>
+      client!.applyPermissions(id, selection),
     listMcpServers: (id) => client!.listMcpServers(id),
     listThreadQueue: (id) => client!.listThreadQueue(id),
     addThreadQueueMessage: (id, input, clientId) =>

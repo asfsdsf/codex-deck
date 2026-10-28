@@ -1,3 +1,5 @@
+import PermissionsPanel from "../components/permissions-panel";
+import { parsePermissionArgs } from "../permission-args";
 import ConfigDiagnostics from "../components/config-diagnostics";
 import RetainedWarnings from "../components/retained-warnings";
 import DaybreakSettings from "../components/daybreak-settings";
@@ -308,6 +310,7 @@ import {
   setCodexThreadName,
   forkCodexThread,
   changeCodexWorkingDirectory,
+  setCodexPermissions,
   startDiffGuide,
   getDiffGuides,
   startCodexSideThread,
@@ -4200,6 +4203,12 @@ export default function CodexDeckApp() {
   const [extensionDialog, setExtensionDialog] =
     useState<ExtensionDialogState | null>(null);
   const closeExtensionDialog = useCallback(() => setExtensionDialog(null), []);
+  // Permissions, auto-review, and worktree dialogs (kept apart from nativeDialog).
+  const [workspaceDialog, setWorkspaceDialog] = useState<{
+    kind: "permissions";
+    threadId: string;
+  } | null>(null);
+  const closeWorkspaceDialog = useCallback(() => setWorkspaceDialog(null), []);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -4541,6 +4550,7 @@ export default function CodexDeckApp() {
     setShowCollabModePicker(false);
     setNativeDialog(null);
     setExtensionDialog(null);
+    setWorkspaceDialog(null);
     setReviewDialog(null);
     setShowStatusModal(false);
     setShowConfigModal(false);
@@ -11710,11 +11720,33 @@ export default function CodexDeckApp() {
           setInteractionError("Select a session before using /permissions.");
           return false;
         }
-        setShowStatusModal(true);
-        showCommandNoticeForDuration(
-          "Permission profile details are shown in session status.",
-        );
-        return true;
+        if (!normalizedArgs) {
+          setWorkspaceDialog({
+            kind: "permissions",
+            threadId: commandSessionId,
+          });
+          return true;
+        }
+        try {
+          const selection = parsePermissionArgs(normalizedArgs);
+          if (
+            selection.profileId === ":danger-full-access" &&
+            !window.confirm(
+              "Enable full access? When Codex runs with full access, it can edit any file on your computer and run commands with network, without your approval.",
+            )
+          )
+            return false;
+          await setCodexPermissions(commandSessionId, selection);
+          showCommandNoticeForDuration(
+            `Permission selection requested: ${selection.profileId}`,
+          );
+          return true;
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+          return false;
+        }
       }
 
       if (commandName === "/memories") {
@@ -14712,6 +14744,14 @@ export default function CodexDeckApp() {
                 threadId={nativeDialog.threadId}
               />
             )}
+          </NativeDialog>
+        )}
+        {workspaceDialog && (
+          <NativeDialog title="Permissions" onClose={closeWorkspaceDialog}>
+            <PermissionsPanel
+              key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
+              threadId={workspaceDialog.threadId}
+            />
           </NativeDialog>
         )}
         {reviewDialog && (

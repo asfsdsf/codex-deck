@@ -7,11 +7,19 @@ import {
   changeThreadWorkingDirectory,
   CodexWorkspaceError,
 } from "../codex-working-directory";
+import {
+  parseApprovalPolicy,
+  parseApprovalsReviewer,
+} from "../codex-permissions";
 import { responseStatusForError, toErrorMessage } from "./utils";
 
 type WorkspaceClient = Pick<
   CodexAppServerClientFacade,
-  "getThreadSummary" | "forkThread" | "archiveThread"
+  | "getThreadSummary"
+  | "forkThread"
+  | "archiveThread"
+  | "readPermissions"
+  | "applyPermissions"
 >;
 
 export function registerWorkspaceRoutes(
@@ -65,6 +73,52 @@ export function registerWorkspaceRoutes(
         body.path,
         body.currentCwd,
       );
+    }),
+  );
+
+  app.get("/api/codex/threads/:id/permissions", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      if (!threadId) return c.json({ error: "Thread ID is required." }, 400);
+      if (!client.readPermissions)
+        throw new Error("Permission settings are unavailable on this server.");
+      return client.readPermissions(threadId);
+    }),
+  );
+
+  app.post("/api/codex/threads/:id/permissions", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      const body = await c.req.json().catch(() => null);
+      const approvalPolicy =
+        body?.approvalPolicy == null
+          ? null
+          : parseApprovalPolicy(body.approvalPolicy);
+      const approvalsReviewer =
+        body?.approvalsReviewer == null
+          ? null
+          : parseApprovalsReviewer(body.approvalsReviewer);
+      if (
+        !threadId ||
+        typeof body?.profileId !== "string" ||
+        !body.profileId.trim() ||
+        (body.approvalPolicy != null && !approvalPolicy) ||
+        (body.approvalsReviewer != null && !approvalsReviewer)
+      )
+        return c.json(
+          {
+            error:
+              "A permission profile and optional valid approval policy and reviewer are required.",
+          },
+          400,
+        );
+      if (!client.applyPermissions)
+        throw new Error("Permission settings are unavailable on this server.");
+      return client.applyPermissions(threadId, {
+        profileId: body.profileId,
+        approvalPolicy,
+        approvalsReviewer,
+      });
     }),
   );
 }
