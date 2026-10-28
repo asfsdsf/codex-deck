@@ -2752,7 +2752,9 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     >
       <div
         className={
-          isUser && !reviewReport ? "max-w-[85%] min-w-0" : "w-full min-w-0"
+          isUser && !reviewReport && !editing
+            ? "max-w-[85%] min-w-0"
+            : "w-full min-w-0"
         }
       >
         <div className="group relative">
@@ -2787,7 +2789,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 autoFocus
                 disabled={editSaving}
                 aria-label="Edit history message"
-                className="block min-h-24 w-full resize-y rounded-lg border border-white/20 bg-zinc-950/30 py-2 pl-3 pr-24 font-mono text-sm leading-relaxed text-white outline-none placeholder:text-white/45 focus:border-white/45 disabled:cursor-wait disabled:opacity-70"
+                className="block min-h-24 w-full resize-y rounded-lg border border-zinc-500/40 bg-zinc-950/30 py-2 pl-3 pr-24 font-mono text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400/70 disabled:cursor-wait disabled:opacity-70"
               />
             ) : translatedMessageText !== null ? (
               <SafeMarkdown
@@ -2916,7 +2918,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                     type="button"
                     onClick={cancelEditing}
                     disabled={editSaving}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/20 bg-zinc-950/65 text-zinc-200 hover:bg-zinc-900/80 disabled:opacity-50"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-950/65 text-zinc-200 hover:bg-zinc-900/80 disabled:opacity-50"
                     title="Cancel edit (Escape)"
                     aria-label="Cancel message edit"
                   >
