@@ -6,6 +6,9 @@ import TranscriptExport from "../components/transcript-export";
 import ConversationRecapView from "../components/conversation-recap";
 import UsageDashboard from "../components/usage-dashboard";
 import NativeDialog from "../components/native-dialog";
+import ExtensionDialogs, {
+  type ExtensionDialogState,
+} from "../components/extension-dialogs";
 import McpAdmin from "../components/mcp-admin";
 import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
@@ -4191,6 +4194,9 @@ export default function CodexDeckApp() {
     threadId: string | null;
   } | null>(null);
   const closeNativeDialog = useCallback(() => setNativeDialog(null), []);
+  const [extensionDialog, setExtensionDialog] =
+    useState<ExtensionDialogState | null>(null);
+  const closeExtensionDialog = useCallback(() => setExtensionDialog(null), []);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -4531,6 +4537,7 @@ export default function CodexDeckApp() {
     setDeleteTerminalTargetId(null);
     setShowCollabModePicker(false);
     setNativeDialog(null);
+    setExtensionDialog(null);
     setReviewDialog(null);
     setShowStatusModal(false);
     setShowConfigModal(false);
@@ -11636,6 +11643,15 @@ export default function CodexDeckApp() {
         setNativeDialog({ kind: "recap", threadId: commandSessionId });
         return true;
       }
+      if (commandName === "/presets") {
+        setExtensionDialog({
+          kind: "presets",
+          threadId: commandSessionId,
+          cwd: commandSessionData?.project ?? null,
+          draft: normalizedArgs,
+        });
+        return true;
+      }
       if (commandName === "/mcp" || commandName === "/usage") {
         setNativeDialog({
           kind: commandName === "/usage" ? "usage" : "mcp",
@@ -12097,6 +12113,24 @@ export default function CodexDeckApp() {
       sideThreadsById,
       isMobilePhone,
     ],
+  );
+
+  // Presets submit through the normal composer path; slash-command presets
+  // dispatch that command, as upstream `QueuedInputAction::ParseSlash` does.
+  const handleRunPreset = useCallback(
+    async (threadId: string, input: string): Promise<boolean> => {
+      const invocation = parseSlashCommandInvocation(
+        input,
+        SESSION_COMPOSER_SLASH_COMMANDS,
+      );
+      if (invocation)
+        return handleRunSlashCommand(invocation.command.name, invocation.args);
+      return sendMessageText(
+        { text: input, images: [] },
+        { sessionIdOverride: threadId },
+      );
+    },
+    [handleRunSlashCommand, sendMessageText],
   );
 
   const handleConfirmRename = useCallback(async () => {
@@ -14508,6 +14542,14 @@ export default function CodexDeckApp() {
           </div>
         )}
 
+        {extensionDialog && (
+          <ExtensionDialogs
+            dialog={extensionDialog}
+            homeId={selectedCodexHomeId}
+            onClose={closeExtensionDialog}
+            onRunPreset={handleRunPreset}
+          />
+        )}
         {nativeDialog && (
           <NativeDialog
             title={

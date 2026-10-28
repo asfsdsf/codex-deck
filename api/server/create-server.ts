@@ -7,6 +7,7 @@ import { registerHookRunRoutes } from "./hook-run-routes";
 import { registerMemoryInsightRoutes } from "./memory-insight-routes";
 import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
+import { registerExtensionRoutes } from "./extension-routes";
 import { SIDE_CONVERSATION_BOUNDARY_PROMPT } from "../session-origins";
 import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
@@ -4984,6 +4985,9 @@ export function createServer(options: ServerOptions) {
     wake: (id) => {
       for (const listener of conversationWakeListeners) listener(id);
     },
+  });
+  registerExtensionRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
   });
   registerReviewRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,

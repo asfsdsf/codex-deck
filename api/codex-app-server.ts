@@ -21,6 +21,7 @@ import type {
   CodexQueuedMessage,
   CodexThreadQueueSnapshot,
 } from "./codex-thread-queue";
+import { CodexExtensions } from "./codex-extensions";
 import {
   readUsageDashboard,
   type UsageDashboardSnapshot,
@@ -1145,6 +1146,20 @@ class CodexAppServerClient {
       throw new Error("Invalid reset-credit response");
     this.notifyNativeState("usage");
     return { outcome: String(result.outcome) };
+  }
+
+  private extensions = new CodexExtensions(
+    async (method, params, options = {}) => {
+      if (!options.timeoutMs)
+        return this.requestNativeThread(method, params ?? {}, options.threadId);
+      await this.ensureConnected();
+      await this.ensureInitialized();
+      return this.requestRaw(method, params ?? {}, options.timeoutMs);
+    },
+    (scope, threadId) => this.notifyNativeState(scope, threadId ?? null),
+  );
+  public getExtensions(): CodexExtensions {
+    return this.extensions;
   }
 
   private mcpUpdates: McpRuntimeUpdate[] = [];
@@ -3909,6 +3924,7 @@ class CodexAppServerClient {
 
   private handleServerNotification(method: string, params: unknown): void {
     if (this.recaps.handleNotification(method, params)) return;
+    if (this.extensions.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
       return;
@@ -6635,6 +6651,7 @@ export interface CodexAppServerClientFacade {
     threadId?: string | null,
   ) => Promise<{ authorizationUrl: string; loginId?: string }>;
   reloadMcpServers?: () => Promise<void>;
+  getExtensions?: () => CodexExtensions;
   restartAppServer?: () => Promise<boolean>;
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
   fetchProviderModels?: (cwd?: string | null) => Promise<CodexModelOption[]>;
@@ -6799,6 +6816,7 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       ),
     loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
     reloadMcpServers: () => client!.reloadMcpServers(),
+    getExtensions: () => client!.getExtensions(),
     readMemorySettings: (cwd?: string | null) =>
       client!.readMemorySettings(cwd),
     writeMemorySettings: (settings: CodexMemoriesSettings) =>

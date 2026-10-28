@@ -175,6 +175,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "View usage, rate limits, credit estimates, and resets",
   },
   {
+    name: "/presets",
+    description: "Run or save reusable prompts and slash commands",
+  },
+  {
     name: "/mcp",
     description: "Manage MCP servers, tools, and authentication",
   },
