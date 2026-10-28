@@ -296,6 +296,8 @@ export interface SendCodexMessageInput {
   serviceTier?: CodexServiceTier | null;
   effort?: CodexReasoningEffort | null;
   collaborationMode?: CodexCollaborationModeInput | null;
+  /** Steer the running turn when there is one; otherwise start a turn. */
+  steerActiveTurn?: boolean;
 }
 
 export type CodexRawResponseItem = Record<string, unknown>;
@@ -312,6 +314,7 @@ export type SendCodexInputItem =
 
 export interface SendCodexMessageResult {
   turnId: string | null;
+  steered?: boolean;
 }
 
 export type CodexTurnStatus =
@@ -2395,6 +2398,13 @@ class CodexAppServerClient {
       await this.resumeThread(threadId, activeConfig);
     }
 
+    if (input.steerActiveTurn) {
+      const steered = await this.steerActiveTurn(threadId, params.input);
+      if (steered) {
+        return steered;
+      }
+    }
+
     try {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
@@ -2417,6 +2427,56 @@ class CodexAppServerClient {
         turnId: extractTurnIdFromTurnStartResult(result),
       };
     }
+  }
+
+  /**
+   * Mirrors Codex TUI submission: steer the running turn, retry once on a
+   * stale turn id, and return null so the caller starts a turn when none is
+   * running. Non-steerable (review/compact) turns throw so the web app queues.
+   */
+  private async steerActiveTurn(
+    threadId: string,
+    input: unknown,
+  ): Promise<SendCodexMessageResult | null> {
+    this.clearThreadStateCache(threadId);
+    let expectedTurnId = (await this.getThreadState(threadId)).activeTurnId;
+    let retriedAfterMismatch = false;
+    while (expectedTurnId) {
+      try {
+        const result = await this.request("turn/steer", {
+          threadId,
+          input,
+          expectedTurnId,
+        });
+        this.clearThreadStateCache(threadId);
+        const turnId = asString(
+          (result as { turnId?: unknown } | null)?.turnId,
+        )?.trim();
+        return { turnId: turnId || expectedTurnId, steered: true };
+      } catch (error) {
+        if (!(error instanceof CodexAppServerRpcError)) {
+          throw error;
+        }
+        if (
+          error.message === "no active turn to steer" ||
+          shouldRetryAfterResume(error)
+        ) {
+          return null;
+        }
+        const actualTurnId = parseSteerTurnMismatch(error.message);
+        if (
+          actualTurnId &&
+          !retriedAfterMismatch &&
+          actualTurnId !== expectedTurnId
+        ) {
+          expectedTurnId = actualTurnId;
+          retriedAfterMismatch = true;
+          continue;
+        }
+        throw error;
+      }
+    }
+    return null;
   }
 
   public async interruptThread(threadId: string): Promise<void> {
@@ -6145,6 +6205,14 @@ function parseTurnError(value: unknown): CodexTurnError | null {
     message,
     additionalDetails,
   };
+}
+
+/** Parses app-server's "expected active turn id `a` but found `b`" error. */
+function parseSteerTurnMismatch(message: string): string | null {
+  const match = /^expected active turn id `[^`]*` but found `([^`]+)`$/.exec(
+    message,
+  );
+  return match?.[1] ?? null;
 }
 
 function shouldRetryAfterResume(error: unknown): boolean {

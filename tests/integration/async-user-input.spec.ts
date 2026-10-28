@@ -50,7 +50,10 @@ for (const theme of ["dark", "light"] as const) {
         });
         return;
       }
-      const text = route.request().postDataJSON().input[0].text;
+      const body = route.request().postDataJSON();
+      // Answers steer the running turn instead of waiting in the queue.
+      expect(body.steerActiveTurn).toBe(true);
+      const text = body.input[0].text;
       replies.push(text);
       await app.appendSessionMessage("alpha", "user", text);
       await route.fulfill({ json: { turnId: "reply-turn" } });
@@ -93,7 +96,13 @@ for (const theme of ["dark", "light"] as const) {
     await page.getByRole("button", { name: "Submit answers" }).click();
     await expect(answer).toBeDisabled();
     expect(replies).toEqual([
-      "Question: Which GPU and checkpoint will you use?\nAnswer: H100 + Qwen3.5-9B BF16",
+      `<send_user_message_question_reply>\n${JSON.stringify([
+        {
+          answer: "H100 + Qwen3.5-9B BF16",
+          question: "Which GPU and checkpoint will you use?",
+          questionItemId: '["request_user_input_async","async-call",0]',
+        },
+      ])}\n</send_user_message_question_reply>`,
     ]);
     await page.reload();
     await expect(answer).toBeDisabled();

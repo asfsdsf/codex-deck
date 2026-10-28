@@ -193,6 +193,11 @@ export interface SendCodexMessageRequest {
   serviceTier?: CodexServiceTier | null;
   effort?: CodexReasoningEffort | null;
   collaborationMode?: CodexCollaborationModeInput | null;
+  /**
+   * Deliver into the thread's running turn (`turn/steer`) when one is active,
+   * starting a new turn otherwise. Used for async question answers.
+   */
+  steerActiveTurn?: boolean;
 }
 
 export type SendCodexMessageInputItem =
@@ -208,6 +213,8 @@ export type SendCodexMessageInputItem =
 export interface SendCodexMessageResponse {
   ok: boolean;
   turnId: string | null;
+  /** True when the input joined the running turn instead of starting one. */
+  steered?: boolean;
 }
 
 export type CodexTurnStatus =

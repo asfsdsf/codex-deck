@@ -5076,6 +5076,7 @@ export function createServer(options: ServerOptions) {
         ...(serviceTier !== undefined ? { serviceTier } : {}),
         ...(effort !== undefined ? { effort } : {}),
         ...(collaborationMode !== undefined ? { collaborationMode } : {}),
+        ...(body.steerActiveTurn === true ? { steerActiveTurn: true } : {}),
       });
 
       for (const listener of conversationWakeListeners) {
@@ -5085,6 +5086,7 @@ export function createServer(options: ServerOptions) {
       const response: SendCodexMessageResponse = {
         ok: true,
         turnId: result.turnId,
+        ...(result.steered ? { steered: true } : {}),
       };
       return c.json(response);
     } catch (error) {

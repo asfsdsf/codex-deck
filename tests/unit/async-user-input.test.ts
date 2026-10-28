@@ -22,8 +22,12 @@ import {
   isUserInputQuestionAnswered,
   normalizeUserInputQuestions,
 } from "../../web/user-input";
-import { USER_INPUT_OTHER_OPTION_LABEL } from "../../web/utils";
-import { __TEST_ONLY__ } from "../../api/codex-app-server";
+import { USER_INPUT_OTHER_OPTION_LABEL, sanitizeText } from "../../web/utils";
+import { parseAsyncQuestionReply } from "../../web/async-question-reply";
+import {
+  CodexAppServerRpcError,
+  __TEST_ONLY__,
+} from "../../api/codex-app-server";
 
 (globalThis as { React?: typeof React }).React = React;
 
@@ -228,7 +232,11 @@ test("acknowledged async tool calls accept message replies without a pending RPC
     request,
     buildUserInputResponsePayload(request, { "question-0": draft }),
   );
-  assert.equal(text, "Question: Any requirements?\nAnswer: Include examples");
+  assert.equal(
+    text,
+    '<send_user_message_question_reply>\n[{"answer":"Include examples","question":"Any requirements?","questionItemId":"[\\"request_user_input_async\\",\\"async-call\\",0]"}]\n</send_user_message_question_reply>',
+  );
+  assert.equal(sanitizeText(text), "> Any requirements?\n\nInclude examples");
   assert.deepEqual(
     getAsyncUserInputState(messages, "thread-1", [
       { text },
@@ -311,6 +319,207 @@ test("message replies resolve only their own questions and preserve choice and c
     ),
     ["second"],
   );
+});
+
+function asyncQuestionMessages(): ConversationMessage[] {
+  return [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "call-1",
+            name: "request_user_input_async",
+            input: {
+              questions: [
+                { title: "Which environment?", options: ["Staging", "Prod"] },
+                { title: "Anything else?" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ];
+}
+
+test("replies from the Codex TUI or desktop resolve questions by their stable id", () => {
+  const messages = asyncQuestionMessages();
+  // The TUI answers one question per message, with the Codex envelope.
+  messages.push({
+    type: "user",
+    message: {
+      role: "user",
+      content:
+        '<send_user_message_question_reply>\n[{"answer":"Staging","question":"Which environment?","questionItemId":"[\\"request_user_input_async\\",\\"call-1\\",0]"}]\n</send_user_message_question_reply>',
+    },
+  });
+  assert.deepEqual(
+    getAsyncUserInputState(messages, "thread-1").resolvedAnswersByItemId.get(
+      "call-1",
+    ),
+    { "question-0": { optionLabel: "Staging", otherText: "" } },
+  );
+  // Older desktop replies identify the whole tool call.
+  const older = asyncQuestionMessages();
+  older.push({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: '<send_user_message_question_reply>{"questionItemId":"call-1","question":"Which environment?","answer":"Prod"}</send_user_message_question_reply>',
+        },
+      ],
+    },
+  });
+  assert.equal(
+    getAsyncUserInputState(older, "thread-1").resolvedAnswersByItemId.has(
+      "call-1",
+    ),
+    true,
+  );
+});
+
+test("answers written by earlier codex-deck versions still resolve their questions", () => {
+  const messages = asyncQuestionMessages();
+  messages.push({
+    type: "user",
+    message: {
+      role: "user",
+      content:
+        "Question: Which environment?\nAnswer: Prod\n\nQuestion: Anything else?\nAnswer: No",
+    },
+  });
+  assert.deepEqual(
+    getAsyncUserInputState(messages, "thread-1").resolvedAnswersByItemId.get(
+      "call-1",
+    ),
+    {
+      "question-0": { optionLabel: "Prod", otherText: "" },
+      "question-1": {
+        optionLabel: USER_INPUT_OTHER_OPTION_LABEL,
+        otherText: "No",
+      },
+    },
+  );
+});
+
+test("reply envelopes are only recognized when complete, as in the Codex TUI", () => {
+  const reply = '{"questionItemId":"one","question":"First?","answer":"Yes"}';
+  assert.deepEqual(
+    parseAsyncQuestionReply(
+      `# Context from my IDE setup:\nfoo\n## My request for Codex:\n<send_user_message_question_reply>[${reply}]</send_user_message_question_reply>`,
+    ),
+    [{ questionItemId: "one", question: "First?", answer: "Yes" }],
+  );
+  for (const text of [
+    "<send_user_message_question_reply>[]</send_user_message_question_reply>",
+    `<send_user_message_question_reply>[${reply},null]</send_user_message_question_reply>`,
+    `Quoted: <send_user_message_question_reply>${reply}</send_user_message_question_reply>`,
+    `<send_user_message_question_reply>${reply}</send_user_message_question_reply> trailing`,
+  ]) {
+    assert.equal(parseAsyncQuestionReply(text), null, text);
+    assert.equal(sanitizeText(text), text.trim());
+  }
+});
+
+function steerHarness(activeTurnId: string | null) {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const harness = client as unknown as {
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    getThreadState: () => Promise<{ activeTurnId: string | null }>;
+    steerActiveTurn: (
+      threadId: string,
+      input: unknown,
+    ) => Promise<{ turnId: string | null; steered?: boolean } | null>;
+  };
+  harness.getThreadState = async () => ({ activeTurnId });
+  return { client, calls, harness };
+}
+
+test("async answers steer the running turn and fall back like the Codex TUI", async () => {
+  const input = [{ type: "text", text: "answer" }];
+  {
+    const { client, calls, harness } = steerHarness("turn-1");
+    harness.request = async (method, params) => {
+      calls.push({ method, params });
+      return { turnId: "turn-1" };
+    };
+    assert.deepEqual(await harness.steerActiveTurn("thread-1", input), {
+      turnId: "turn-1",
+      steered: true,
+    });
+    assert.deepEqual(calls, [
+      {
+        method: "turn/steer",
+        params: { threadId: "thread-1", input, expectedTurnId: "turn-1" },
+      },
+    ]);
+    await client.close();
+  }
+  {
+    // No running turn: the caller starts one with turn/start.
+    const { client, calls, harness } = steerHarness(null);
+    harness.request = async (method, params) => {
+      calls.push({ method, params });
+      return {};
+    };
+    assert.equal(await harness.steerActiveTurn("thread-1", input), null);
+    assert.deepEqual(calls, []);
+    await client.close();
+  }
+  {
+    // The turn ended between reading state and steering.
+    const { client, harness } = steerHarness("turn-1");
+    harness.request = async () => {
+      throw new CodexAppServerRpcError(-32600, "no active turn to steer");
+    };
+    assert.equal(await harness.steerActiveTurn("thread-1", input), null);
+    await client.close();
+  }
+  {
+    // A stale turn id is retried once with the server-reported turn.
+    const { client, calls, harness } = steerHarness("turn-1");
+    harness.request = async (method, params) => {
+      calls.push({ method, params });
+      if (params.expectedTurnId === "turn-1") {
+        throw new CodexAppServerRpcError(
+          -32600,
+          "expected active turn id `turn-1` but found `turn-2`",
+        );
+      }
+      return { turnId: "turn-2" };
+    };
+    assert.deepEqual(await harness.steerActiveTurn("thread-1", input), {
+      turnId: "turn-2",
+      steered: true,
+    });
+    assert.deepEqual(
+      calls.map((call) => call.params.expectedTurnId),
+      ["turn-1", "turn-2"],
+    );
+    await client.close();
+  }
+  {
+    // Review/compact turns cannot be steered; the web app queues instead.
+    const { client, harness } = steerHarness("turn-1");
+    harness.request = async () => {
+      throw new CodexAppServerRpcError(-32600, "cannot steer a review turn");
+    };
+    await assert.rejects(
+      harness.steerActiveTurn("thread-1", input),
+      /cannot steer a review turn/,
+    );
+    await client.close();
+  }
 });
 
 function rpcHarness() {

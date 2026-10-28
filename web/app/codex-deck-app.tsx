@@ -9792,6 +9792,11 @@ export default function CodexDeckApp() {
         pendingIdOverride?: string;
         /** Skip the queued-while-generating check (used by force-send). */
         bypassQueue?: boolean;
+        /**
+         * Deliver into the running turn (turn/steer) instead of starting a
+         * new one. Used for async question answers, as Codex CLI does.
+         */
+        steerActiveTurn?: boolean;
       },
     ): Promise<boolean> => {
       const sessionId = options?.sessionIdOverride ?? activeComposerSessionId;
@@ -9925,15 +9930,18 @@ export default function CodexDeckApp() {
             : {}),
           collaborationMode,
           ...serviceTierInput(effectiveModelIdForRequest),
+          ...(options?.steerActiveTurn ? { steerActiveTurn: true } : {}),
         });
 
         markSessionUserMessagedAt(sessionId, Date.now());
         setSessionMode(sessionId, modeToUse);
         pendingSendOptionsByIdRef.current.delete(pendingId);
+        // A steered message joins a turn that already has a confirmed user
+        // message, so keep it unattached to stay visible until it is saved.
         markPendingUserMessageAwaitingConfirmation(
           sessionId,
           pendingId,
-          response.turnId,
+          response.steered ? null : response.turnId,
         );
         trackWebManagedSessionTurn(sessionId, response.turnId);
         setPendingTurn({
@@ -9942,9 +9950,25 @@ export default function CodexDeckApp() {
         });
         return true;
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          options?.steerActiveTurn &&
+          /^cannot steer a (review|compact) turn$/.test(message)
+        ) {
+          // Like Codex CLI, a rejected steer waits in the queue for the turn
+          // to finish instead of being dropped.
+          setPendingUserMessagesBySession((current) =>
+            updatePendingUserMessageStatus(
+              current,
+              sessionId,
+              pendingId,
+              "queued",
+            ),
+          );
+          return true;
+        }
         pendingSendOptionsByIdRef.current.delete(pendingId);
         removePendingUserMessageById(sessionId, pendingId);
-        const message = error instanceof Error ? error.message : String(error);
         if (isSessionUnavailableMessage(message)) {
           notifySessionUnavailable();
           return false;
@@ -10170,9 +10194,18 @@ export default function CodexDeckApp() {
     [selectedSession, sendMessageText],
   );
 
+  // Mirror Codex CLI: an async answer is delivered right away, steering the
+  // running turn when there is one, rather than waiting in the message queue.
   const handleAnswerAsyncQuestion = useCallback(
     (sessionId: string, text: string) =>
-      sendMessageText({ text, images: [] }, { sessionIdOverride: sessionId }),
+      sendMessageText(
+        { text, images: [] },
+        {
+          sessionIdOverride: sessionId,
+          bypassQueue: true,
+          steerActiveTurn: true,
+        },
+      ),
     [sendMessageText],
   );
 

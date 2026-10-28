@@ -10,6 +10,13 @@ import {
   parseResolvedUserInputAnswers,
   type UserInputAnswerDraft,
 } from "./utils";
+import {
+  ASYNC_QUESTION_TOOL_NAME,
+  buildAsyncQuestionReplyText,
+  getAsyncQuestionItemId,
+  parseAsyncQuestionItemId,
+  parseAsyncQuestionReply,
+} from "./async-question-reply";
 
 export function isUserInputToolName(name: string | undefined): boolean {
   return [
@@ -113,26 +120,58 @@ export function isMessageUserInputRequest(
   );
 }
 
-/** Native async questions are answered by a later user message, without an RPC response. */
+/** Async questions have no ids of their own; ours encode the tool's question index. */
+function getAsyncQuestionIndex(
+  question: Pick<CodexUserInputQuestion, "id">,
+  position: number,
+): number {
+  const match = /^question-(\d+)$/.exec(question.id);
+  return match ? Number(match[1]) : position;
+}
+
+function toAsyncAnswerDraft(
+  question: Pick<CodexUserInputQuestion, "options">,
+  answer: string,
+): UserInputAnswerDraft {
+  return question.options.some((option) => option.label === answer)
+    ? { optionLabel: answer, otherText: "" }
+    : { optionLabel: USER_INPUT_OTHER_OPTION_LABEL, otherText: answer };
+}
+
+/**
+ * Native async questions are answered by a later user message, without an RPC
+ * response. Uses Codex's `<send_user_message_question_reply>` envelope, like
+ * the Codex TUI and desktop app.
+ */
 export function buildAsyncUserInputMessage(
   request: CodexUserInputRequest,
   response: CodexUserInputResponsePayload,
 ): string {
-  return request.questions
-    .map((question) => {
-      const answers = response.answers[question.id]?.answers ?? [];
-      const note = answers.find((answer) =>
-        answer.startsWith(USER_INPUT_NOTE_PREFIX),
-      );
-      const answer = note
-        ? note.slice(USER_INPUT_NOTE_PREFIX.length)
-        : answers.join("\n");
-      return `Question: ${question.question}\nAnswer: ${answer}`;
-    })
-    .join("\n\n");
+  const replies = request.questions.flatMap((question, position) => {
+    const answers = response.answers[question.id]?.answers ?? [];
+    const note = answers.find((answer) =>
+      answer.startsWith(USER_INPUT_NOTE_PREFIX),
+    );
+    const answer = (
+      note ? note.slice(USER_INPUT_NOTE_PREFIX.length) : answers.join("\n")
+    ).trim();
+    if (!answer) return [];
+    return [
+      {
+        questionItemId: getAsyncQuestionItemId(
+          request.itemId,
+          getAsyncQuestionIndex(question, position),
+        ),
+        question: question.question,
+        answer,
+      },
+    ];
+  });
+  return replies.length ? buildAsyncQuestionReplyText(replies) : "";
 }
 
-function parseAsyncUserInputMessage(
+/** Reads the plain-text format earlier codex-deck versions sent. */
+function parseLegacyAsyncUserInputMessage(
   request: CodexUserInputRequest,
   text: string,
 ): Record<string, UserInputAnswerDraft> | null {
@@ -149,11 +188,7 @@ function parseAsyncUserInputMessage(
     if (end < 0) return null;
     const answer = remaining.slice(0, end).trim();
     if (!answer) return null;
-    drafts[question.id] = question.options.some(
-      (option) => option.label === answer,
-    )
-      ? { optionLabel: answer, otherText: "" }
-      : { optionLabel: USER_INPUT_OTHER_OPTION_LABEL, otherText: answer };
+    drafts[question.id] = toAsyncAnswerDraft(question, answer);
     remaining = remaining.slice(end).trimStart();
   }
   return drafts;
@@ -173,10 +208,32 @@ export function getAsyncUserInputState(
     Record<string, UserInputAnswerDraft>
   >();
   const resolveReply = (text: string) => {
+    const replies = parseAsyncQuestionReply(text);
+    if (replies) {
+      // Replies carry stable question ids, so answers from any client
+      // (web, TUI, desktop) resolve exactly the question they answer.
+      for (const reply of replies) {
+        const target = parseAsyncQuestionItemId(reply.questionItemId);
+        const request = requests.get(target?.itemId ?? reply.questionItemId);
+        if (!request) continue;
+        const drafts = { ...resolvedAnswersByItemId.get(request.itemId) };
+        const question = target
+          ? request.questions.find(
+              (candidate, position) =>
+                getAsyncQuestionIndex(candidate, position) === target.index,
+            )
+          : undefined;
+        if (question) {
+          drafts[question.id] = toAsyncAnswerDraft(question, reply.answer);
+        }
+        resolvedAnswersByItemId.set(request.itemId, drafts);
+      }
+      return;
+    }
     // Match the latest unanswered occurrence when an agent repeats a question.
     for (const request of [...requests.values()].reverse()) {
       if (resolvedAnswersByItemId.has(request.itemId)) continue;
-      const answers = parseAsyncUserInputMessage(request, text);
+      const answers = parseLegacyAsyncUserInputMessage(request, text);
       if (!answers) continue;
       resolvedAnswersByItemId.set(request.itemId, answers);
       break;
@@ -200,7 +257,7 @@ export function getAsyncUserInputState(
     for (const block of content) {
       if (
         block.type === "tool_use" &&
-        block.name?.toLowerCase() === "request_user_input_async" &&
+        block.name?.toLowerCase() === ASYNC_QUESTION_TOOL_NAME &&
         block.id
       ) {
         const questions = normalizeUserInputQuestions(

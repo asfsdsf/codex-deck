@@ -1,4 +1,5 @@
 import type { CodexThreadStateResponse } from "@codex-deck/api";
+import { getAsyncQuestionReplyDisplayText } from "./async-question-reply";
 
 export interface WaitStatePendingTurn {
   sessionId: string;
@@ -322,7 +323,8 @@ const SANITIZE_PATTERNS = [
 ];
 
 export function sanitizeText(text: string): string {
-  let result = text;
+  // Show async question answers the way the Codex TUI does.
+  let result = getAsyncQuestionReplyDisplayText(text) ?? text;
   for (const pattern of SANITIZE_PATTERNS) {
     result = result.replace(pattern, "");
   }
