@@ -2115,6 +2115,30 @@ export function reloadCodexMcpServers(): Promise<{ ok: boolean }> {
   return requestJson("/api/codex/mcp/reload", { method: "POST" });
 }
 
+export function readCodexMcpAppResource(input: {
+  threadId: string;
+  callId: string;
+}): Promise<import("@codex-deck/api").CodexMcpAppResourceResponse> {
+  return requestJson("/api/codex/mcp-apps/resource", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function callCodexMcpAppTool(input: {
+  threadId: string;
+  callId: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+}): Promise<import("@codex-deck/api").CodexMcpAppToolCallResponse> {
+  return requestJson("/api/codex/mcp-apps/tool-call", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 export function getCodexIdeContextStatus(input: {
   threadId?: string | null;
   cwd?: string | null;

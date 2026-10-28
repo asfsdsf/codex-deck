@@ -194,6 +194,7 @@ import {
   applyIdeContextForSend,
   registerIdeContextRoutes,
 } from "./ide-context-routes";
+import { registerMcpAppRoutes } from "./mcp-app-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
 import { CodexHomeRuntimeManager } from "../codex-home-runtime-manager";
 import {
@@ -4994,6 +4995,9 @@ export function createServer(options: ServerOptions) {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
   registerIdeContextRoutes(app);
+  registerMcpAppRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
   registerReviewRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
     wake: (id) => {

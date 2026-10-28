@@ -1,3 +1,4 @@
+import { parseMcpAppToolCall } from "./codex-mcp-apps";
 import { isVisibleConversationMessage } from "./conversation-pagination";
 import {
   isGeneratedImageRunning,
@@ -1583,6 +1584,20 @@ function parseCodexConversation(
     }
 
     if (record.type === "event_msg") {
+      const mcpApp = parseMcpAppToolCall(payload);
+      if (mcpApp) {
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId);
+        pushConversationMessage(
+          messages,
+          createPersistedCollaborationMessage(
+            { type: "mcp_app", id: mcpApp.callId, mcpApp },
+            `${offset}:mcp-app:${messages.length}`,
+            timestamp,
+            turnId ?? undefined,
+          ),
+        );
+        continue;
+      }
       if (normalizedPayloadType === "itemcompleted") {
         const collaborationBlock = parsePersistedCollaborationItem(
           payload.item,

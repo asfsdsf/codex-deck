@@ -1683,7 +1683,8 @@ export interface ContentBlock {
     | "reasoning"
     | "agent_reasoning"
     | "subagent_activity"
-    | "collab_agent_tool_call";
+    | "collab_agent_tool_call"
+    | "mcp_app";
   text?: string;
   image_url?: string;
   generatedImage?: {
@@ -1714,6 +1715,49 @@ export interface ContentBlock {
   model?: string | null;
   reasoningEffort?: CodexReasoningEffort | null;
   agentsStates?: Record<string, CodexCollabAgentState>;
+  /** MCP App widget declared by an MCP tool call (`mcpAppUi`). */
+  mcpApp?: CodexMcpAppBlock;
+}
+
+export interface CodexMcpAppBlock {
+  /** Originating MCP tool call id. */
+  callId: string;
+  server: string;
+  tool: string;
+  /** `ui://` resource holding the widget HTML. */
+  resourceUri: string;
+  /** Descriptor preference; null when only the legacy resource URI is known. */
+  displayMode: "inline" | "fullscreen" | null;
+  arguments: unknown;
+  /** CallToolResult passed to the widget (omitted when too large). */
+  result: {
+    content: unknown[];
+    structuredContent?: unknown;
+    isError?: boolean;
+    _meta?: unknown;
+  } | null;
+  error: string | null;
+  status: string;
+}
+
+export interface CodexMcpAppResourceResponse {
+  uri: string;
+  mimeType: string;
+  html: string;
+  csp: {
+    connectDomains: unknown[];
+    resourceDomains: unknown[];
+    frameDomains: unknown[];
+    baseUriDomains: unknown[];
+  };
+  prefersBorder: boolean | null;
+}
+
+export interface CodexMcpAppToolCallResponse {
+  content: unknown[];
+  structuredContent?: unknown;
+  isError?: boolean;
+  _meta?: unknown;
 }
 
 export interface TokenUsage {

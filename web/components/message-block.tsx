@@ -101,6 +101,7 @@ import { ReviewReportRenderer } from "./review-report";
 
 import { GeneratedImage } from "./generated-image";
 import { ApprovalRequestRenderer } from "./approval-request";
+import { McpAppWidget } from "./mcp-app-widget";
 
 interface MessageBlockProps {
   sessionId?: string;
@@ -2117,7 +2118,8 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
         block.type === "reasoning" ||
         block.type === "agent_reasoning" ||
         block.type === "subagent_activity" ||
-        block.type === "collab_agent_tool_call"
+        block.type === "collab_agent_tool_call" ||
+        block.type === "mcp_app"
       );
     });
   };
@@ -4530,6 +4532,12 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
       <div data-search-block-index={String(blockIndex)}>{contentNode}</div>
     );
   };
+
+  if (block.type === "mcp_app" && block.mcpApp) {
+    return wrapSearchableBlock(
+      <McpAppWidget threadId={props.sessionId} app={block.mcpApp} />,
+    );
+  }
 
   if (block.type === "text" && block.text) {
     const parsedRestartNotice = parseTerminalRestartNoticeMessage(block.text);

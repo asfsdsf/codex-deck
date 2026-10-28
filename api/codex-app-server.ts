@@ -1264,6 +1264,41 @@ class CodexAppServerClient {
       ),
     };
   }
+  /** `mcpServer/resource/read` scoped to the originating tool call. */
+  public async readMcpAppResource(input: {
+    threadId: string;
+    server: string;
+    uri: string;
+    originCallId: string;
+  }): Promise<unknown> {
+    return this.requestNativeThread(
+      "mcpServer/resource/read",
+      {
+        threadId: input.threadId,
+        server: input.server,
+        uri: input.uri,
+        originCallId: input.originCallId,
+      },
+      input.threadId,
+    );
+  }
+  public async callMcpServerTool(input: {
+    threadId: string;
+    server: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+  }): Promise<unknown> {
+    return this.requestNativeThread(
+      "mcpServer/tool/call",
+      {
+        threadId: input.threadId,
+        server: input.server,
+        tool: input.tool,
+        arguments: input.arguments,
+      },
+      input.threadId,
+    );
+  }
   public async loginMcpServer(
     name: string,
     threadId?: string | null,
@@ -6671,6 +6706,18 @@ export interface CodexAppServerClientFacade {
     threadId: string,
     queuedSubmissionId: string | null,
   ) => Promise<{ turnId: string | null }>;
+  readMcpAppResource?: (input: {
+    threadId: string;
+    server: string;
+    uri: string;
+    originCallId: string;
+  }) => Promise<unknown>;
+  callMcpServerTool?: (input: {
+    threadId: string;
+    server: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+  }) => Promise<unknown>;
   loginMcpServer?: (
     name: string,
     threadId?: string | null,
@@ -6839,6 +6886,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.mutateThreadQueue(id, (rpc) =>
         threadQueue.startThreadQueueMessage(rpc, id, itemId),
       ),
+    readMcpAppResource: (input) => client!.readMcpAppResource(input),
+    callMcpServerTool: (input) => client!.callMcpServerTool(input),
     loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
     reloadMcpServers: () => client!.reloadMcpServers(),
     getExtensions: () => client!.getExtensions(),
