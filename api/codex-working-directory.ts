@@ -47,6 +47,7 @@ export interface WorkingDirectoryDeps {
     options?: { cwd?: string },
   ) => Promise<CodexThreadSummary>;
   archiveThread?: (threadId: string) => Promise<void>;
+  hasBackgroundTerminals?: (threadId: string) => Promise<boolean>;
 }
 
 export const WORKING_DIRECTORY_BUSY_MESSAGE =
@@ -85,6 +86,11 @@ export async function changeThreadWorkingDirectory(
     );
   }
   await assertWorkingDirectory(cwd);
+  if (await deps.hasBackgroundTerminals?.(threadId).catch(() => false))
+    throw new CodexWorkspaceError(
+      "Active background terminals block /cd.",
+      409,
+    );
   let thread: CodexThreadSummary;
   try {
     thread = await deps.forkThread(threadId, { cwd });

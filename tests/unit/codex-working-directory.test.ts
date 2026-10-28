@@ -95,6 +95,14 @@ test("/cd forks the conversation into an existing directory and rejects bad targ
   status = "idle";
   await assert.rejects(
     changeThreadWorkingDirectory(
+      { ...deps, hasBackgroundTerminals: async () => true },
+      "source",
+      "child",
+    ),
+    /background terminals block/,
+  );
+  await assert.rejects(
+    changeThreadWorkingDirectory(
       { ...deps, forkThread: async () => summary("wrong", root) },
       "source",
       "child",

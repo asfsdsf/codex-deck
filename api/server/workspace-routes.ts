@@ -16,6 +16,7 @@ import { responseStatusForError, toErrorMessage } from "./utils";
 type WorkspaceClient = Pick<
   CodexAppServerClientFacade,
   | "getThreadSummary"
+  | "listBackgroundTerminals"
   | "forkThread"
   | "archiveThread"
   | "readPermissions"
@@ -73,6 +74,10 @@ export function registerWorkspaceRoutes(
           getThreadSummary: client.getThreadSummary,
           forkThread: client.forkThread,
           archiveThread: client.archiveThread,
+          hasBackgroundTerminals: client.listBackgroundTerminals
+            ? async (id) =>
+                (await client.listBackgroundTerminals!(id)).length > 0
+            : undefined,
         },
         threadId,
         body.path,
