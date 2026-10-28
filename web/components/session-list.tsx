@@ -26,6 +26,8 @@ interface SessionListItem {
   status?: SessionStatus;
   /** Shared Codex read receipt; absent when the app-server has none. */
   readReceipt?: "read" | "unread" | null;
+  /** Named Codex project/section ("Project · Section"), if assigned. */
+  organizationLabel?: string | null;
 }
 
 function SessionStatusIcon({
@@ -437,6 +439,14 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                           <span className="truncate">
                             {session.projectName}
                           </span>
+                          {session.organizationLabel ? (
+                            <span
+                              className="max-w-[50%] shrink-0 truncate rounded-md bg-zinc-800 px-1.5 py-px text-[10px] font-medium text-zinc-300"
+                              title={`Codex project: ${session.organizationLabel}`}
+                            >
+                              {session.organizationLabel}
+                            </span>
+                          ) : null}
                         </span>
                         <span
                           className="shrink-0 text-[11px] text-zinc-500"

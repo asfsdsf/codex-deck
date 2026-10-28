@@ -1,19 +1,25 @@
 import CodexEnvironments from "./codex-environments";
+import CodexProjects from "./codex-projects";
 import CodexRemoteControl from "./codex-remote-control";
 
 // Native dialogs for upstream organization and remote APIs. The main app only
 // routes slash commands here, keeping its own dialog switch small.
 
-export type OrganizationDialogKind = "remote-control" | "environments";
+export type OrganizationDialogKind =
+  | "remote-control"
+  | "environments"
+  | "projects";
 
 const COMMANDS: Record<string, OrganizationDialogKind> = {
   "/remote-control": "remote-control",
   "/environments": "environments",
+  "/projects": "projects",
 };
 
 const TITLES: Record<OrganizationDialogKind, string> = {
   "remote-control": "Codex remote control",
   environments: "Execution environments",
+  projects: "Projects and sections",
 };
 
 export function getOrganizationDialogForCommand(
@@ -44,5 +50,7 @@ export default function OrganizationDialogBody({
       return <CodexRemoteControl />;
     case "environments":
       return <CodexEnvironments threadId={threadId} />;
+    case "projects":
+      return <CodexProjects threadId={threadId} />;
   }
 }

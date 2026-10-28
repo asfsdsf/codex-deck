@@ -224,6 +224,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Register, inspect, and select remote execution environments",
   },
   {
+    name: "/projects",
+    description: "Manage named projects and sections for conversations",
+  },
+  {
     name: "/model",
     description: "Choose what model and reasoning effort to use",
   },

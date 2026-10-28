@@ -401,6 +401,8 @@ import {
   type BrowserTitleMode,
 } from "../browser-title";
 import { useThreadReadStates } from "../hooks/use-thread-read-states";
+import { useCodexProjects } from "../hooks/use-codex-projects";
+import { getThreadOrganizationLabel } from "../codex-projects-view";
 import { getReadReceipt, resolveSessionReadStatus } from "../thread-read-state";
 import {
   getSessionStatusStorageKey,
@@ -4252,6 +4254,7 @@ export default function CodexDeckApp() {
     selectedCodexHomeId,
     sessions,
   );
+  const codexProjects = useCodexProjects(apiReady, selectedCodexHomeId);
   const [contextRefreshVersion, setContextRefreshVersion] = useState(0);
   const [isTouchResizeOverlayVisible, setIsTouchResizeOverlayVisible] =
     useState(false);
@@ -5646,9 +5649,14 @@ export default function CodexDeckApp() {
             getReadReceipt(threadReadStates.snapshot, session.id),
           ),
           readReceipt: getReadReceipt(threadReadStates.snapshot, session.id),
+          organizationLabel: getThreadOrganizationLabel(
+            codexProjects,
+            session.id,
+          ),
         };
       }),
     [
+      codexProjects,
       threadReadStates.snapshot,
       sessionTerminalRolesById,
       sessionWorkflowRolesById,

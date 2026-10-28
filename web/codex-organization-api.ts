@@ -1,4 +1,7 @@
 import type {
+  CodexProject,
+  CodexThreadSection,
+  ProjectsSnapshot,
   EnvironmentRegistration,
   EnvironmentsSnapshot,
   RemoteControlPairing,
@@ -103,4 +106,80 @@ export function setCodexThreadEnvironmentSelection(
     `${threadPath(threadId)}/environment-selection`,
     post(selection ?? { environmentId: null }),
   );
+}
+
+// Named projects and thread sections (upstream `project/*`, `threadSection/*`).
+export function getCodexProjects(): Promise<ProjectsSnapshot> {
+  return requestJson("/api/codex/projects");
+}
+
+export function createCodexProject(input: {
+  name: string;
+  roots: string[];
+  idempotencyKey: string;
+  threadIds?: string[];
+}): Promise<{ project: CodexProject }> {
+  return requestJson("/api/codex/projects", post(input));
+}
+
+const projectPath = (projectId: string) =>
+  `/api/codex/projects/${encodeURIComponent(projectId)}`;
+
+export function updateCodexProject(
+  projectId: string,
+  patch: { name?: string; roots?: string[] },
+): Promise<{ project: CodexProject }> {
+  return requestJson(`${projectPath(projectId)}/update`, post(patch));
+}
+
+export function moveCodexProject(
+  projectId: string,
+  beforeProjectId: string | null,
+): Promise<{ ok: boolean }> {
+  return requestJson(
+    `${projectPath(projectId)}/move`,
+    post({ beforeProjectId }),
+  );
+}
+
+export function deleteCodexProject(
+  projectId: string,
+): Promise<{ ok: boolean }> {
+  return requestJson(`${projectPath(projectId)}/delete`, post({}));
+}
+
+export function assignCodexThreadProject(
+  threadId: string,
+  projectId: string | null,
+): Promise<{ ok: boolean }> {
+  return requestJson(`${threadPath(threadId)}/project`, post({ projectId }));
+}
+
+export function moveCodexThreadSection(
+  threadId: string,
+  sectionId: string | null,
+): Promise<{ ok: boolean }> {
+  return requestJson(`${threadPath(threadId)}/section`, post({ sectionId }));
+}
+
+const sectionPath = (sectionId: string) =>
+  `/api/codex/thread-sections/${encodeURIComponent(sectionId)}`;
+
+export function createCodexThreadSection(
+  name: string,
+): Promise<{ section: CodexThreadSection }> {
+  return requestJson("/api/codex/thread-sections", post({ name }));
+}
+
+export function renameCodexThreadSection(
+  sectionId: string,
+  name: string,
+): Promise<{ section: CodexThreadSection }> {
+  return requestJson(`${sectionPath(sectionId)}/update`, post({ name }));
+}
+
+export function deleteCodexThreadSection(
+  sectionId: string,
+): Promise<{ ok: boolean }> {
+  return requestJson(`${sectionPath(sectionId)}/delete`, post({}));
 }

@@ -4,7 +4,10 @@ import type { CodexOrganizationService } from "../codex-organization";
 import { responseStatusForError, toErrorMessage } from "./utils";
 
 type OrganizationService = Partial<
-  Pick<CodexOrganizationService, "readState" | "remoteControl" | "environments">
+  Pick<
+    CodexOrganizationService,
+    "readState" | "remoteControl" | "environments" | "projects"
+  >
 >;
 
 class RouteInputError extends Error {}
@@ -41,6 +44,43 @@ function optionalText(value: unknown, label: string, max = 4096) {
   if (typeof value !== "string" || value.length > max)
     invalid(`Expected ${label} to be a string.`);
   return value;
+}
+
+function requireName(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim() || value.length > 200)
+    invalid(`A ${label} of at most 200 characters is required.`);
+  return value.trim();
+}
+
+const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
+
+function requireRoots(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.length > 32 ||
+    value.some(
+      (root) =>
+        typeof root !== "string" ||
+        root.length > 4096 ||
+        !ABSOLUTE_PATH.test(root.trim()),
+    )
+  )
+    invalid("Expected one to 32 absolute project root paths.");
+  return (value as string[]).map((root) => root.trim());
+}
+
+function optionalIdList(value: unknown, label: string): string[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length > 1000)
+    invalid(`Expected ${label} list.`);
+  return [...new Set(value.map((id) => requireId(id, label)))];
+}
+
+function nullableId(value: unknown, label: string): string | null {
+  return value === null || value === undefined || value === ""
+    ? null
+    : requireId(value, label);
 }
 
 export function requireId(value: unknown, label: string): string {
@@ -217,6 +257,100 @@ export function registerOrganizationRoutes(
           cwd: cwd.trim(),
         },
       ]);
+      return { ok: true };
+    }),
+  );
+  app.get("/api/codex/projects", (c) =>
+    run(c, "projects", (projects) => projects.snapshot()),
+  );
+  app.post("/api/codex/projects", (c) =>
+    run(c, "projects", async (projects) => {
+      const body = await readBody(c);
+      return {
+        project: await projects.createProject({
+          name: requireName(body.name, "project name"),
+          roots: requireRoots(body.roots),
+          idempotencyKey: requireId(body.idempotencyKey, "idempotency key"),
+          threadIds: optionalIdList(body.threadIds, "thread ID"),
+        }),
+      };
+    }),
+  );
+  app.post("/api/codex/projects/:id/update", (c) =>
+    run(c, "projects", async (projects) => {
+      const body = await readBody(c);
+      const name =
+        body.name == null ? null : requireName(body.name, "project name");
+      const roots = body.roots == null ? null : requireRoots(body.roots);
+      if (!name && !roots) invalid("Expected a new name or roots.");
+      return {
+        project: await projects.updateProject(
+          requireId(c.req.param("id"), "project ID"),
+          { name, roots },
+        ),
+      };
+    }),
+  );
+  app.post("/api/codex/projects/:id/move", (c) =>
+    run(c, "projects", async (projects) => {
+      const body = await readBody(c);
+      await projects.moveProject(
+        requireId(c.req.param("id"), "project ID"),
+        nullableId(body.beforeProjectId, "project ID"),
+      );
+      return { ok: true };
+    }),
+  );
+  app.post("/api/codex/projects/:id/delete", (c) =>
+    run(c, "projects", async (projects) => {
+      await projects.deleteProject(requireId(c.req.param("id"), "project ID"));
+      return { ok: true };
+    }),
+  );
+  app.post("/api/codex/threads/:id/project", (c) =>
+    run(c, "projects", async (projects) => {
+      const body = await readBody(c);
+      await projects.assignThread(
+        requireId(c.req.param("id"), "thread ID"),
+        nullableId(body.projectId, "project ID"),
+      );
+      return { ok: true };
+    }),
+  );
+  app.post("/api/codex/threads/:id/section", (c) =>
+    run(c, "projects", async (projects) => {
+      const body = await readBody(c);
+      await projects.moveThreadToSection(
+        requireId(c.req.param("id"), "thread ID"),
+        nullableId(body.sectionId, "section ID"),
+      );
+      return { ok: true };
+    }),
+  );
+  app.post("/api/codex/thread-sections", (c) =>
+    run(c, "projects", async (projects) => {
+      const body = await readBody(c);
+      return {
+        section: await projects.createSection(
+          requireName(body.name, "section name"),
+        ),
+      };
+    }),
+  );
+  app.post("/api/codex/thread-sections/:id/update", (c) =>
+    run(c, "projects", async (projects) => {
+      const body = await readBody(c);
+      return {
+        section: await projects.renameSection(
+          requireId(c.req.param("id"), "section ID"),
+          requireName(body.name, "section name"),
+        ),
+      };
+    }),
+  );
+  app.post("/api/codex/thread-sections/:id/delete", (c) =>
+    run(c, "projects", async (projects) => {
+      await projects.deleteSection(requireId(c.req.param("id"), "section ID"));
       return { ok: true };
     }),
   );
