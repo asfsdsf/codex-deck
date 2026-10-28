@@ -152,7 +152,7 @@ const CodexValuePicker = forwardRef<
         aria-haspopup="listbox"
         aria-controls={listboxId}
         onClick={openPicker}
-        className={`inline-flex h-8 min-w-[140px] items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-left text-xs text-zinc-300 transition-colors hover:bg-zinc-800/80 focus:outline-none focus:ring-1 focus:ring-cyan-500/70 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+        className={`inline-flex h-7 max-w-[16rem] items-center justify-between gap-1 rounded-full px-2.5 text-left text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
         title={value || defaultLabel}
       >
         <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
@@ -169,7 +169,7 @@ const CodexValuePicker = forwardRef<
           id={listboxId}
           role="listbox"
           aria-label={inputAriaLabel}
-          className="absolute bottom-full left-0 z-50 mb-2 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded border border-zinc-700 bg-zinc-900 shadow-2xl"
+          className="absolute bottom-full left-0 z-50 mb-2 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 shadow-2xl"
         >
           <div className="flex items-center gap-2 border-b border-zinc-800 p-2">
             <input
@@ -179,7 +179,7 @@ const CodexValuePicker = forwardRef<
               onKeyDown={handleInputKeyDown}
               aria-label={inputAriaLabel}
               placeholder={inputPlaceholder}
-              className="h-8 min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-500/70"
+              className="h-8 min-w-0 flex-1 rounded-lg border border-zinc-700/70 bg-zinc-950 px-2.5 text-xs text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
             />
             {onRefresh && (
               <button
@@ -189,7 +189,7 @@ const CodexValuePicker = forwardRef<
                 disabled={refreshing}
                 aria-label={refreshAriaLabel}
                 title={refreshAriaLabel}
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-950 text-zinc-300 transition-colors hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-950 text-zinc-300 transition-colors hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
               >
                 <RefreshCw
                   aria-hidden="true"
@@ -206,7 +206,7 @@ const CodexValuePicker = forwardRef<
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => selectValue("")}
               className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors ${
-                !value ? "bg-cyan-700/25" : "hover:bg-zinc-800/80"
+                !value ? "bg-zinc-800" : "hover:bg-zinc-800/60"
               }`}
             >
               <span className="min-w-0 flex-1 truncate text-zinc-200">
@@ -226,7 +226,7 @@ const CodexValuePicker = forwardRef<
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => selectValue(option.value)}
                   className={`flex w-full items-start gap-2 px-3 py-2 text-left transition-colors ${
-                    isSelected ? "bg-cyan-700/25" : "hover:bg-zinc-800/80"
+                    isSelected ? "bg-zinc-800" : "hover:bg-zinc-800/60"
                   }`}
                 >
                   <span className="min-w-0 flex-1">

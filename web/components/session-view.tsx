@@ -229,16 +229,16 @@ function scrollSearchMatchWithinNestedContainers(
 
 function getCollapsedLineToneClasses(tone: ViewportTextTone): string {
   if (tone === "user") {
-    return "text-indigo-200";
+    return "text-zinc-200";
   }
   if (tone === "assistant") {
-    return "text-cyan-200";
+    return "text-zinc-300";
   }
   if (tone === "tool") {
-    return "text-emerald-200";
+    return "text-zinc-400";
   }
   if (tone === "plan") {
-    return "text-sky-200";
+    return "text-zinc-300";
   }
   if (tone === "goal") {
     return "text-emerald-200";
@@ -3448,8 +3448,8 @@ const SessionView = memo(
                               <span
                                 className={`absolute left-1/2 top-0 h-full w-[2px] -translate-x-1/2 rounded-full transition-colors ${
                                   isCollapsed
-                                    ? "bg-sky-300/95"
-                                    : "bg-zinc-600/95 hover:bg-zinc-400/95"
+                                    ? "bg-zinc-600 hover:bg-zinc-400"
+                                    : "bg-zinc-800 hover:bg-zinc-500"
                                 }`}
                               />
                             </button>
@@ -3490,7 +3490,7 @@ const SessionView = memo(
                                           data-conversation-message={
                                             entry.visibleIndex + 1
                                           }
-                                          className={`flex min-w-0 items-center gap-2 text-[11px] leading-relaxed ${getCollapsedLineToneClasses(line.tone)}`}
+                                          className={`flex min-w-0 items-center gap-2 text-[12px] leading-relaxed ${getCollapsedLineToneClasses(line.tone)}`}
                                           title={line.text}
                                         >
                                           <CollapsedViewportSummary

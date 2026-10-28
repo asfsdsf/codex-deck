@@ -213,7 +213,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
 
   return (
     <div className="session-list-surface h-full overflow-hidden bg-zinc-950 flex flex-col">
-      <div className="px-3 py-2 border-b border-zinc-800/60 space-y-2">
+      <div className="mx-2 mb-1 space-y-2 rounded-lg px-2 py-1.5 transition-colors focus-within:bg-zinc-800/50 hover:bg-zinc-800/40">
         <div className="flex min-w-0 items-center gap-2 text-zinc-500">
           {searchControls ? (
             <div className="flex shrink-0 items-center gap-2">
@@ -240,7 +240,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
               value={search}
               onChange={(e) => handleSearchChange(e.target.value)}
               placeholder={searchPlaceholder}
-              className="min-w-0 flex-1 bg-transparent text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-zinc-200 placeholder-zinc-500 focus:outline-none"
             />
             {search && (
               <button
@@ -270,7 +270,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                 type="button"
                 onClick={() => void handleDeepSearch()}
                 disabled={deepSearchLoading}
-                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-cyan-700/60 bg-cyan-950/40 px-2 text-[11px] font-medium text-cyan-300 transition-colors hover:border-cyan-600 hover:bg-cyan-900/40 disabled:cursor-wait disabled:opacity-60"
+                className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-zinc-800 px-2 text-[11px] font-medium text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-wait disabled:opacity-60"
                 aria-label="Deep search all session content"
                 title="Search all session history files"
               >
@@ -308,7 +308,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
             {deepSearchError}
           </p>
         ) : onDeepSearch && deepSearchResult ? (
-          <p className="text-[10px] text-cyan-500/90" aria-live="polite">
+          <p className="text-[10px] text-zinc-500" aria-live="polite">
             {filteredSessions.length} deep search match
             {filteredSessions.length === 1 ? "" : "es"} via{" "}
             {deepSearchResult.command}
@@ -372,40 +372,40 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                     width: "100%",
                     transform: `translateY(${virtualItem.start}px)`,
                   }}
-                  className="overflow-hidden px-1.5 py-px"
+                  className="overflow-hidden px-2 py-px"
                 >
                   <div className="group relative">
                     <button
                       type="button"
                       onClick={() => onSelectSession(session.id)}
-                      className={`block w-full rounded-lg px-2.5 py-2.5 ${onRequestDeleteSession ? "pr-10" : "pr-2.5"} text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
+                      className={`block w-full rounded-lg px-2.5 py-2 ${onRequestDeleteSession ? "pr-10" : "pr-2.5"} text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
                         selectedSession === session.id
-                          ? "bg-cyan-500/12 ring-1 ring-inset ring-cyan-500/25"
-                          : "hover:bg-zinc-900/60"
+                          ? "bg-zinc-800"
+                          : "hover:bg-zinc-800/45"
                       }`}
                       aria-current={
                         selectedSession === session.id ? "page" : undefined
                       }
                     >
-                      <p className="text-[13px] font-medium text-zinc-200 leading-snug line-clamp-2 break-words">
+                      <p className="text-[13.5px] text-zinc-200 leading-snug line-clamp-2 break-words">
                         {session.sessionType ? (
                           <span
                             title={sessionTypeTitle}
                             aria-label={sessionTypeTitle}
-                            className="mr-1.5 inline-flex rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-[0.01em] text-cyan-200"
+                            className="mr-1.5 inline-flex rounded-md bg-zinc-700/60 px-1.5 py-px align-middle text-[10px] font-medium tracking-[0.01em] text-zinc-300"
                           >
                             {sessionTypeLabel}
                           </span>
                         ) : null}
                         {session.workflowRoleLabel ? (
-                          <span className="mr-1.5 inline-flex rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-[0.01em] text-cyan-200">
+                          <span className="mr-1.5 inline-flex rounded-md bg-zinc-700/60 px-1.5 py-px align-middle text-[10px] font-medium tracking-[0.01em] text-zinc-300">
                             {session.workflowRoleLabel}
                           </span>
                         ) : null}
                         <span>{session.display}</span>
                       </p>
                       <div className="mt-1 flex items-center justify-between gap-2">
-                        <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-zinc-500">
+                        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-500">
                           {session.status ? (
                             <SessionStatusIcon status={session.status} />
                           ) : null}
@@ -414,7 +414,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                           </span>
                         </span>
                         <span
-                          className="shrink-0 text-[10px] text-zinc-600"
+                          className="shrink-0 text-[11px] text-zinc-500"
                           title="Created - last user message"
                         >
                           {formatSessionTimeLabel(
@@ -431,7 +431,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                           event.stopPropagation();
                           onRequestDeleteSession(session.id);
                         }}
-                        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800/80 bg-zinc-950/40 text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                        className="absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                         aria-label={`${deleteButtonLabel} ${session.id}`}
                         title={deleteButtonLabel}
                       >
@@ -458,7 +458,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
         )}
       </div>
 
-      <div className="px-3 py-2 border-t border-zinc-800/60">
+      <div className="px-3 py-1.5">
         <div className="text-[10px] text-zinc-600 text-center">
           {sessions.length} {countLabel}
           {sessions.length !== 1 ? "s" : ""}

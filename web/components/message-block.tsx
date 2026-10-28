@@ -2757,14 +2757,14 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
       >
         <div className="group relative">
           <div
-            className={`px-4 py-3 rounded-2xl overflow-hidden ${
+            className={`overflow-hidden ${
               reviewReport
-                ? "border border-zinc-700/60 bg-zinc-900/40 text-zinc-100"
+                ? "rounded-2xl border border-zinc-700/60 bg-zinc-900/40 px-4 py-3 text-zinc-100"
                 : isUser
                   ? isPendingUserTone
-                    ? "border border-zinc-700/60 bg-zinc-800/50 text-zinc-200 rounded-br-md"
-                    : "border border-indigo-500/30 bg-indigo-500/15 text-zinc-100 rounded-br-md"
-                  : "border border-zinc-800/60 bg-zinc-900/40 text-zinc-100 rounded-bl-md"
+                    ? "message-user-bubble rounded-[18px] px-4 py-2.5 text-zinc-300 opacity-75"
+                    : "message-user-bubble rounded-[18px] px-4 py-2.5 text-zinc-100"
+                  : "px-1 py-1 text-zinc-100"
             }`}
           >
             {editing ? (
@@ -2894,7 +2894,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
           </div>
           {(showMessageCopyButton || canEditMessage) && (
             <div
-              className={`absolute right-2 top-2 flex items-center gap-1 transition-opacity ${
+              className={`mt-1 flex items-center justify-end gap-1 transition-opacity md:absolute md:right-2 md:top-2 md:mt-0 ${
                 editing
                   ? "opacity-100"
                   : "opacity-70 hover:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
@@ -2933,11 +2933,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                         setEditError(null);
                         setEditing(true);
                       }}
-                      className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border ${
-                        isUser
-                          ? "border-indigo-300/35 bg-indigo-900/45"
-                          : "border-cyan-300/35 bg-cyan-900/35"
-                      }`}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 hover:text-zinc-100"
                       title="Edit history message"
                       aria-label="Edit history message"
                     >
@@ -2952,26 +2948,14 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                           ? "Show original"
                           : "Translate message to Chinese"
                       }
-                      className={`rounded-lg border ${
-                        isUser
-                          ? isPendingUserTone
-                            ? "border-zinc-400/30 bg-zinc-900/55"
-                            : "border-indigo-300/35 bg-indigo-900/45"
-                          : "border-cyan-300/35 bg-cyan-900/35"
-                      }`}
+                      className="rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 hover:text-zinc-100"
                     />
                   )}
                   {showMessageCopyButton && messageCopyText && (
                     <CopyButton
                       text={messageCopyText}
                       title="Copy message"
-                      className={`rounded-lg border ${
-                        isUser
-                          ? isPendingUserTone
-                            ? "border-zinc-400/30 bg-zinc-900/55"
-                            : "border-indigo-300/35 bg-indigo-900/45"
-                          : "border-cyan-300/35 bg-cyan-900/35"
-                      }`}
+                      className="rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 hover:text-zinc-100"
                     />
                   )}
                 </>

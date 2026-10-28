@@ -80,6 +80,8 @@ import {
   Languages,
   Loader2,
   Send,
+  ArrowUp,
+  Square,
   Clock3,
   OctagonX,
   Activity,
@@ -390,7 +392,7 @@ function ThemeToggleButton(props: ThemeToggleButtonProps) {
     <button
       type="button"
       onClick={onToggleTheme}
-      className="group relative h-8 w-8 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 transition-colors hover:bg-zinc-800/80"
+      className="group relative h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
       title={`Switch to ${switchingTo} theme`}
       aria-label={`Switch to ${switchingTo} theme`}
     >
@@ -2219,6 +2221,17 @@ const MessageComposer = memo(function MessageComposer(
     stoppingTurn,
   });
 
+  const slashInvocationReady =
+    parseSlashCommandInvocation(draft, slashCommands) !== null;
+  const primaryButtonLabel = slashInvocationReady
+    ? "Run"
+    : primaryActionState.label;
+  // Send and Stop render as Codex-style round icon buttons; other actions
+  // (Run, Init, ...) keep a short text label.
+  const primaryButtonIconOnly =
+    !slashInvocationReady &&
+    (primaryActionState.kind === "stop" || primaryActionState.kind === "send");
+
   const normalizedImageFiles = useMemo(
     () => imageAttachments.map((attachment) => attachment.file),
     [imageAttachments],
@@ -2873,30 +2886,31 @@ const MessageComposer = memo(function MessageComposer(
     <>
       <div
         onPointerDown={onResizeMessageBoxStart}
-        className="group flex cursor-ns-resize select-none items-end justify-center touch-action-none pt-1 pb-0.5"
+        className="group flex cursor-ns-resize select-none items-end justify-center touch-action-none pt-1.5"
+        title="Drag to resize"
       >
-        <div className="w-8 h-0.5 rounded-full bg-zinc-600 group-hover:bg-zinc-400 transition-colors" />
+        <div className="composer-resize-bar h-1 w-9 rounded-full bg-zinc-700/60 transition-colors group-hover:bg-zinc-500" />
       </div>
       {draftTranslation.status === "error" && draftTranslation.error && (
-        <div className="mb-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs text-rose-200">
+        <div className="mx-3 mt-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs text-rose-200">
           Translation failed: {draftTranslation.error}
         </div>
       )}
-      <div className="flex items-end gap-1.5">
+      <div>
         <div
           ref={composerContainerRef}
-          className="relative flex-1"
+          className="relative"
           onDragEnter={handleComposerDragEnter}
           onDragOver={handleComposerDragOver}
           onDragLeave={handleComposerDragLeave}
           onDrop={handleComposerDrop}
         >
           {imageAttachments.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2 rounded border border-zinc-800 bg-zinc-900/40 p-2">
+            <div className="flex flex-wrap gap-2 px-3 pt-2">
               {imageAttachments.map((attachment, index) => (
                 <div
                   key={attachment.id}
-                  className="group relative overflow-hidden rounded-md border border-zinc-700/70 bg-zinc-950"
+                  className="group relative overflow-hidden rounded-lg border border-zinc-700/70 bg-zinc-950"
                 >
                   <img
                     src={attachment.previewUrl}
@@ -2917,7 +2931,7 @@ const MessageComposer = memo(function MessageComposer(
             </div>
           )}
           {isDragActive && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border border-cyan-500/70 bg-cyan-600/10 text-xs text-cyan-200">
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[18px] border border-dashed border-cyan-500/70 bg-cyan-600/10 text-xs text-cyan-200">
               <span className="inline-flex items-center gap-1.5">
                 <ImagePlus className="h-3.5 w-3.5" />
                 Drop images to attach
@@ -3210,161 +3224,177 @@ const MessageComposer = memo(function MessageComposer(
               }
             }}
             onPaste={handleComposerPaste}
-            placeholder="Message Codex..."
+            placeholder="Ask Codex anything..."
             rows={2}
             style={{ height: `${messageBoxHeight}px` }}
-            className="block w-full min-h-[36px] resize-none rounded-xl border border-zinc-800 bg-zinc-900/70 px-3.5 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 transition-colors focus:border-cyan-500/40 focus:outline-none focus:ring-2 focus:ring-cyan-500/15"
+            className="block w-full min-h-[36px] resize-none border-0 bg-transparent px-4 pt-1.5 pb-1 text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
           />
         </div>
-        <div className="relative flex">
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleMobileFileInputChange}
-            className="hidden"
-          />
-          <input
-            ref={galleryInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handleMobileFileInputChange}
-            className="hidden"
-          />
-          {isMobilePhone && showMobileAttachMenu && (
-            <div className="absolute bottom-12 right-0 z-30 min-w-[9rem] rounded-lg border border-zinc-700 bg-zinc-900/95 p-1.5 shadow-xl">
-              <button
-                type="button"
-                onClick={handleOpenCameraPicker}
-                disabled={isSendingLocked || composerBusy}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+        <div className="composer-actions absolute bottom-2 right-2 z-10 flex items-center gap-1">
+          <div className="relative flex">
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleMobileFileInputChange}
+              className="hidden"
+            />
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleMobileFileInputChange}
+              className="hidden"
+            />
+            {isMobilePhone && showMobileAttachMenu && (
+              <div className="absolute bottom-10 right-0 z-30 min-w-[9rem] rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-xl">
+                <button
+                  type="button"
+                  onClick={handleOpenCameraPicker}
+                  disabled={isSendingLocked || composerBusy}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  Camera
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenGalleryPicker}
+                  disabled={isSendingLocked || composerBusy}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <Images className="h-3.5 w-3.5" />
+                  Photos
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (isMobilePhone) {
+                  setShowMobileAttachMenu((value) => !value);
+                  return;
+                }
+                handleOpenGalleryPicker();
+              }}
+              disabled={isSendingLocked || composerBusy}
+              className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-40"
+              title="Attach image"
+              aria-label="Attach image"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                className="h-[18px] w-[18px]"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                <Camera className="h-3.5 w-3.5" />
-                Camera
-              </button>
-              <button
-                type="button"
-                onClick={handleOpenGalleryPicker}
-                disabled={isSendingLocked || composerBusy}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-              >
-                <Images className="h-3.5 w-3.5" />
-                Photos
-              </button>
-            </div>
-          )}
+                <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+                <circle cx="9" cy="10" r="1.6" />
+                <path d="M5.5 17.5l4.6-4.8a1 1 0 011.46.02l2.3 2.45a1 1 0 001.45.03l1.6-1.6a1 1 0 011.41 0l2.2 2.2" />
+              </svg>
+            </button>
+          </div>
           <button
             type="button"
+            onClick={handleTranslateDraft}
+            disabled={
+              isSendingLocked ||
+              composerBusy ||
+              draftTranslation.status === "loading" ||
+              (!hasDraftText && draftTranslation.status !== "active")
+            }
+            className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-40"
+            title={
+              draftTranslation.status === "active"
+                ? "Show original"
+                : draftTranslation.status === "error"
+                  ? (draftTranslation.error ?? "Translation failed")
+                  : "Translate to English"
+            }
+            aria-label={
+              draftTranslation.status === "active"
+                ? "Show original"
+                : "Translate to English"
+            }
+            aria-pressed={draftTranslation.status === "active"}
+          >
+            {draftTranslation.status === "loading" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Languages
+                className={`h-4 w-4 ${
+                  draftTranslation.status === "active"
+                    ? "text-cyan-300"
+                    : draftTranslation.status === "error"
+                      ? "text-rose-400"
+                      : ""
+                }`}
+              />
+            )}
+          </button>
+          <button
+            onMouseDown={(event) => {
+              if (event.button === 0) {
+                event.preventDefault();
+              }
+            }}
             onClick={() => {
-              if (isMobilePhone) {
-                setShowMobileAttachMenu((value) => !value);
+              const invocation = parseSlashCommandInvocation(
+                draft,
+                slashCommands,
+              );
+              if (invocation) {
+                void executeSlashCommand(invocation.command, invocation.args);
                 return;
               }
-              handleOpenGalleryPicker();
+              if (primaryActionState.kind === "stop") {
+                void onStopConversation();
+                return;
+              }
+              if (primaryActionState.kind === "idle") {
+                void handleIdlePrimaryAction("send-button");
+                return;
+              }
+              void handleSendMessage("send-button");
             }}
-            disabled={isSendingLocked || composerBusy}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/80 text-zinc-300 transition-colors hover:bg-zinc-800/80 hover:text-zinc-100 disabled:opacity-50"
-            title="Attach image"
-            aria-label="Attach image"
+            disabled={
+              composerBusy ||
+              (primaryActionState.disabled &&
+                !parseSlashCommandInvocation(draft, slashCommands))
+            }
+            title={primaryButtonLabel}
+            aria-label={primaryButtonLabel}
+            className={`ml-0.5 flex h-8 items-center justify-center rounded-full text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-35 cursor-pointer ${
+              primaryButtonIconOnly ? "w-8" : "px-3.5"
+            } ${
+              isGeneratingForSelectedSession && !shouldUseStopAction
+                ? "bg-zinc-700 text-zinc-100 hover:bg-zinc-600"
+                : "bg-zinc-100 text-zinc-950 hover:bg-zinc-300"
+            }`}
           >
-            <svg
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
-              <circle cx="9" cy="10" r="1.6" />
-              <path d="M5.5 17.5l4.6-4.8a1 1 0 011.46.02l2.3 2.45a1 1 0 001.45.03l1.6-1.6a1 1 0 011.41 0l2.2 2.2" />
-            </svg>
+            {primaryButtonIconOnly ? (
+              primaryActionState.kind === "stop" ? (
+                stoppingTurn ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Square className="h-3 w-3 fill-current" />
+                )
+              ) : sendingMessage ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2.25} />
+              )
+            ) : (
+              primaryButtonLabel
+            )}
           </button>
         </div>
-        <button
-          type="button"
-          onClick={handleTranslateDraft}
-          disabled={
-            isSendingLocked ||
-            composerBusy ||
-            draftTranslation.status === "loading" ||
-            (!hasDraftText && draftTranslation.status !== "active")
-          }
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/80 text-zinc-300 transition-colors hover:bg-zinc-800/80 hover:text-zinc-100 disabled:opacity-50"
-          title={
-            draftTranslation.status === "active"
-              ? "Show original"
-              : draftTranslation.status === "error"
-                ? (draftTranslation.error ?? "Translation failed")
-                : "Translate to English"
-          }
-          aria-label={
-            draftTranslation.status === "active"
-              ? "Show original"
-              : "Translate to English"
-          }
-          aria-pressed={draftTranslation.status === "active"}
-        >
-          {draftTranslation.status === "loading" ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Languages
-              className={`h-5 w-5 ${
-                draftTranslation.status === "active"
-                  ? "text-cyan-300"
-                  : draftTranslation.status === "error"
-                    ? "text-rose-400"
-                    : ""
-              }`}
-            />
-          )}
-        </button>
-        <button
-          onMouseDown={(event) => {
-            if (event.button === 0) {
-              event.preventDefault();
-            }
-          }}
-          onClick={() => {
-            const invocation = parseSlashCommandInvocation(
-              draft,
-              slashCommands,
-            );
-            if (invocation) {
-              void executeSlashCommand(invocation.command, invocation.args);
-              return;
-            }
-            if (primaryActionState.kind === "stop") {
-              void onStopConversation();
-              return;
-            }
-            if (primaryActionState.kind === "idle") {
-              void handleIdlePrimaryAction("send-button");
-              return;
-            }
-            void handleSendMessage("send-button");
-          }}
-          disabled={
-            composerBusy ||
-            (primaryActionState.disabled &&
-              !parseSlashCommandInvocation(draft, slashCommands))
-          }
-          className={`flex h-9 items-center justify-center rounded-lg px-4 text-sm font-medium text-zinc-50 transition-colors disabled:opacity-50 cursor-pointer ${
-            shouldUseStopAction
-              ? "bg-red-700/90 hover:bg-red-700"
-              : isGeneratingForSelectedSession
-                ? "bg-zinc-700/85 hover:bg-zinc-600"
-                : "bg-cyan-700/80 hover:bg-cyan-700"
-          }`}
-        >
-          {parseSlashCommandInvocation(draft, slashCommands)
-            ? "Run"
-            : primaryActionState.label}
-        </button>
       </div>
     </>
   );
@@ -7604,7 +7634,7 @@ export default function CodexDeckApp() {
     ? "border-blue-500/50 bg-blue-500/20 text-blue-200 hover:bg-blue-500/25"
     : isCustomModeEnabled
       ? "border-amber-500/50 bg-amber-500/20 text-amber-200 hover:bg-amber-500/25"
-      : "border-zinc-800 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80";
+      : "border-transparent text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100";
   const modeToggleTitle = !hasPlanMode
     ? "Plan mode is unavailable for this session"
     : isCustomModeEnabled
@@ -12950,83 +12980,55 @@ export default function CodexDeckApp() {
       | null;
     composerDisabledReason?: string | null;
   }) => (
-    <>
-      <div className="border-t border-zinc-800/60 bg-zinc-950 px-2.5 py-2">
-        <div ref={toolbarWidthRef} className="relative">
-          <div
-            ref={toolbarMeasureRef}
-            aria-hidden="true"
-            className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-2 whitespace-nowrap"
-          >
-            <button
-              type="button"
-              disabled
-              tabIndex={-1}
-              className={`h-8 px-2.5 text-xs rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${modeToggleClassName}`}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                {isNonDefaultModeEnabled ? (
-                  <CircleDot className="h-3.5 w-3.5" />
-                ) : (
-                  <Circle className="h-3.5 w-3.5" />
-                )}
-                Plan
-              </span>
-            </button>
-            <div className="h-8 min-w-[160px] rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs leading-8 text-zinc-300">
-              <span className="block truncate">
-                {selectedModelId
-                  ? (filteredModels.find(
-                      (model) => model.id === selectedModelId,
-                    )?.displayName ?? selectedModelId)
-                  : modelControlLabel}
-              </span>
-            </div>
-            <div className="h-8 min-w-[140px] rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs leading-8 text-zinc-300">
-              <span className="block truncate">
-                {selectedEffort || effortControlLabel}
-              </span>
-            </div>
-            <span className="text-xs text-zinc-500 whitespace-nowrap">
-              {contextWindowText}
-            </span>
+    <div className="composer-shell shrink-0 bg-zinc-950 px-3 pb-3 pt-1 md:px-5">
+      <div className="composer-card relative mx-auto w-full max-w-4xl">
+        {input.composerDisabledReason ? (
+          <div className="px-4 pt-3 pb-1 text-xs text-amber-200">
+            {input.composerDisabledReason}
           </div>
-
-          {isToolbarCompact ? (
-            <div className="flex items-center gap-2">
+        ) : (
+          <MessageComposer
+            sessionId={input.sessionId}
+            draftResetKey={input.draftResetKey}
+            history={input.history}
+            slashCommands={input.slashCommands}
+            isGeneratingForSelectedSession={input.isGeneratingForSession}
+            isSendingLocked={input.isSendingLocked}
+            sendingMessage={input.sendingMessage}
+            stoppingTurn={input.stoppingTurn}
+            idlePrimaryActionLabel={input.idlePrimaryActionLabel}
+            idlePrimaryActionBusy={input.idlePrimaryActionBusy}
+            idlePrimaryActionBusyLabel={input.idlePrimaryActionBusyLabel}
+            allowIdlePrimaryActionWithoutContent={
+              input.allowIdlePrimaryActionWithoutContent
+            }
+            idlePrimaryActionOnlyWithoutContent={
+              input.idlePrimaryActionOnlyWithoutContent
+            }
+            onIdlePrimaryAction={input.onIdlePrimaryAction}
+            messageBoxHeight={messageBoxHeight}
+            onResizeMessageBoxStart={handleResizeMessageBoxStart}
+            onSendMessage={input.onSendMessage}
+            onRunSlashCommand={input.onRunSlashCommand}
+            onStopConversation={input.onStopConversation}
+          />
+        )}
+        <div
+          className={`composer-toolbar px-2 pb-2 pt-1 ${
+            input.composerDisabledReason ? "" : "pr-[7.5rem]"
+          }`}
+        >
+          <div ref={toolbarWidthRef} className="relative">
+            <div
+              ref={toolbarMeasureRef}
+              aria-hidden="true"
+              className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-2 whitespace-nowrap"
+            >
               <button
                 type="button"
-                onClick={() =>
-                  setIsToolbarControlsExpanded((current) => !current)
-                }
-                className="inline-flex h-8 w-8 items-center justify-center rounded border border-zinc-800 bg-zinc-900/70 text-zinc-300 transition-colors hover:bg-zinc-800/80"
-                aria-label={
-                  isToolbarControlsExpanded ? "Hide controls" : "Show controls"
-                }
-                aria-expanded={isToolbarControlsExpanded}
-              >
-                <svg
-                  viewBox="0 0 20 20"
-                  aria-hidden="true"
-                  className={`h-3.5 w-3.5 transition-transform ${
-                    isToolbarControlsExpanded ? "rotate-180" : ""
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M4 12l6-6 6 6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onPointerDown={handleToolbarTogglePointerDown}
-                onClick={handleTogglePlanMode}
-                disabled={!hasPlanMode}
-                className={`h-8 px-2.5 text-xs rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${modeToggleClassName}`}
-                title={modeToggleTitle}
+                disabled
+                tabIndex={-1}
+                className={`h-7 px-2.5 text-xs rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${modeToggleClassName}`}
               >
                 <span className="inline-flex items-center gap-1.5">
                   {isNonDefaultModeEnabled ? (
@@ -13037,38 +13039,133 @@ export default function CodexDeckApp() {
                   Plan
                 </span>
               </button>
-              <span className="ml-auto text-xs text-zinc-500">
+              <div className="h-8 min-w-[160px] rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs leading-8 text-zinc-300">
+                <span className="block truncate">
+                  {selectedModelId
+                    ? (filteredModels.find(
+                        (model) => model.id === selectedModelId,
+                      )?.displayName ?? selectedModelId)
+                    : modelControlLabel}
+                </span>
+              </div>
+              <div className="h-8 min-w-[140px] rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs leading-8 text-zinc-300">
+                <span className="block truncate">
+                  {selectedEffort || effortControlLabel}
+                </span>
+              </div>
+              <span className="text-xs text-zinc-500 whitespace-nowrap">
                 {contextWindowText}
               </span>
             </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onPointerDown={handleToolbarTogglePointerDown}
-                onClick={handleTogglePlanMode}
-                disabled={!hasPlanMode}
-                className={`h-8 px-2.5 text-xs rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${modeToggleClassName}`}
-                title={modeToggleTitle}
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  {isNonDefaultModeEnabled ? (
-                    <CircleDot className="h-3.5 w-3.5" />
-                  ) : (
-                    <Circle className="h-3.5 w-3.5" />
-                  )}
-                  Plan
+
+            {isToolbarCompact ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsToolbarControlsExpanded((current) => !current)
+                  }
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                  aria-label={
+                    isToolbarControlsExpanded
+                      ? "Hide controls"
+                      : "Show controls"
+                  }
+                  aria-expanded={isToolbarControlsExpanded}
+                >
+                  <svg
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                    className={`h-3.5 w-3.5 transition-transform ${
+                      isToolbarControlsExpanded ? "rotate-180" : ""
+                    }`}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M4 12l6-6 6 6" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onPointerDown={handleToolbarTogglePointerDown}
+                  onClick={handleTogglePlanMode}
+                  disabled={!hasPlanMode}
+                  className={`h-7 px-2.5 text-xs rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${modeToggleClassName}`}
+                  title={modeToggleTitle}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {isNonDefaultModeEnabled ? (
+                      <CircleDot className="h-3.5 w-3.5" />
+                    ) : (
+                      <Circle className="h-3.5 w-3.5" />
+                    )}
+                    Plan
+                  </span>
+                </button>
+                <span className="ml-auto text-xs text-zinc-500">
+                  {contextWindowText}
                 </span>
-              </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onPointerDown={handleToolbarTogglePointerDown}
+                  onClick={handleTogglePlanMode}
+                  disabled={!hasPlanMode}
+                  className={`h-7 px-2.5 text-xs rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${modeToggleClassName}`}
+                  title={modeToggleTitle}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {isNonDefaultModeEnabled ? (
+                      <CircleDot className="h-3.5 w-3.5" />
+                    ) : (
+                      <Circle className="h-3.5 w-3.5" />
+                    )}
+                    Plan
+                  </span>
+                </button>
+                <CodexValuePicker
+                  ref={modelSelectRef}
+                  value={selectedModelId}
+                  defaultLabel={modelControlLabel}
+                  options={modelPickerOptions}
+                  onChange={setSelectedModelId}
+                  inputAriaLabel="Model"
+                  inputPlaceholder="Search or enter a model ID"
+                  onRefresh={handleFetchModels}
+                  refreshing={fetchingModels}
+                  refreshAriaLabel="Fetch models from provider"
+                />
+                <CodexValuePicker
+                  value={selectedEffort}
+                  defaultLabel={effortControlLabel}
+                  options={effortPickerOptions}
+                  onChange={setSelectedEffort}
+                  inputAriaLabel="Reasoning effort"
+                  inputPlaceholder="Search or enter a reasoning mode"
+                />
+                {tierControl}
+                <span className="ml-auto text-xs text-zinc-500">
+                  {contextWindowText}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {isToolbarCompact && isToolbarControlsExpanded && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
               <CodexValuePicker
-                ref={modelSelectRef}
+                ref={compactModelSelectRef}
                 value={selectedModelId}
                 defaultLabel={modelControlLabel}
                 options={modelPickerOptions}
                 onChange={setSelectedModelId}
                 inputAriaLabel="Model"
                 inputPlaceholder="Search or enter a model ID"
-                className="min-w-[160px]"
                 onRefresh={handleFetchModels}
                 refreshing={fetchingModels}
                 refreshAriaLabel="Fetch models from provider"
@@ -13080,77 +13177,13 @@ export default function CodexDeckApp() {
                 onChange={setSelectedEffort}
                 inputAriaLabel="Reasoning effort"
                 inputPlaceholder="Search or enter a reasoning mode"
-                className="min-w-[140px]"
               />
               {tierControl}
-              <span className="ml-auto text-xs text-zinc-500">
-                {contextWindowText}
-              </span>
             </div>
           )}
         </div>
-
-        {isToolbarCompact && isToolbarControlsExpanded && (
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <CodexValuePicker
-              ref={compactModelSelectRef}
-              value={selectedModelId}
-              defaultLabel={modelControlLabel}
-              options={modelPickerOptions}
-              onChange={setSelectedModelId}
-              inputAriaLabel="Model"
-              inputPlaceholder="Search or enter a model ID"
-              className="min-w-[160px]"
-              onRefresh={handleFetchModels}
-              refreshing={fetchingModels}
-              refreshAriaLabel="Fetch models from provider"
-            />
-            <CodexValuePicker
-              value={selectedEffort}
-              defaultLabel={effortControlLabel}
-              options={effortPickerOptions}
-              onChange={setSelectedEffort}
-              inputAriaLabel="Reasoning effort"
-              inputPlaceholder="Search or enter a reasoning mode"
-              className="min-w-[140px]"
-            />
-            {tierControl}
-          </div>
-        )}
       </div>
-
-      {input.composerDisabledReason ? (
-        <div className="border-t border-zinc-800/60 bg-zinc-950 px-3 py-3 text-xs text-amber-200">
-          {input.composerDisabledReason}
-        </div>
-      ) : (
-        <MessageComposer
-          sessionId={input.sessionId}
-          draftResetKey={input.draftResetKey}
-          history={input.history}
-          slashCommands={input.slashCommands}
-          isGeneratingForSelectedSession={input.isGeneratingForSession}
-          isSendingLocked={input.isSendingLocked}
-          sendingMessage={input.sendingMessage}
-          stoppingTurn={input.stoppingTurn}
-          idlePrimaryActionLabel={input.idlePrimaryActionLabel}
-          idlePrimaryActionBusy={input.idlePrimaryActionBusy}
-          idlePrimaryActionBusyLabel={input.idlePrimaryActionBusyLabel}
-          allowIdlePrimaryActionWithoutContent={
-            input.allowIdlePrimaryActionWithoutContent
-          }
-          idlePrimaryActionOnlyWithoutContent={
-            input.idlePrimaryActionOnlyWithoutContent
-          }
-          onIdlePrimaryAction={input.onIdlePrimaryAction}
-          messageBoxHeight={messageBoxHeight}
-          onResizeMessageBoxStart={handleResizeMessageBoxStart}
-          onSendMessage={input.onSendMessage}
-          onRunSlashCommand={input.onRunSlashCommand}
-          onStopConversation={input.onStopConversation}
-        />
-      )}
-    </>
+    </div>
   );
 
   function SessionHeader(props: SessionHeaderProps) {
@@ -13170,14 +13203,14 @@ export default function CodexDeckApp() {
 
     return (
       <>
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <button
             type="button"
             onClick={onToggleRailCollapsedByDefault}
-            className={`h-8 shrink-0 rounded border px-2.5 text-[11px] font-medium transition-colors ${
+            className={`h-7 shrink-0 rounded-lg px-2.5 text-[11px] font-medium transition-colors ${
               railCollapsedByDefault
-                ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/20"
-                : "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80"
+                ? "bg-zinc-800 text-zinc-100 hover:bg-zinc-700/80"
+                : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
             }`}
             title={
               railCollapsedByDefault
@@ -13187,14 +13220,14 @@ export default function CodexDeckApp() {
           >
             {railCollapsedByDefault ? "Text Mode" : "Block Mode"}
           </button>
-          <span className="text-sm text-zinc-300 truncate max-w-xs">
+          <span className="min-w-0 truncate text-[14px] font-medium text-zinc-100 max-w-md">
             {session.display}
           </span>
           {session.project ? (
             <button
               type="button"
               onClick={() => onCopyProjectPath(session.project)}
-              className="inline-flex h-6 max-w-[14rem] shrink-0 items-center gap-1 rounded border border-zinc-700/70 bg-zinc-900/60 px-1.5 text-left text-[11px] text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-200"
+              className="inline-flex h-6 min-w-0 max-w-[14rem] shrink items-center gap-1 rounded-md bg-zinc-800/60 px-2 text-left text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
               title={`Copy project path: ${session.project}`}
               aria-label="Copy project path"
             >
@@ -13216,10 +13249,10 @@ export default function CodexDeckApp() {
           <button
             type="button"
             onClick={onToggleConversationSearch}
-            className={`h-8 w-8 shrink-0 rounded border transition-colors cursor-pointer ${
+            className={`h-8 w-8 shrink-0 rounded-lg transition-colors cursor-pointer ${
               conversationSearchOpen
-                ? "border-cyan-500/50 bg-cyan-500/16 text-cyan-100 hover:bg-cyan-500/22"
-                : "border-zinc-700 bg-zinc-800/70 text-zinc-300 hover:bg-zinc-700/80"
+                ? "bg-zinc-800 text-zinc-100 hover:bg-zinc-700/80"
+                : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
             }`}
             title={
               conversationSearchOpen
@@ -13241,7 +13274,7 @@ export default function CodexDeckApp() {
           {!isMobilePhone && (
             <button
               onClick={() => onCopySessionId(session.id)}
-              className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded transition-colors cursor-pointer shrink-0"
+              className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 cursor-pointer shrink-0"
               title="Copy session ID to clipboard"
             >
               {copied ? (
@@ -13269,20 +13302,25 @@ export default function CodexDeckApp() {
           className="pane-left relative shrink-0 border-r border-zinc-800/60 flex flex-col bg-zinc-950"
           style={{ width: `${leftPaneWidth}px` }}
         >
-          <div className="pane-header-left border-b border-zinc-800/60">
-            <div className="flex min-h-[50px] items-center gap-2 px-4 py-2">
+          <div className="pane-header-left">
+            <div className="flex min-h-[50px] items-center gap-1.5 px-3 py-2">
               <button
                 type="button"
                 onClick={() => setSidebarCollapsed(true)}
-                className="h-8 w-8 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 transition-colors hover:bg-zinc-800/80"
+                className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
                 aria-label="Collapse left pane"
                 title="Collapse left pane"
               >
                 <ChevronLeft className="mx-auto h-4 w-4" />
               </button>
-              <div className="flex min-w-0 flex-1 items-center justify-between gap-2 overflow-hidden rounded border border-zinc-800 bg-zinc-900/60 px-2 py-2">
-                <div className="shrink-0 text-[11px] uppercase tracking-[0.16em] text-zinc-500">
-                  {remoteConnected ? "Remote" : "Local"}
+              <div className="flex min-w-0 flex-1 items-center justify-between gap-2 overflow-hidden pl-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-zinc-100">
+                    Codex Deck
+                  </span>
+                  <span className="shrink-0 rounded-md bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                    {remoteConnected ? "Remote" : "Local"}
+                  </span>
                 </div>
                 <div className="flex min-w-0 items-center justify-end gap-1.5 overflow-hidden">
                   {remoteConnected && (
@@ -13291,7 +13329,7 @@ export default function CodexDeckApp() {
                       onClick={() => {
                         void handleDisconnectRemote();
                       }}
-                      className="h-7 min-w-0 max-w-full shrink truncate rounded border border-zinc-700 bg-zinc-800/80 px-2 text-[11px] text-zinc-200 transition-colors hover:bg-zinc-700/80"
+                      className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
                       title="Log out from remote mode"
                     >
                       Logout
@@ -13305,7 +13343,7 @@ export default function CodexDeckApp() {
                         setRemoteError(null);
                         setRemoteAutoRestoreServerUrl(null);
                       }}
-                      className="h-7 min-w-0 max-w-full shrink truncate rounded border border-zinc-700 bg-zinc-800/80 px-2 text-[11px] text-zinc-200 transition-colors hover:bg-zinc-700/80"
+                      className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
                       title="Remote Login"
                     >
                       Remote Login
@@ -13315,7 +13353,7 @@ export default function CodexDeckApp() {
               </div>
             </div>
 
-            <div className="px-3 pb-2">
+            <div className="px-2 pb-1">
               <label className="block">
                 <span className="sr-only">Codex home</span>
                 <select
@@ -13325,7 +13363,7 @@ export default function CodexDeckApp() {
                   }
                   disabled={codexHomesLoading || codexHomes.length === 0}
                   aria-label="Codex home"
-                  className="h-9 w-full rounded border border-zinc-800 bg-zinc-900/70 px-2.5 text-xs text-zinc-300 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-8 w-full cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {codexHomes.length === 0 ? (
                     <option value={MAIN_CODEX_HOME_ID}>
@@ -13358,7 +13396,7 @@ export default function CodexDeckApp() {
               ) : null}
             </div>
 
-            <div className="space-y-2 px-3 pb-3">
+            <div className="space-y-2 px-2 pb-2">
               {remoteConnected && remoteMachines.length > 0 && (
                 <label className="block">
                   <select
@@ -13366,7 +13404,7 @@ export default function CodexDeckApp() {
                     onChange={(event) =>
                       handleSelectRemoteMachine(event.target.value || null)
                     }
-                    className="w-full h-9 bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2.5 focus:outline-none"
+                    className="h-8 w-full cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
                   >
                     {remoteMachines.map((machine) => (
                       <option key={machine.id} value={machine.id}>
@@ -13379,14 +13417,14 @@ export default function CodexDeckApp() {
                 </label>
               )}
 
-              <div className="grid grid-cols-3 items-center gap-1 rounded-lg border border-zinc-800/60 bg-zinc-900/40 p-1">
+              <div className="grid grid-cols-3 items-center gap-0.5 rounded-[10px] bg-zinc-800/50 p-[3px]">
                 <button
                   type="button"
                   onClick={() => handleSelectTerminal()}
-                  className={`rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors ${
+                  className={`rounded-[7px] px-2 py-1 text-center text-[12px] font-medium transition-colors ${
                     centerView === "terminal"
-                      ? "bg-cyan-500/15 text-cyan-100 ring-1 ring-inset ring-cyan-500/30"
-                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                      ? "bg-zinc-700/80 text-zinc-50 shadow-sm"
+                      : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
                   Terminal
@@ -13394,10 +13432,10 @@ export default function CodexDeckApp() {
                 <button
                   type="button"
                   onClick={handleSelectCodex}
-                  className={`rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors ${
+                  className={`rounded-[7px] px-2 py-1 text-center text-[12px] font-medium transition-colors ${
                     centerView === "session"
-                      ? "bg-cyan-500/15 text-cyan-100 ring-1 ring-inset ring-cyan-500/30"
-                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                      ? "bg-zinc-700/80 text-zinc-50 shadow-sm"
+                      : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
                   Codex
@@ -13405,10 +13443,10 @@ export default function CodexDeckApp() {
                 <button
                   type="button"
                   onClick={() => handleSelectWorkflow()}
-                  className={`rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors ${
+                  className={`rounded-[7px] px-2 py-1 text-center text-[12px] font-medium transition-colors ${
                     centerView === "workflow"
-                      ? "bg-cyan-500/15 text-cyan-100 ring-1 ring-inset ring-cyan-500/30"
-                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                      ? "bg-zinc-700/80 text-zinc-50 shadow-sm"
+                      : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
                   Workflow
@@ -13492,7 +13530,7 @@ export default function CodexDeckApp() {
                       selectedWorkflowProject ||
                       "Project path"
                     }
-                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded-lg border border-zinc-800 px-2.5 transition-colors focus:border-cyan-500/40 focus:outline-none"
+                    className="project-path-placeholder-tail min-w-0 flex-1 h-8 bg-zinc-800/40 text-zinc-200 text-[12px] rounded-lg border border-transparent px-2.5 placeholder:text-zinc-500 transition-colors hover:bg-zinc-800/60 focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none"
                   />
                   <button
                     type="button"
@@ -13502,7 +13540,7 @@ export default function CodexDeckApp() {
                       setShowWorkflowIdPromptModal(true);
                     }}
                     disabled={workflowActionBusy}
-                    className="h-9 rounded-lg bg-cyan-700/80 px-3 text-xs font-medium text-zinc-50 transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-100 px-3 text-[12px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     New Workflow
                   </button>
@@ -13518,7 +13556,7 @@ export default function CodexDeckApp() {
                       )
                     }
                     placeholder={newSessionPlaceholder}
-                    className="project-path-placeholder-tail min-w-0 flex-1 h-9 bg-zinc-900/70 text-zinc-200 text-xs rounded-lg border border-zinc-800 px-2.5 placeholder:text-zinc-500 transition-colors focus:border-cyan-500/40 focus:outline-none"
+                    className="project-path-placeholder-tail min-w-0 flex-1 h-8 bg-zinc-800/40 text-zinc-200 text-[12px] rounded-lg border border-transparent px-2.5 placeholder:text-zinc-500 transition-colors hover:bg-zinc-800/60 focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none"
                   />
                   <button
                     onClick={() => {
@@ -13527,7 +13565,7 @@ export default function CodexDeckApp() {
                         : handleCreateSession());
                     }}
                     disabled={creatingSession}
-                    className="h-9 min-w-0 max-w-full shrink truncate rounded-lg bg-cyan-700/80 px-3 text-xs font-medium text-zinc-50 transition-colors hover:bg-cyan-700 disabled:opacity-50 cursor-pointer"
+                    className="h-8 min-w-0 max-w-full shrink truncate rounded-lg bg-zinc-100 px-3 text-[12px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
                     title={
                       centerView === "terminal"
                         ? "Start a new terminal"
@@ -13605,11 +13643,11 @@ export default function CodexDeckApp() {
               }
             />
           </div>
-          <div className="shrink-0 border-t border-zinc-800/60 bg-zinc-950/80 p-2">
+          <div className="shrink-0 p-2">
             <button
               type="button"
               onClick={() => setShowConfigModal(true)}
-              className="flex h-9 w-full items-center gap-2 rounded px-2.5 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-900/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
               title="Codex Deck settings"
               aria-label="Codex Deck settings"
             >
@@ -13637,7 +13675,7 @@ export default function CodexDeckApp() {
         </aside>
       )}
 
-      <main className="flex-1 overflow-hidden bg-zinc-950 flex flex-col">
+      <main className="pane-main flex-1 overflow-hidden bg-zinc-950 flex flex-col">
         {apiReady && (
           <OperationalNotices
             key={`${selectedCodexHomeId}:${activeComposerSessionId}`}
@@ -13650,7 +13688,7 @@ export default function CodexDeckApp() {
               <button
                 type="button"
                 onClick={openLeftPane}
-                className="h-8 w-8 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 transition-colors hover:bg-zinc-800/80"
+                className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
                 aria-label="Expand left pane"
                 title="Expand left pane"
               >
@@ -13749,7 +13787,7 @@ export default function CodexDeckApp() {
               <button
                 type="button"
                 onClick={openRightPane}
-                className="h-8 w-8 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 transition-colors hover:bg-zinc-800/80"
+                className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
                 aria-label="Expand right pane"
                 title="Expand right pane"
               >

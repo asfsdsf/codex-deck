@@ -1012,10 +1012,10 @@ export default function DiffPane(props: DiffPaneProps) {
           <button
             type="button"
             onClick={() => setIsFileListVisible((current) => !current)}
-            className={`h-8 w-8 shrink-0 rounded border text-zinc-300 transition-colors ${
+            className={`h-8 w-8 shrink-0 rounded-lg transition-colors ${
               isFileListVisible
-                ? "border-zinc-600 bg-zinc-800/80 hover:bg-zinc-700/80"
-                : "border-zinc-700 bg-zinc-900/70 hover:bg-zinc-800/80"
+                ? "bg-zinc-800 text-zinc-100 hover:bg-zinc-700/80"
+                : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
             }`}
             aria-label={
               isFileListVisible ? "Hide list panel" : "Show list panel"
@@ -1029,7 +1029,7 @@ export default function DiffPane(props: DiffPaneProps) {
             onChange={(event) =>
               onChangeMode(event.target.value as RightPaneMode)
             }
-            className="h-8 min-w-0 flex-1 bg-zinc-900/70 text-zinc-300 text-xs rounded border border-zinc-800 px-2 focus:outline-none"
+            className="h-8 min-w-0 flex-1 cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] font-medium text-zinc-200 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
           >
             <option value="unstaged">Unstaged</option>
             <option value="staged">Staged</option>
@@ -1043,7 +1043,7 @@ export default function DiffPane(props: DiffPaneProps) {
         <button
           type="button"
           onClick={onToggleCollapsed}
-          className="h-8 w-8 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
+          className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
           aria-label="Collapse diff pane"
           title="Collapse diff pane"
         >
@@ -1075,7 +1075,7 @@ export default function DiffPane(props: DiffPaneProps) {
                     <button
                       type="button"
                       onClick={onRefreshTerminalRuns}
-                      className="h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
+                      className="h-6 w-6 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
                       aria-label="Refresh terminal runs"
                       title="Refresh terminal runs"
                     >
@@ -1166,7 +1166,7 @@ export default function DiffPane(props: DiffPaneProps) {
                   <button
                     type="button"
                     onClick={onRefreshSkills}
-                    className="h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
+                    className="h-6 w-6 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
                     aria-label="Refresh skills"
                     title="Refresh skills"
                   >
@@ -1272,7 +1272,7 @@ export default function DiffPane(props: DiffPaneProps) {
                         onOpenFileTreeDirectory(parentDir);
                       }}
                       disabled={!fileTreeNodesData?.dir}
-                      className="h-6 rounded border border-zinc-700 bg-zinc-900/70 px-2 text-[10px] text-zinc-300 hover:bg-zinc-800/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="h-6 rounded-md border border-zinc-800 bg-zinc-800/50 px-2 text-[10px] text-zinc-300 hover:bg-zinc-800/80 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Up
                     </button>
@@ -1301,7 +1301,7 @@ export default function DiffPane(props: DiffPaneProps) {
                           type="button"
                           onClick={onLoadMoreFileTreeNodes}
                           disabled={fileTreeLoadingMore}
-                          className="w-full h-7 rounded border border-zinc-700 bg-zinc-900/70 text-[11px] text-zinc-300 hover:bg-zinc-800/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-full h-7 rounded-md border border-zinc-800 bg-zinc-800/50 text-[11px] text-zinc-300 hover:bg-zinc-800/80 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {fileTreeLoadingMore ? "Loading..." : "Load more"}
                         </button>

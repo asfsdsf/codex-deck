@@ -9,15 +9,15 @@ function getCollapsedSegmentClassName(
 ): string {
   switch (segment.kind) {
     case "label":
-      return "font-semibold text-amber-200";
+      return "font-medium text-zinc-200";
     case "detail":
       return "text-zinc-300";
     case "path":
-      return "font-medium text-cyan-100";
+      return "text-zinc-400";
     case "query":
-      return "font-medium text-emerald-200";
+      return "text-zinc-400";
     case "range":
-      return "font-medium text-violet-200";
+      return "text-zinc-400";
     case "count-add":
       return "text-emerald-300";
     case "count-remove":

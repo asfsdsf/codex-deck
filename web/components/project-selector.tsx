@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, ChevronDown, Search, X } from "lucide-react";
+import { Check, ChevronDown, Folder, Search, X } from "lucide-react";
 import {
   buildProjectSelectorOptions,
   filterProjectSelectorOptions,
@@ -179,9 +179,10 @@ const ProjectSelector = memo(function ProjectSelector(
             openSelector();
           }
         }}
-        className="flex min-h-10 w-full items-center gap-2 rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-left text-sm text-zinc-300 transition-colors hover:bg-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+        className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
         title={selectedProject ?? allLabel}
       >
+        <Folder className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{selectedOption.label}</span>
         <ChevronDown
           className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${
@@ -191,9 +192,9 @@ const ProjectSelector = memo(function ProjectSelector(
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-lg border border-zinc-700/70 bg-zinc-950/95 shadow-2xl">
+        <div className="absolute left-0 right-0 z-30 mt-1.5 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900 shadow-2xl">
           <div className="border-b border-zinc-800/70 p-2">
-            <div className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-900/70 px-2.5">
+            <div className="flex items-center gap-2 rounded-lg bg-zinc-800/60 px-2.5">
               <Search className="h-4 w-4 shrink-0 text-zinc-500" />
               <input
                 ref={inputRef}
@@ -284,13 +285,13 @@ const ProjectSelector = memo(function ProjectSelector(
                       selectProject(option.project);
                     }}
                     className={`flex w-full items-start gap-3 px-3 py-2 text-left transition-colors ${
-                      isHighlighted ? "bg-cyan-700/20" : "hover:bg-zinc-800/80"
+                      isHighlighted ? "bg-zinc-800" : "hover:bg-zinc-800/60"
                     }`}
                     title={option.description ?? option.label}
                   >
                     <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                       {isSelected && (
-                        <Check className="h-4 w-4 text-cyan-300" />
+                        <Check className="h-4 w-4 text-zinc-200" />
                       )}
                     </span>
                     <span className="min-w-0 flex-1">

@@ -18,7 +18,7 @@ export default function ServiceTierSelect({
       }
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="h-8 min-w-0 max-w-[160px] rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200"
+      className="h-7 min-w-0 max-w-[160px] cursor-pointer rounded-full border-0 bg-transparent px-2 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus:outline-none"
     >
       <option value="">Default speed</option>
       <option value="default">Standard speed</option>

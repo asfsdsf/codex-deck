@@ -1,6 +1,7 @@
 # Dependencies
 docs/CODEX_CLI_PARITY_TODO.md
 .codex/
+.claude/
 playwright-report/
 test-results/
 *.pyc

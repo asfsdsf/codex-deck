@@ -1,40 +1,23 @@
 @import "tailwindcss";
 
 @theme {
+  /* Codex desktop uses the platform UI font, not a web font. */
   --font-sans:
-    "Geist Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI",
+    "Helvetica Neue", Roboto, Arial, "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", "Noto Sans", sans-serif;
   --font-mono:
-    "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Geist Mono", Consolas,
     "Liberation Mono", monospace;
-}
 
-@font-face {
-  font-family: "Geist Sans";
-  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Regular.woff2")
-    format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Geist Sans";
-  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Medium.woff2")
-    format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Geist Sans";
-  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-SemiBold.woff2")
-    format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
+  /* Softer corners across the app (Codex desktop look). */
+  --radius: 0.5rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+  --radius-3xl: 1.5rem;
 }
 
 @font-face {
@@ -95,18 +78,55 @@
 
 :root {
   color-scheme: dark;
+
+  /*
+   * Neutral grays (no blue tint) so dark mode matches the Codex desktop app.
+   * Every surface in the app is built on zinc-*, so this retunes them all.
+   */
+  --color-zinc-50: #fafafa;
+  --color-zinc-100: #ececec;
+  --color-zinc-200: #d6d6d6;
+  --color-zinc-300: #b8b8b8;
+  --color-zinc-400: #979797;
+  --color-zinc-500: #7a7a7a;
+  --color-zinc-600: #5c5c5c;
+  --color-zinc-700: #3e3e3e;
+  --color-zinc-800: #2e2e2e;
+  --color-zinc-900: #232323;
+  --color-zinc-950: #181818;
+
+  /* The app accent (historically cyan) becomes the Codex blue. */
+  --color-cyan-50: #eef6ff;
+  --color-cyan-100: #d9ecff;
+  --color-cyan-200: #bcdcff;
+  --color-cyan-300: #8fc6ff;
+  --color-cyan-400: #5eaeff;
+  --color-cyan-500: #339cff;
+  --color-cyan-600: #1f86f0;
+  --color-cyan-700: #1570d6;
+  --color-cyan-800: #125aad;
+  --color-cyan-900: #11498a;
+  --color-cyan-950: #0b2e57;
+
   --app-viewport-height: 100vh;
   --app-viewport-offset-top: 0px;
   --app-viewport-offset-bottom: 0px;
-  --app-body-background: #09090b;
-  --app-scrollbar-thumb: #27272a;
-  --app-scrollbar-thumb-hover: #3f3f46;
-  --app-pre-background: #18181b;
-  --app-pre-border: transparent;
-  --app-select-option-background: #18181b;
+  --app-body-background: #181818;
+  --app-surface-main: #181818;
+  --app-surface-sidebar: #1e1e1e;
+  --app-surface-side-pane: #1c1c1c;
+  --app-surface-composer: #232323;
+  --app-border-subtle: rgba(255, 255, 255, 0.07);
+  --app-border-composer: rgba(255, 255, 255, 0.1);
+  --app-user-bubble: #2a2a2a;
+  --app-scrollbar-thumb: #343434;
+  --app-scrollbar-thumb-hover: #4a4a4a;
+  --app-pre-background: #1f1f1f;
+  --app-pre-border: rgba(255, 255, 255, 0.06);
+  --app-select-option-background: #232323;
   --app-select-option-foreground: var(--color-zinc-100);
   --app-patch-syntax-color: var(--color-zinc-300);
-  --app-command-syntax-color: #dbdee5;
+  --app-command-syntax-color: #dcdcdc;
   --app-patch-comment-color: var(--color-zinc-500);
   --app-patch-keyword-color: var(--color-blue-400);
   --app-patch-title-color: var(--color-cyan-400);
@@ -116,44 +136,40 @@
   --app-patch-meta-color: var(--color-violet-300);
   --app-patch-addition-color: var(--color-emerald-300);
   --app-patch-deletion-color: var(--color-rose-300);
-  --app-markdown-section-color: var(--color-cyan-300);
+  --app-markdown-section-color: var(--color-zinc-50);
   --app-markdown-strong-color: var(--color-zinc-50);
-  --app-markdown-emphasis-color: var(--color-violet-200);
-  --app-markdown-code-color: var(--color-amber-300);
-  --app-markdown-code-background: color-mix(
-    in oklab,
-    var(--color-zinc-700) 45%,
-    transparent
-  );
+  --app-markdown-emphasis-color: var(--color-zinc-200);
+  --app-markdown-code-color: var(--color-zinc-100);
+  --app-markdown-code-background: rgba(255, 255, 255, 0.08);
   --app-markdown-link-color: var(--color-cyan-400);
   --app-search-match-accent: var(--color-amber-400);
   --app-search-active-accent: var(--color-cyan-400);
   --app-page-control-foreground: var(--color-zinc-50);
   --app-artifact-preview-backdrop: radial-gradient(
     circle at top,
-    rgba(244, 244, 245, 0.12),
-    rgba(9, 9, 11, 0.96) 60%
+    rgba(244, 244, 245, 0.1),
+    rgba(24, 24, 24, 0.96) 60%
   );
-  --app-terminal-background: #09090b;
-  --app-terminal-foreground: #e4e4e7;
-  --app-terminal-cursor: #d4d4d8;
+  --app-terminal-background: #141414;
+  --app-terminal-foreground: #e4e4e4;
+  --app-terminal-cursor: #d4d4d4;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* zinc */
-  --color-zinc-50: oklch(14.1% 0.005 285.823);
-  --color-zinc-100: oklch(21% 0.006 285.885);
-  --color-zinc-200: oklch(27.4% 0.006 286.033);
-  --color-zinc-300: oklch(37% 0.013 285.805);
-  --color-zinc-400: oklch(44.2% 0.017 285.786);
-  --color-zinc-500: oklch(55.2% 0.016 285.938);
-  --color-zinc-600: oklch(70.5% 0.015 286.067);
-  --color-zinc-700: oklch(87.1% 0.006 286.286);
-  --color-zinc-800: oklch(92% 0.004 286.32);
-  --color-zinc-900: oklch(96.7% 0.001 286.375);
-  --color-zinc-950: oklch(98.5% 0 0);
+  /* zinc (inverted, neutral to match the Codex desktop light theme) */
+  --color-zinc-50: oklch(14.5% 0 0);
+  --color-zinc-100: oklch(21% 0 0);
+  --color-zinc-200: oklch(27.5% 0 0);
+  --color-zinc-300: oklch(37% 0 0);
+  --color-zinc-400: oklch(45% 0 0);
+  --color-zinc-500: oklch(56% 0 0);
+  --color-zinc-600: oklch(71% 0 0);
+  --color-zinc-700: oklch(87.5% 0 0);
+  --color-zinc-800: oklch(92.5% 0 0);
+  --color-zinc-900: oklch(96.5% 0 0);
+  --color-zinc-950: oklch(100% 0 0);
 
   /* slate */
   --color-slate-50: oklch(12.9% 0.042 264.695);
@@ -168,18 +184,18 @@
   --color-slate-900: oklch(96.8% 0.007 247.896);
   --color-slate-950: oklch(98.4% 0.003 247.858);
 
-  /* cyan */
-  --color-cyan-50: oklch(30.2% 0.056 229.695);
-  --color-cyan-100: oklch(39.8% 0.07 227.392);
-  --color-cyan-200: oklch(45% 0.085 224.283);
-  --color-cyan-300: oklch(52% 0.105 223.128);
-  --color-cyan-400: oklch(60.9% 0.126 221.723);
-  --color-cyan-500: oklch(71.5% 0.143 215.221);
-  --color-cyan-600: oklch(78.9% 0.154 211.53);
-  --color-cyan-700: oklch(86.5% 0.127 207.078);
-  --color-cyan-800: oklch(91.7% 0.08 205.041);
-  --color-cyan-900: oklch(95.6% 0.045 203.388);
-  --color-cyan-950: oklch(98.4% 0.019 200.873);
+  /* cyan (inverted; the app accent maps to the Codex blue) */
+  --color-cyan-50: #062a4f;
+  --color-cyan-100: #0a3c70;
+  --color-cyan-200: #0b4b8c;
+  --color-cyan-300: #0b5bad;
+  --color-cyan-400: #0a6bd1;
+  --color-cyan-500: #1f86f0;
+  --color-cyan-600: #4ea5f5;
+  --color-cyan-700: #94c7fa;
+  --color-cyan-800: #c4e0fc;
+  --color-cyan-900: #e2effe;
+  --color-cyan-950: #f2f8ff;
 
   /* amber */
   --color-amber-50: oklch(27.9% 0.077 45.635);
@@ -337,34 +353,30 @@
   --color-orange-900: oklch(95.4% 0.038 75.164);
   --color-orange-950: oklch(98% 0.016 73.684);
 
-  --app-body-background: linear-gradient(
-    180deg,
-    oklch(99.6% 0.001 286.1) 0%,
-    oklch(98.6% 0.002 286.1) 100%
-  );
-  --app-scrollbar-thumb: color-mix(
-    in oklab,
-    var(--color-zinc-500) 55%,
-    transparent
-  );
-  --app-scrollbar-thumb-hover: color-mix(
-    in oklab,
-    var(--color-zinc-400) 72%,
-    transparent
-  );
-  --app-pre-background: color-mix(in oklab, var(--color-zinc-900) 85%, white);
-  --app-pre-border: color-mix(in oklab, var(--color-zinc-500) 16%, transparent);
+  --app-body-background: #ffffff;
+  --app-surface-main: #ffffff;
+  --app-surface-sidebar: #f7f7f7;
+  --app-surface-side-pane: #fbfbfb;
+  --app-surface-composer: #ffffff;
+  --app-border-subtle: rgba(0, 0, 0, 0.08);
+  --app-border-composer: rgba(0, 0, 0, 0.12);
+  --app-user-bubble: #f0f0f0;
+  --app-scrollbar-thumb: rgba(0, 0, 0, 0.16);
+  --app-scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+  --app-pre-background: #f7f7f7;
+  --app-pre-border: rgba(0, 0, 0, 0.07);
   --app-select-option-background: var(--color-zinc-950);
   --app-select-option-foreground: var(--color-zinc-100);
   --app-command-syntax-color: var(--color-zinc-200);
+  --app-markdown-code-background: rgba(0, 0, 0, 0.06);
   --app-artifact-preview-backdrop: radial-gradient(
     circle at top,
-    color-mix(in srgb, var(--color-cyan-600) 14%, transparent),
+    rgba(0, 0, 0, 0.04),
     rgba(255, 255, 255, 0.96) 62%
   );
-  --app-terminal-background: #f8fafc;
-  --app-terminal-foreground: #1f2937;
-  --app-terminal-cursor: #0f172a;
+  --app-terminal-background: #fafafa;
+  --app-terminal-foreground: #1f1f1f;
+  --app-terminal-cursor: #111111;
 }
 
 @supports (height: 100dvh) {
@@ -605,78 +617,81 @@ select option {
   color: var(--app-select-option-foreground);
 }
 
-[data-theme="light"] .pane-left {
-  background-color: #fafafa;
+/*
+ * Pane surfaces (Codex desktop layout): a slightly lifted sidebar, a flat
+ * main canvas, and a quiet side pane. These beat the bg-zinc-950 utility
+ * on the same elements because unlayered CSS wins over Tailwind layers.
+ */
+.pane-left,
+.pane-left .session-list-surface,
+.pane-header-left {
+  background-color: var(--app-surface-sidebar);
 }
 
-[data-theme="light"] .pane-right {
-  background-color: #fafafa;
+.pane-main,
+.pane-header-center {
+  background-color: var(--app-surface-main);
 }
 
-[data-theme="light"] .session-list-surface {
-  background-color: #f6f6f7;
+.pane-right,
+.pane-header-right {
+  background-color: var(--app-surface-side-pane);
 }
 
-[data-theme="light"] .pane-header-left {
-  background-color: #f4f4f5;
+.pane-left,
+.pane-right,
+.pane-header-left,
+.pane-header-center,
+.pane-header-right,
+.pane-left .border-zinc-800\/60,
+.pane-left .border-zinc-800\/40,
+.pane-right .border-zinc-800\/60 {
+  border-color: var(--app-border-subtle);
 }
 
-[data-theme="light"] .pane-header-center {
-  background-color: #fcfcfc;
+/* Floating, rounded composer box. */
+.composer-card {
+  background-color: var(--app-surface-composer);
+  border: 1px solid var(--app-border-composer);
+  border-radius: 1.25rem;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.12),
+    0 8px 24px -12px rgba(0, 0, 0, 0.35);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
-[data-theme="light"] .pane-header-right {
-  background-color: #f4f4f5;
+.composer-card:focus-within {
+  border-color: color-mix(in srgb, var(--color-zinc-500) 55%, transparent);
 }
 
-[data-theme="light"] .pane-left .hover\:bg-zinc-900\/60:hover {
-  background-color: #ececee;
+.composer-card .composer-resize-bar {
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    background-color 150ms ease;
 }
 
-[data-theme="light"] .pane-left .bg-cyan-700\/30 {
-  background-color: #dff3f8;
+.composer-card:hover .composer-resize-bar {
+  opacity: 1;
 }
 
-[data-theme="light"] .pane-left .border-zinc-800\/40,
-[data-theme="light"] .pane-left .border-t-zinc-800\/40,
-[data-theme="light"] .pane-left .border-zinc-800,
-[data-theme="light"] .pane-left .border-zinc-800\/60,
-[data-theme="light"] .pane-left .border-zinc-900 {
-  border-color: #e4e4e7;
+@media (pointer: coarse) {
+  .composer-card .composer-resize-bar {
+    opacity: 1;
+  }
 }
 
-[data-theme="light"] .pane-left .text-zinc-200,
-[data-theme="light"] .pane-left .text-zinc-300 {
-  color: #3f3f46;
+[data-theme="light"] .composer-card {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 6px 20px -10px rgba(0, 0, 0, 0.12);
 }
 
-[data-theme="light"] .pane-left .text-zinc-400,
-[data-theme="light"] .pane-left .text-zinc-500,
-[data-theme="light"] .pane-left .text-zinc-600 {
-  color: #71717a;
-}
-
-[data-theme="light"] .pane-right .hover\:bg-zinc-900\/50:hover {
-  background-color: #f0f0f1;
-}
-
-[data-theme="light"] .pane-right .bg-zinc-900\/60 {
-  background-color: #ececee;
-}
-
-[data-theme="light"] .pane-right .border-zinc-800\/60,
-[data-theme="light"] .pane-right .border-zinc-900 {
-  border-color: #e4e4e7;
-}
-
-[data-theme="light"] .pane-right .text-zinc-200,
-[data-theme="light"] .pane-right .text-zinc-300 {
-  color: #3f3f46;
-}
-
-[data-theme="light"] .pane-right .text-zinc-400,
-[data-theme="light"] .pane-right .text-zinc-500 {
-  color: #71717a;
+/* User turns render as a soft bubble, assistant turns as plain text. */
+.message-user-bubble {
+  background-color: var(--app-user-bubble);
 }
 
 @keyframes thinking-pulse {

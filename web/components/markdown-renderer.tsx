@@ -43,15 +43,11 @@ function protectCodeRegions(content: string): {
       while (nextPosition <= content.length) {
         const nextLineEnd = content.indexOf("\n", nextPosition);
         const isFinalBlockLine = nextLineEnd === -1;
-        const nextLineEndAt = isFinalBlockLine
-          ? content.length
-          : nextLineEnd;
+        const nextLineEndAt = isFinalBlockLine ? content.length : nextLineEnd;
         const nextLine = content.slice(nextPosition, nextLineEndAt);
         block += `\n${nextLine}`;
 
-        if (
-          new RegExp(`^\\s{0,3}${fenceMarker}{3,}\\s*$`).test(nextLine)
-        ) {
+        if (new RegExp(`^\\s{0,3}${fenceMarker}{3,}\\s*$`).test(nextLine)) {
           position = isFinalBlockLine ? content.length : nextLineEndAt;
           closed = true;
           break;
@@ -108,10 +104,7 @@ function protectCodeRegions(content: string): {
     restore: (value) => {
       let restored = value;
       protectedValues.forEach((protectedValue, index) => {
-        restored = restored.replaceAll(
-          `\u0000${index}\u0000`,
-          protectedValue,
-        );
+        restored = restored.replaceAll(`\u0000${index}\u0000`, protectedValue);
       });
       return restored;
     },
@@ -306,7 +299,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer(
           code: (props) => {
             const { children } = props;
             return (
-              <code className="px-1.5 py-0.5 rounded bg-zinc-800/80 text-cyan-300 text-[12px] font-mono">
+              <code className="px-1.5 py-0.5 rounded-md bg-zinc-800/70 text-zinc-100 text-[12.5px] font-mono">
                 {children}
               </code>
             );
