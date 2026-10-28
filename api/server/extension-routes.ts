@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono";
 import { getCodexAppServerClient } from "../codex-app-server";
+import { parseBedrockSetup, parseLoginRequest } from "../codex-account";
 import type { CodexExtensions } from "../codex-extensions";
 import { CodexInputError } from "../codex-input-error";
 import { responseStatusForError, toErrorMessage } from "./utils";
@@ -81,5 +82,44 @@ export function registerExtensionRoutes(
         cwd: c.req.query("cwd") || null,
       }),
     ),
+  );
+
+  // Codex account (the Codex CLI login, not Deck's remote-server login).
+  // Credentials in request bodies are forwarded to app-server only.
+  app.get("/api/codex/account", (c) =>
+    run(c, (target) => target.account.read()),
+  );
+  app.post("/api/codex/account/login", (c) =>
+    run(c, async (target) =>
+      target.account.startLogin(parseLoginRequest(await body(c))),
+    ),
+  );
+  app.post("/api/codex/account/login/cancel", (c) =>
+    run(c, async (target) => {
+      const input = await body(c);
+      return target.account.cancelLogin(optionalString(input.id, "id"));
+    }),
+  );
+  app.post("/api/codex/account/logout", (c) =>
+    run(c, (target) => target.account.logout()),
+  );
+  app.get("/api/codex/account/bedrock", (c) =>
+    run(c, (target) => target.account.discoverBedrock()),
+  );
+  app.post("/api/codex/account/bedrock", (c) =>
+    run(c, async (target) => {
+      const input = await body(c);
+      return target.account.configureBedrock(
+        input.type === "profile" || input.type === "environment"
+          ? parseBedrockSetup(input)
+          : parseLoginRequest(input),
+      );
+    }),
+  );
+  app.post("/api/codex/account/gateway/login", (c) =>
+    run(c, (target) => target.account.startGatewayLogin()),
+  );
+  app.post("/api/codex/account/gateway/cancel", (c) =>
+    run(c, (target) => target.account.cancelGatewayLogin()),
   );
 }

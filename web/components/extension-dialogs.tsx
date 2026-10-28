@@ -1,21 +1,31 @@
+import CodexAccount from "./codex-account";
 import NativeDialog from "./native-dialog";
 import PresetsAdmin from "./presets-admin";
 
-export type ExtensionDialogState = {
-  kind: "presets";
-  threadId: string | null;
-  cwd: string | null;
-  /** Text after `/presets`, used to start a new preset from a draft. */
-  draft?: string;
-};
+export type ExtensionDialogState =
+  | {
+      kind: "presets";
+      threadId: string | null;
+      cwd: string | null;
+      /** Text after `/presets`, used to start a new preset from a draft. */
+      draft?: string;
+    }
+  | {
+      kind: "account";
+      threadId: string | null;
+      /** `/logout` opens with the logout confirmation showing. */
+      confirmLogout?: boolean;
+    };
 
 const TITLES: Record<ExtensionDialogState["kind"], string> = {
   presets: "Presets",
+  account: "Codex account",
 };
 
 /**
- * Hosts the native account/extension dialogs (`/presets`, ...). Kept apart
- * from the main app's `nativeDialog` chain so each surface stays isolated.
+ * Hosts the native account/extension dialogs (`/presets`, `/login`, ...).
+ * Kept apart from the main app's `nativeDialog` chain so each surface stays
+ * isolated.
  */
 export default function ExtensionDialogs({
   dialog,
@@ -46,6 +56,9 @@ export default function ExtensionDialogs({
             return ran;
           }}
         />
+      )}
+      {dialog.kind === "account" && (
+        <CodexAccount key={key} confirmLogout={dialog.confirmLogout} />
       )}
     </NativeDialog>
   );

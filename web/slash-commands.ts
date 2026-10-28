@@ -179,6 +179,14 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Run or save reusable prompts and slash commands",
   },
   {
+    name: "/login",
+    description: "Sign in to your Codex account or set up a provider",
+  },
+  {
+    name: "/logout",
+    description: "Log out of Codex",
+  },
+  {
     name: "/mcp",
     description: "Manage MCP servers, tools, and authentication",
   },

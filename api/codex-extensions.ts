@@ -1,4 +1,5 @@
 import type { NativeScope } from "./codex-native";
+import { CodexAccountManager } from "./codex-account";
 import {
   readPresets,
   writePreset,
@@ -34,8 +35,18 @@ export class CodexExtensions {
   private plain = (method: string, params: Record<string, unknown>) =>
     this.rpc(method, params);
 
+  /** Codex account onboarding (distinct from Deck's remote-server login). */
+  readonly account = new CodexAccountManager(
+    (method, params, options) => this.rpc(method, params, options),
+    () => this.notify("account"),
+  );
+
   /** Returns true when the notification was fully consumed. */
-  handleNotification(_method: string, _params: unknown): boolean {
+  handleNotification(method: string, params: unknown): boolean {
+    // Account notifications are observed but left for the existing auth
+    // fingerprint/usage handlers.
+    if (this.account.observe(method, params))
+      return method === "account/gatewayOAuth/changed";
     return false;
   }
 

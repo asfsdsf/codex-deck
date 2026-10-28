@@ -6,7 +6,8 @@ export type NativeScope =
   | "daybreak"
   | "diagnostics"
   | "queue"
-  | "presets";
+  | "presets"
+  | "account";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

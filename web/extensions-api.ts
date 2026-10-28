@@ -43,3 +43,55 @@ export function deleteCodexPreset(
     { method: "DELETE" },
   );
 }
+
+// Codex account: the Codex CLI login on the Deck host, distinct from Deck's
+// remote-server login. Credential fields are POSTed to the backend only.
+type AccountSnapshot = import("../api/codex-account").CodexAccountSnapshot;
+export function getCodexAccount(): Promise<AccountSnapshot> {
+  return requestJson("/api/codex/account");
+}
+export function startCodexLogin(
+  request: import("../api/codex-account").CodexLoginRequest,
+): Promise<AccountSnapshot> {
+  return requestJson("/api/codex/account/login", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+export function cancelCodexLogin(id: string | null): Promise<AccountSnapshot> {
+  return requestJson("/api/codex/account/login/cancel", {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}
+export function logoutCodexAccount(): Promise<AccountSnapshot> {
+  return requestJson("/api/codex/account/logout", {
+    method: "POST",
+    body: "{}",
+  });
+}
+export function discoverCodexBedrock(): Promise<
+  import("../api/codex-account").BedrockDiscovery
+> {
+  return requestJson("/api/codex/account/bedrock");
+}
+export function configureCodexBedrock(
+  request: Record<string, unknown>,
+): Promise<{ snapshot: AccountSnapshot; govCloudWarning: boolean }> {
+  return requestJson("/api/codex/account/bedrock", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+export function startCodexGatewayLogin(): Promise<AccountSnapshot> {
+  return requestJson("/api/codex/account/gateway/login", {
+    method: "POST",
+    body: "{}",
+  });
+}
+export function cancelCodexGatewayLogin(): Promise<AccountSnapshot> {
+  return requestJson("/api/codex/account/gateway/cancel", {
+    method: "POST",
+    body: "{}",
+  });
+}

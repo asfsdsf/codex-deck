@@ -164,3 +164,159 @@ test("presets fall back to merging layers when the effective config omits tui", 
     invalidReason: null,
   });
 });
+
+test("Codex account login tracks device-code attempts, completion, and cancellation without echoing secrets", async () => {
+  const { calls, notified, extensions, app } = harness((method, params) => {
+    if (method === "account/read")
+      return {
+        account: { type: "chatgpt", email: "a@b.c", planType: "pro" },
+        requiresOpenaiAuth: true,
+      };
+    if (method === "account/gatewayOAuth/read")
+      return { providerId: "openai", providerName: "OpenAI", required: false };
+    if (method === "config/read")
+      return { config: { forced_login_method: null, model_provider: null } };
+    if (method === "experimentalFeature/list")
+      return {
+        data: [
+          { name: "bedrock_setup_wizard", stage: "stable", enabled: true },
+        ],
+        nextCursor: null,
+      };
+    if (method === "account/login/start") {
+      const type = (params as Record<string, unknown>).type;
+      if (type === "chatgptDeviceCode")
+        return {
+          type,
+          loginId: "login-1",
+          verificationUrl: "https://auth.openai.com/codex/device",
+          userCode: "ABCD-1234",
+        };
+      if (type === "apiKey") return { type: "apiKey" };
+      if (type === "chatgpt")
+        return { type, loginId: "login-2", authUrl: "javascript:alert(1)" };
+    }
+    if (method === "account/login/cancel") return { status: "canceled" };
+    if (method === "account/logout") return {};
+    throw new Error(`unexpected ${method}`);
+  });
+
+  const snapshot = await (await app.request("/api/codex/account")).json();
+  assert.equal(snapshot.account.email, "a@b.c");
+  assert.deepEqual(snapshot.methods, {
+    chatgpt: true,
+    deviceCode: true,
+    apiKey: true,
+    bedrock: true,
+  });
+
+  const started = await app.request("/api/codex/account/login", {
+    method: "POST",
+    body: JSON.stringify({ type: "chatgptDeviceCode" }),
+  });
+  const pending = (await started.json()).pendingLogin;
+  assert.equal(pending.userCode, "ABCD-1234");
+  assert.equal(pending.loginId, "login-1");
+
+  // Completion for another attempt does not clear this one.
+  extensions.handleNotification("account/login/completed", {
+    loginId: "other",
+    success: true,
+  });
+  assert.ok((await extensions.account.read()).pendingLogin);
+  assert.equal(
+    extensions.handleNotification("account/login/completed", {
+      loginId: "login-1",
+      success: false,
+      error: "denied",
+    }),
+    false,
+    "account notifications stay visible to the auth fingerprint handler",
+  );
+  const completed = await extensions.account.read();
+  assert.equal(completed.pendingLogin, null);
+  assert.deepEqual(
+    [completed.lastLogin?.success, completed.lastLogin?.error],
+    [false, "denied"],
+  );
+
+  const keyLogin = await app.request("/api/codex/account/login", {
+    method: "POST",
+    body: JSON.stringify({ type: "apiKey", apiKey: "sk-secret" }),
+  });
+  assert.equal(keyLogin.status, 200);
+  assert.doesNotMatch(await keyLogin.text(), /sk-secret/);
+  const missingKey = await app.request("/api/codex/account/login", {
+    method: "POST",
+    body: JSON.stringify({ type: "apiKey", apiKey: " " }),
+  });
+  assert.equal(missingKey.status, 400);
+  const unsafe = await app.request("/api/codex/account/login", {
+    method: "POST",
+    body: JSON.stringify({ type: "chatgpt" }),
+  });
+  assert.equal(unsafe.status, 500);
+  assert.match((await unsafe.json()).error, /Invalid Codex sign-in URL/);
+
+  // Starting a new device-code login, then logging out, cancels it first.
+  await app.request("/api/codex/account/login", {
+    method: "POST",
+    body: JSON.stringify({ type: "chatgptDeviceCode" }),
+  });
+  const logout = await app.request("/api/codex/account/logout", {
+    method: "POST",
+    body: "{}",
+  });
+  assert.equal(logout.status, 200);
+  const order = calls
+    .map((call) => call.method)
+    .filter((method) => method.startsWith("account/log"));
+  assert.deepEqual(order.slice(-2), ["account/login/cancel", "account/logout"]);
+  assert.ok(notified.includes("account"));
+});
+
+test("gateway OAuth sign-in runs in the background and surfaces the authorization link", async () => {
+  let resolveLogin: () => void = () => {};
+  const { calls, extensions } = harness((method) => {
+    if (method === "account/gatewayOAuth/login")
+      return new Promise<void>((resolve) => {
+        resolveLogin = resolve;
+      }).then(() => ({}));
+    if (method === "account/gatewayOAuth/read")
+      return {
+        providerId: "gw",
+        providerName: "Gateway",
+        required: true,
+        status: "notReady",
+        error: null,
+      };
+    if (method === "account/read") return { account: null };
+    return { config: {}, data: [], nextCursor: null };
+  });
+  const started = await extensions.account.startGatewayLogin();
+  assert.equal(started.gateway?.loginInFlight, true);
+  const login = calls.find((c) => c.method === "account/gatewayOAuth/login");
+  assert.ok(
+    (login?.options as { timeoutMs?: number } | undefined)?.timeoutMs,
+    "gateway login uses an extended timeout",
+  );
+  await assert.rejects(extensions.account.startGatewayLogin(), /in progress/);
+  assert.equal(
+    extensions.handleNotification("account/gatewayOAuth/changed", {
+      providerId: "gw",
+      status: "started",
+      authUrl: "https://gw.example/authorize",
+    }),
+    true,
+  );
+  assert.equal(
+    (await extensions.account.read()).gateway?.authUrl,
+    "https://gw.example/authorize",
+  );
+  resolveLogin();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const done = await extensions.account.read();
+  assert.equal(done.gateway?.loginInFlight, false);
+  assert.equal(done.gateway?.status, "succeeded");
+  assert.equal(done.gateway?.authUrl, null);
+});

@@ -11652,6 +11652,14 @@ export default function CodexDeckApp() {
         });
         return true;
       }
+      if (commandName === "/login" || commandName === "/logout") {
+        setExtensionDialog({
+          kind: "account",
+          threadId: commandSessionId,
+          confirmLogout: commandName === "/logout",
+        });
+        return true;
+      }
       if (commandName === "/mcp" || commandName === "/usage") {
         setNativeDialog({
           kind: commandName === "/usage" ? "usage" : "mcp",
