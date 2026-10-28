@@ -13,7 +13,8 @@ export type NativeScope =
   | "plugins"
   | "permissions"
   | "guardian"
-  | "worktrees";
+  | "worktrees"
+  | "voice";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

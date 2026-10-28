@@ -22,6 +22,7 @@ import type {
   CodexThreadQueueSnapshot,
 } from "./codex-thread-queue";
 import { CodexExtensions } from "./codex-extensions";
+import { RealtimeVoiceManager } from "./codex-realtime";
 import {
   readUsageDashboard,
   type UsageDashboardSnapshot,
@@ -1202,6 +1203,15 @@ class CodexAppServerClient {
   );
   public getRecap(threadId: string): ConversationRecap | null {
     return this.recaps.get(threadId);
+  }
+  private realtimeVoice = new RealtimeVoiceManager({
+    rpc: (method, params) => this.request(method, params),
+    threadRpc: (method, params, id) =>
+      this.requestNativeThread(method, params, id),
+    notify: (id) => this.notifyNativeState("voice", id),
+  });
+  public getRealtimeVoice(): RealtimeVoiceManager {
+    return this.realtimeVoice;
   }
   public startRecap(threadId: string, history: string): ConversationRecap {
     return this.recaps.start(threadId, history);
@@ -3470,6 +3480,7 @@ class CodexAppServerClient {
     this.pendingApprovalRequests.clear();
     this.clearPendingElicitations();
     this.recaps.cancelAll();
+    this.realtimeVoice.resetAll("The Codex app-server stopped, ending voice.");
     this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
@@ -4064,6 +4075,7 @@ class CodexAppServerClient {
 
   private handleServerNotification(method: string, params: unknown): void {
     if (this.recaps.handleNotification(method, params)) return;
+    if (this.realtimeVoice.handleNotification(method, params)) return;
     this.permissions.handleNotification(method, params);
     if (this.guardianReviews.handleNotification(method, params)) return;
     if (this.extensions.handleNotification(method, params)) return;
@@ -4895,6 +4907,7 @@ class CodexAppServerClient {
     this.initialized = false;
     this.initializeInFlight = null;
     this.recaps.cancelAll();
+    this.realtimeVoice.resetAll("The Codex app-server stopped, ending voice.");
     this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
@@ -6778,6 +6791,7 @@ export interface CodexAppServerClientFacade {
     updates: Record<string, boolean>,
   ) => Promise<ExperimentalWriteResult>;
   getRecap?: (threadId: string) => ConversationRecap | null;
+  getRealtimeVoice?: () => RealtimeVoiceManager;
   startRecap?: (threadId: string, history: string) => ConversationRecap;
   readUsageDashboard?: (
     threadId?: string | null,
@@ -6969,6 +6983,7 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     writeExperimentalFeatures: (id, updates) =>
       client!.writeExperimentalFeatures(id, updates),
     getRecap: (id) => client!.getRecap(id),
+    getRealtimeVoice: () => client!.getRealtimeVoice(),
     startRecap: (id, history) => client!.startRecap(id, history),
     readUsageDashboard: (id) => client!.readUsageDashboard(id),
     consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
