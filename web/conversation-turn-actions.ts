@@ -1,7 +1,7 @@
 import type { ConversationMessage } from "@codex-deck/api";
 
 /** Per-message history operations bound to the message's persisted turn. */
-export type ConversationTurnAction = "fork-through" | "fork-before";
+export type ConversationTurnAction = "fork-through" | "fork-before" | "rewind";
 
 /**
  * `prompt` is the opening user message of a turn, `steer` a later user message
@@ -105,12 +105,21 @@ export function getTurnActionItems(
     },
   ];
   if (role !== "prompt") return items;
-  items.push({
-    action: "fork-before",
-    label: "Fork before this turn",
-    description: "New conversation without this turn or later ones",
-    disabledReason: null,
-  });
+  items.push(
+    {
+      action: "fork-before",
+      label: "Fork before this turn",
+      description: "New conversation without this turn or later ones",
+      disabledReason: null,
+    },
+    {
+      action: "rewind",
+      label: "Rewind to here",
+      description: "Remove this turn and later ones, then edit this prompt",
+      disabledReason:
+        busy === "idle" ? null : "Stop the running turn before rewinding.",
+    },
+  );
   return items;
 }
 

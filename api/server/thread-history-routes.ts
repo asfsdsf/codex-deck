@@ -5,18 +5,28 @@ import {
 } from "../codex-app-server";
 import {
   parseForkBoundary,
+  parseRevertTurnId,
   ThreadHistoryRequestError,
 } from "../codex-thread-history";
-import type { CodexThreadForkResponse } from "../storage";
+import {
+  refreshSessionRollout,
+  type CodexThreadForkResponse,
+} from "../storage";
 import { responseStatusForError, toErrorMessage } from "./utils";
 
-type ThreadHistoryClient = Pick<CodexAppServerClientFacade, "forkThread">;
+type ThreadHistoryClient = Pick<
+  CodexAppServerClientFacade,
+  "forkThread" | "revertThread"
+>;
 
-/** Turn-boundary forks of a stored conversation. */
+/** Turn-boundary forks and rewinds of a stored conversation. */
 export function registerThreadHistoryRoutes(
   app: Hono,
   deps: {
     subscribe?: () => void;
+    /** Re-reads conversation streams so every client reconciles a rewind. */
+    wake?: (threadId: string) => void;
+    refreshRollout?: (threadId: string) => Promise<void>;
     getClient?: () => ThreadHistoryClient;
   } = {},
 ) {
@@ -66,6 +76,26 @@ export function registerThreadHistoryRoutes(
         thread: await client.forkThread(threadId, boundary),
       };
       return response;
+    }),
+  );
+
+  app.post("/api/codex/threads/:id/revert", (c) =>
+    run(c, async (client, threadId) => {
+      const beforeTurnId = parseRevertTurnId(await body(c));
+      if (!client.revertThread)
+        return c.json(
+          {
+            error: "Conversation rewind is not available for this codex client",
+          },
+          503,
+        );
+      const result = await client.revertThread(threadId, beforeTurnId);
+      // The revert committed a new rollout; reconcile even if refresh fails.
+      await (deps.refreshRollout ?? refreshSessionRollout)(threadId).catch(
+        () => {},
+      );
+      deps.wake?.(threadId);
+      return result;
     }),
   );
 }

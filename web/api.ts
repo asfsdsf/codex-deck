@@ -1123,6 +1123,22 @@ export async function forkCodexThreadAtTurn(
   );
 }
 
+/** Rewinds history before a turn; workspace files are not reverted. */
+export function revertCodexThread(
+  threadId: string,
+  beforeTurnId: string,
+): Promise<import("@codex-deck/api").CodexThreadRevertResult> {
+  return requestJsonAndNotifyConversation(
+    threadId,
+    `/api/codex/threads/${encodeURIComponent(threadId)}/revert`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ beforeTurnId }),
+    },
+  );
+}
+
 export function startDiffGuide(
   input: DiffGuideStartRequest,
 ): Promise<DiffGuideStartResponse> {

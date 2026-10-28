@@ -5037,6 +5037,9 @@ export function createServer(options: ServerOptions) {
   });
   registerThreadHistoryRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
+    wake: (id) => {
+      for (const listener of conversationWakeListeners) listener(id);
+    },
   });
 
   app.post("/api/codex/threads/:id/messages", async (c) => {

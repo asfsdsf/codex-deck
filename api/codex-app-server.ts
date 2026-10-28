@@ -15,7 +15,11 @@ import {
   type ExperimentalFeature,
   type ExperimentalWriteResult,
 } from "./codex-native";
-import type { CodexForkBoundary } from "./codex-thread-history";
+import {
+  revertThreadBeforeTurn,
+  type CodexForkBoundary,
+  type CodexThreadRevertResult,
+} from "./codex-thread-history";
 import { RecapManager, type ConversationRecap } from "./codex-recap";
 import * as threadQueue from "./codex-thread-queue";
 import type {
@@ -2132,6 +2136,21 @@ class CodexAppServerClient {
     }
   }
 
+  /** `thread/revert`: drop the selected turn and later ones (files are kept). */
+  public async revertThread(
+    threadId: string,
+    beforeTurnId: string,
+  ): Promise<CodexThreadRevertResult> {
+    const id = threadId.trim();
+    if (!id) throw new Error("threadId is required");
+    const rpc = (method: string, params: Record<string, unknown>) =>
+      this.requestNativeThread(method, params, id);
+    const result = await revertThreadBeforeTurn(rpc, rpc, id, beforeTurnId);
+    this.clearThreadStateCache(id);
+    this.notifyNativeState("history", id);
+    return result;
+  }
+
   public async injectThreadItems(
     threadId: string,
     items: CodexRawResponseItem[],
@@ -4104,6 +4123,15 @@ class CodexAppServerClient {
     if (this.organization.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
+      return;
+    }
+    if (method === "thread/reverted") {
+      // Reverts from any client (TUI, desktop, other tabs) replace the rollout.
+      const threadId = asTrimmedString(asRecord(params)?.threadId);
+      if (threadId) {
+        this.clearThreadStateCache(threadId);
+        this.notifyNativeState("history", threadId);
+      }
       return;
     }
     if (
@@ -6904,6 +6932,10 @@ export interface CodexAppServerClientFacade {
     threadId: string,
     options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string },
   ) => Promise<CodexThreadSummary>;
+  revertThread?: (
+    threadId: string,
+    beforeTurnId: string,
+  ) => Promise<CodexThreadRevertResult>;
   injectThreadItems?: (
     threadId: string,
     items: CodexRawResponseItem[],
@@ -7065,6 +7097,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.setThreadName(threadId, name),
     forkThread: (threadId: string, options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string }) =>
       client!.forkThread(threadId, options),
+    revertThread: (threadId: string, beforeTurnId: string) =>
+      client!.revertThread(threadId, beforeTurnId),
     injectThreadItems: (threadId: string, items: CodexRawResponseItem[]) =>
       client!.injectThreadItems(threadId, items),
     compactThread: (threadId: string) => client!.compactThread(threadId),

@@ -164,7 +164,16 @@ import CodexValuePicker, {
   type CodexValuePickerOption,
 } from "../components/codex-value-picker";
 import CenteredConfirmDialog from "../components/centered-confirm-dialog";
-import type { ConversationTurnAction } from "../conversation-turn-actions";
+import {
+  getTurnPromptText,
+  type ConversationTurnAction,
+} from "../conversation-turn-actions";
+import ConversationRewindDialog from "../components/conversation-rewind-dialog";
+import {
+  requestComposerDraft,
+  subscribeComposerDraftRequests,
+  takeComposerDraft,
+} from "../composer-draft-requests";
 import { PetCompanion, PetPicker } from "../components/pet-companion";
 import MemoriesModal from "../components/memories-modal";
 import ConfigModal from "../components/config-modal";
@@ -2202,6 +2211,28 @@ const MessageComposer = memo(function MessageComposer(
     composerResetKey,
     resetDraftTranslation,
   ]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const apply = () => {
+      const text = takeComposerDraft(sessionId);
+      if (text === null) return;
+      resetDraftTranslation();
+      setHistoryNavigation({ index: null, draftBeforeNavigation: "" });
+      setDraft(text);
+      setCursorPosition(text.length);
+      requestAnimationFrame(() => {
+        const textarea = composerTextareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(text.length, text.length);
+      });
+    };
+    apply();
+    return subscribeComposerDraftRequests((requestedSessionId) => {
+      if (requestedSessionId === sessionId) apply();
+    });
+  }, [composerResetKey, resetDraftTranslation, sessionId]);
 
   useEffect(() => {
     const updateMobilePhoneState = () => {
@@ -12735,6 +12766,11 @@ export default function CodexDeckApp() {
   const isGeneratingForSelectedSession =
     !!selectedSession && pendingTurn?.sessionId === selectedSession;
   const turnActionInFlightRef = useRef(false);
+  const [rewindTarget, setRewindTarget] = useState<{
+    sessionId: string;
+    turnId: string;
+    promptPreview: string;
+  } | null>(null);
   const handleTurnAction = useCallback(
     (
       sessionId: string,
@@ -12743,6 +12779,20 @@ export default function CodexDeckApp() {
     ) => {
       const turnId = message.turnId?.trim();
       if (!turnId || turnActionInFlightRef.current) return;
+      if (action === "rewind") {
+        if (sideThreadsById[sessionId]) {
+          setInteractionError(
+            "Editing previous prompts is unavailable in side conversations.",
+          );
+          return;
+        }
+        setRewindTarget({
+          sessionId,
+          turnId,
+          promptPreview: getTurnPromptText(message),
+        });
+        return;
+      }
       turnActionInFlightRef.current = true;
       void (async () => {
         try {
@@ -12770,7 +12820,11 @@ export default function CodexDeckApp() {
         }
       })();
     },
-    [showCommandNoticeForDuration, upsertSessionFromThreadSummary],
+    [
+      showCommandNoticeForDuration,
+      sideThreadsById,
+      upsertSessionFromThreadSummary,
+    ],
   );
   const selectedSessionConnectionFailureNotice =
     selectedSession && connectionFailureNotice?.sessionId === selectedSession
@@ -15496,6 +15550,28 @@ export default function CodexDeckApp() {
             onCancel={() => setDeleteSessionTargetId(null)}
             onConfirm={(deleteDiffGuide) => {
               void handleConfirmDeleteSession(deleteDiffGuide);
+            }}
+          />
+        )}
+
+        {rewindTarget && (
+          <ConversationRewindDialog
+            key={`${rewindTarget.sessionId}:${rewindTarget.turnId}`}
+            sessionId={rewindTarget.sessionId}
+            turnId={rewindTarget.turnId}
+            promptPreview={rewindTarget.promptPreview}
+            onCancel={() => setRewindTarget(null)}
+            onRewound={(result) => {
+              setRewindTarget(null);
+              setInteractionError(null);
+              const text = result.prompt?.text ?? rewindTarget.promptPreview;
+              if (text) requestComposerDraft(result.threadId, text);
+              const omitted = result.prompt?.omittedInputCount ?? 0;
+              showCommandNoticeForDuration(
+                omitted > 0
+                  ? `Rewound conversation; workspace files were not changed. Reattach ${omitted} image or file input${omitted === 1 ? "" : "s"} before resending.`
+                  : "Rewound conversation; workspace files were not changed.",
+              );
             }}
           />
         )}

@@ -527,6 +527,11 @@ export interface CodexThreadGoalClearResponse {
   cleared: boolean;
 }
 
+export type {
+  CodexRewoundPrompt,
+  CodexThreadRevertResult,
+} from "../codex-thread-history";
+
 export interface CodexThreadForkResponse {
   thread: CodexThreadSummary;
 }
@@ -5450,6 +5455,14 @@ async function getPrefixUserMessageTimestamp(
 export async function loadStorage(): Promise<void> {
   sessionDisplayCache.clear();
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
+}
+
+/** Re-resolve a thread's current rollout after `thread/revert` replaced it. */
+export async function refreshSessionRollout(sessionId: string): Promise<void> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return;
+  clearSessionCaches(normalizedSessionId);
+  await buildFileIndex();
 }
 
 export async function syncSessionFileIndex(
