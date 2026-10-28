@@ -340,6 +340,10 @@ export type SendCodexInputItem =
   | {
       type: "image";
       url: string;
+    }
+  | {
+      type: "audio";
+      url: string;
     };
 
 export interface SendCodexMessageResult {
@@ -1470,6 +1474,13 @@ class CodexAppServerClient {
               record.defaultReasoningEffort,
             ),
             supportedReasoningEfforts: supported,
+            ...(Array.isArray(record.inputModalities)
+              ? {
+                  inputModalities: record.inputModalities.filter(
+                    (entry): entry is string => typeof entry === "string",
+                  ),
+                }
+              : {}),
             ...(modelServiceTiers(record) !== undefined
               ? {
                   serviceTiers: modelServiceTiers(record),
@@ -2485,13 +2496,13 @@ class CodexAppServerClient {
           continue;
         }
 
-        if (item.type === "image") {
+        if (item.type === "image" || item.type === "audio") {
           const url = item.url.trim();
           if (!url) {
             continue;
           }
           normalizedInput.push({
-            type: "image",
+            type: item.type,
             url,
           });
         }
@@ -2517,7 +2528,7 @@ class CodexAppServerClient {
       input: normalizedInput.map((item) =>
         item.type === "text"
           ? { type: "text", text: item.text }
-          : { type: "image", url: item.url },
+          : { type: item.type, url: item.url },
       ),
       attachments: [],
     };

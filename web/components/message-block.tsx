@@ -2134,6 +2134,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
         );
       }
       if (block.type === "image_generation") return !!block.generatedImage;
+      if (block.type === "audio") return !!block.audio_url?.trim();
       return (
         block.type === "image" &&
         typeof block.image_url === "string" &&
@@ -4616,6 +4617,20 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
           alt="User image"
           className="max-h-[360px] w-auto max-w-full"
           loading="lazy"
+        />
+      </div>,
+    );
+  }
+
+  if (block.type === "audio" && block.audio_url?.trim()) {
+    return wrapSearchableBlock(
+      <div className="w-full max-w-md rounded-lg border border-zinc-700/45 bg-zinc-950/70 p-2">
+        <audio
+          controls
+          preload="metadata"
+          src={block.audio_url}
+          aria-label="User audio"
+          className="w-full"
         />
       </div>,
     );

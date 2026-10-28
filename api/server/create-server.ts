@@ -636,6 +636,24 @@ function parseSendMessageInputItems(
       continue;
     }
 
+    if (type === "audio") {
+      if (typeof record.url !== "string") {
+        return undefined;
+      }
+      const url = record.url.trim();
+      if (!url) {
+        continue;
+      }
+      if (!/^(data:audio\/[a-z0-9.+-]+[;,]|https:\/\/)/i.test(url)) {
+        return undefined;
+      }
+      parsed.push({
+        type: "audio",
+        url,
+      });
+      continue;
+    }
+
     return undefined;
   }
 

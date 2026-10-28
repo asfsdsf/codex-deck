@@ -761,6 +761,8 @@ function extractContentBlocksFromPayloadContent(
       text?: unknown;
       image_url?: unknown;
       imageUrl?: unknown;
+      audio_url?: unknown;
+      audioUrl?: unknown;
     };
 
     if (
@@ -789,6 +791,21 @@ function extractContentBlocksFromPayloadContent(
         blocks.push({
           type: "image",
           image_url: imageUrl,
+        });
+      }
+    }
+
+    if (block.type === "input_audio") {
+      const audioUrl =
+        typeof block.audio_url === "string"
+          ? block.audio_url
+          : typeof block.audioUrl === "string"
+            ? block.audioUrl
+            : "";
+      if (audioUrl.trim().length > 0) {
+        blocks.push({
+          type: "audio",
+          audio_url: audioUrl,
         });
       }
     }

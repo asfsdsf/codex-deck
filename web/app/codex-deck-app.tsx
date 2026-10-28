@@ -7,9 +7,19 @@ import RetainedWarnings from "../components/retained-warnings";
 import DaybreakSettings from "../components/daybreak-settings";
 import ExperimentalFeatures from "../components/experimental-features";
 import VoiceSessionBar from "../components/voice-session-bar";
+import {
+  AudioAttachButton,
+  AudioAttachmentList,
+  useAudioAttachments,
+} from "../components/audio-attachments";
 import VoiceSettings from "../components/voice-settings";
 import { getVoiceController } from "../voice/voice-controller";
-import { parseVoiceCommandArgs, VOICE_USAGE } from "../voice/voice-support";
+import {
+  audioAttachmentUnavailableReason,
+  isAudioDataUrl,
+  parseVoiceCommandArgs,
+  VOICE_USAGE,
+} from "../voice/voice-support";
 import TranscriptExport from "../components/transcript-export";
 import ConversationRecapView from "../components/conversation-recap";
 import UsageDashboard from "../components/usage-dashboard";
@@ -827,6 +837,8 @@ interface MessageComposerProps {
   onStopConversation: () => Promise<void>;
   /** Offer attaching a final-answer JSON schema to the next turn. */
   allowOutputSchema?: boolean;
+  /** Shows audio attachments; a non-null reason disables them. */
+  audioInput?: { unavailableReason: string | null };
 }
 
 type ComposerSendTrigger = "textarea-enter" | "send-button" | "other";
@@ -2037,7 +2049,10 @@ const MessageComposer = memo(function MessageComposer(
     onRunSlashCommand,
     onStopConversation,
     allowOutputSchema = false,
+    audioInput,
   } = props;
+  const audio = useAudioAttachments();
+  const clearAudioAttachments = audio.clear;
   const composerResetKey = draftResetKey ?? sessionId ?? "";
   const [outputSchema, setOutputSchema] = useState<AttachedOutputSchema | null>(
     null,
@@ -2165,10 +2180,16 @@ const MessageComposer = memo(function MessageComposer(
     setSelectedSkillSelectorIndex(0);
     skillSelectorRequestIdRef.current += 1;
     clearImageAttachments();
+    clearAudioAttachments();
     dragDepthRef.current = 0;
     setIsDragActive(false);
     setShowMobileAttachMenu(false);
-  }, [clearImageAttachments, composerResetKey, resetDraftTranslation]);
+  }, [
+    clearAudioAttachments,
+    clearImageAttachments,
+    composerResetKey,
+    resetDraftTranslation,
+  ]);
 
   useEffect(() => {
     const updateMobilePhoneState = () => {
@@ -2300,7 +2321,10 @@ const MessageComposer = memo(function MessageComposer(
   );
 
   const hasDraftText = draft.trim().length > 0;
-  const hasMessageContent = hasDraftText || imageAttachments.length > 0;
+  const hasMessageContent =
+    hasDraftText ||
+    imageAttachments.length > 0 ||
+    (!!audioInput && audio.attachments.length > 0);
   const shouldUseStopAction =
     isGeneratingForSelectedSession && !hasMessageContent;
   const steerWhileGenerating =
@@ -2360,7 +2384,8 @@ const MessageComposer = memo(function MessageComposer(
     clearImageAttachments();
     setOutputSchema(null);
     setOutputSchemaEditorOpen(false);
-  }, [clearImageAttachments, resetDraftTranslation]);
+    clearAudioAttachments();
+  }, [clearAudioAttachments, clearImageAttachments, resetDraftTranslation]);
 
   const focusComposerInput = useCallback(() => {
     const applyFocus = () => {
@@ -2880,9 +2905,16 @@ const MessageComposer = memo(function MessageComposer(
         return;
       }
 
+      // Audio rides in `images` as data:audio URLs; the send path maps them
+      // to `{ type: "audio" }` inputs.
       const sent = await submit({
         text: draft,
-        images: imageDataUrls,
+        images: [
+          ...imageDataUrls,
+          ...(audioInput && !audioInput.unavailableReason
+            ? audio.attachments.map((attachment) => attachment.dataUrl)
+            : []),
+        ],
         ...(allowOutputSchema && outputSchema
           ? { outputSchema: outputSchema.value }
           : {}),
@@ -2907,6 +2939,8 @@ const MessageComposer = memo(function MessageComposer(
       outputSchema,
       slashCommands,
       executeSlashCommand,
+      audioInput,
+      audio.attachments,
     ],
   );
   const handleIdlePrimaryAction = useCallback(
@@ -3090,6 +3124,23 @@ const MessageComposer = memo(function MessageComposer(
                   : null
               }
             />
+          )}
+          {audioInput && (
+            <AudioAttachmentList
+              attachments={audio.attachments}
+              disabled={isSendingLocked || composerBusy}
+              onRemove={audio.remove}
+            />
+          )}
+          {audioInput && audio.error && (
+            <div role="alert" className="px-4 pt-2 text-xs text-red-300">
+              {audio.error}
+            </div>
+          )}
+          {audioInput?.unavailableReason && audio.attachments.length > 0 && (
+            <div className="px-4 pt-2 text-xs text-amber-200">
+              {audioInput.unavailableReason} Attached audio will not be sent.
+            </div>
           )}
           {isDragActive && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[18px] border border-dashed border-cyan-500/70 bg-cyan-600/10 text-xs text-cyan-200">
@@ -3411,6 +3462,14 @@ const MessageComposer = memo(function MessageComposer(
           ref={composerActionsRef}
           className="composer-actions absolute bottom-2 right-2 z-10 flex items-center gap-1"
         >
+          {audioInput && (
+            <AudioAttachButton
+              unavailableReason={audioInput.unavailableReason}
+              disabled={isSendingLocked || composerBusy}
+              onAdd={(entries) => void audio.addBlobs(entries)}
+              onError={audio.setError}
+            />
+          )}
           <div className="relative flex">
             <input
               ref={cameraInputRef}
@@ -7801,6 +7860,13 @@ export default function CodexDeckApp() {
       collaborationModes.find((mode) => mode.mode === selectedModeKey) ?? null,
     [collaborationModes, selectedModeKey],
   );
+  const selectedSessionAudioInput = useMemo(() => {
+    const modelId = selectedModeOption?.model || selectedModelId;
+    const model =
+      models.find((entry) => entry.id === modelId) ??
+      (modelId ? null : (models.find((entry) => entry.isDefault) ?? null));
+    return { unavailableReason: audioAttachmentUnavailableReason(model) };
+  }, [models, selectedModeOption?.model, selectedModelId]);
   const selectedModeLabel = useMemo(() => {
     if (selectedModeOption?.name.trim()) {
       return selectedModeOption.name.trim();
@@ -10096,12 +10162,17 @@ export default function CodexDeckApp() {
           typeof imageUrl === "string" && imageUrl.trim().length > 0,
       );
       const input: Array<
-        { type: "text"; text: string } | { type: "image"; url: string }
+        | { type: "text"; text: string }
+        | { type: "image"; url: string }
+        | { type: "audio"; url: string }
       > = [
         ...(normalizedText.length > 0
           ? ([{ type: "text", text: normalizedText }] as const)
           : []),
-        ...normalizedImages.map((url) => ({ type: "image", url }) as const),
+        ...normalizedImages.map(
+          (url) =>
+            ({ type: isAudioDataUrl(url) ? "audio" : "image", url }) as const,
+        ),
       ];
       if (input.length === 0) {
         return false;
@@ -13765,6 +13836,7 @@ export default function CodexDeckApp() {
       | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
       | null;
     composerDisabledReason?: string | null;
+    audioInput?: { unavailableReason: string | null };
   }) => (
     <div className="composer-shell shrink-0 bg-zinc-950 px-3 pb-3 pt-1 md:px-5">
       <VoiceSessionBar
@@ -13814,6 +13886,7 @@ export default function CodexDeckApp() {
             onRunSlashCommand={input.onRunSlashCommand}
             onStopConversation={input.onStopConversation}
             allowOutputSchema={input.allowOutputSchema}
+            audioInput={input.audioInput}
           />
         )}
         <div
@@ -16345,6 +16418,7 @@ export default function CodexDeckApp() {
 
               {renderComposerFooter({
                 sessionId: selectedSession,
+                audioInput: selectedSessionAudioInput,
                 history: messageHistoryBySession[selectedSession] ?? [],
                 slashCommands: SESSION_COMPOSER_SLASH_COMMANDS,
                 isGeneratingForSession: isGeneratingForSelectedSession,
