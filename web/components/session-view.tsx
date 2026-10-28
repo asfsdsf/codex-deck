@@ -26,6 +26,7 @@ import MessageBlock from "./message-block";
 import { PendingElicitations } from "./pending-elicitations";
 import { PendingUserInputRequests } from "./pending-user-input-requests";
 import { PendingApprovalRequests } from "./pending-approval-requests";
+import { AutoReviewActivity } from "./auto-review";
 import { UserInputResizeContainer } from "./user-input-textarea";
 import {
   buildAsyncUserInputMessage,
@@ -3609,6 +3610,7 @@ const SessionView = memo(
                   errors={approvalErrors}
                   onRespond={submitApprovalResponse}
                 />
+                <AutoReviewActivity key={sessionId} sessionId={sessionId} />
                 <PendingElicitations
                   key={sessionId}
                   sessionId={sessionId}

@@ -363,6 +363,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     supportsInlineArgs: true,
   },
   {
+    name: "/approve",
+    description: "Approve one retry of a recent auto-review denial",
+  },
+  {
     name: "/memories",
     description: "Configure memory use and generation",
   },

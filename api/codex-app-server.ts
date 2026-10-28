@@ -27,6 +27,10 @@ import {
   type UsageDashboardSnapshot,
 } from "./codex-native";
 import {
+  GuardianReviewStore,
+  type CodexGuardianSnapshot,
+} from "./codex-guardian";
+import {
   PermissionManager,
   type CodexPermissionSelection,
   type CodexPermissionSnapshot,
@@ -1120,6 +1124,20 @@ class CodexAppServerClient {
     );
   }
 
+  private guardianReviews = new GuardianReviewStore(
+    (method, params, threadId) =>
+      this.requestNativeThread(method, params, threadId),
+    (id) => this.notifyNativeState("guardian", id),
+  );
+  public readGuardianReviews(threadId: string): CodexGuardianSnapshot {
+    return this.guardianReviews.snapshot(threadId);
+  }
+  public approveGuardianDenial(
+    threadId: string,
+    reviewId: string,
+  ): Promise<CodexGuardianSnapshot> {
+    return this.guardianReviews.approveDenial(threadId, reviewId);
+  }
   private permissions = new PermissionManager(
     (method, params, threadId) =>
       this.requestNativeThread(method, params, threadId),
@@ -4003,6 +4021,7 @@ class CodexAppServerClient {
   private handleServerNotification(method: string, params: unknown): void {
     if (this.recaps.handleNotification(method, params)) return;
     this.permissions.handleNotification(method, params);
+    if (this.guardianReviews.handleNotification(method, params)) return;
     if (this.extensions.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
@@ -6668,6 +6687,11 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  readGuardianReviews?: (threadId: string) => CodexGuardianSnapshot;
+  approveGuardianDenial?: (
+    threadId: string,
+    reviewId: string,
+  ) => Promise<CodexGuardianSnapshot>;
   readPermissions?: (threadId: string) => Promise<CodexPermissionSnapshot>;
   applyPermissions?: (
     threadId: string,
@@ -6890,6 +6914,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     startRecap: (id, history) => client!.startRecap(id, history),
     readUsageDashboard: (id) => client!.readUsageDashboard(id),
     consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
+    readGuardianReviews: (id) => client!.readGuardianReviews(id),
+    approveGuardianDenial: (id, reviewId) =>
+      client!.approveGuardianDenial(id, reviewId),
     readPermissions: (id) => client!.readPermissions(id),
     applyPermissions: (id, selection) =>
       client!.applyPermissions(id, selection),

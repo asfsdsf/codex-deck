@@ -1,4 +1,5 @@
 import PermissionsPanel from "../components/permissions-panel";
+import { AutoReviewDenials } from "../components/auto-review";
 import { parsePermissionArgs } from "../permission-args";
 import ConfigDiagnostics from "../components/config-diagnostics";
 import RetainedWarnings from "../components/retained-warnings";
@@ -4205,7 +4206,7 @@ export default function CodexDeckApp() {
   const closeExtensionDialog = useCallback(() => setExtensionDialog(null), []);
   // Permissions, auto-review, and worktree dialogs (kept apart from nativeDialog).
   const [workspaceDialog, setWorkspaceDialog] = useState<{
-    kind: "permissions";
+    kind: "permissions" | "approve";
     threadId: string;
   } | null>(null);
   const closeWorkspaceDialog = useCallback(() => setWorkspaceDialog(null), []);
@@ -11715,6 +11716,15 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/approve") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /approve.");
+          return false;
+        }
+        setWorkspaceDialog({ kind: "approve", threadId: commandSessionId });
+        return true;
+      }
+
       if (commandName === "/permissions") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /permissions.");
@@ -14747,11 +14757,25 @@ export default function CodexDeckApp() {
           </NativeDialog>
         )}
         {workspaceDialog && (
-          <NativeDialog title="Permissions" onClose={closeWorkspaceDialog}>
-            <PermissionsPanel
-              key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
-              threadId={workspaceDialog.threadId}
-            />
+          <NativeDialog
+            title={
+              workspaceDialog.kind === "approve"
+                ? "Auto-review Denials"
+                : "Permissions"
+            }
+            onClose={closeWorkspaceDialog}
+          >
+            {workspaceDialog.kind === "approve" ? (
+              <AutoReviewDenials
+                key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
+                threadId={workspaceDialog.threadId}
+              />
+            ) : (
+              <PermissionsPanel
+                key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
+                threadId={workspaceDialog.threadId}
+              />
+            )}
           </NativeDialog>
         )}
         {reviewDialog && (

@@ -2261,3 +2261,20 @@ export function setCodexPermissions(
     { method: "POST", body: JSON.stringify(selection) },
   );
 }
+
+export function getCodexAutoReview(
+  threadId: string,
+): Promise<import("@codex-deck/api").CodexGuardianSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/auto-review`,
+  );
+}
+export function approveCodexAutoReviewDenial(
+  threadId: string,
+  reviewId: string,
+): Promise<import("@codex-deck/api").CodexGuardianSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/auto-review/${encodeURIComponent(reviewId)}/approve`,
+    { method: "POST" },
+  );
+}

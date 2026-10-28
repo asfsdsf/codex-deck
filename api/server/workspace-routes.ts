@@ -20,6 +20,8 @@ type WorkspaceClient = Pick<
   | "archiveThread"
   | "readPermissions"
   | "applyPermissions"
+  | "readGuardianReviews"
+  | "approveGuardianDenial"
 >;
 
 export function registerWorkspaceRoutes(
@@ -119,6 +121,28 @@ export function registerWorkspaceRoutes(
         approvalPolicy,
         approvalsReviewer,
       });
+    }),
+  );
+
+  app.get("/api/codex/threads/:id/auto-review", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      if (!threadId) return c.json({ error: "Thread ID is required." }, 400);
+      if (!client.readGuardianReviews)
+        throw new Error("Auto-review activity is unavailable on this server.");
+      return client.readGuardianReviews(threadId);
+    }),
+  );
+
+  app.post("/api/codex/threads/:id/auto-review/:reviewId/approve", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      const reviewId = c.req.param("reviewId")?.trim();
+      if (!threadId || !reviewId)
+        return c.json({ error: "Thread and review IDs are required." }, 400);
+      if (!client.approveGuardianDenial)
+        throw new Error("Auto-review retries are unavailable on this server.");
+      return client.approveGuardianDenial(threadId, reviewId);
     }),
   );
 }

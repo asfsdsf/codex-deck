@@ -1,4 +1,8 @@
 export type {
+  CodexGuardianReview,
+  CodexGuardianSnapshot,
+} from "../codex-guardian";
+export type {
   CodexApprovalPolicy,
   CodexApprovalsReviewer,
   CodexPermissionOption,
