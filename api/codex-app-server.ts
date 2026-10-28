@@ -15,6 +15,12 @@ import {
   type ExperimentalWriteResult,
 } from "./codex-native";
 import { RecapManager, type ConversationRecap } from "./codex-recap";
+import * as threadQueue from "./codex-thread-queue";
+import type {
+  CodexQueueInputItem,
+  CodexQueuedMessage,
+  CodexThreadQueueSnapshot,
+} from "./codex-thread-queue";
 import {
   readUsageDashboard,
   type UsageDashboardSnapshot,
@@ -22,6 +28,7 @@ import {
 import {
   nativePages,
   nativeRecord,
+  type NativeRpc,
   type NativeScope,
   type McpInventorySnapshot,
   type McpServerInventory,
@@ -1171,6 +1178,39 @@ class CodexAppServerClient {
       if (!threadId || !shouldRetryAfterResume(error)) throw error;
       await this.resumeThread(threadId);
       return this.request(method, params);
+    }
+  }
+  private threadQueueRpc(threadId: string): NativeRpc {
+    // Queue reads/edits go to the thread store and need no resume; only
+    // thread/queue/start needs the thread loaded on this app-server.
+    return async (method, params) => {
+      try {
+        return await this.request(method, params);
+      } catch (error) {
+        if (
+          !(error instanceof CodexAppServerRpcError) ||
+          !/resume the thread before/i.test(error.message)
+        )
+          throw error;
+        await this.resumeThread(threadId);
+        return this.request(method, params);
+      }
+    };
+  }
+  public listThreadQueue(threadId: string): Promise<CodexThreadQueueSnapshot> {
+    return threadQueue.listThreadQueue(this.threadQueueRpc(threadId), threadId);
+  }
+  public async mutateThreadQueue<T>(
+    threadId: string,
+    work: (rpc: NativeRpc) => Promise<T>,
+  ): Promise<T> {
+    this.clearThreadStateCache(threadId);
+    try {
+      return await work(this.threadQueueRpc(threadId));
+    } finally {
+      this.clearThreadStateCache(threadId);
+      // thread/queue/changed only reaches subscribed connections.
+      this.notifyNativeState("queue", threadId);
     }
   }
   public async listMcpServers(
@@ -3918,6 +3958,12 @@ class CodexAppServerClient {
       return;
     }
 
+    if (method === "thread/queue/changed") {
+      const threadId = asTrimmedString(asRecord(params)?.threadId);
+      if (threadId) this.notifyNativeState("queue", threadId);
+      return;
+    }
+
     if (method === "thread/started") {
       this.handleThreadStartedNotification(params);
       return;
@@ -6549,6 +6595,34 @@ export interface CodexAppServerClientFacade {
     creditId?: string | null,
   ) => Promise<{ outcome: string }>;
   listMcpServers?: (threadId?: string | null) => Promise<McpInventorySnapshot>;
+  listThreadQueue?: (threadId: string) => Promise<CodexThreadQueueSnapshot>;
+  addThreadQueueMessage?: (
+    threadId: string,
+    input: CodexQueueInputItem[],
+    clientUserMessageId: string,
+  ) => Promise<CodexQueuedMessage>;
+  updateThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string,
+    text: string,
+  ) => Promise<CodexQueuedMessage>;
+  deleteThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string,
+  ) => Promise<boolean>;
+  reorderThreadQueue?: (
+    threadId: string,
+    queuedSubmissionIds: string[],
+  ) => Promise<void>;
+  moveThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string,
+    direction: "up" | "down",
+  ) => Promise<boolean>;
+  startThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string | null,
+  ) => Promise<{ turnId: string | null }>;
   loginMcpServer?: (
     name: string,
     threadId?: string | null,
@@ -6691,6 +6765,31 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     readUsageDashboard: (id) => client!.readUsageDashboard(id),
     consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
     listMcpServers: (id) => client!.listMcpServers(id),
+    listThreadQueue: (id) => client!.listThreadQueue(id),
+    addThreadQueueMessage: (id, input, clientId) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.addThreadQueueMessage(rpc, id, input, clientId),
+      ),
+    updateThreadQueueMessage: (id, itemId, text) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.updateThreadQueueMessage(rpc, id, itemId, text),
+      ),
+    deleteThreadQueueMessage: (id, itemId) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.deleteThreadQueueMessage(rpc, id, itemId),
+      ),
+    reorderThreadQueue: (id, ids) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.reorderThreadQueue(rpc, id, ids),
+      ),
+    moveThreadQueueMessage: (id, itemId, direction) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.moveThreadQueueMessage(rpc, id, itemId, direction),
+      ),
+    startThreadQueueMessage: (id, itemId) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.startThreadQueueMessage(rpc, id, itemId),
+      ),
     loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
     reloadMcpServers: () => client!.reloadMcpServers(),
     readMemorySettings: (cwd?: string | null) =>

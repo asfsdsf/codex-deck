@@ -20,6 +20,10 @@ export type {
   McpServerInventory,
 } from "../codex-native";
 export type { CodexBackgroundTerminal } from "../background-terminals";
+export type {
+  CodexQueuedMessage,
+  CodexThreadQueueSnapshot,
+} from "../codex-thread-queue";
 import type { CodexOperationalNotification } from "../operational-notifications";
 export type { CodexOperationalNotification } from "../operational-notifications";
 import type { CodexHookRun } from "../hook-runs";

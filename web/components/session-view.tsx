@@ -82,6 +82,7 @@ import {
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
 import { STEERED_MESSAGE_CAPTION } from "../running-turn-send";
+import QueuedMessageActions from "./queued-message-actions";
 import { mergePendingConversationMessages } from "../pending-conversation-messages";
 import { getCompletedTaskAnswers } from "../task-answer";
 import { TaskAnswerActions } from "./task-answer-actions";
@@ -256,6 +257,20 @@ interface SessionViewProps {
     pendingId: string,
   ) => Promise<boolean>;
   onCancelPendingUserMessage?: (sessionId: string, pendingId: string) => void;
+  /** Edit a shared-queue message's text. */
+  onEditPendingUserMessage?: (
+    sessionId: string,
+    pendingId: string,
+    text: string,
+  ) => Promise<boolean>;
+  /** Move a shared-queue message within the server queue. */
+  onMovePendingUserMessage?: (
+    sessionId: string,
+    pendingId: string,
+    direction: "up" | "down",
+  ) => void;
+  /** A turn is running for this session (queued items wait for it). */
+  turnActive?: boolean;
   onAnswerAsyncQuestion?: (sessionId: string, text: string) => Promise<boolean>;
   railCollapsedByDefault?: boolean;
   latestButtonBottomOffsetPx?: number;
@@ -737,6 +752,9 @@ const SessionView = memo(
         pendingUserMessages = [],
         onForceSendPendingUserMessage,
         onCancelPendingUserMessage,
+        onEditPendingUserMessage,
+        onMovePendingUserMessage,
+        turnActive = false,
         onAnswerAsyncQuestion,
         railCollapsedByDefault = false,
         latestButtonBottomOffsetPx,
@@ -803,6 +821,13 @@ const SessionView = memo(
       ]);
       const [submittingApprovalRequestIds, setSubmittingApprovalRequestIds] =
         useState<string[]>([]);
+      const sharedQueuePendingIds = useMemo(
+        () =>
+          pendingUserMessages
+            .filter((entry) => entry.sharedQueueId)
+            .map((entry) => entry.pendingId),
+        [pendingUserMessages],
+      );
       const [forceSendingPendingId, setForceSendingPendingId] = useState<
         string | null
       >(null);
@@ -2603,6 +2628,9 @@ const SessionView = memo(
 
           if (entry.pendingUserMessage) {
             const pendingMessage = entry.pendingUserMessage;
+            const sharedQueueIndex = sharedQueuePendingIds.indexOf(
+              pendingMessage.pendingId,
+            );
             return (
               <div
                 key={entry.entryKey}
@@ -2617,55 +2645,68 @@ const SessionView = memo(
                     {STEERED_MESSAGE_CAPTION}
                   </div>
                 ) : null}
-                {pendingMessage.status === "queued" &&
-                (onForceSendPendingUserMessage ||
-                  onCancelPendingUserMessage) ? (
-                  <div className="mt-1 flex items-center justify-end gap-2">
-                    <span className="text-[11px] text-zinc-500">
-                      Queued — sends when the current turn finishes
-                    </span>
-                    {onForceSendPendingUserMessage ? (
-                      <button
-                        type="button"
-                        disabled={forceSendingPendingId !== null}
-                        onClick={() => {
-                          setForceSendingPendingId(pendingMessage.pendingId);
-                          void onForceSendPendingUserMessage(
-                            sessionId,
-                            pendingMessage.pendingId,
-                          ).finally(() => {
-                            setForceSendingPendingId((current) =>
-                              current === pendingMessage.pendingId
-                                ? null
-                                : current,
-                            );
-                          });
-                        }}
-                        className="rounded border border-indigo-400/40 bg-indigo-600/20 px-2.5 py-1 text-[11px] text-indigo-200 transition-colors hover:bg-indigo-600/35 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {forceSendingPendingId === pendingMessage.pendingId
-                          ? "Sending..."
-                          : "Send now"}
-                      </button>
-                    ) : null}
-                    {onCancelPendingUserMessage ? (
-                      <button
-                        type="button"
-                        disabled={
-                          forceSendingPendingId === pendingMessage.pendingId
-                        }
-                        onClick={() =>
-                          onCancelPendingUserMessage(
-                            sessionId,
-                            pendingMessage.pendingId,
-                          )
-                        }
-                        className="rounded border border-zinc-500/50 bg-zinc-800/40 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-700/50 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Cancel
-                      </button>
-                    ) : null}
-                  </div>
+                {pendingMessage.status === "queued" ? (
+                  <QueuedMessageActions
+                    message={pendingMessage}
+                    turnActive={turnActive}
+                    sendingNow={
+                      forceSendingPendingId === pendingMessage.pendingId
+                    }
+                    busy={forceSendingPendingId !== null}
+                    canMoveUp={sharedQueueIndex > 0}
+                    canMoveDown={
+                      sharedQueueIndex >= 0 &&
+                      sharedQueueIndex < sharedQueuePendingIds.length - 1
+                    }
+                    onSendNow={
+                      onForceSendPendingUserMessage
+                        ? () => {
+                            setForceSendingPendingId(pendingMessage.pendingId);
+                            void onForceSendPendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                            ).finally(() => {
+                              setForceSendingPendingId((current) =>
+                                current === pendingMessage.pendingId
+                                  ? null
+                                  : current,
+                              );
+                            });
+                          }
+                        : null
+                    }
+                    onCancel={
+                      onCancelPendingUserMessage
+                        ? () =>
+                            onCancelPendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                            )
+                        : null
+                    }
+                    onEdit={
+                      pendingMessage.sharedQueueId && onEditPendingUserMessage
+                        ? (text) =>
+                            onEditPendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                              text,
+                            )
+                        : null
+                    }
+                    onMove={
+                      pendingMessage.sharedQueueId &&
+                      onMovePendingUserMessage &&
+                      sharedQueuePendingIds.length > 1
+                        ? (direction) =>
+                            onMovePendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                              direction,
+                            )
+                        : null
+                    }
+                  />
                 ) : null}
               </div>
             );
@@ -2758,6 +2799,10 @@ const SessionView = memo(
           latestAiTerminalPlanEntryKey,
           onApproveAiTerminalStep,
           onCancelPendingUserMessage,
+          onEditPendingUserMessage,
+          onMovePendingUserMessage,
+          sharedQueuePendingIds,
+          turnActive,
           onFilePathLinkClick,
           onForceSendPendingUserMessage,
           onPlanAction,

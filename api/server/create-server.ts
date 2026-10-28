@@ -1,4 +1,5 @@
 import { registerNativeWorkflowRoutes } from "./native-workflow-routes";
+import { registerThreadQueueRoutes } from "./thread-queue-routes";
 import { registerBackgroundTerminalRoutes } from "./background-terminal-routes";
 import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
@@ -4976,6 +4977,12 @@ export function createServer(options: ServerOptions) {
   registerMemoryInsightRoutes(app);
   registerNativeWorkflowRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
+  });
+  registerThreadQueueRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+    wake: (id) => {
+      for (const listener of conversationWakeListeners) listener(id);
+    },
   });
   registerReviewRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,

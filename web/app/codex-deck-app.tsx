@@ -10,6 +10,12 @@ import McpAdmin from "../components/mcp-admin";
 import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import RunningTurnComposerActions from "../components/running-turn-composer-actions";
+import { useNativeSnapshot } from "../hooks/use-native-snapshot";
+import {
+  mergeSharedQueueIntoPending,
+  sharedQueueItemIdFromPendingId,
+  shouldUseSharedQueue,
+} from "../shared-message-queue";
 import ServiceTierSelect from "../components/service-tier-select";
 import { serviceTierOverride } from "../../api/service-tiers";
 import ReviewModal from "../components/review-modal";
@@ -32,6 +38,8 @@ import type {
   DiffGuideSummary,
   DiffGuideStartResponse,
   CodexAppServerEvent,
+  CodexQueuedMessage,
+  SendCodexMessageInputItem,
   CodexAgentAction,
   CodexAgentWaitConfig,
   CodexCollaborationModeOption,
@@ -215,6 +223,12 @@ import {
   getCodexThreadState,
   getWorkflowSessionRoles as getWorkflowSessionRolesRequest,
   interruptCodexThread,
+  addCodexThreadQueueMessage,
+  deleteCodexThreadQueueMessage,
+  getCodexThreadQueue,
+  moveCodexThreadQueueMessage,
+  startCodexThreadQueueMessage,
+  updateCodexThreadQueueMessage,
   isRemoteTransportEnabled,
   listCodexCollaborationModes,
   listCodexModels,
@@ -674,6 +688,9 @@ interface PendingTurn {
   sessionId: string;
   turnId: string | null;
 }
+
+const EMPTY_PENDING_USER_MESSAGES: PendingUserMessage[] = [];
+const EMPTY_SHARED_QUEUE_ITEMS: CodexQueuedMessage[] = [];
 
 interface SideThreadState {
   parentThreadId: string;
@@ -9795,6 +9812,76 @@ export default function CodexDeckApp() {
     workflowCreateTitle,
   ]);
 
+  // Server-side shared queue for the selected session (thread/queue/*). It
+  // refetches on thread/queue/changed, reconnect snapshots, and visibility.
+  const sharedQueueSupportedRef = useRef<boolean | null>(null);
+  const loadSelectedSharedQueue = useCallback(async () => {
+    const threadId = selectedSession;
+    if (!threadId) {
+      return { threadId: null, supported: false, items: [] };
+    }
+    const snapshot = await getCodexThreadQueue(threadId);
+    sharedQueueSupportedRef.current = snapshot.supported;
+    return { threadId, ...snapshot };
+  }, [selectedSession]);
+  const {
+    data: sharedQueueData,
+    refresh: refreshSharedQueue,
+    setData: setSharedQueueData,
+  } = useNativeSnapshot("queue", selectedSession, loadSelectedSharedQueue);
+  const selectedSharedQueueItems =
+    sharedQueueData && sharedQueueData.threadId === selectedSession
+      ? sharedQueueData.items
+      : EMPTY_SHARED_QUEUE_ITEMS;
+  const selectedSessionPendingUserMessages = useMemo(
+    () =>
+      selectedSession
+        ? mergeSharedQueueIntoPending(
+            pendingUserMessagesBySession[selectedSession] ??
+              EMPTY_PENDING_USER_MESSAGES,
+            selectedSharedQueueItems,
+          )
+        : EMPTY_PENDING_USER_MESSAGES,
+    [pendingUserMessagesBySession, selectedSession, selectedSharedQueueItems],
+  );
+
+  // Adds to the app-server queue; false means "use the local queue".
+  const enqueueSharedQueueMessage = useCallback(
+    async (
+      sessionId: string,
+      input: SendCodexMessageInputItem[],
+    ): Promise<boolean> => {
+      if (sharedQueueSupportedRef.current === false) {
+        return false;
+      }
+      try {
+        const response = await addCodexThreadQueueMessage(
+          sessionId,
+          input,
+          createPendingUserMessageId(),
+        );
+        const item = response.item;
+        if (!response.supported || !item) {
+          sharedQueueSupportedRef.current = false;
+          return false;
+        }
+        sharedQueueSupportedRef.current = true;
+        setSharedQueueData((current) =>
+          current &&
+          current.threadId === sessionId &&
+          !current.items.some((entry) => entry.id === item.id)
+            ? { ...current, items: [...current.items, item] }
+            : current,
+        );
+        refreshSharedQueue();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [refreshSharedQueue, setSharedQueueData],
+  );
+
   const enqueuePendingUserMessage = useCallback(
     (
       sessionId: string,
@@ -9931,16 +10018,40 @@ export default function CodexDeckApp() {
       // a time; older queued messages keep their order.
       let steerRunningTurn = options?.steerActiveTurn === true;
       if (!options?.pendingIdOverride && !options?.bypassQueue) {
+        const hasLocalBacklog =
+          nextQueuedPendingUserMessage(
+            pendingUserMessagesBySessionRef.current,
+            sessionId,
+          ) !== null;
         const route = resolveComposerSendRoute({
           turnActive: pendingTurnRef.current?.sessionId === sessionId,
-          hasQueuedBacklog:
-            nextQueuedPendingUserMessage(
-              pendingUserMessagesBySessionRef.current,
-              sessionId,
-            ) !== null,
+          hasQueuedBacklog: hasLocalBacklog,
           intent: options?.intent ?? "default",
         });
         steerRunningTurn = steerRunningTurn || route === "steer";
+        // The app-server drains its shared queue itself; a local backlog
+        // keeps using the local queue so the two never interleave.
+        if (
+          route === "queue" &&
+          !hasLocalBacklog &&
+          pendingTurnRef.current?.sessionId === sessionId &&
+          shouldUseSharedQueue({
+            supported: sharedQueueSupportedRef.current,
+            hasSendOverrides:
+              options?.modeOverride !== undefined ||
+              options?.cwdOverride !== undefined,
+          })
+        ) {
+          setSendingMessage(true);
+          try {
+            if (await enqueueSharedQueueMessage(sessionId, input)) {
+              setInteractionError(null);
+              return true;
+            }
+          } finally {
+            setSendingMessage(false);
+          }
+        }
         if (route === "queue") {
           const pendingId = enqueuePendingUserMessage(
             sessionId,
@@ -10065,6 +10176,22 @@ export default function CodexDeckApp() {
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (
+          steerRunningTurn &&
+          isNonSteerableTurnError(message) &&
+          shouldUseSharedQueue({
+            supported: sharedQueueSupportedRef.current,
+            hasSendOverrides:
+              options?.modeOverride !== undefined ||
+              options?.cwdOverride !== undefined,
+          }) &&
+          (await enqueueSharedQueueMessage(sessionId, input))
+        ) {
+          // The app-server submits it when the review/compact turn ends.
+          pendingSendOptionsByIdRef.current.delete(pendingId);
+          removePendingUserMessageById(sessionId, pendingId);
+          return true;
+        }
         if (steerRunningTurn && isNonSteerableTurnError(message)) {
           // Like Codex CLI, a rejected steer waits in the queue for the turn
           // to finish instead of being dropped.
@@ -10108,6 +10235,7 @@ export default function CodexDeckApp() {
       selectedEffort,
       threadSummaryById,
       enqueuePendingUserMessage,
+      enqueueSharedQueueMessage,
       markPendingUserMessageAwaitingConfirmation,
       markSessionUserMessagedAt,
       removePendingUserMessageById,
@@ -10227,11 +10355,121 @@ export default function CodexDeckApp() {
     [],
   );
 
+  // "Send now" for a shared-queue item: interrupt a running turn (the
+  // server does not drain after an interrupt), then start that item.
+  const sendSharedQueueItemNow = useCallback(
+    async (sessionId: string, itemId: string): Promise<boolean> => {
+      const item = selectedSharedQueueItems.find(
+        (entry) => entry.id === itemId,
+      );
+      setInteractionError(null);
+      if (!(await interruptRunningTurnForSession(sessionId))) {
+        return false;
+      }
+      setSendingMessage(true);
+      try {
+        const { turnId } = await startCodexThreadQueueMessage(
+          sessionId,
+          itemId,
+        );
+        if (item) {
+          // Keep the prompt visible until Codex records it.
+          const pendingId = enqueuePendingUserMessage(sessionId, {
+            text: item.text,
+            images: item.images,
+          });
+          markPendingUserMessageAwaitingConfirmation(
+            sessionId,
+            pendingId,
+            turnId,
+          );
+        }
+        markSessionUserMessagedAt(sessionId, Date.now());
+        trackWebManagedSessionTurn(sessionId, turnId);
+        setPendingTurn({ sessionId, turnId });
+        return true;
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      } finally {
+        setSendingMessage(false);
+        refreshSharedQueue();
+      }
+    },
+    [
+      enqueuePendingUserMessage,
+      interruptRunningTurnForSession,
+      markPendingUserMessageAwaitingConfirmation,
+      markSessionUserMessagedAt,
+      refreshSharedQueue,
+      selectedSharedQueueItems,
+      trackWebManagedSessionTurn,
+    ],
+  );
+
+  const editPendingUserMessage = useCallback(
+    async (sessionId: string, pendingId: string, text: string) => {
+      const itemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (!itemId) {
+        return false;
+      }
+      try {
+        const { item } = await updateCodexThreadQueueMessage(
+          sessionId,
+          itemId,
+          text,
+        );
+        setSharedQueueData((current) =>
+          current && current.threadId === sessionId
+            ? {
+                ...current,
+                items: current.items.map((entry) =>
+                  entry.id === item.id ? item : entry,
+                ),
+              }
+            : current,
+        );
+        return true;
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      } finally {
+        refreshSharedQueue();
+      }
+    },
+    [refreshSharedQueue, setSharedQueueData],
+  );
+
+  const movePendingUserMessage = useCallback(
+    (sessionId: string, pendingId: string, direction: "up" | "down") => {
+      const itemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (!itemId) {
+        return;
+      }
+      void moveCodexThreadQueueMessage(sessionId, itemId, direction)
+        .catch((error: unknown) =>
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          ),
+        )
+        .finally(refreshSharedQueue);
+    },
+    [refreshSharedQueue],
+  );
+
   const forceSendPendingUserMessage = useCallback(
     async (sessionId: string, pendingId: string): Promise<boolean> => {
       const normalizedSessionId = sessionId.trim();
       if (!normalizedSessionId || sendingMessage || stoppingTurn) {
         return false;
+      }
+      const sharedItemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (sharedItemId) {
+        return sendSharedQueueItemNow(normalizedSessionId, sharedItemId);
       }
       const message = getPendingUserMessage(
         pendingUserMessagesBySessionRef.current,
@@ -10272,6 +10510,7 @@ export default function CodexDeckApp() {
     [
       interruptRunningTurnForSession,
       sendMessageText,
+      sendSharedQueueItemNow,
       sendingMessage,
       stoppingTurn,
     ],
@@ -10281,6 +10520,27 @@ export default function CodexDeckApp() {
     (sessionId: string, pendingId: string) => {
       const normalizedSessionId = sessionId.trim();
       if (!normalizedSessionId) {
+        return;
+      }
+      const sharedItemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (sharedItemId) {
+        setSharedQueueData((current) =>
+          current && current.threadId === normalizedSessionId
+            ? {
+                ...current,
+                items: current.items.filter(
+                  (entry) => entry.id !== sharedItemId,
+                ),
+              }
+            : current,
+        );
+        void deleteCodexThreadQueueMessage(normalizedSessionId, sharedItemId)
+          .catch((error: unknown) =>
+            setInteractionError(
+              error instanceof Error ? error.message : String(error),
+            ),
+          )
+          .finally(refreshSharedQueue);
         return;
       }
       const message = getPendingUserMessage(
@@ -10296,7 +10556,7 @@ export default function CodexDeckApp() {
       pendingSendOptionsByIdRef.current.delete(pendingId);
       removePendingUserMessageById(normalizedSessionId, pendingId);
     },
-    [removePendingUserMessageById],
+    [refreshSharedQueue, removePendingUserMessageById, setSharedQueueData],
   );
 
   const submitSelectedSessionMessage = useCallback(
@@ -15555,11 +15815,12 @@ export default function CodexDeckApp() {
                   ref={sessionViewRef}
                   sessionId={selectedSession}
                   projectPath={selectedSessionData?.project ?? null}
-                  pendingUserMessages={
-                    pendingUserMessagesBySession[selectedSession] ?? []
-                  }
+                  pendingUserMessages={selectedSessionPendingUserMessages}
                   onForceSendPendingUserMessage={forceSendPendingUserMessage}
                   onCancelPendingUserMessage={cancelPendingUserMessage}
+                  onEditPendingUserMessage={editPendingUserMessage}
+                  onMovePendingUserMessage={movePendingUserMessage}
+                  turnActive={isGeneratingForSelectedSession}
                   onAnswerAsyncQuestion={handleAnswerAsyncQuestion}
                   railCollapsedByDefault={railCollapsedByDefault}
                   conversationSearchOpen={conversationSearchOpen}

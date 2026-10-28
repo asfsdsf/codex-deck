@@ -11,6 +11,8 @@ export interface PendingUserMessage {
   turnId?: string | null;
   /** Delivered into a running turn with `turn/steer`. */
   steered?: boolean;
+  /** Item id in the app-server's shared queue (display-only entries). */
+  sharedQueueId?: string;
 }
 
 export type PendingUserMessagesBySession = Record<string, PendingUserMessage[]>;

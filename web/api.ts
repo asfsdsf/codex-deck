@@ -107,6 +107,7 @@ import type {
   CodexUserInputResponsePayload,
   CodexApprovalRequest,
   CodexApprovalResponsePayload,
+  SendCodexMessageInputItem,
   SendCodexMessageRequest,
   SendCodexMessageResponse,
 } from "@codex-deck/api";
@@ -2009,6 +2010,87 @@ export function terminateCodexBackgroundTerminal(
 ): Promise<{ terminated: boolean }> {
   return requestJson(
     `/api/codex/threads/${encodeURIComponent(threadId)}/background-terminals/${encodeURIComponent(processId)}/terminate`,
+    { method: "POST" },
+  );
+}
+
+type CodexQueuedMessage = import("@codex-deck/api").CodexQueuedMessage;
+function threadQueueUrl(threadId: string, suffix = ""): string {
+  return `/api/codex/threads/${encodeURIComponent(threadId.trim())}/queue${suffix}`;
+}
+export function getCodexThreadQueue(
+  threadId: string,
+): Promise<import("@codex-deck/api").CodexThreadQueueSnapshot> {
+  return requestJson(threadQueueUrl(threadId));
+}
+/** `supported: false` means the app-server has no shared queue. */
+export function addCodexThreadQueueMessage(
+  threadId: string,
+  input: SendCodexMessageInputItem[],
+  clientUserMessageId?: string,
+): Promise<{ supported: boolean; item?: CodexQueuedMessage }> {
+  return requestJson(threadQueueUrl(threadId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input, clientUserMessageId }),
+  });
+}
+export function updateCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+  text: string,
+): Promise<{ item: CodexQueuedMessage }> {
+  return requestJson(
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}`),
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    },
+  );
+}
+export function deleteCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+): Promise<{ deleted: boolean }> {
+  return requestJson(
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}`),
+    {
+      method: "DELETE",
+    },
+  );
+}
+export function reorderCodexThreadQueue(
+  threadId: string,
+  ids: string[],
+): Promise<{ ok: boolean }> {
+  return requestJson(threadQueueUrl(threadId, "/reorder"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+}
+export function moveCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+  direction: "up" | "down",
+): Promise<{ moved: boolean }> {
+  return requestJson(
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}/move`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction }),
+    },
+  );
+}
+export function startCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+): Promise<{ ok: boolean; turnId: string | null }> {
+  return requestJsonAndNotifyConversation(
+    threadId.trim(),
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}/start`),
     { method: "POST" },
   );
 }
