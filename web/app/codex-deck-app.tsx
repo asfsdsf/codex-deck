@@ -9,6 +9,7 @@ import NativeDialog from "../components/native-dialog";
 import McpAdmin from "../components/mcp-admin";
 import OperationalNotices from "../components/operational-notices";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
+import RunningTurnComposerActions from "../components/running-turn-composer-actions";
 import ServiceTierSelect from "../components/service-tier-select";
 import { serviceTierOverride } from "../../api/service-tiers";
 import ReviewModal from "../components/review-modal";
@@ -191,6 +192,11 @@ import {
   resolveTerminalComposerContinueText,
 } from "../message-composer-actions";
 import {
+  isNonSteerableTurnError,
+  resolveComposerSendRoute,
+  type ComposerSendIntent,
+} from "../running-turn-send";
+import {
   createRemoteAdminSetupToken,
   createCodexThread,
   deleteWorkflow as deleteWorkflowRequest,
@@ -316,6 +322,7 @@ import {
   consumeConfirmedPendingUserMessages,
   getPendingUserMessage,
   nextQueuedPendingUserMessage,
+  markPendingUserMessageSteered,
   removePendingUserMessage,
   updatePendingUserMessageStatus,
   type PendingUserMessage,
@@ -767,6 +774,14 @@ interface MessageComposerProps {
   messageBoxHeight: number;
   onResizeMessageBoxStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onSendMessage: (payload: MessageComposerSubmitPayload) => Promise<boolean>;
+  /** Queue for after the running turn (Codex TUI Tab). */
+  onQueueMessage?:
+    | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+    | null;
+  /** Interrupt the running turn, then send as a new turn. */
+  onInterruptAndSend?:
+    | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+    | null;
   onRunSlashCommand: (commandName: string, args: string) => Promise<boolean>;
   onStopConversation: () => Promise<void>;
 }
@@ -1974,6 +1989,8 @@ const MessageComposer = memo(function MessageComposer(
     messageBoxHeight,
     onResizeMessageBoxStart,
     onSendMessage,
+    onQueueMessage,
+    onInterruptAndSend,
     onRunSlashCommand,
     onStopConversation,
   } = props;
@@ -2234,6 +2251,8 @@ const MessageComposer = memo(function MessageComposer(
   const hasMessageContent = hasDraftText || imageAttachments.length > 0;
   const shouldUseStopAction =
     isGeneratingForSelectedSession && !hasMessageContent;
+  const steerWhileGenerating =
+    isGeneratingForSelectedSession && hasMessageContent;
   const hasIdlePrimaryAction = typeof onIdlePrimaryAction === "function";
   const idlePrimaryActionButtonLabel = idlePrimaryActionLabel || "Send";
   const composerBusy = sendingMessage || idlePrimaryActionBusy;
@@ -2248,6 +2267,7 @@ const MessageComposer = memo(function MessageComposer(
     sendingMessage,
     shouldUseStopAction,
     stoppingTurn,
+    steerWhileGenerating,
   });
 
   const slashInvocationReady =
@@ -2259,7 +2279,12 @@ const MessageComposer = memo(function MessageComposer(
   // (Run, Init, ...) keep a short text label.
   const primaryButtonIconOnly =
     !slashInvocationReady &&
-    (primaryActionState.kind === "stop" || primaryActionState.kind === "send");
+    (primaryActionState.kind === "stop" ||
+      (primaryActionState.kind === "send" && !steerWhileGenerating));
+  const showRunningTurnActions =
+    steerWhileGenerating &&
+    !slashInvocationReady &&
+    primaryActionState.kind === "send";
 
   const normalizedImageFiles = useMemo(
     () => imageAttachments.map((attachment) => attachment.file),
@@ -2777,7 +2802,12 @@ const MessageComposer = memo(function MessageComposer(
   );
 
   const handleSendMessage = useCallback(
-    async (trigger: ComposerSendTrigger = "other") => {
+    async (
+      trigger: ComposerSendTrigger = "other",
+      submit: (
+        payload: MessageComposerSubmitPayload,
+      ) => Promise<boolean> = onSendMessage,
+    ) => {
       const invocation = parseSlashCommandInvocation(draft, slashCommands);
       if (invocation) {
         await executeSlashCommand(invocation.command, invocation.args);
@@ -2796,7 +2826,7 @@ const MessageComposer = memo(function MessageComposer(
         return;
       }
 
-      const sent = await onSendMessage({ text: draft, images: imageDataUrls });
+      const sent = await submit({ text: draft, images: imageDataUrls });
       if (!sent) {
         return;
       }
@@ -2958,6 +2988,23 @@ const MessageComposer = memo(function MessageComposer(
                 </div>
               ))}
             </div>
+          )}
+          {showRunningTurnActions && (
+            <RunningTurnComposerActions
+              touch={isMobilePhone}
+              disabled={composerBusy || stoppingTurn}
+              onQueue={
+                onQueueMessage
+                  ? () => void handleSendMessage("send-button", onQueueMessage)
+                  : null
+              }
+              onInterruptAndSend={
+                onInterruptAndSend
+                  ? () =>
+                      void handleSendMessage("send-button", onInterruptAndSend)
+                  : null
+              }
+            />
           )}
           {isDragActive && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[18px] border border-dashed border-cyan-500/70 bg-cyan-600/10 text-xs text-cyan-200">
@@ -3229,6 +3276,22 @@ const MessageComposer = memo(function MessageComposer(
                   navigateInputHistory("down");
                   return;
                 }
+              }
+
+              if (
+                event.key === "Tab" &&
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.nativeEvent.isComposing &&
+                showRunningTurnActions &&
+                onQueueMessage
+              ) {
+                // Codex TUI: Tab queues the draft while a task runs.
+                event.preventDefault();
+                void handleSendMessage("textarea-enter", onQueueMessage);
+                return;
               }
 
               if (
@@ -9829,6 +9892,8 @@ export default function CodexDeckApp() {
          * new one. Used for async question answers, as Codex CLI does.
          */
         steerActiveTurn?: boolean;
+        /** "queue" holds the message for after the running turn (Tab). */
+        intent?: ComposerSendIntent;
       },
     ): Promise<boolean> => {
       const sessionId = options?.sessionIdOverride ?? activeComposerSessionId;
@@ -9860,19 +9925,23 @@ export default function CodexDeckApp() {
         return false;
       }
 
-      // Mirror Codex CLI's client-side input queue: while a turn is running
-      // for this session (or older messages are still queued), hold the
-      // message locally as "queued" so it can be force-sent or cancelled.
-      // Queued messages auto-send one at a time when the turn settles.
+      // Mirror Codex CLI: while a turn runs, a plain send steers it
+      // (turn/steer) and an explicit queue request (Tab) holds the message
+      // as "queued" until the turn settles. Queued messages auto-send one at
+      // a time; older queued messages keep their order.
+      let steerRunningTurn = options?.steerActiveTurn === true;
       if (!options?.pendingIdOverride && !options?.bypassQueue) {
-        const turnActiveForSession =
-          pendingTurnRef.current?.sessionId === sessionId;
-        const hasQueuedBacklog =
-          nextQueuedPendingUserMessage(
-            pendingUserMessagesBySessionRef.current,
-            sessionId,
-          ) !== null;
-        if (turnActiveForSession || hasQueuedBacklog) {
+        const route = resolveComposerSendRoute({
+          turnActive: pendingTurnRef.current?.sessionId === sessionId,
+          hasQueuedBacklog:
+            nextQueuedPendingUserMessage(
+              pendingUserMessagesBySessionRef.current,
+              sessionId,
+            ) !== null,
+          intent: options?.intent ?? "default",
+        });
+        steerRunningTurn = steerRunningTurn || route === "steer";
+        if (route === "queue") {
           const pendingId = enqueuePendingUserMessage(
             sessionId,
             payload,
@@ -9962,7 +10031,15 @@ export default function CodexDeckApp() {
             : {}),
           collaborationMode,
           ...serviceTierInput(effectiveModelIdForRequest),
-          ...(options?.steerActiveTurn ? { steerActiveTurn: true } : {}),
+          ...(steerRunningTurn
+            ? {
+                steerActiveTurn: true,
+                ...(pendingTurnRef.current?.sessionId === sessionId &&
+                pendingTurnRef.current.turnId
+                  ? { expectedTurnId: pendingTurnRef.current.turnId }
+                  : {}),
+              }
+            : {}),
         });
 
         markSessionUserMessagedAt(sessionId, Date.now());
@@ -9975,6 +10052,11 @@ export default function CodexDeckApp() {
           pendingId,
           response.steered ? null : response.turnId,
         );
+        if (response.steered) {
+          setPendingUserMessagesBySession((current) =>
+            markPendingUserMessageSteered(current, sessionId, pendingId),
+          );
+        }
         trackWebManagedSessionTurn(sessionId, response.turnId);
         setPendingTurn({
           sessionId,
@@ -9983,10 +10065,7 @@ export default function CodexDeckApp() {
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (
-          options?.steerActiveTurn &&
-          /^cannot steer a (review|compact) turn$/.test(message)
-        ) {
+        if (steerRunningTurn && isNonSteerableTurnError(message)) {
           // Like Codex CLI, a rejected steer waits in the queue for the turn
           // to finish instead of being dropped.
           queueAutosendSuppressSessionsRef.current.delete(sessionId);
@@ -10108,6 +10187,46 @@ export default function CodexDeckApp() {
     maybeSendNextQueuedUserMessage,
   ]);
 
+  // Interrupt the running turn and wait briefly for it to settle, so an
+  // explicit "interrupt and send" starts a fresh turn (Codex CLI Esc).
+  const interruptRunningTurnForSession = useCallback(
+    async (sessionId: string): Promise<boolean> => {
+      if (pendingTurnRef.current?.sessionId !== sessionId) {
+        return true;
+      }
+      setStoppingTurn(true);
+      try {
+        await interruptCodexThread(sessionId);
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      } finally {
+        setStoppingTurn(false);
+      }
+
+      // interruptCodexThread resolves once turn/interrupt is acknowledged;
+      // poll briefly in case the app-server still reports the turn active.
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        try {
+          const state = await getCodexThreadState(sessionId);
+          if (!state.isGenerating) {
+            break;
+          }
+        } catch {
+          // Ignore transient polling errors.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      setPendingTurn((current) =>
+        current?.sessionId === sessionId ? null : current,
+      );
+      return true;
+    },
+    [],
+  );
+
   const forceSendPendingUserMessage = useCallback(
     async (sessionId: string, pendingId: string): Promise<boolean> => {
       const normalizedSessionId = sessionId.trim();
@@ -10132,35 +10251,8 @@ export default function CodexDeckApp() {
       setInteractionError(null);
 
       try {
-        if (pendingTurnRef.current?.sessionId === normalizedSessionId) {
-          setStoppingTurn(true);
-          try {
-            await interruptCodexThread(normalizedSessionId);
-          } catch (error) {
-            setInteractionError(
-              error instanceof Error ? error.message : String(error),
-            );
-            return false;
-          } finally {
-            setStoppingTurn(false);
-          }
-
-          // interruptCodexThread resolves once turn/interrupt is acknowledged;
-          // poll briefly in case the app-server still reports the turn active.
-          for (let attempt = 0; attempt < 10; attempt += 1) {
-            try {
-              const state = await getCodexThreadState(normalizedSessionId);
-              if (!state.isGenerating) {
-                break;
-              }
-            } catch {
-              // Ignore transient polling errors.
-            }
-            await new Promise((resolve) => setTimeout(resolve, 300));
-          }
-          setPendingTurn((current) =>
-            current?.sessionId === normalizedSessionId ? null : current,
-          );
+        if (!(await interruptRunningTurnForSession(normalizedSessionId))) {
+          return false;
         }
 
         const sendOptions =
@@ -10177,7 +10269,12 @@ export default function CodexDeckApp() {
         queueDrainInFlightSessionsRef.current.delete(normalizedSessionId);
       }
     },
-    [sendMessageText, sendingMessage, stoppingTurn],
+    [
+      interruptRunningTurnForSession,
+      sendMessageText,
+      sendingMessage,
+      stoppingTurn,
+    ],
   );
 
   const cancelPendingUserMessage = useCallback(
@@ -10202,11 +10299,29 @@ export default function CodexDeckApp() {
     [removePendingUserMessageById],
   );
 
-  const handleSendMessage = useCallback(
-    async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
+  const submitSelectedSessionMessage = useCallback(
+    async (
+      payload: MessageComposerSubmitPayload,
+      mode: "default" | "queue" | "interrupt" = "default",
+    ): Promise<boolean> => {
       const sessionId = selectedSession;
       const normalizedText = payload.text.trim();
-      const sent = await sendMessageText(payload);
+      if (mode === "interrupt") {
+        if (!sessionId || sendingMessage || stoppingTurn) {
+          return false;
+        }
+        if (!(await interruptRunningTurnForSession(sessionId))) {
+          return false;
+        }
+      }
+      const sent = await sendMessageText(
+        payload,
+        mode === "interrupt"
+          ? { bypassQueue: true }
+          : mode === "queue"
+            ? { intent: "queue" }
+            : undefined,
+      );
       if (!sent || !sessionId) {
         return sent;
       }
@@ -10224,7 +10339,28 @@ export default function CodexDeckApp() {
       });
       return true;
     },
-    [selectedSession, sendMessageText],
+    [
+      interruptRunningTurnForSession,
+      selectedSession,
+      sendMessageText,
+      sendingMessage,
+      stoppingTurn,
+    ],
+  );
+  const handleSendMessage = useCallback(
+    (payload: MessageComposerSubmitPayload) =>
+      submitSelectedSessionMessage(payload),
+    [submitSelectedSessionMessage],
+  );
+  const handleQueueMessage = useCallback(
+    (payload: MessageComposerSubmitPayload) =>
+      submitSelectedSessionMessage(payload, "queue"),
+    [submitSelectedSessionMessage],
+  );
+  const handleInterruptAndSendMessage = useCallback(
+    (payload: MessageComposerSubmitPayload) =>
+      submitSelectedSessionMessage(payload, "interrupt"),
+    [submitSelectedSessionMessage],
   );
 
   // Mirror Codex CLI: an async answer is delivered right away, steering the
@@ -13034,6 +13170,12 @@ export default function CodexDeckApp() {
     sendingMessage: boolean;
     stoppingTurn: boolean;
     onSendMessage: (payload: MessageComposerSubmitPayload) => Promise<boolean>;
+    onQueueMessage?:
+      | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+      | null;
+    onInterruptAndSend?:
+      | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+      | null;
     onRunSlashCommand: (commandName: string, args: string) => Promise<boolean>;
     onStopConversation: () => Promise<void>;
     idlePrimaryActionLabel?: string;
@@ -13075,6 +13217,8 @@ export default function CodexDeckApp() {
             messageBoxHeight={messageBoxHeight}
             onResizeMessageBoxStart={handleResizeMessageBoxStart}
             onSendMessage={input.onSendMessage}
+            onQueueMessage={input.onQueueMessage}
+            onInterruptAndSend={input.onInterruptAndSend}
             onRunSlashCommand={input.onRunSlashCommand}
             onStopConversation={input.onStopConversation}
           />
@@ -15555,6 +15699,8 @@ export default function CodexDeckApp() {
                 sendingMessage,
                 stoppingTurn,
                 onSendMessage: handleSendMessage,
+                onQueueMessage: handleQueueMessage,
+                onInterruptAndSend: handleInterruptAndSendMessage,
                 onRunSlashCommand: handleRunSlashCommand,
                 onStopConversation: handleStopConversation,
                 composerDisabledReason:

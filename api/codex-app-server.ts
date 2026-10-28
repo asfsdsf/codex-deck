@@ -298,6 +298,8 @@ export interface SendCodexMessageInput {
   collaborationMode?: CodexCollaborationModeInput | null;
   /** Steer the running turn when there is one; otherwise start a turn. */
   steerActiveTurn?: boolean;
+  /** Turn the caller believes is running; the steer precondition. */
+  expectedTurnId?: string | null;
 }
 
 export type CodexRawResponseItem = Record<string, unknown>;
@@ -2400,7 +2402,11 @@ class CodexAppServerClient {
     }
 
     if (input.steerActiveTurn) {
-      const steered = await this.steerActiveTurn(threadId, params.input);
+      const steered = await this.steerActiveTurn(
+        threadId,
+        params.input,
+        input.expectedTurnId,
+      );
       if (steered) {
         return steered;
       }
@@ -2438,9 +2444,14 @@ class CodexAppServerClient {
   private async steerActiveTurn(
     threadId: string,
     input: unknown,
+    callerExpectedTurnId?: string | null,
   ): Promise<SendCodexMessageResult | null> {
     this.clearThreadStateCache(threadId);
-    let expectedTurnId = (await this.getThreadState(threadId)).activeTurnId;
+    // Prefer the turn the browser saw; a stale id is resolved by the
+    // app-server's "no active turn" / turn-mismatch replies below.
+    let expectedTurnId =
+      callerExpectedTurnId?.trim() ||
+      (await this.getThreadState(threadId)).activeTurnId;
     let retriedAfterMismatch = false;
     while (expectedTurnId) {
       try {

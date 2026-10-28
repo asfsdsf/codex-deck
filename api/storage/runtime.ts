@@ -195,9 +195,12 @@ export interface SendCodexMessageRequest {
   collaborationMode?: CodexCollaborationModeInput | null;
   /**
    * Deliver into the thread's running turn (`turn/steer`) when one is active,
-   * starting a new turn otherwise. Used for async question answers.
+   * starting a new turn otherwise. Used for composer sends while a turn runs
+   * and for async question answers.
    */
   steerActiveTurn?: boolean;
+  /** Running turn the caller expects to steer (`turn/steer` precondition). */
+  expectedTurnId?: string;
 }
 
 export type SendCodexMessageInputItem =

@@ -81,6 +81,7 @@ import {
 } from "../ai-terminal";
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
+import { STEERED_MESSAGE_CAPTION } from "../running-turn-send";
 import { mergePendingConversationMessages } from "../pending-conversation-messages";
 import { getCompletedTaskAnswers } from "../task-answer";
 import { TaskAnswerActions } from "./task-answer-actions";
@@ -2610,6 +2611,12 @@ const SessionView = memo(
                 data-message-hover
               >
                 <MessageBlock message={message} userTone="pending" />
+                {pendingMessage.steered &&
+                pendingMessage.status !== "queued" ? (
+                  <div className="mt-1 text-right text-[11px] text-zinc-500">
+                    {STEERED_MESSAGE_CAPTION}
+                  </div>
+                ) : null}
                 {pendingMessage.status === "queued" &&
                 (onForceSendPendingUserMessage ||
                   onCancelPendingUserMessage) ? (

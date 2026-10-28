@@ -5077,6 +5077,11 @@ export function createServer(options: ServerOptions) {
         ...(effort !== undefined ? { effort } : {}),
         ...(collaborationMode !== undefined ? { collaborationMode } : {}),
         ...(body.steerActiveTurn === true ? { steerActiveTurn: true } : {}),
+        ...(body.steerActiveTurn === true &&
+        typeof body.expectedTurnId === "string" &&
+        body.expectedTurnId.trim()
+          ? { expectedTurnId: body.expectedTurnId.trim() }
+          : {}),
       });
 
       for (const listener of conversationWakeListeners) {
