@@ -22,6 +22,9 @@ type WorkspaceClient = Pick<
   | "applyPermissions"
   | "readGuardianReviews"
   | "approveGuardianDenial"
+  | "listWorktrees"
+  | "startWorktree"
+  | "removeWorktree"
 >;
 
 export function registerWorkspaceRoutes(
@@ -143,6 +146,55 @@ export function registerWorkspaceRoutes(
       if (!client.approveGuardianDenial)
         throw new Error("Auto-review retries are unavailable on this server.");
       return client.approveGuardianDenial(threadId, reviewId);
+    }),
+  );
+
+  app.get("/api/codex/threads/:id/worktrees", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      if (!threadId) return c.json({ error: "Thread ID is required." }, 400);
+      if (!client.listWorktrees)
+        throw new Error("Managed worktrees are unavailable on this server.");
+      return client.listWorktrees(threadId, c.req.query("cwd") || null);
+    }),
+  );
+
+  app.post("/api/codex/threads/:id/worktrees", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      const body = await c.req.json().catch(() => null);
+      if (
+        !threadId ||
+        (body?.mode !== "fork" && body?.mode !== "new") ||
+        (body.currentCwd != null && typeof body.currentCwd !== "string")
+      )
+        return c.json(
+          { error: "Thread ID and a mode of fork or new are required." },
+          400,
+        );
+      if (!client.startWorktree)
+        throw new Error("Managed worktrees are unavailable on this server.");
+      return client.startWorktree(threadId, body.mode, body.currentCwd);
+    }),
+  );
+
+  app.post("/api/codex/threads/:id/worktrees/remove", (c) =>
+    run(c, async (client) => {
+      const threadId = c.req.param("id")?.trim();
+      const body = await c.req.json().catch(() => null);
+      if (
+        !threadId ||
+        typeof body?.root !== "string" ||
+        !body.root.trim() ||
+        (body.currentCwd != null && typeof body.currentCwd !== "string")
+      )
+        return c.json(
+          { error: "Thread ID and a worktree root are required." },
+          400,
+        );
+      if (!client.removeWorktree)
+        throw new Error("Managed worktrees are unavailable on this server.");
+      return client.removeWorktree(threadId, body.root, body.currentCwd);
     }),
   );
 }

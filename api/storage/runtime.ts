@@ -1,4 +1,10 @@
 export type {
+  CodexWorktreeEntry,
+  CodexWorktreeList,
+  CodexWorktreeMode,
+  CodexWorktreeStartResult,
+} from "../codex-worktrees";
+export type {
   CodexGuardianReview,
   CodexGuardianSnapshot,
 } from "../codex-guardian";

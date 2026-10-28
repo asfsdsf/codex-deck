@@ -12,7 +12,8 @@ export type NativeScope =
   | "apps"
   | "plugins"
   | "permissions"
-  | "guardian";
+  | "guardian"
+  | "worktrees";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,

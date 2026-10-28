@@ -1,4 +1,5 @@
 import PermissionsPanel from "../components/permissions-panel";
+import WorktreePanel from "../components/worktree-panel";
 import { AutoReviewDenials } from "../components/auto-review";
 import { parsePermissionArgs } from "../permission-args";
 import ConfigDiagnostics from "../components/config-diagnostics";
@@ -4206,8 +4207,9 @@ export default function CodexDeckApp() {
   const closeExtensionDialog = useCallback(() => setExtensionDialog(null), []);
   // Permissions, auto-review, and worktree dialogs (kept apart from nativeDialog).
   const [workspaceDialog, setWorkspaceDialog] = useState<{
-    kind: "permissions" | "approve";
+    kind: "permissions" | "approve" | "worktree";
     threadId: string;
+    cwd?: string | null;
   } | null>(null);
   const closeWorkspaceDialog = useCallback(() => setWorkspaceDialog(null), []);
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -11716,6 +11718,31 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/worktree") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /worktree.");
+          return false;
+        }
+        if (
+          sideThreadsById[commandSessionId] ||
+          pendingTurn?.sessionId === commandSessionId ||
+          pendingUserMessagesBySessionRef.current[commandSessionId]?.some(
+            (entry) => entry.status === "queued",
+          )
+        ) {
+          setInteractionError(
+            "Creating a worktree requires an idle primary session without queued input.",
+          );
+          return false;
+        }
+        setWorkspaceDialog({
+          kind: "worktree",
+          threadId: commandSessionId,
+          cwd: commandSessionData?.project ?? null,
+        });
+        return true;
+      }
+
       if (commandName === "/approve") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /approve.");
@@ -14761,11 +14788,33 @@ export default function CodexDeckApp() {
             title={
               workspaceDialog.kind === "approve"
                 ? "Auto-review Denials"
-                : "Permissions"
+                : workspaceDialog.kind === "worktree"
+                  ? "Worktrees"
+                  : "Permissions"
             }
             onClose={closeWorkspaceDialog}
           >
-            {workspaceDialog.kind === "approve" ? (
+            {workspaceDialog.kind === "worktree" ? (
+              <WorktreePanel
+                key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
+                threadId={workspaceDialog.threadId}
+                cwd={workspaceDialog.cwd ?? null}
+                onStarted={(result) => {
+                  upsertSessionFromThreadSummary(result.thread);
+                  setSelectedSession(result.thread.threadId);
+                  setCenterView("session");
+                  setWorkspaceDialog(null);
+                  showCommandNoticeForDuration(
+                    `Working directory changed to: ${result.checkout.cwd}`,
+                  );
+                }}
+                onResume={(threadId) => {
+                  setSelectedSession(threadId);
+                  setCenterView("session");
+                  setWorkspaceDialog(null);
+                }}
+              />
+            ) : workspaceDialog.kind === "approve" ? (
               <AutoReviewDenials
                 key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
                 threadId={workspaceDialog.threadId}

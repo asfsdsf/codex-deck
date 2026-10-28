@@ -27,6 +27,13 @@ import {
   type UsageDashboardSnapshot,
 } from "./codex-native";
 import {
+  WorktreeService,
+  type CodexWorktreeList,
+  type CodexWorktreeMode,
+  type CodexWorktreeStartResult,
+} from "./codex-worktrees";
+import { getCodexDir } from "./storage/runtime";
+import {
   GuardianReviewStore,
   type CodexGuardianSnapshot,
 } from "./codex-guardian";
@@ -1124,6 +1131,43 @@ class CodexAppServerClient {
     );
   }
 
+  private worktrees = new WorktreeService({
+    codexHome: () => configuredCodexHome || getCodexDir(),
+    readDesktopConfig: async (cwd) => {
+      const result = asRecord(
+        await this.request("config/read", { includeLayers: false, cwd }),
+      );
+      return asRecord(asRecord(result?.config)?.desktop) ?? null;
+    },
+    getThreadSummary: (id) => this.getThreadSummary(id),
+    forkThread: (id, options) => this.forkThread(id, options),
+    createThread: async (cwd) =>
+      this.getThreadSummary(await this.createThread({ cwd })),
+    archiveThread: (id) => this.archiveThread(id),
+    hasBackgroundTerminals: async (id) =>
+      (await this.listBackgroundTerminals(id)).length > 0,
+    notify: () => this.notifyNativeState("worktrees"),
+  });
+  public listWorktrees(
+    threadId: string,
+    cwd?: string | null,
+  ): Promise<CodexWorktreeList> {
+    return this.worktrees.list(threadId, cwd);
+  }
+  public startWorktree(
+    threadId: string,
+    mode: CodexWorktreeMode,
+    cwd?: string | null,
+  ): Promise<CodexWorktreeStartResult> {
+    return this.worktrees.start(threadId, mode, cwd);
+  }
+  public removeWorktree(
+    threadId: string,
+    root: string,
+    cwd?: string | null,
+  ): Promise<{ message: string }> {
+    return this.worktrees.remove(threadId, root, cwd);
+  }
   private guardianReviews = new GuardianReviewStore(
     (method, params, threadId) =>
       this.requestNativeThread(method, params, threadId),
@@ -6687,6 +6731,20 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  listWorktrees?: (
+    threadId: string,
+    cwd?: string | null,
+  ) => Promise<CodexWorktreeList>;
+  startWorktree?: (
+    threadId: string,
+    mode: CodexWorktreeMode,
+    cwd?: string | null,
+  ) => Promise<CodexWorktreeStartResult>;
+  removeWorktree?: (
+    threadId: string,
+    root: string,
+    cwd?: string | null,
+  ) => Promise<{ message: string }>;
   readGuardianReviews?: (threadId: string) => CodexGuardianSnapshot;
   approveGuardianDenial?: (
     threadId: string,
@@ -6914,6 +6972,9 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     startRecap: (id, history) => client!.startRecap(id, history),
     readUsageDashboard: (id) => client!.readUsageDashboard(id),
     consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
+    listWorktrees: (id, cwd) => client!.listWorktrees(id, cwd),
+    startWorktree: (id, mode, cwd) => client!.startWorktree(id, mode, cwd),
+    removeWorktree: (id, root, cwd) => client!.removeWorktree(id, root, cwd),
     readGuardianReviews: (id) => client!.readGuardianReviews(id),
     approveGuardianDenial: (id, reviewId) =>
       client!.approveGuardianDenial(id, reviewId),

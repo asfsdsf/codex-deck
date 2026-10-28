@@ -274,6 +274,10 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Fork the current chat",
   },
   {
+    name: "/worktree",
+    description: "Start or continue a conversation in a new worktree",
+  },
+  {
     name: "/cd",
     description: "Change the current working directory",
     supportsInlineArgs: true,

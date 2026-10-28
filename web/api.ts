@@ -2278,3 +2278,32 @@ export function approveCodexAutoReviewDenial(
     { method: "POST" },
   );
 }
+
+export function getCodexWorktrees(
+  threadId: string,
+  cwd: string | null,
+): Promise<import("@codex-deck/api").CodexWorktreeList> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/worktrees${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`,
+  );
+}
+export function startCodexWorktree(
+  threadId: string,
+  mode: import("@codex-deck/api").CodexWorktreeMode,
+  currentCwd: string | null,
+): Promise<import("@codex-deck/api").CodexWorktreeStartResult> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/worktrees`,
+    { method: "POST", body: JSON.stringify({ mode, currentCwd }) },
+  );
+}
+export function removeCodexWorktree(
+  threadId: string,
+  root: string,
+  currentCwd: string | null,
+): Promise<{ message: string }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/worktrees/remove`,
+    { method: "POST", body: JSON.stringify({ root, currentCwd }) },
+  );
+}
