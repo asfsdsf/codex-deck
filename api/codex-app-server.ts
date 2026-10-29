@@ -20,7 +20,6 @@ import {
   listThreadAttachments,
   removeThreadAttachment,
   revertThreadBeforeTurn,
-  type CodexForkBoundary,
   type CodexThreadAttachment,
   type CodexThreadAttachmentInput,
   type CodexThreadRevertResult,
