@@ -5,12 +5,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { AudioLines, Circle, Mic, MicOff, Square, X } from "lucide-react";
+import { AudioLines, Circle, FileAudio, Square, X } from "lucide-react";
 import { getVoiceController } from "../voice/voice-controller";
 import {
   audioAttachmentMimeType,
   describeMicrophoneError,
-  describeVoiceAudioMenu,
+  describeVoiceToggle,
   MAX_AUDIO_ATTACHMENT_BYTES,
   readVoiceEnvironment,
   voiceUnavailableReason,
@@ -136,31 +136,51 @@ function pickRecorderMimeType(): string | undefined {
 }
 
 /**
- * Voice and audio menu for Codex conversations: start/stop realtime voice
- * (any conversation model, like the CLI's /voice), attach an audio file, or
- * record a clip. Attaching is disabled with a visible reason when the
- * selected model has no audio input.
+ * One-click realtime voice for Codex conversations. It runs /voice, so it
+ * behaves exactly like typing the command: starts voice with any
+ * conversation model, or stops the call running on this page.
+ */
+export function VoiceToggleButton({ onToggle }: { onToggle: () => void }) {
+  const controller = getVoiceController();
+  const state = useSyncExternalStore(
+    controller.subscribe,
+    controller.getState,
+    controller.getState,
+  );
+  const toggle = describeVoiceToggle(state.status);
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={toggle.active}
+      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-zinc-800 ${
+        toggle.active
+          ? "text-red-300 hover:text-red-200"
+          : "text-zinc-400 hover:text-zinc-100"
+      }`}
+      title={`${toggle.label} (/voice)`}
+      aria-label={toggle.label}
+    >
+      <AudioLines
+        className={`h-[18px] w-[18px] ${toggle.active ? "animate-pulse" : ""}`}
+      />
+    </button>
+  );
+}
+
+/**
+ * Attach an audio file or record a clip to send with the next message.
+ * Rendered only when the selected model accepts audio input.
  */
 export function AudioAttachButton({
-  unavailableReason,
   disabled,
   onAdd,
   onError,
-  onToggleVoice,
 }: {
-  unavailableReason: string | null;
   disabled?: boolean;
   onAdd: (entries: Array<{ blob: Blob; name: string }>) => void;
   onError: (message: string | null) => void;
-  /** Runs /voice; omit to hide the voice item. */
-  onToggleVoice?: () => void;
 }) {
-  const voiceController = getVoiceController();
-  const voiceState = useSyncExternalStore(
-    voiceController.subscribe,
-    voiceController.getState,
-    voiceController.getState,
-  );
   const input = useRef<HTMLInputElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const [open, setOpen] = useState(false);
@@ -182,13 +202,6 @@ export function AudioAttachButton({
     (typeof MediaRecorder === "undefined"
       ? "This browser cannot record audio clips."
       : null);
-  const menu = describeVoiceAudioMenu({
-    attachUnavailable: unavailableReason,
-    recordUnavailable,
-    voiceUnavailable: voiceUnavailableReason(readVoiceEnvironment()),
-    voiceActive: voiceState.status !== "idle",
-    voiceOffered: !!onToggleVoice,
-  });
 
   const startRecording = async () => {
     onError(null);
@@ -254,53 +267,28 @@ export function AudioAttachButton({
         }}
       />
       {open && (
-        <div className="absolute bottom-10 right-0 z-30 w-[min(17rem,80vw)] rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 text-xs shadow-xl">
-          {menu.voice && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  onToggleVoice?.();
-                }}
-                disabled={!!menu.voice.disabledReason}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-              >
-                {voiceState.status === "idle" ? (
-                  <Mic className="h-3.5 w-3.5" />
-                ) : (
-                  <MicOff className="h-3.5 w-3.5 text-red-400" />
-                )}
-                {menu.voice.label}
-              </button>
-              <p className="break-words px-2.5 pb-1.5 text-zinc-500">
-                {menu.voice.disabledReason ??
-                  "Realtime voice works with any conversation model."}
-              </p>
-              <div className="mx-1 mb-1 border-t border-zinc-800" />
-            </>
-          )}
+        <div className="absolute bottom-10 right-0 z-30 w-[min(16rem,80vw)] rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 text-xs shadow-xl">
           <button
             type="button"
             onClick={() => input.current?.click()}
-            disabled={!!menu.attach.disabledReason}
-            className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-zinc-200 hover:bg-zinc-800"
           >
-            <AudioLines className="h-3.5 w-3.5" />
+            <FileAudio className="h-3.5 w-3.5" />
             Attach audio file
           </button>
           <button
             type="button"
             onClick={() => void startRecording()}
-            disabled={!!menu.record.disabledReason}
+            disabled={!!recordUnavailable}
+            title={recordUnavailable ?? undefined}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
           >
             <Circle className="h-3.5 w-3.5 text-red-400" />
             Record a clip
           </button>
-          {(menu.attach.disabledReason ?? menu.record.disabledReason) && (
-            <p role="status" className="break-words px-2.5 pb-1 text-zinc-400">
-              {menu.attach.disabledReason ?? menu.record.disabledReason}
+          {recordUnavailable && (
+            <p className="break-words px-2.5 pb-1 text-zinc-400">
+              {recordUnavailable}
             </p>
           )}
         </div>
@@ -310,19 +298,11 @@ export function AudioAttachButton({
         onClick={() => setOpen((value) => !value)}
         disabled={disabled}
         aria-expanded={open}
-        className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-zinc-800 disabled:opacity-40 ${
-          voiceState.status !== "idle"
-            ? "text-red-300"
-            : menu.dimmed
-              ? "text-zinc-600"
-              : "text-zinc-400 hover:text-zinc-100"
-        }`}
-        title={
-          menu.voice ? "Voice and audio" : (unavailableReason ?? "Attach audio")
-        }
-        aria-label={menu.voice ? "Voice and audio" : "Attach audio"}
+        className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-40"
+        title="Attach audio"
+        aria-label="Attach audio"
       >
-        <AudioLines className="h-[18px] w-[18px]" />
+        <FileAudio className="h-[18px] w-[18px]" />
       </button>
     </div>
   );

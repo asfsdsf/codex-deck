@@ -10,6 +10,7 @@ import VoiceSessionBar from "../components/voice-session-bar";
 import {
   AudioAttachButton,
   AudioAttachmentList,
+  VoiceToggleButton,
   useAudioAttachments,
 } from "../components/audio-attachments";
 import VoiceSettings from "../components/voice-settings";
@@ -3507,12 +3508,15 @@ const MessageComposer = memo(function MessageComposer(
           className="composer-actions absolute bottom-2 right-2 z-10 flex items-center gap-1"
         >
           {audioInput && (
+            <VoiceToggleButton
+              onToggle={() => void onRunSlashCommand("/voice", "")}
+            />
+          )}
+          {audioInput && !audioInput.unavailableReason && (
             <AudioAttachButton
-              unavailableReason={audioInput.unavailableReason}
               disabled={isSendingLocked || composerBusy}
               onAdd={(entries) => void audio.addBlobs(entries)}
               onError={audio.setError}
-              onToggleVoice={() => void onRunSlashCommand("/voice", "")}
             />
           )}
           <div className="relative flex">

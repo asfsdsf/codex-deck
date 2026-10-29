@@ -186,54 +186,17 @@ export function audioAttachmentUnavailableReason(
   return null;
 }
 
-export interface VoiceAudioMenuInput {
-  /** Why audio attachments are unavailable for the selected model. */
-  attachUnavailable: string | null;
-  /** Why this browser cannot record a clip. */
-  recordUnavailable: string | null;
-  /** Why this browser cannot run realtime voice. */
-  voiceUnavailable: string | null;
-  /** A voice call is running (or starting/stopping) on this page. */
-  voiceActive: boolean;
-  /** Whether the menu offers starting/stopping voice at all. */
-  voiceOffered: boolean;
-}
-
-export interface VoiceAudioMenuState {
-  voice: { label: string; disabledReason: string | null } | null;
-  attach: { disabledReason: string | null };
-  record: { disabledReason: string | null };
-  /** Dim the button only when nothing in the menu can be used. */
-  dimmed: boolean;
-}
-
 /**
- * The composer's voice/audio menu. Realtime voice uses its own realtime model,
- * so like the CLI's /voice it is offered whatever the conversation model is;
- * only attaching audio to a turn needs a model with audio input.
+ * The composer's voice button runs /voice, so like the CLI it works with any
+ * conversation model (realtime voice uses its own realtime model).
  */
-export function describeVoiceAudioMenu(
-  input: VoiceAudioMenuInput,
-): VoiceAudioMenuState {
-  const voice = input.voiceOffered
-    ? input.voiceActive
-      ? { label: "Stop voice conversation", disabledReason: null }
-      : {
-          label: "Start voice conversation",
-          disabledReason: input.voiceUnavailable,
-        }
-    : null;
-  const attach = { disabledReason: input.attachUnavailable };
-  const record = {
-    disabledReason: input.attachUnavailable ?? input.recordUnavailable,
-  };
+export function describeVoiceToggle(status: string): {
+  active: boolean;
+  label: string;
+} {
+  const active = status !== "idle";
   return {
-    voice,
-    attach,
-    record,
-    dimmed:
-      !!attach.disabledReason &&
-      !!record.disabledReason &&
-      (!voice || !!voice.disabledReason),
+    active,
+    label: active ? "Stop voice conversation" : "Start voice conversation",
   };
 }
