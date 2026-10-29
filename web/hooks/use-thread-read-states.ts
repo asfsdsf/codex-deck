@@ -11,6 +11,7 @@ import {
 import {
   EMPTY_READ_STATES,
   applyReadStateResult,
+  autoMarkReadRetryDelay,
   shouldAutoMarkRead,
 } from "../thread-read-state";
 
@@ -36,12 +37,28 @@ export function useThreadReadStates(
   const attempted = useRef(new Map<string, string>());
   const suppressed = useRef(new Set<string>());
   const lastViewed = useRef<string | null>(null);
+  const failures = useRef(
+    new Map<string, { revision: string; count: number }>(),
+  );
+  const retryTimers = useRef(new Set<number>());
+  const markViewedRef = useRef<
+    (threadId: string | null, visible: boolean) => void
+  >(() => undefined);
 
   useEffect(() => {
     setSnapshot(EMPTY_READ_STATES);
     attempted.current.clear();
     suppressed.current.clear();
+    failures.current.clear();
   }, [scopeKey]);
+
+  useEffect(() => {
+    const timers = retryTimers.current;
+    return () => {
+      for (const id of timers) window.clearTimeout(id);
+      timers.clear();
+    };
+  }, []);
 
   useEffect(
     () =>
@@ -111,19 +128,43 @@ export function useThreadReadStates(
         )
       )
         return;
-      attempted.current.set(threadId, state.revision);
-      void updateThreadReadState(threadId, "read", state.revision).then(
+      const revision = state.revision;
+      attempted.current.set(threadId, revision);
+      void updateThreadReadState(threadId, "read", revision).then(
         (result) => {
+          failures.current.delete(threadId);
           // A conflict means another client acted on a state this page has not
           // shown; accept it and wait for a fresh selection before retrying.
           if (result.status === "conflict") suppressed.current.add(threadId);
           apply(threadId, result);
         },
-        () => undefined,
+        () => {
+          // Transient failures (e.g. app-server overload) would otherwise leave
+          // the viewed thread unread: forget the attempt and refetch after a
+          // backoff, which re-runs markViewed for the session still on screen.
+          const previous = failures.current.get(threadId);
+          const count =
+            previous?.revision === revision ? previous.count + 1 : 1;
+          failures.current.set(threadId, { revision, count });
+          const delay = autoMarkReadRetryDelay(count);
+          if (delay === null) return;
+          if (attempted.current.get(threadId) === revision)
+            attempted.current.delete(threadId);
+          const id = window.setTimeout(() => {
+            retryTimers.current.delete(id);
+            refresh();
+            // Retry now if the same session is still on screen, even when the
+            // refetch above fails and leaves the snapshot unchanged.
+            if (lastViewed.current === threadId && !document.hidden)
+              markViewedRef.current(threadId, true);
+          }, delay);
+          retryTimers.current.add(id);
+        },
       );
     },
-    [apply],
+    [apply, refresh],
   );
+  markViewedRef.current = markViewed;
 
   /** Explicit read/unread toggle; resolves with the server outcome. */
   const setUnread = useCallback(

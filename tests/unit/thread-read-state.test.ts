@@ -16,6 +16,7 @@ import {
 } from "../../api/server/utils";
 import {
   applyReadStateResult,
+  autoMarkReadRetryDelay,
   getReadReceipt,
   resolveSessionReadStatus,
   shouldAutoMarkRead,
@@ -270,4 +271,13 @@ test("app-server overload errors are reported as retryable 503s", async () => {
     body: JSON.stringify({ operation: "read", expectedRevision: "r" }),
   });
   assert.equal(update.status, 503);
+});
+
+test("failed automatic mark-as-read retries with bounded backoff", () => {
+  assert.deepEqual(
+    [1, 2, 3, 4, 5].map((failures) => autoMarkReadRetryDelay(failures)),
+    [1_000, 2_000, 4_000, 8_000, 16_000],
+  );
+  assert.equal(autoMarkReadRetryDelay(6), null);
+  assert.equal(autoMarkReadRetryDelay(0), null);
 });

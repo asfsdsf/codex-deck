@@ -61,3 +61,16 @@ export function shouldAutoMarkRead(
     attemptedRevision !== state.revision
   );
 }
+
+const AUTO_MARK_READ_RETRY_BASE_MS = 1_000;
+const AUTO_MARK_READ_MAX_FAILURES = 5;
+
+/**
+ * Backoff before retrying a failed automatic mark-as-read (for example when
+ * the app-server is briefly overloaded). Returns null once the page should
+ * stop retrying the same revision.
+ */
+export function autoMarkReadRetryDelay(failures: number): number | null {
+  if (failures < 1 || failures > AUTO_MARK_READ_MAX_FAILURES) return null;
+  return AUTO_MARK_READ_RETRY_BASE_MS * 2 ** (failures - 1);
+}
