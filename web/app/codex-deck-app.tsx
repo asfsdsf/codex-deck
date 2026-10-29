@@ -3512,6 +3512,7 @@ const MessageComposer = memo(function MessageComposer(
               disabled={isSendingLocked || composerBusy}
               onAdd={(entries) => void audio.addBlobs(entries)}
               onError={audio.setError}
+              onToggleVoice={() => void onRunSlashCommand("/voice", "")}
             />
           )}
           <div className="relative flex">
@@ -15059,8 +15060,9 @@ export default function CodexDeckApp() {
                             ? "Voice settings"
                             : nativeDialog.kind === "usage"
                               ? "Usage dashboard"
-                              : (getOrganizationDialogTitle(nativeDialog.kind) ??
-                                "MCP administration")
+                              : (getOrganizationDialogTitle(
+                                  nativeDialog.kind,
+                                ) ?? "MCP administration")
             }
             onClose={closeNativeDialog}
           >

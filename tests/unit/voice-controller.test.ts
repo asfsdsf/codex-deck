@@ -13,6 +13,7 @@ import {
   audioAttachmentMimeType,
   audioAttachmentUnavailableReason,
   describeEndedVoiceSession,
+  describeVoiceAudioMenu,
   describeMicrophoneError,
   getRealtimeDelegationDisplayText,
   isAudioDataUrl,
@@ -330,4 +331,55 @@ test("audio attachments accept upstream formats and require an audio-capable mod
     /GPT does not accept audio input/,
   );
   assert.match(audioAttachmentUnavailableReason(null) ?? "", /Select a model/);
+});
+
+test("voice is offered for any conversation model; only attaching audio needs audio input", () => {
+  const noAudio = "GPT-6.1-Sol does not accept audio input.";
+  const base = {
+    attachUnavailable: noAudio,
+    recordUnavailable: null,
+    voiceUnavailable: null,
+    voiceActive: false,
+    voiceOffered: true,
+  };
+  const menu = describeVoiceAudioMenu(base);
+  assert.deepEqual(menu.voice, {
+    label: "Start voice conversation",
+    disabledReason: null,
+  });
+  assert.equal(menu.attach.disabledReason, noAudio);
+  assert.equal(menu.record.disabledReason, noAudio);
+  assert.equal(menu.dimmed, false);
+
+  assert.equal(
+    describeVoiceAudioMenu({ ...base, voiceActive: true }).voice?.label,
+    "Stop voice conversation",
+  );
+  // Stopping stays possible even if starting would not be.
+  assert.equal(
+    describeVoiceAudioMenu({
+      ...base,
+      voiceActive: true,
+      voiceUnavailable: "insecure",
+    }).voice?.disabledReason,
+    null,
+  );
+  const blocked = describeVoiceAudioMenu({
+    ...base,
+    voiceUnavailable: "insecure",
+  });
+  assert.equal(blocked.voice?.disabledReason, "insecure");
+  assert.equal(blocked.dimmed, true);
+
+  const audioModel = describeVoiceAudioMenu({
+    ...base,
+    attachUnavailable: null,
+    recordUnavailable: "no recorder",
+  });
+  assert.equal(audioModel.attach.disabledReason, null);
+  assert.equal(audioModel.record.disabledReason, "no recorder");
+  assert.equal(
+    describeVoiceAudioMenu({ ...base, voiceOffered: false }).voice,
+    null,
+  );
 });
