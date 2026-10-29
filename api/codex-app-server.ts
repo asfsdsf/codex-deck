@@ -16,8 +16,13 @@ import {
   type ExperimentalWriteResult,
 } from "./codex-native";
 import {
+  addThreadAttachment,
+  listThreadAttachments,
+  removeThreadAttachment,
   revertThreadBeforeTurn,
   type CodexForkBoundary,
+  type CodexThreadAttachment,
+  type CodexThreadAttachmentInput,
   type CodexThreadRevertResult,
 } from "./codex-thread-history";
 import { RecapManager, type ConversationRecap } from "./codex-recap";
@@ -2151,6 +2156,46 @@ class CodexAppServerClient {
     return result;
   }
 
+  // Attachments live on stored threads; none of these calls load the thread.
+  public listThreadAttachments(
+    threadId: string,
+  ): Promise<CodexThreadAttachment[]> {
+    return listThreadAttachments(
+      (method, params) => this.request(method, params),
+      threadId.trim(),
+    );
+  }
+
+  public async addThreadAttachment(
+    threadId: string,
+    input: CodexThreadAttachmentInput,
+  ): Promise<{
+    outcome: "created" | "existing";
+    attachment: CodexThreadAttachment;
+  }> {
+    const id = threadId.trim();
+    const result = await addThreadAttachment(
+      (method, params) => this.request(method, params),
+      id,
+      input,
+    );
+    this.notifyNativeState("attachments", id);
+    return result;
+  }
+
+  public async removeThreadAttachment(
+    threadId: string,
+    input: Omit<CodexThreadAttachmentInput, "payload">,
+  ): Promise<void> {
+    const id = threadId.trim();
+    await removeThreadAttachment(
+      (method, params) => this.request(method, params),
+      id,
+      input,
+    );
+    this.notifyNativeState("attachments", id);
+  }
+
   public async injectThreadItems(
     threadId: string,
     items: CodexRawResponseItem[],
@@ -4123,6 +4168,11 @@ class CodexAppServerClient {
     if (this.organization.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
+      return;
+    }
+    if (method === "thread/attachment/updated") {
+      const threadId = asTrimmedString(asRecord(params)?.threadId);
+      if (threadId) this.notifyNativeState("attachments", threadId);
       return;
     }
     if (method === "thread/reverted") {
@@ -6936,6 +6986,20 @@ export interface CodexAppServerClientFacade {
     threadId: string,
     beforeTurnId: string,
   ) => Promise<CodexThreadRevertResult>;
+  listThreadAttachments?: (
+    threadId: string,
+  ) => Promise<CodexThreadAttachment[]>;
+  addThreadAttachment?: (
+    threadId: string,
+    input: CodexThreadAttachmentInput,
+  ) => Promise<{
+    outcome: "created" | "existing";
+    attachment: CodexThreadAttachment;
+  }>;
+  removeThreadAttachment?: (
+    threadId: string,
+    input: Omit<CodexThreadAttachmentInput, "payload">,
+  ) => Promise<void>;
   injectThreadItems?: (
     threadId: string,
     items: CodexRawResponseItem[],
@@ -7099,6 +7163,12 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.forkThread(threadId, options),
     revertThread: (threadId: string, beforeTurnId: string) =>
       client!.revertThread(threadId, beforeTurnId),
+    listThreadAttachments: (threadId) =>
+      client!.listThreadAttachments(threadId),
+    addThreadAttachment: (threadId, input) =>
+      client!.addThreadAttachment(threadId, input),
+    removeThreadAttachment: (threadId, input) =>
+      client!.removeThreadAttachment(threadId, input),
     injectThreadItems: (threadId: string, items: CodexRawResponseItem[]) =>
       client!.injectThreadItems(threadId, items),
     compactThread: (threadId: string) => client!.compactThread(threadId),

@@ -27,6 +27,7 @@ import NativeDialog from "../components/native-dialog";
 import ExtensionDialogs, {
   type ExtensionDialogState,
 } from "../components/extension-dialogs";
+import ThreadAttachments from "../components/thread-attachments";
 import McpAdmin from "../components/mcp-admin";
 import OrganizationDialogBody, {
   getOrganizationDialogForCommand,
@@ -4326,6 +4327,13 @@ export default function CodexDeckApp() {
     cwd?: string | null;
   } | null>(null);
   const closeWorkspaceDialog = useCallback(() => setWorkspaceDialog(null), []);
+  const [attachmentsThreadId, setAttachmentsThreadId] = useState<string | null>(
+    null,
+  );
+  const closeAttachmentsDialog = useCallback(
+    () => setAttachmentsThreadId(null),
+    [],
+  );
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -4668,6 +4676,7 @@ export default function CodexDeckApp() {
     setNativeDialog(null);
     setExtensionDialog(null);
     setWorkspaceDialog(null);
+    setAttachmentsThreadId(null);
     setReviewDialog(null);
     setShowStatusModal(false);
     setShowConfigModal(false);
@@ -11886,6 +11895,14 @@ export default function CodexDeckApp() {
         void voice.start(commandSessionId);
         return true;
       }
+      if (commandName === "/attachments") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /attachments.");
+          return false;
+        }
+        setAttachmentsThreadId(commandSessionId);
+        return true;
+      }
       if (commandName === "/recap") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /recap.");
@@ -15145,6 +15162,17 @@ export default function CodexDeckApp() {
                 threadId={workspaceDialog.threadId}
               />
             )}
+          </NativeDialog>
+        )}
+        {attachmentsThreadId && (
+          <NativeDialog
+            title="Conversation attachments"
+            onClose={closeAttachmentsDialog}
+          >
+            <ThreadAttachments
+              key={`${selectedCodexHomeId}:${attachmentsThreadId}`}
+              threadId={attachmentsThreadId}
+            />
           </NativeDialog>
         )}
         {reviewDialog && (

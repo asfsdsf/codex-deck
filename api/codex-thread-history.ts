@@ -1,4 +1,4 @@
-import { nativeRecord, type NativeRpc } from "./codex-native";
+import { nativePages, nativeRecord, type NativeRpc } from "./codex-native";
 
 /**
  * Conversation-history operations backed by app-server v2: forking at a turn
@@ -164,4 +164,117 @@ export async function revertThreadBeforeTurn(
 
   await revert("thread/revert", { threadId, beforeTurnId });
   return { threadId, beforeTurnId, prompt };
+}
+
+/** `ThreadAttachment` from app-server v2. */
+export interface CodexThreadAttachment {
+  id: string;
+  attachmentType: string;
+  identityKey: string;
+  payload: unknown;
+  createdAt: number;
+}
+
+export interface CodexThreadAttachmentInput {
+  attachmentType: string;
+  identityKey: string;
+  payload: unknown;
+}
+
+// Mirrors codex-state's MAX_THREAD_ATTACHMENT_* limits.
+const MAX_ATTACHMENT_TYPE_BYTES = 256;
+const MAX_ATTACHMENT_IDENTITY_KEY_BYTES = 256;
+const MAX_ATTACHMENT_PAYLOAD_BYTES = 64 * 1024;
+
+function attachmentIdentity(
+  value: Record<string, unknown>,
+): Omit<CodexThreadAttachmentInput, "payload"> {
+  const { attachmentType, identityKey } = value;
+  if (typeof attachmentType !== "string" || !attachmentType.trim())
+    throw new ThreadHistoryRequestError("attachmentType is required.");
+  if (Buffer.byteLength(attachmentType) > MAX_ATTACHMENT_TYPE_BYTES)
+    throw new ThreadHistoryRequestError("attachmentType is too long.");
+  if (typeof identityKey !== "string" || !identityKey)
+    throw new ThreadHistoryRequestError("identityKey is required.");
+  if (Buffer.byteLength(identityKey) > MAX_ATTACHMENT_IDENTITY_KEY_BYTES)
+    throw new ThreadHistoryRequestError("identityKey is too long.");
+  return { attachmentType: attachmentType.trim(), identityKey };
+}
+
+export function parseAttachmentInput(
+  body: unknown,
+  requirePayload: boolean,
+): CodexThreadAttachmentInput {
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    throw new ThreadHistoryRequestError("Attachment must be an object.");
+  const record = body as Record<string, unknown>;
+  const identity = attachmentIdentity(record);
+  if (!requirePayload) return { ...identity, payload: null };
+  if (record.payload === undefined)
+    throw new ThreadHistoryRequestError("payload is required.");
+  if (
+    Buffer.byteLength(JSON.stringify(record.payload)) >
+    MAX_ATTACHMENT_PAYLOAD_BYTES
+  )
+    throw new ThreadHistoryRequestError("payload exceeds 64 KiB.");
+  return { ...identity, payload: record.payload };
+}
+
+export function parseThreadAttachment(value: unknown): CodexThreadAttachment {
+  const record = nativeRecord(value);
+  if (
+    typeof record.id !== "string" ||
+    typeof record.attachmentType !== "string" ||
+    typeof record.identityKey !== "string" ||
+    typeof record.createdAt !== "number"
+  )
+    throw new Error("Invalid thread attachment");
+  return {
+    id: record.id,
+    attachmentType: record.attachmentType,
+    identityKey: record.identityKey,
+    payload: record.payload ?? null,
+    createdAt: record.createdAt,
+  };
+}
+
+export async function listThreadAttachments(
+  rpc: NativeRpc,
+  threadId: string,
+): Promise<CodexThreadAttachment[]> {
+  const entries = await nativePages<unknown>(rpc, "thread/attachment/list", {
+    threadId,
+  });
+  return entries.map(parseThreadAttachment);
+}
+
+export async function addThreadAttachment(
+  rpc: NativeRpc,
+  threadId: string,
+  input: CodexThreadAttachmentInput,
+): Promise<{
+  outcome: "created" | "existing";
+  attachment: CodexThreadAttachment;
+}> {
+  const result = nativeRecord(
+    await rpc("thread/attachment/add", { threadId, ...input }),
+  );
+  if (result.outcome !== "created" && result.outcome !== "existing")
+    throw new Error("Invalid thread/attachment/add response");
+  return {
+    outcome: result.outcome,
+    attachment: parseThreadAttachment(result.attachment),
+  };
+}
+
+export async function removeThreadAttachment(
+  rpc: NativeRpc,
+  threadId: string,
+  input: Omit<CodexThreadAttachmentInput, "payload">,
+): Promise<void> {
+  await rpc("thread/attachment/remove", {
+    threadId,
+    attachmentType: input.attachmentType,
+    identityKey: input.identityKey,
+  });
 }

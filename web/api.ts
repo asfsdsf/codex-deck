@@ -1139,6 +1139,45 @@ export function revertCodexThread(
   );
 }
 
+export function getCodexThreadAttachments(threadId: string): Promise<{
+  attachments: import("@codex-deck/api").CodexThreadAttachment[];
+}> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/attachments`,
+  );
+}
+
+export function addCodexThreadAttachment(
+  threadId: string,
+  input: { attachmentType: string; identityKey: string; payload: unknown },
+): Promise<{
+  outcome: "created" | "existing";
+  attachment: import("@codex-deck/api").CodexThreadAttachment;
+}> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/attachments`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function removeCodexThreadAttachment(
+  threadId: string,
+  input: { attachmentType: string; identityKey: string },
+): Promise<{ ok: boolean }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/attachments/remove`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export function startDiffGuide(
   input: DiffGuideStartRequest,
 ): Promise<DiffGuideStartResponse> {

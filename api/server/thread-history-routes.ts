@@ -4,6 +4,7 @@ import {
   type CodexAppServerClientFacade,
 } from "../codex-app-server";
 import {
+  parseAttachmentInput,
   parseForkBoundary,
   parseRevertTurnId,
   ThreadHistoryRequestError,
@@ -16,10 +17,14 @@ import { responseStatusForError, toErrorMessage } from "./utils";
 
 type ThreadHistoryClient = Pick<
   CodexAppServerClientFacade,
-  "forkThread" | "revertThread"
+  | "forkThread"
+  | "revertThread"
+  | "listThreadAttachments"
+  | "addThreadAttachment"
+  | "removeThreadAttachment"
 >;
 
-/** Turn-boundary forks and rewinds of a stored conversation. */
+/** Turn-boundary forks, rewinds, and durable attachments of a conversation. */
 export function registerThreadHistoryRoutes(
   app: Hono,
   deps: {
@@ -96,6 +101,39 @@ export function registerThreadHistoryRoutes(
       );
       deps.wake?.(threadId);
       return result;
+    }),
+  );
+
+  const unavailable = (c: Context) =>
+    c.json(
+      { error: "Thread attachments are not available for this codex client" },
+      503,
+    );
+  app.get("/api/codex/threads/:id/attachments", (c) =>
+    run(c, async (client, threadId) => {
+      if (!client.listThreadAttachments) return unavailable(c);
+      return { attachments: await client.listThreadAttachments(threadId) };
+    }),
+  );
+  app.post("/api/codex/threads/:id/attachments", (c) =>
+    run(c, async (client, threadId) => {
+      const input = parseAttachmentInput(await body(c), true);
+      if (!client.addThreadAttachment) return unavailable(c);
+      return client.addThreadAttachment(threadId, input);
+    }),
+  );
+  app.post("/api/codex/threads/:id/attachments/remove", (c) =>
+    run(c, async (client, threadId) => {
+      const { attachmentType, identityKey } = parseAttachmentInput(
+        await body(c),
+        false,
+      );
+      if (!client.removeThreadAttachment) return unavailable(c);
+      await client.removeThreadAttachment(threadId, {
+        attachmentType,
+        identityKey,
+      });
+      return { ok: true };
     }),
   );
 }

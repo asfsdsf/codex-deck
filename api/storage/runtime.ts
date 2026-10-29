@@ -529,6 +529,7 @@ export interface CodexThreadGoalClearResponse {
 
 export type {
   CodexRewoundPrompt,
+  CodexThreadAttachment,
   CodexThreadRevertResult,
 } from "../codex-thread-history";
 

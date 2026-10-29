@@ -16,6 +16,12 @@ import {
   getTurnActionItems,
   latestTurnId,
 } from "../../web/conversation-turn-actions";
+import {
+  customAttachmentDraft,
+  describeThreadAttachment,
+  pullRequestAttachmentFromUrl,
+} from "../../web/thread-attachments";
+import { parseAttachmentInput } from "../../api/codex-thread-history";
 
 function mockClient(
   rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>,
@@ -301,4 +307,150 @@ test("revert route refreshes the rollout and wakes every conversation stream", a
     "refresh:t",
     "wake:t",
   ]);
+});
+
+test("pull request attachments use the canonical app-server identity", () => {
+  assert.deepEqual(
+    pullRequestAttachmentFromUrl(
+      "https://www.GitHub.com/OpenAI/Codex/pull/123/files?x=1",
+    ),
+    {
+      attachmentType: "pull_request",
+      identityKey: '["github.com","openai","codex",123]',
+      payload: { url: "https://www.github.com/OpenAI/Codex/pull/123" },
+    },
+  );
+  assert.equal(pullRequestAttachmentFromUrl("javascript:alert(1)"), null);
+  assert.equal(
+    pullRequestAttachmentFromUrl("https://github.com/o/r/issues/1"),
+    null,
+  );
+  assert.equal(
+    customAttachmentDraft({
+      attachmentType: "issue",
+      identityKey: "k",
+      payload: "{",
+    }),
+    "Payload must be valid JSON.",
+  );
+  assert.deepEqual(
+    customAttachmentDraft({
+      attachmentType: " issue ",
+      identityKey: "k",
+      payload: "",
+    }),
+    { attachmentType: "issue", identityKey: "k", payload: null },
+  );
+  const summary = describeThreadAttachment({
+    id: "a",
+    attachmentType: "worktree",
+    identityKey: "wt",
+    payload: { root: "/tmp/wt", url: "file:///etc" },
+    createdAt: 1,
+  });
+  assert.equal(summary.typeLabel, "Worktree");
+  assert.equal(summary.href, null);
+  assert.throws(
+    () => parseAttachmentInput({ attachmentType: "x", identityKey: "k" }, true),
+    /payload/,
+  );
+  assert.throws(
+    () =>
+      parseAttachmentInput(
+        { attachmentType: "x".repeat(300), identityKey: "k", payload: 1 },
+        true,
+      ),
+    /too long/,
+  );
+});
+
+test("attachment operations paginate, validate, and broadcast updates", async () => {
+  const calls: [string, Record<string, unknown>][] = [];
+  const events: unknown[] = [];
+  const attachment = {
+    id: "a1",
+    attachmentType: "pull_request",
+    identityKey: "k",
+    payload: { url: "https://github.com/o/r/pull/1" },
+    createdAt: 10,
+  };
+  const { client, internal } = mockClient(async (method, params) => {
+    calls.push([method, params]);
+    if (method === "thread/attachment/list")
+      return params.cursor
+        ? { data: [{ ...attachment, id: "a2" }], nextCursor: null }
+        : { data: [attachment], nextCursor: "next" };
+    if (method === "thread/attachment/add")
+      return { outcome: "existing", attachment };
+    return {};
+  });
+  client.subscribeAppServerEvents((event) => events.push(event));
+  const listed = await client.listThreadAttachments("t");
+  assert.deepEqual(
+    listed.map((entry) => entry.id),
+    ["a1", "a2"],
+  );
+  assert.equal(
+    (await client.addThreadAttachment("t", attachment)).outcome,
+    "existing",
+  );
+  await client.removeThreadAttachment("t", {
+    attachmentType: "pull_request",
+    identityKey: "k",
+  });
+  assert.deepEqual(calls.at(-1), [
+    "thread/attachment/remove",
+    { threadId: "t", attachmentType: "pull_request", identityKey: "k" },
+  ]);
+  internal.handleServerNotification("thread/attachment/updated", {
+    threadId: "other",
+    attachmentType: "pull_request",
+    identityKey: "k",
+    attachmentId: "a1",
+    operation: "deleted",
+  });
+  assert.deepEqual(
+    events.map((event) => {
+      const { scope, threadId } = event as { scope: string; threadId: string };
+      return [scope, threadId];
+    }),
+    [
+      ["attachments", "t"],
+      ["attachments", "t"],
+      ["attachments", "other"],
+    ],
+  );
+
+  const app = new Hono();
+  const removed: unknown[] = [];
+  registerThreadHistoryRoutes(app, {
+    getClient: () => ({
+      listThreadAttachments: async () => [attachment],
+      addThreadAttachment: async () => ({ outcome: "created", attachment }),
+      removeThreadAttachment: async (threadId, input) => {
+        removed.push([threadId, input]);
+      },
+    }),
+  });
+  const list = await app.request("/api/codex/threads/t/attachments");
+  assert.deepEqual(await list.json(), { attachments: [attachment] });
+  const post = (path: string, body: string) =>
+    app.request(`/api/codex/threads/t/attachments${path}`, {
+      method: "POST",
+      body,
+    });
+  assert.equal(
+    (await post("", '{"attachmentType":"x","identityKey":"k"}')).status,
+    400,
+  );
+  assert.equal(
+    (await post("", '{"attachmentType":"x","identityKey":"k","payload":{}}'))
+      .status,
+    200,
+  );
+  assert.equal(
+    (await post("/remove", '{"attachmentType":"x","identityKey":"k"}')).status,
+    200,
+  );
+  assert.deepEqual(removed, [["t", { attachmentType: "x", identityKey: "k" }]]);
 });

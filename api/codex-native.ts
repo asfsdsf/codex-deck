@@ -16,7 +16,8 @@ export type NativeScope =
   | "worktrees"
   | "voice"
   | import("./codex-organization").OrganizationScope
-  | "history";
+  | "history"
+  | "attachments";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,
