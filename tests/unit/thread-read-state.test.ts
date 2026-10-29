@@ -11,6 +11,10 @@ import {
 } from "../../api/codex-read-state";
 import { registerOrganizationRoutes } from "../../api/server/organization-routes";
 import {
+  APP_SERVER_OVERLOADED_ERROR_CODE,
+  responseStatusForError,
+} from "../../api/server/utils";
+import {
   applyReadStateResult,
   getReadReceipt,
   resolveSessionReadStatus,
@@ -229,4 +233,41 @@ test("session status prefers running turns, then shared receipts, then local mar
     }).states.a.revision,
     "z",
   );
+});
+
+test("app-server overload errors are reported as retryable 503s", async () => {
+  const overloaded = new CodexAppServerRpcError(
+    APP_SERVER_OVERLOADED_ERROR_CODE,
+    "Server overloaded; retry later.",
+  );
+  assert.equal(responseStatusForError(overloaded), 503);
+  assert.equal(
+    responseStatusForError(new CodexAppServerRpcError(-32603, "boom")),
+    500,
+  );
+
+  const app = new Hono();
+  registerOrganizationRoutes(app, {
+    getService: () =>
+      ({
+        readState: {
+          list: async () => {
+            throw overloaded;
+          },
+          update: async () => {
+            throw overloaded;
+          },
+        },
+      }) as never,
+  });
+  const list = await app.request("/api/codex/read-states");
+  assert.equal(list.status, 503);
+  assert.deepEqual(await list.json(), {
+    error: "Server overloaded; retry later.",
+  });
+  const update = await app.request("/api/codex/threads/t1/read-state", {
+    method: "POST",
+    body: JSON.stringify({ operation: "read", expectedRevision: "r" }),
+  });
+  assert.equal(update.status, 503);
 });
