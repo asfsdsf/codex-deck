@@ -1956,6 +1956,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     messageTranslationSource,
     "en",
     "zh",
+    "markdown",
   );
   const translatedMessageText =
     messageTranslation.showing && messageTranslation.translated !== null
@@ -4542,6 +4543,9 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     blockTranslationSource,
     "en",
     "zh",
+    block.type === "reasoning" || block.type === "agent_reasoning"
+      ? "markdown"
+      : "text",
   );
   const translatedBlockText =
     blockTranslation.showing && blockTranslation.translated !== null

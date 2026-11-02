@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
 import { translateText } from "../api";
+import { translateMarkdown } from "../markdown-translation";
 import {
   getCachedTranslation,
   setCachedTranslation,
+  type TranslationFormat,
 } from "../translation-cache";
 
 export type BlockTranslationStatus = "idle" | "loading" | "ready" | "error";
@@ -27,13 +29,14 @@ export function useBlockTranslation(
   sourceText: string | null,
   inputLang: string,
   outputLang: string,
+  format: TranslationFormat = "text",
 ): BlockTranslationState {
-  const key = JSON.stringify([sourceText, inputLang, outputLang]);
+  const key = JSON.stringify([sourceText, inputLang, outputLang, format]);
   const currentKey = useRef(key);
   currentKey.current = key;
   const [state, setState] = useState<TranslationState | null>(null);
   const cached = sourceText
-    ? getCachedTranslation(sourceText, inputLang, outputLang)
+    ? getCachedTranslation(sourceText, inputLang, outputLang, format)
     : undefined;
   const current =
     state?.key === key
@@ -69,12 +72,33 @@ export function useBlockTranslation(
           : latest,
       );
     };
-    void translateText({ text: sourceText, inputLang, outputLang }, (text) => {
+    const onProgress = (text: string) => {
       update({ translated: text, showing: true });
-    })
-      .then(({ translatedText }) => {
+    };
+    const translate = async (
+      text: string,
+      progress?: (text: string) => void,
+    ) => {
+      const response = await translateText(
+        { text, inputLang, outputLang },
+        progress,
+      );
+      return response.translatedText;
+    };
+    void (
+      format === "markdown"
+        ? translateMarkdown(sourceText, translate, onProgress)
+        : translate(sourceText, onProgress)
+    )
+      .then((translatedText) => {
         if (!translatedText.trim()) throw new Error("Translation is empty.");
-        setCachedTranslation(sourceText, inputLang, outputLang, translatedText);
+        setCachedTranslation(
+          sourceText,
+          inputLang,
+          outputLang,
+          translatedText,
+          format,
+        );
         update({ translated: translatedText, status: "ready", showing: true });
       })
       .catch((error: unknown) => {
