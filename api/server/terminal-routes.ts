@@ -4,7 +4,10 @@ import {
   getCodexAppServerClient,
   isCodexReasoningEffort,
 } from "../codex-app-server";
-import { getLocalTerminalManager } from "../local-terminal";
+import {
+  getLocalTerminalManager,
+  TerminalWorkingDirectoryError,
+} from "../local-terminal";
 import { getSystemContextSnapshot } from "../system-context";
 import { sanitizeTerminalChatTranscript } from "../terminal-chat-transcript-sanitizer";
 import {
@@ -182,6 +185,12 @@ function toTerminalTextInput(
     return [];
   }
   return [{ type: "text", text: normalizedText }];
+}
+
+function terminalErrorStatus(error: unknown): 400 | 500 | 503 {
+  return error instanceof TerminalWorkingDirectoryError
+    ? 400
+    : responseStatusForError(error);
 }
 
 type TerminalRestartSource = "restart" | "activate";
@@ -434,7 +443,7 @@ export function registerTerminalRoutes(app: Hono): void {
     } catch (error) {
       return c.json(
         { error: toErrorMessage(error) },
-        responseStatusForError(error),
+        terminalErrorStatus(error),
       );
     }
   });
@@ -1049,7 +1058,7 @@ export function registerTerminalRoutes(app: Hono): void {
     } catch (error) {
       return c.json(
         { error: toErrorMessage(error) },
-        responseStatusForError(error),
+        terminalErrorStatus(error),
       );
     }
   });
@@ -1312,6 +1321,8 @@ export function registerTerminalRoutes(app: Hono): void {
           type: "reset",
           output: snapshot.output,
           running: snapshot.running,
+          cols: snapshot.cols,
+          rows: snapshot.rows,
         });
         await writeTerminalEvent({
           terminalId,

@@ -52,7 +52,10 @@ interface BufferedTerminalInputControllerInput {
 }
 
 export interface BufferedTerminalInputController {
-  queueInput: (chunk: string) => void;
+  // `userInitiated` defaults to true. Data that is not user initiated (mouse
+  // and focus reports, automatic query replies) is only sent while this
+  // client owns terminal write, and never triggers the read-only warning.
+  queueInput: (chunk: string, options?: { userInitiated?: boolean }) => void;
   flush: () => Promise<void>;
   reset: () => void;
 }
@@ -61,40 +64,61 @@ export function createBufferedTerminalInputController(
   input: BufferedTerminalInputControllerInput,
 ): BufferedTerminalInputController {
   const sendInput = input.sendInput ?? sendTerminalInput;
-  let sendQueue = Promise.resolve();
+  // Input typed while a request is in flight is batched into the next request,
+  // so typing speed is not limited by one round trip per key (which matters a
+  // lot over the remote relay).
+  let pendingInput = "";
+  let pumping = false;
+  let pumpPromise: Promise<void> = Promise.resolve();
 
-  const flush = async () => {
-    return sendQueue;
+  const pump = async () => {
+    pumping = true;
+    try {
+      while (pendingInput.length > 0) {
+        if (input.isDisposed()) {
+          pendingInput = "";
+          break;
+        }
+        const chunk = pendingInput;
+        pendingInput = "";
+        try {
+          await sendInput(input.terminalId, { input: chunk }, input.clientId);
+        } catch (error) {
+          input.setError(getErrorMessage(error));
+        }
+      }
+    } finally {
+      pumping = false;
+    }
   };
 
   return {
-    queueInput(chunk: string) {
+    queueInput(chunk, options) {
       if (!chunk || input.isDisposed()) {
         return;
       }
 
+      const userInitiated = options?.userInitiated ?? true;
       const writeOwnerId = input.getWriteOwnerId();
-      if (writeOwnerId !== null && writeOwnerId !== input.clientId) {
-        input.onReadOnlyAttempt?.();
+      if (userInitiated) {
+        if (writeOwnerId !== null && writeOwnerId !== input.clientId) {
+          input.onReadOnlyAttempt?.();
+          return;
+        }
+      } else if (writeOwnerId !== input.clientId) {
         return;
       }
 
-      sendQueue = sendQueue
-        .catch(() => undefined)
-        .then(async () => {
-          if (input.isDisposed()) {
-            return;
-          }
-          try {
-            await sendInput(input.terminalId, { input: chunk }, input.clientId);
-          } catch (error) {
-            input.setError(getErrorMessage(error));
-          }
-        });
+      pendingInput += chunk;
+      if (!pumping) {
+        pumpPromise = pump();
+      }
     },
-    flush,
+    flush() {
+      return pumpPromise;
+    },
     reset() {
-      sendQueue = Promise.resolve();
+      pendingInput = "";
     },
   };
 }

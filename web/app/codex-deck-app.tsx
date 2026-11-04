@@ -16385,7 +16385,7 @@ export default function CodexDeckApp() {
                   <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
                     <div className="inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg">
                       <span className="thinking-dot" />
-                      <span className="thinking-label">Chating...</span>
+                      <span className="thinking-label">Chatting...</span>
                     </div>
                   </div>
                 )}
@@ -16453,7 +16453,7 @@ export default function CodexDeckApp() {
                   <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
                     <div className="inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg">
                       <span className="thinking-dot" />
-                      <span className="thinking-label">Chating...</span>
+                      <span className="thinking-label">Chatting...</span>
                     </div>
                     {showFixDangling && (
                       <div className="pointer-events-auto flex items-center gap-2">

@@ -1,81 +1,88 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  bindTerminalExplicitInputHandlers,
+  bindTerminalInputHandlers,
   buildTerminalPasteInput,
+  USER_INPUT_ATTRIBUTION_WINDOW_MS,
+  type TerminalInputQueueOptions,
 } from "../../web/terminal-user-input";
 
-class FakeTextArea {
-  public value = "";
-  private readonly listeners = new Map<
-    string,
-    Set<(event: Event | KeyboardEvent | ClipboardEvent) => void>
-  >();
+class FakeElement {
+  private readonly listeners = new Map<string, Set<() => void>>();
 
-  public addEventListener(
-    type: string,
-    listener: (event: Event | KeyboardEvent | ClipboardEvent) => void,
-  ): void {
+  public addEventListener(type: string, listener: () => void): void {
     const listeners = this.listeners.get(type) ?? new Set();
     listeners.add(listener);
     this.listeners.set(type, listeners);
   }
 
-  public removeEventListener(
-    type: string,
-    listener: (event: Event | KeyboardEvent | ClipboardEvent) => void,
-  ): void {
+  public removeEventListener(type: string, listener: () => void): void {
     this.listeners.get(type)?.delete(listener);
   }
 
-  public dispatch(
-    type: string,
-    event: Event | KeyboardEvent | ClipboardEvent,
-  ): void {
+  public dispatch(type: string): void {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener(event);
+      listener();
     }
+  }
+
+  public listenerCount(): number {
+    let count = 0;
+    for (const listeners of this.listeners.values()) {
+      count += listeners.size;
+    }
+    return count;
   }
 }
 
 class FakeTerminal {
-  public readonly textarea = new FakeTextArea();
-  public readonly modes: { bracketedPasteMode: boolean } = {
-    bracketedPasteMode: false,
-  };
-  public onDataSubscriptions = 0;
-  private readonly keyListeners = new Set<
-    (event: { key: string; domEvent: KeyboardEvent }) => void
-  >();
+  public readonly element = new FakeElement();
+  private readonly dataListeners = new Set<(data: string) => void>();
 
-  public onKey(
-    listener: (event: { key: string; domEvent: KeyboardEvent }) => void,
-  ): { dispose: () => void } {
-    this.keyListeners.add(listener);
+  public onData(listener: (data: string) => void): { dispose: () => void } {
+    this.dataListeners.add(listener);
     return {
       dispose: () => {
-        this.keyListeners.delete(listener);
+        this.dataListeners.delete(listener);
       },
     };
   }
 
-  public onData(): { dispose: () => void } {
-    this.onDataSubscriptions += 1;
-    return {
-      dispose: () => undefined,
-    };
-  }
-
-  public emitKey(key: string): void {
-    const domEvent = {
-      key,
-      preventDefault: () => undefined,
-      stopPropagation: () => undefined,
-    } as unknown as KeyboardEvent;
-    for (const listener of this.keyListeners) {
-      listener({ key, domEvent });
+  public emitData(data: string): void {
+    for (const listener of this.dataListeners) {
+      listener(data);
     }
   }
+
+  public get dataListenerCount(): number {
+    return this.dataListeners.size;
+  }
+}
+
+function bind(options?: { replaying?: () => boolean }) {
+  const terminal = new FakeTerminal();
+  const sent: Array<{ data: string; options?: TerminalInputQueueOptions }> = [];
+  let now = 1_000;
+  const cleanup = bindTerminalInputHandlers({
+    terminal: terminal as unknown as Parameters<
+      typeof bindTerminalInputHandlers
+    >[0]["terminal"],
+    controller: {
+      queueInput: (data, queueOptions) => {
+        sent.push({ data, options: queueOptions });
+      },
+    },
+    isReplayingOutput: options?.replaying ?? (() => false),
+    now: () => now,
+  });
+  return {
+    terminal,
+    sent,
+    cleanup,
+    advance: (ms: number) => {
+      now += ms;
+    },
+  };
 }
 
 test("buildTerminalPasteInput normalizes line endings and brackets paste when enabled", () => {
@@ -87,92 +94,72 @@ test("buildTerminalPasteInput normalizes line endings and brackets paste when en
   );
 });
 
-test("bindTerminalExplicitInputHandlers forwards key input without subscribing to terminal onData", () => {
-  const terminal = new FakeTerminal();
-  const sentInputs: string[] = [];
+test("typed input, including input-event-only text from mobile keyboards, is forwarded as user input", () => {
+  const { terminal, sent, cleanup } = bind();
 
-  const cleanup = bindTerminalExplicitInputHandlers({
-    terminal: terminal as unknown as Parameters<
-      typeof bindTerminalExplicitInputHandlers
-    >[0]["terminal"],
-    controller: {
-      queueInput: (chunk: string) => {
-        sentInputs.push(chunk);
-      },
-    },
-  });
+  terminal.element.dispatch("keydown");
+  terminal.emitData("l");
+  terminal.element.dispatch("input");
+  terminal.emitData("s -la");
 
-  terminal.emitKey("a");
-
-  assert.deepEqual(sentInputs, ["a"]);
-  assert.equal(terminal.onDataSubscriptions, 0);
-
+  assert.deepEqual(sent, [
+    { data: "l", options: { userInitiated: true } },
+    { data: "s -la", options: { userInitiated: true } },
+  ]);
   cleanup();
 });
 
-test("bindTerminalExplicitInputHandlers forwards explicit paste input with bracketed paste mode", () => {
-  const terminal = new FakeTerminal();
-  terminal.modes.bracketedPasteMode = true;
-  const sentInputs: string[] = [];
-  let prevented = false;
-  let stopped = false;
+test("IME text flushed shortly after compositionend still counts as typed", () => {
+  const { terminal, sent, cleanup, advance } = bind();
 
-  const cleanup = bindTerminalExplicitInputHandlers({
-    terminal: terminal as unknown as Parameters<
-      typeof bindTerminalExplicitInputHandlers
-    >[0]["terminal"],
-    controller: {
-      queueInput: (chunk: string) => {
-        sentInputs.push(chunk);
-      },
-    },
-  });
+  terminal.element.dispatch("compositionend");
+  advance(USER_INPUT_ATTRIBUTION_WINDOW_MS - 1);
+  terminal.emitData("中文");
 
-  terminal.textarea.dispatch("paste", {
-    clipboardData: {
-      getData: () => "foo\nbar",
-    },
-    preventDefault: () => {
-      prevented = true;
-    },
-    stopPropagation: () => {
-      stopped = true;
-    },
-  } as unknown as ClipboardEvent);
-
-  assert.equal(prevented, true);
-  assert.equal(stopped, true);
-  assert.deepEqual(sentInputs, ["\u001b[200~foo\rbar\u001b[201~"]);
-
+  assert.deepEqual(sent, [{ data: "中文", options: { userInitiated: true } }]);
   cleanup();
 });
 
-test("bindTerminalExplicitInputHandlers forwards committed composition text", async () => {
-  const terminal = new FakeTerminal();
-  const sentInputs: string[] = [];
+test("terminal query replies are forwarded as automatic input", () => {
+  const { terminal, sent, cleanup, advance } = bind();
 
-  const cleanup = bindTerminalExplicitInputHandlers({
-    terminal: terminal as unknown as Parameters<
-      typeof bindTerminalExplicitInputHandlers
-    >[0]["terminal"],
-    controller: {
-      queueInput: (chunk: string) => {
-        sentInputs.push(chunk);
-      },
-    },
+  terminal.element.dispatch("keydown");
+  advance(USER_INPUT_ATTRIBUTION_WINDOW_MS + 1);
+  terminal.emitData("\u001b[5;1R");
+
+  assert.deepEqual(sent, [
+    { data: "\u001b[5;1R", options: { userInitiated: false } },
+  ]);
+  cleanup();
+});
+
+test("replies generated while old output is replayed are dropped, typing is not", () => {
+  let replaying = true;
+  const { terminal, sent, cleanup, advance } = bind({
+    replaying: () => replaying,
   });
 
-  terminal.textarea.value = "";
-  terminal.textarea.dispatch("compositionstart", {} as Event);
-  terminal.textarea.value = "中";
-  terminal.textarea.dispatch("compositionend", {} as Event);
+  terminal.emitData("\u001b[?1;2c");
+  terminal.element.dispatch("keydown");
+  terminal.emitData("q");
+  advance(USER_INPUT_ATTRIBUTION_WINDOW_MS + 1);
+  replaying = false;
+  terminal.emitData("\u001b[12;1R");
 
-  await new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
+  assert.deepEqual(sent, [
+    { data: "q", options: { userInitiated: true } },
+    { data: "\u001b[12;1R", options: { userInitiated: false } },
+  ]);
+  cleanup();
+});
 
-  assert.deepEqual(sentInputs, ["中"]);
-  assert.equal(terminal.textarea.value, "");
+test("cleanup unsubscribes from xterm and the DOM", () => {
+  const { terminal, cleanup } = bind();
+  assert.equal(terminal.dataListenerCount, 1);
+  assert.ok(terminal.element.listenerCount() > 0);
 
   cleanup();
+
+  assert.equal(terminal.dataListenerCount, 0);
+  assert.equal(terminal.element.listenerCount(), 0);
 });

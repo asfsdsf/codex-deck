@@ -1,7 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { Bot, MessageSquarePlus, RefreshCw } from "lucide-react";
+import {
+  AArrowDown,
+  AArrowUp,
+  Bot,
+  Keyboard,
+  MessageSquarePlus,
+  RefreshCw,
+} from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type {
   ConversationMessage,
@@ -22,18 +29,43 @@ import {
   createTerminalClientId,
   type TerminalIncrementalStreamEvent,
 } from "../terminal-session-client";
-import { bindTerminalExplicitInputHandlers } from "../terminal-user-input";
+import {
+  bindTerminalInputHandlers,
+  type TerminalInputQueueOptions,
+} from "../terminal-user-input";
 import type { ResolvedTheme } from "../theme";
 import {
   deriveAiTerminalStepStatesByArtifactMessageKey,
   type AiTerminalStepDirective,
   type AiTerminalStepState,
 } from "../ai-terminal";
-import { fitTerminalViewport } from "../terminal-render";
+import { fitTerminalViewport, isUsableTerminalSize } from "../terminal-render";
 import { getTerminalTheme } from "../terminal-theme";
 import { shouldAutoClaimWriteAfterRestart } from "../terminal-write-ownership";
+import { createTerminalOutputWriter } from "../terminal-output-writer";
+import {
+  findTerminalBufferLinks,
+  isOpenableTerminalUrl,
+} from "../terminal-links";
+import {
+  TERMINAL_EXTRA_KEYS,
+  applyTerminalCtrlModifier,
+  getTerminalExtraKeySequence,
+  type TerminalExtraKeyId,
+} from "../terminal-extra-keys";
+import {
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+  clampTerminalFontSize,
+  readStoredTerminalFontSize,
+  writeStoredTerminalFontSize,
+} from "../terminal-preferences";
 import MessageBlock from "./message-block";
 import { TerminalSnapshotBlock } from "./terminal-snapshot-block";
+
+// Resizes arrive in bursts while a pane is dragged; fitting redraws the whole
+// retained output, so wait for the burst to settle.
+const RESIZE_DEBOUNCE_MS = 60;
 
 interface TerminalViewProps {
   terminalId: string;
@@ -66,6 +98,59 @@ interface TerminalViewProps {
   }) => Promise<boolean>;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isDocumentVisible(): boolean {
+  return (
+    typeof document === "undefined" || document.visibilityState !== "hidden"
+  );
+}
+
+function isApplePlatform(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/u.test(navigator.userAgent)
+  );
+}
+
+function detectCoarsePointer(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches
+  );
+}
+
+function openTerminalUrl(url: string): void {
+  if (!isOpenableTerminalUrl(url)) {
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    // The async clipboard API needs a secure context; fall back below.
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
 const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const {
     terminalId,
@@ -82,27 +167,34 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const streamCleanupRef = useRef<(() => void) | null>(null);
   const seqRef = useRef(0);
   const isDisposedRef = useRef(false);
-  const hasStartedRef = useRef(false);
+  const hasBootstrappedRef = useRef(false);
   const clientIdRef = useRef(createTerminalClientId());
   const writeOwnerIdRef = useRef<string | null>(null);
   const restartInFlightRef = useRef(false);
+  const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ctrlArmedRef = useRef(false);
   const readOnlyWarningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const readOnlyWarningVisibleRef = useRef(false);
   const readOnlyWarningShownAtRef = useRef(0);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
-  const renderedLiveOutputRef = useRef("");
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [bootstrapped, setBootstrapped] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [writeOwnerId, setWriteOwnerId] = useState<string | null>(null);
   const [showReadOnlyWarning, setShowReadOnlyWarning] = useState(false);
-  const [terminalOutput, setTerminalOutput] = useState("");
+  const [hasVisibleOutput, setHasVisibleOutput] = useState(false);
+  const [fontSize, setFontSize] = useState(() => readStoredTerminalFontSize());
+  const [isCoarsePointer, setIsCoarsePointer] = useState(detectCoarsePointer);
+  const [extraKeysHidden, setExtraKeysHidden] = useState(false);
+  const [ctrlArmed, setCtrlArmed] = useState(false);
   const [timelineEntries, setTimelineEntries] = useState<
     TerminalTimelineEntry[]
   >([]);
@@ -113,6 +205,26 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
   const terminalTheme = useMemo(
     () => getTerminalTheme(resolvedTheme),
     [resolvedTheme],
+  );
+  // Read when the xterm instance is created; later changes are applied to the
+  // live instance so a theme or font change never rebuilds the terminal.
+  const terminalThemeRef = useRef(terminalTheme);
+  terminalThemeRef.current = terminalTheme;
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
+
+  // Set once fitAndSyncSize exists; redraws finish asynchronously.
+  const fitAndSyncSizeRef = useRef<() => void>(() => undefined);
+  const [outputWriter] = useState(() =>
+    createTerminalOutputWriter({
+      getSink: () => terminalRef.current,
+      onVisibleOutputChange: setHasVisibleOutput,
+      // A redraw may have switched the grid to the PTY's size; fit it back to
+      // this screen (xterm reflows the history) and sync the PTY if we own it.
+      onRedrawComplete: () => {
+        fitAndSyncSizeRef.current();
+      },
+    }),
   );
 
   const isReadOnly =
@@ -167,9 +279,27 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     [handleReadOnlyAttempt, terminalId],
   );
 
-  useEffect(() => {
-    writeOwnerIdRef.current = writeOwnerId;
-  }, [writeOwnerId]);
+  const setCtrlArmedState = useCallback((armed: boolean) => {
+    ctrlArmedRef.current = armed;
+    setCtrlArmed(armed);
+  }, []);
+
+  // Every byte headed for the shell goes through here, so the sticky Ctrl key
+  // from the touch key row also applies to the on-screen keyboard.
+  const queueTerminalData = useCallback(
+    (
+      data: string,
+      options: TerminalInputQueueOptions = { userInitiated: true },
+    ) => {
+      let nextData = data;
+      if (options.userInitiated && ctrlArmedRef.current) {
+        nextData = applyTerminalCtrlModifier(data);
+        setCtrlArmedState(false);
+      }
+      terminalInputController.queueInput(nextData, options);
+    },
+    [setCtrlArmedState, terminalInputController],
+  );
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -191,16 +321,117 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     }
   }, [boundSessionId, clearArtifactTimelineState]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return;
+    }
+    const query = window.matchMedia("(pointer: coarse)");
+    const handleChange = () => {
+      setIsCoarsePointer(query.matches);
+    };
+    query.addEventListener?.("change", handleChange);
+    return () => {
+      query.removeEventListener?.("change", handleChange);
+    };
+  }, []);
+
+  const sendResize = useCallback(
+    async (force = false) => {
+      if (
+        !hasBootstrappedRef.current ||
+        restartInFlightRef.current ||
+        isDisposedRef.current
+      ) {
+        return;
+      }
+
+      const terminal = terminalRef.current;
+      if (!terminal) {
+        return;
+      }
+
+      // Only the write owner sizes the PTY; other clients render whatever
+      // size the owner picked.
+      if (writeOwnerIdRef.current !== clientIdRef.current) {
+        return;
+      }
+
+      // Ask for the size this screen fits rather than the grid's current
+      // size, which is temporarily the PTY's own while a snapshot is redrawn.
+      const container = containerRef.current;
+      if (
+        !container ||
+        container.clientWidth <= 0 ||
+        container.clientHeight <= 0
+      ) {
+        return;
+      }
+      const proposed = fitAddonRef.current?.proposeDimensions();
+      const size = proposed
+        ? { cols: proposed.cols, rows: proposed.rows }
+        : { cols: terminal.cols, rows: terminal.rows };
+      if (!isUsableTerminalSize(size)) {
+        return;
+      }
+      const lastSize = lastSentSizeRef.current;
+      if (
+        !force &&
+        lastSize &&
+        lastSize.cols === size.cols &&
+        lastSize.rows === size.rows
+      ) {
+        return;
+      }
+      lastSentSizeRef.current = size;
+
+      try {
+        await resizeTerminal(terminalId, size, clientIdRef.current);
+      } catch (resizeError) {
+        lastSentSizeRef.current = null;
+        if (!isDisposedRef.current) {
+          setError(getErrorMessage(resizeError));
+        }
+      }
+    },
+    [terminalId],
+  );
+
+  const applyWriteOwner = useCallback(
+    (nextWriteOwnerId: string | null) => {
+      const previousWriteOwnerId = writeOwnerIdRef.current;
+      writeOwnerIdRef.current = nextWriteOwnerId;
+      setWriteOwnerId(nextWriteOwnerId);
+      // Whoever just gained write (claim, take over, or the server claiming
+      // on first input) pushes its size so the PTY matches its screen.
+      if (
+        nextWriteOwnerId === clientIdRef.current &&
+        previousWriteOwnerId !== clientIdRef.current
+      ) {
+        void sendResize(true);
+      }
+    },
+    [sendResize],
+  );
+
   const applyFullSnapshot = useCallback(
-    (snapshot: TerminalSnapshotResponse) => {
-      renderedLiveOutputRef.current = "";
-      setTerminalOutput(snapshot.output);
+    (
+      snapshot: TerminalSnapshotResponse,
+      options: { authoritative: boolean },
+    ) => {
+      // A snapshot from an HTTP response can be older than events the stream
+      // already delivered; the stream is newer, so keep it.
+      if (!options.authoritative && snapshot.seq < seqRef.current) {
+        return;
+      }
+      outputWriter.replace(snapshot.output, {
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+      });
       setRunning(snapshot.running);
       seqRef.current = snapshot.seq;
-      writeOwnerIdRef.current = snapshot.writeOwnerId;
-      setWriteOwnerId(snapshot.writeOwnerId);
+      applyWriteOwner(snapshot.writeOwnerId);
     },
-    [],
+    [applyWriteOwner, outputWriter],
   );
 
   const applyArtifacts = useCallback(
@@ -213,42 +444,6 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     [],
   );
 
-  const sendResize = useCallback(async () => {
-    if (!hasStartedRef.current) {
-      return;
-    }
-
-    if (restartInFlightRef.current) {
-      return;
-    }
-
-    const terminal = terminalRef.current;
-    if (!terminal) {
-      return;
-    }
-
-    if (writeOwnerIdRef.current !== clientIdRef.current) {
-      return;
-    }
-
-    try {
-      await resizeTerminal(
-        terminalId,
-        {
-          cols: terminal.cols,
-          rows: terminal.rows,
-        },
-        clientIdRef.current,
-      );
-    } catch (resizeError) {
-      setError(
-        resizeError instanceof Error
-          ? resizeError.message
-          : String(resizeError),
-      );
-    }
-  }, [terminalId]);
-
   const closeStream = useCallback(() => {
     if (streamCleanupRef.current) {
       streamCleanupRef.current();
@@ -260,17 +455,55 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     const container = containerRef.current;
-    if (!terminal || !fitAddon || !container) {
+    // While a snapshot is being redrawn at the PTY's size, fitting would
+    // change the width under it; the redraw fits when it finishes.
+    if (
+      !terminal ||
+      !fitAddon ||
+      !container ||
+      !terminal.element ||
+      outputWriter.isReplaying()
+    ) {
       return { didFit: false, sizeChanged: false };
     }
 
-    return fitTerminalViewport({
-      container,
-      fitAddon,
-      terminal,
-      replayOutput: renderedLiveOutputRef.current,
-    });
-  }, []);
+    // xterm reflows existing lines to the new width itself.
+    return fitTerminalViewport({ container, fitAddon, terminal });
+  }, [outputWriter]);
+
+  const fitAndSyncSize = useCallback(() => {
+    if (isDisposedRef.current) {
+      return;
+    }
+    const result = fitTerminal();
+    if (result.didFit) {
+      void sendResize();
+    }
+  }, [fitTerminal, sendResize]);
+  fitAndSyncSizeRef.current = fitAndSyncSize;
+
+  const scheduleFit = useCallback(() => {
+    if (fitTimerRef.current) {
+      clearTimeout(fitTimerRef.current);
+    }
+    fitTimerRef.current = setTimeout(() => {
+      fitTimerRef.current = null;
+      fitAndSyncSize();
+    }, RESIZE_DEBOUNCE_MS);
+  }, [fitAndSyncSize]);
+
+  const claimWrite = useCallback(async () => {
+    try {
+      const claim = await claimTerminalWrite(terminalId, clientIdRef.current);
+      if (!isDisposedRef.current) {
+        applyWriteOwner(claim.writeOwnerId);
+      }
+    } catch (claimError) {
+      if (!isDisposedRef.current) {
+        setError(getErrorMessage(claimError));
+      }
+    }
+  }, [applyWriteOwner, terminalId]);
 
   const applyStreamEvent = useCallback(
     (event: TerminalIncrementalStreamEvent) => {
@@ -294,82 +527,72 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
       if (event.type === "output") {
         if (typeof event.chunk === "string" && event.chunk.length > 0) {
-          setTerminalOutput((current) => `${current}${event.chunk ?? ""}`);
+          outputWriter.append(event.chunk);
         }
       } else if (event.type === "state") {
         setRunning(event.running === true);
       } else if (event.type === "reset") {
-        const nextOutput = typeof event.output === "string" ? event.output : "";
-        renderedLiveOutputRef.current = "";
-        setTerminalOutput(nextOutput);
+        outputWriter.replace(
+          typeof event.output === "string" ? event.output : "",
+          { cols: event.cols, rows: event.rows },
+        );
         setRunning(event.running === true);
       } else if (event.type === "ownership") {
-        writeOwnerIdRef.current = event.writeOwnerId ?? null;
-        setWriteOwnerId(event.writeOwnerId ?? null);
+        applyWriteOwner(event.writeOwnerId ?? null);
       } else if (event.type === "artifacts") {
         applyArtifacts(event.artifacts);
       }
 
       seqRef.current = event.seq;
     },
-    [applyArtifacts],
+    [applyArtifacts, applyWriteOwner, outputWriter],
   );
 
-  const bootstrap = useCallback(async () => {
+  const connect = useCallback(async () => {
     setError(null);
 
-    try {
-      const unsubscribe = await connectTerminalSession({
-        terminalId,
-        clientId: clientIdRef.current,
-        isDisposed: () => isDisposedRef.current,
-        onBootstrap: (event) => {
-          hasStartedRef.current = true;
-          applyFullSnapshot(event.snapshot);
-          applyArtifacts(event.artifacts);
-          fitTerminal();
-        },
-        onEvent: applyStreamEvent,
-        onConnectedChange: setConnected,
-        onError: (message) => {
-          setError(message);
-        },
-      });
+    const unsubscribe = await connectTerminalSession({
+      terminalId,
+      clientId: clientIdRef.current,
+      isDisposed: () => isDisposedRef.current,
+      // Sent on the first connection and again after every reconnect.
+      onBootstrap: (event) => {
+        hasBootstrappedRef.current = true;
+        setBootstrapped(true);
+        fitTerminal();
+        applyFullSnapshot(event.snapshot, { authoritative: true });
+        applyArtifacts(event.artifacts);
 
-      if (isDisposedRef.current) {
-        unsubscribe();
-        return;
-      }
+        const currentWriteOwnerId = event.snapshot.writeOwnerId;
+        if (currentWriteOwnerId === null) {
+          // Take the free write slot so the PTY gets this screen's size
+          // before anything is typed. Background tabs leave it free.
+          if (isDocumentVisible()) {
+            void claimWrite();
+          }
+        } else if (currentWriteOwnerId === clientIdRef.current) {
+          void sendResize(true);
+        }
+      },
+      onEvent: applyStreamEvent,
+      onConnectedChange: setConnected,
+      onError: (message) => {
+        setError(message);
+      },
+    });
 
-      closeStream();
-      streamCleanupRef.current = unsubscribe;
-
-      if (!hasStartedRef.current) {
-        return;
-      }
-
-      const currentWriteOwnerId = writeOwnerIdRef.current;
-      if (currentWriteOwnerId === null) {
-        const claim = await claimTerminalWrite(terminalId, clientIdRef.current);
-        writeOwnerIdRef.current = claim.writeOwnerId;
-        setWriteOwnerId(claim.writeOwnerId);
-        await sendResize();
-        return;
-      }
-
-      if (currentWriteOwnerId === clientIdRef.current) {
-        await sendResize();
-      }
-    } catch (error) {
-      if (!isDisposedRef.current) {
-        setError(error instanceof Error ? error.message : String(error));
-        setConnected(false);
-      }
+    if (isDisposedRef.current) {
+      unsubscribe();
+      return;
     }
+
+    closeStream();
+    streamCleanupRef.current = unsubscribe;
   }, [
-    applyFullSnapshot,
     applyArtifacts,
+    applyFullSnapshot,
     applyStreamEvent,
+    claimWrite,
     closeStream,
     fitTerminal,
     sendResize,
@@ -378,33 +601,40 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
 
   useEffect(() => {
     isDisposedRef.current = false;
+    hasBootstrappedRef.current = false;
+    seqRef.current = 0;
+    writeOwnerIdRef.current = null;
+    lastSentSizeRef.current = null;
+    outputWriter.clear();
 
     const terminal = new Terminal({
       convertEol: false,
       scrollback: 10000,
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: fontSizeRef.current,
       fontFamily: TERMINAL_FONT_FAMILY,
-      theme: terminalTheme,
+      theme: terminalThemeRef.current,
+      // OSC 8 hyperlinks printed by programs.
+      linkHandler: {
+        activate: (_event, text) => {
+          openTerminalUrl(text);
+        },
+      },
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
     const container = containerRef.current;
-    let explicitInputCleanup: (() => void) | null = null;
+    const disposers: Array<() => void> = [];
+    let resizeObserver: ResizeObserver | null = null;
 
     if (container && typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver(() => {
-        const fitResult = fitTerminal();
-        if (fitResult.didFit) {
-          void sendResize();
-        }
+      resizeObserver = new ResizeObserver(() => {
+        scheduleFit();
       });
-      observer.observe(container);
-      resizeObserverRef.current = observer;
+      resizeObserver.observe(container);
     }
 
     // Open inside requestAnimationFrame to ensure the browser has completed
@@ -416,27 +646,87 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       }
 
       terminal.open(container);
-      explicitInputCleanup = bindTerminalExplicitInputHandlers({
-        terminal,
-        controller: terminalInputController,
+      disposers.push(
+        bindTerminalInputHandlers({
+          terminal,
+          controller: { queueInput: queueTerminalData },
+          isReplayingOutput: () => outputWriter.isReplaying(),
+        }),
+      );
+
+      // Plain http(s) URLs in the output.
+      const linkProvider = terminal.registerLinkProvider({
+        provideLinks(bufferLineNumber, callback) {
+          const links = findTerminalBufferLinks(
+            terminal.buffer.active,
+            bufferLineNumber,
+          );
+          callback(
+            links.length > 0
+              ? links.map((link) => ({
+                  range: link.range,
+                  text: link.url,
+                  decorations: { underline: true, pointerCursor: true },
+                  activate: (_event: MouseEvent, text: string) => {
+                    openTerminalUrl(text);
+                  },
+                }))
+              : undefined,
+          );
+        },
       });
+      disposers.push(() => {
+        linkProvider.dispose();
+      });
+
+      // Ctrl+C / Ctrl+V belong to the shell, so Linux and Windows get the
+      // usual terminal shortcuts Ctrl+Shift+C / Ctrl+Shift+V. (On macOS,
+      // Cmd+C / Cmd+V already work.)
+      if (!isApplePlatform()) {
+        terminal.attachCustomKeyEventHandler((event) => {
+          if (
+            event.type !== "keydown" ||
+            !event.ctrlKey ||
+            !event.shiftKey ||
+            event.altKey ||
+            event.metaKey
+          ) {
+            return true;
+          }
+          const key = event.key.toLowerCase();
+          if (key === "c") {
+            const selection = terminal.getSelection();
+            if (selection) {
+              void copyTextToClipboard(selection);
+            }
+            event.preventDefault();
+            return false;
+          }
+          if (key === "v") {
+            // Let the browser fire its paste event; xterm handles it.
+            return false;
+          }
+          return true;
+        });
+      }
+
       fitTerminal();
 
       // Schedule retry fits for cases where the first measurement isn't stable.
       for (const delay of [100, 500]) {
         retryTimers.push(
           setTimeout(() => {
-            if (!isDisposedRef.current) {
-              const fitResult = fitTerminal();
-              if (fitResult.didFit) {
-                void sendResize();
-              }
-            }
+            fitAndSyncSize();
           }, delay),
         );
       }
 
-      void bootstrap();
+      void connect().catch((connectError) => {
+        if (!isDisposedRef.current) {
+          setError(getErrorMessage(connectError));
+          setConnected(false);
+        }
+      });
     });
 
     const capturedClientId = clientIdRef.current;
@@ -446,35 +736,54 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       for (const timer of retryTimers) {
         clearTimeout(timer);
       }
+      if (fitTimerRef.current) {
+        clearTimeout(fitTimerRef.current);
+        fitTimerRef.current = null;
+      }
       closeStream();
-      resizeObserverRef.current?.disconnect();
-      resizeObserverRef.current = null;
-      explicitInputCleanup?.();
+      resizeObserver?.disconnect();
+      for (const dispose of disposers) {
+        dispose();
+      }
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminalInputController.reset();
-      renderedLiveOutputRef.current = "";
-      setTerminalOutput("");
+      outputWriter.clear();
       setTimelineEntries([]);
       setConnected(false);
+      setBootstrapped(false);
       setRunning(false);
       setError(null);
       setWriteOwnerId(null);
+      setCtrlArmedState(false);
       if (readOnlyWarningTimerRef.current) {
         clearTimeout(readOnlyWarningTimerRef.current);
       }
       void releaseTerminalWrite(terminalId, capturedClientId).catch(() => {});
     };
   }, [
-    bootstrap,
     closeStream,
+    connect,
+    fitAndSyncSize,
     fitTerminal,
-    sendResize,
+    outputWriter,
+    queueTerminalData,
+    scheduleFit,
+    setCtrlArmedState,
     terminalId,
     terminalInputController,
-    terminalTheme,
   ]);
+
+  useEffect(() => {
+    writeStoredTerminalFontSize(fontSize);
+    const terminal = terminalRef.current;
+    if (!terminal || terminal.options.fontSize === fontSize) {
+      return;
+    }
+    terminal.options.fontSize = fontSize;
+    scheduleFit();
+  }, [fontSize, scheduleFit]);
 
   const embeddedMessagesByKey = useMemo(
     () =>
@@ -482,31 +791,15 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     [embeddedMessages],
   );
   const hasEmbeddedTimelineEntries = timelineEntries.length > 0;
-  const hasLiveTerminalOutput = terminalOutput.trim().length > 0;
   const shouldShowActivateTerminalCta =
-    !running && !hasLiveTerminalOutput && !embeddedMessagesLoading;
-
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    if (!terminal) {
-      return;
-    }
-
-    const nextOutput = terminalOutput;
-    if (!nextOutput.startsWith(renderedLiveOutputRef.current)) {
-      terminal.reset();
-      if (nextOutput.length > 0) {
-        terminal.write(nextOutput);
-      }
-      renderedLiveOutputRef.current = nextOutput;
-      return;
-    }
-
-    if (nextOutput.length > renderedLiveOutputRef.current.length) {
-      terminal.write(nextOutput.slice(renderedLiveOutputRef.current.length));
-    }
-    renderedLiveOutputRef.current = nextOutput;
-  }, [terminalOutput]);
+    bootstrapped &&
+    !running &&
+    !restarting &&
+    !hasVisibleOutput &&
+    !embeddedMessagesLoading;
+  const shouldShowExitedBanner =
+    bootstrapped && connected && !running && !restarting && hasVisibleOutput;
+  const showExtraKeys = isCoarsePointer && !extraKeysHidden;
 
   useEffect(() => {
     if (!hasEmbeddedTimelineEntries) {
@@ -517,17 +810,23 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
       return;
     }
     viewport.scrollTop = viewport.scrollHeight;
-  }, [hasEmbeddedTimelineEntries, terminalOutput, timelineEntries.length]);
+  }, [hasEmbeddedTimelineEntries, timelineEntries.length]);
 
   const statusText = useMemo(() => {
     if (!connected) {
-      return "Disconnected";
+      return bootstrapped ? "Reconnecting…" : "Connecting…";
     }
-    return running ? "Running" : "Stopped";
-  }, [connected, running]);
+    if (!bootstrapped) {
+      return "Connecting…";
+    }
+    return running ? "Running" : "Exited";
+  }, [bootstrapped, connected, running]);
 
   const handleRestart = useCallback(
     (source: "restart" | "activate") => {
+      if (restartInFlightRef.current) {
+        return;
+      }
       void (async () => {
         const previousWriteOwnerId = writeOwnerIdRef.current;
         const shouldClaimWrite = shouldAutoClaimWriteAfterRestart(
@@ -536,6 +835,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
         );
 
         restartInFlightRef.current = true;
+        setRestarting(true);
         try {
           const snapshot = await restartTerminal(
             terminalId,
@@ -546,10 +846,8 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
             return;
           }
 
-          applyFullSnapshot(snapshot);
-          let nextWriteOwnerId = snapshot.writeOwnerId;
-
-          if (shouldClaimWrite && nextWriteOwnerId === null) {
+          applyFullSnapshot(snapshot, { authoritative: false });
+          if (shouldClaimWrite && writeOwnerIdRef.current === null) {
             const claim = await claimTerminalWrite(
               terminalId,
               clientIdRef.current,
@@ -557,45 +855,66 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
             if (isDisposedRef.current) {
               return;
             }
-            nextWriteOwnerId = claim.writeOwnerId;
-            writeOwnerIdRef.current = claim.writeOwnerId;
-            setWriteOwnerId(claim.writeOwnerId);
+            applyWriteOwner(claim.writeOwnerId);
           }
 
           restartInFlightRef.current = false;
           fitTerminal();
-          if (nextWriteOwnerId === clientIdRef.current) {
-            await sendResize();
+          // The new shell starts at the default 80x24.
+          await sendResize(true);
+          terminalRef.current?.focus();
+        } catch (restartError) {
+          if (!isDisposedRef.current) {
+            setError(getErrorMessage(restartError));
           }
-        } catch (reconnectError) {
-          setError(
-            reconnectError instanceof Error
-              ? reconnectError.message
-              : String(reconnectError),
-          );
         } finally {
           restartInFlightRef.current = false;
+          if (!isDisposedRef.current) {
+            setRestarting(false);
+          }
         }
       })();
     },
-    [applyFullSnapshot, fitTerminal, sendResize, terminalId],
+    [applyFullSnapshot, applyWriteOwner, fitTerminal, sendResize, terminalId],
   );
 
   const handleTakeOver = useCallback(() => {
     void (async () => {
       try {
         const claim = await claimTerminalWrite(terminalId, clientIdRef.current);
-        writeOwnerIdRef.current = claim.writeOwnerId;
-        setWriteOwnerId(claim.writeOwnerId);
+        if (isDisposedRef.current) {
+          return;
+        }
+        applyWriteOwner(claim.writeOwnerId);
         fitTerminal();
-        await sendResize();
+        await sendResize(true);
+        terminalRef.current?.focus();
       } catch (claimError) {
-        setError(
-          claimError instanceof Error ? claimError.message : String(claimError),
-        );
+        setError(getErrorMessage(claimError));
       }
     })();
-  }, [fitTerminal, sendResize, terminalId]);
+  }, [applyWriteOwner, fitTerminal, sendResize, terminalId]);
+
+  const handleExtraKey = useCallback(
+    (id: TerminalExtraKeyId) => {
+      if (id === "ctrl") {
+        setCtrlArmedState(!ctrlArmedRef.current);
+        return;
+      }
+      const sequence = getTerminalExtraKeySequence(id, {
+        applicationCursorKeys:
+          terminalRef.current?.modes.applicationCursorKeysMode ?? false,
+      });
+      if (sequence) {
+        queueTerminalData(sequence, { userInitiated: true });
+      }
+    },
+    [queueTerminalData, setCtrlArmedState],
+  );
+
+  const changeFontSize = useCallback((delta: number) => {
+    setFontSize((current) => clampTerminalFontSize(current + delta));
+  }, []);
 
   const handleApproveStep = useCallback(
     async (input: {
@@ -616,64 +935,127 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
     [onApproveAiTerminalStep],
   );
 
+  const headerIconButtonClassName =
+    "h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 transition-colors hover:bg-zinc-800/80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-900/70";
+
   return (
     <div className="h-full flex flex-col bg-zinc-950">
       <div className="h-10 border-b border-zinc-800/60 px-3 flex items-center gap-2 text-xs">
         <span
-          className={`inline-block h-2.5 w-2.5 rounded-full ${
-            connected
+          className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${
+            connected && bootstrapped
               ? running
                 ? "bg-emerald-400"
                 : "bg-zinc-400"
               : "bg-red-400"
           }`}
+          role="img"
           aria-label={`Terminal status: ${statusText}`}
           title={statusText}
         />
+        {statusText !== "Running" ? (
+          <span
+            className={`shrink-0 ${
+              connected ? "text-zinc-500" : "text-red-300/90"
+            }`}
+          >
+            {statusText}
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={() => handleRestart("restart")}
-          className="h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
+          disabled={isReadOnly || restarting}
+          className={headerIconButtonClassName}
           aria-label="Restart terminal"
-          title="Restart terminal"
+          title={
+            isReadOnly
+              ? "Take over to restart the terminal"
+              : "Restart terminal"
+          }
         >
-          <RefreshCw className="h-3.5 w-3.5 mx-auto" />
+          <RefreshCw
+            className={`h-3.5 w-3.5 mx-auto ${restarting ? "animate-spin" : ""}`}
+          />
         </button>
         {isReadOnly && (
           <>
-            <span className="text-amber-300/80 truncate">
+            <span className="min-w-0 truncate text-amber-300/80">
               Read-only — another client has write permission
             </span>
             <button
               type="button"
               onClick={handleTakeOver}
-              className="h-7 rounded border border-amber-600/60 bg-amber-700/20 px-2.5 text-amber-200 transition-colors hover:bg-amber-700/40"
+              className="h-7 shrink-0 rounded border border-amber-600/60 bg-amber-700/20 px-2.5 text-amber-200 transition-colors hover:bg-amber-700/40"
             >
               Take Over
             </button>
           </>
         )}
-        {error && (
-          <span className="ml-auto text-red-300 truncate" title={error}>
+        {error ? (
+          <span className="ml-auto min-w-0 truncate text-red-300" title={error}>
             {error}
           </span>
+        ) : (
+          <div className="ml-auto" />
         )}
-        {!error ? <div className="ml-auto" /> : null}
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => changeFontSize(-1)}
+            disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
+            className={headerIconButtonClassName}
+            aria-label="Decrease terminal font size"
+            title={`Smaller text (${fontSize}px)`}
+          >
+            <AArrowDown className="h-3.5 w-3.5 mx-auto" />
+          </button>
+          <button
+            type="button"
+            onClick={() => changeFontSize(1)}
+            disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
+            className={headerIconButtonClassName}
+            aria-label="Increase terminal font size"
+            title={`Larger text (${fontSize}px)`}
+          >
+            <AArrowUp className="h-3.5 w-3.5 mx-auto" />
+          </button>
+          {isCoarsePointer ? (
+            <button
+              type="button"
+              onClick={() => setExtraKeysHidden((hidden) => !hidden)}
+              className={`${headerIconButtonClassName} ${
+                showExtraKeys ? "border-cyan-600/60 text-cyan-200" : ""
+              }`}
+              aria-label={
+                showExtraKeys ? "Hide terminal keys" : "Show terminal keys"
+              }
+              aria-pressed={showExtraKeys}
+              title={
+                showExtraKeys ? "Hide terminal keys" : "Show terminal keys"
+              }
+            >
+              <Keyboard className="h-3.5 w-3.5 mx-auto" />
+            </button>
+          ) : null}
+        </div>
         <button
           type="button"
           onClick={onChatInSession}
           disabled={!onChatInSession || chatBusy}
-          className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-600/70 bg-cyan-600/20 px-2.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-600/30 disabled:cursor-not-allowed disabled:opacity-55"
+          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded border border-cyan-600/70 bg-cyan-600/20 px-2.5 text-[11px] text-cyan-100 transition-colors hover:bg-cyan-600/30 disabled:cursor-not-allowed disabled:opacity-55"
+          aria-label="Chat in session"
+          title="Chat in session"
         >
           <MessageSquarePlus className="h-3.5 w-3.5" />
-          Chat in session
+          <span className="hidden sm:inline">Chat in session</span>
         </button>
       </div>
       <div className="flex-1 min-h-0 relative overflow-hidden">
         <div ref={timelineViewportRef} className="h-full overflow-y-auto">
           <div
             className={`flex min-h-full flex-col ${
-              hasEmbeddedTimelineEntries ? "gap-3 px-2 py-1" : "px-2 py-1"
+              hasEmbeddedTimelineEntries ? "gap-3 px-2 py-1" : ""
             }`}
           >
             {hasEmbeddedTimelineEntries ? (
@@ -687,7 +1069,7 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
               </div>
             ) : null}
             {embeddedMessagesLoading && !hasEmbeddedTimelineEntries ? (
-              <div className="shrink-0 px-1 text-[11px] text-zinc-500">
+              <div className="shrink-0 px-3 py-1 text-[11px] text-zinc-500">
                 Loading bound session replies...
               </div>
             ) : null}
@@ -734,20 +1116,20 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
                 </div>
               );
             })}
+            {/* The xterm host is absolutely positioned so it always gets a
+                definite size to fit to; a percentage height here would
+                collapse to xterm's own default 24 rows. */}
             <div
               className={
                 hasEmbeddedTimelineEntries
-                  ? "shrink-0 overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950 shadow-[0_0_0_1px_rgba(24,24,27,0.4)]"
-                  : "min-h-full flex-1 overflow-hidden"
+                  ? "relative h-[16rem] shrink-0 overflow-hidden rounded-xl border border-zinc-800/80"
+                  : "relative min-h-0 flex-1 overflow-hidden"
               }
+              style={{ backgroundColor: terminalTheme.background }}
             >
               <div
                 ref={containerRef}
-                className={
-                  hasEmbeddedTimelineEntries
-                    ? "h-[16rem] w-full px-2 py-1"
-                    : "h-full w-full"
-                }
+                className="terminal-host absolute inset-0"
               />
             </div>
           </div>
@@ -757,6 +1139,30 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
             <div className="rounded-lg border border-zinc-600/50 bg-zinc-800/90 px-5 py-3 text-sm text-zinc-200 shadow-lg">
               Read-only mode — press{" "}
               <strong className="text-amber-300">Take Over</strong> to type
+            </div>
+          </div>
+        )}
+        {shouldShowExitedBanner && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-3">
+            <div
+              className="pointer-events-auto inline-flex items-center gap-3 rounded-lg border border-zinc-700/70 bg-zinc-900/95 px-3 py-2 text-xs text-zinc-300 shadow-lg"
+              role="status"
+            >
+              <span>The shell has exited.</span>
+              <button
+                type="button"
+                onClick={() => handleRestart("restart")}
+                disabled={isReadOnly}
+                title={
+                  isReadOnly
+                    ? "Take over to restart the terminal"
+                    : "Start a new shell"
+                }
+                className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-600/70 bg-cyan-600/20 px-2.5 text-cyan-100 transition-colors hover:bg-cyan-600/30 disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Restart
+              </button>
             </div>
           </div>
         )}
@@ -776,9 +1182,14 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
               <button
                 type="button"
                 onClick={() => handleRestart("activate")}
-                className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-5 text-sm font-medium text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:border-cyan-400/55 hover:bg-cyan-500/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                disabled={isReadOnly}
+                className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-5 text-sm font-medium text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:border-cyan-400/55 hover:bg-cyan-500/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:cursor-not-allowed disabled:opacity-55"
                 aria-label="Activate terminal emulator"
-                title="Activate terminal emulator"
+                title={
+                  isReadOnly
+                    ? "Take over to activate the terminal"
+                    : "Activate terminal emulator"
+                }
               >
                 <RefreshCw className="h-4 w-4" />
                 Activate terminal
@@ -787,6 +1198,37 @@ const TerminalView = memo(function TerminalView(props: TerminalViewProps) {
           </div>
         )}
       </div>
+      {showExtraKeys ? (
+        <div
+          className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-zinc-800/60 px-2 py-1.5"
+          role="toolbar"
+          aria-label="Terminal keys"
+        >
+          {TERMINAL_EXTRA_KEYS.map((key) => {
+            const isActiveModifier = key.id === "ctrl" && ctrlArmed;
+            return (
+              <button
+                key={key.id}
+                type="button"
+                // Keep focus (and the on-screen keyboard) on the terminal.
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => handleExtraKey(key.id)}
+                aria-label={key.ariaLabel}
+                aria-pressed={key.id === "ctrl" ? ctrlArmed : undefined}
+                className={`h-8 min-w-[2.5rem] shrink-0 rounded-md border px-2 font-mono text-xs transition-colors ${
+                  isActiveModifier
+                    ? "border-cyan-500/60 bg-cyan-500/20 text-cyan-100"
+                    : "border-zinc-700/70 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
+                }`}
+              >
+                {key.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 });

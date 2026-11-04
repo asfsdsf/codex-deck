@@ -1070,6 +1070,10 @@ export interface TerminalSnapshotResponse {
   output: string;
   seq: number;
   writeOwnerId: string | null;
+  // PTY size the output was produced at. Clients replay the snapshot at this
+  // size and then reflow it to their own. Absent from older backends.
+  cols?: number;
+  rows?: number;
 }
 
 export interface TerminalInputRequest {
@@ -1134,6 +1138,8 @@ export type TerminalStreamEvent =
       type: "reset";
       output: string;
       running: boolean;
+      cols?: number;
+      rows?: number;
     }
   | {
       terminalId: string;

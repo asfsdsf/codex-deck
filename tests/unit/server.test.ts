@@ -24,6 +24,7 @@ import {
 } from "../../api/codex-app-server";
 import {
   setLocalTerminalManagerForTests,
+  TerminalWorkingDirectoryError,
   type LocalTerminalManager,
 } from "../../api/local-terminal";
 import { getTerminalBinding } from "../../api/terminal-bindings";
@@ -7752,6 +7753,79 @@ test("MCP elicitation routes validate answers and synchronize remote resolution"
     server.stop();
     setCodexAppServerClientForTests(null);
     await client.close();
+    await cleanup();
+  }
+});
+
+test("terminal routes report a missing working directory as a bad request", async () => {
+  const { rootDir, cleanup } = await createTempCodexDir(
+    "server-terminal-missing-cwd",
+  );
+  const server = createServer({ port: 13182, codexDir: rootDir, open: false });
+  const terminalId = "terminal-missing-cwd";
+  const snapshot = {
+    id: terminalId,
+    terminalId,
+    running: false,
+    cwd: "/repo/deleted",
+    shell: "zsh",
+    output: "",
+    seq: 1,
+    writeOwnerId: null,
+  };
+
+  const manager: LocalTerminalManager = {
+    listTerminals: () => [],
+    createTerminal: (cwd?: string) => {
+      throw new TerminalWorkingDirectoryError(cwd ?? "");
+    },
+    closeTerminal: async () => false,
+    getSnapshot: (requestedTerminalId: string) =>
+      requestedTerminalId === terminalId ? snapshot : null,
+    restart: () => {
+      throw new TerminalWorkingDirectoryError("/repo/deleted");
+    },
+    writeInput: () => undefined,
+    resize: () => undefined,
+    interrupt: () => undefined,
+    getEventsSince: () => ({ events: [], requiresReset: false }),
+    subscribeTerminal: () => () => undefined,
+    subscribeTerminals: () => () => undefined,
+    dispose: async () => undefined,
+    getWriteOwnerId: () => null,
+    claimWrite: () => undefined,
+    releaseWrite: () => undefined,
+    isWriteOwner: () => false,
+    publishArtifacts: () => undefined,
+    consumeFrozenBlock: async () => null,
+  };
+
+  try {
+    setLocalTerminalManagerForTests(manager);
+    await loadStorage();
+
+    const created = await requestJson(server, "/api/terminals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/repo/missing" }),
+    });
+    assert.equal(created.status, 400);
+    assert.deepEqual(created.body, {
+      error: "Directory does not exist: /repo/missing",
+    });
+
+    const restarted = await requestJson(
+      server,
+      `/api/terminals/${terminalId}/restart?clientId=client-a`,
+      { method: "POST" },
+    );
+    assert.equal(restarted.status, 400);
+    assert.deepEqual(restarted.body, {
+      error: "Directory does not exist: /repo/deleted",
+    });
+  } finally {
+    setLocalTerminalManagerForTests(null);
+    server.stop();
     await cleanup();
   }
 });

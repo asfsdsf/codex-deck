@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fitTerminalViewport } from "../../web/terminal-render";
+import {
+  fitTerminalViewport,
+  isUsableTerminalSize,
+  MIN_USABLE_TERMINAL_COLS,
+  MIN_USABLE_TERMINAL_ROWS,
+} from "../../web/terminal-render";
 
 test("fitTerminalViewport skips hidden containers", () => {
   let fitCalls = 0;
-  let resetCalls = 0;
-  let written = "";
 
   const result = fitTerminalViewport({
     container: {
@@ -17,38 +20,35 @@ test("fitTerminalViewport skips hidden containers", () => {
         fitCalls += 1;
       },
     },
-    terminal: {
-      cols: 80,
-      rows: 24,
-      reset() {
-        resetCalls += 1;
-      },
-      write(data: string) {
-        written += data;
-      },
-    },
-    replayOutput: "prompt> ls",
+    terminal: { cols: 80, rows: 24 },
   });
 
   assert.deepEqual(result, { didFit: false, sizeChanged: false });
   assert.equal(fitCalls, 0);
-  assert.equal(resetCalls, 0);
-  assert.equal(written, "");
 });
 
-test("fitTerminalViewport redraws the rendered buffer after a size change", () => {
-  let resetCalls = 0;
-  let written = "";
-  const terminal = {
-    cols: 80,
-    rows: 24,
-    reset() {
-      resetCalls += 1;
+test("fitTerminalViewport skips containers too small to be a usable terminal", () => {
+  let fitCalls = 0;
+  const terminal = { cols: 86, rows: 31 };
+
+  const result = fitTerminalViewport({
+    container: { clientWidth: 30, clientHeight: 480 },
+    fitAddon: {
+      fit() {
+        fitCalls += 1;
+      },
+      proposeDimensions: () => ({ cols: 3, rows: 22 }),
     },
-    write(data: string) {
-      written += data;
-    },
-  };
+    terminal,
+  });
+
+  assert.deepEqual(result, { didFit: false, sizeChanged: false });
+  assert.equal(fitCalls, 0);
+  assert.deepEqual(terminal, { cols: 86, rows: 31 });
+});
+
+test("fitTerminalViewport reports a size change", () => {
+  const terminal = { cols: 80, rows: 24 };
 
   const result = fitTerminalViewport({
     container: {
@@ -60,20 +60,15 @@ test("fitTerminalViewport redraws the rendered buffer after a size change", () =
         terminal.cols = 120;
         terminal.rows = 30;
       },
+      proposeDimensions: () => ({ cols: 120, rows: 30 }),
     },
     terminal,
-    replayOutput: "(base) Project/codex-deck » ls",
   });
 
   assert.deepEqual(result, { didFit: true, sizeChanged: true });
-  assert.equal(resetCalls, 1);
-  assert.equal(written, "(base) Project/codex-deck » ls");
 });
 
-test("fitTerminalViewport avoids redraw when the geometry is unchanged", () => {
-  let resetCalls = 0;
-  let writeCalls = 0;
-
+test("fitTerminalViewport reports an unchanged geometry", () => {
   const result = fitTerminalViewport({
     container: {
       clientWidth: 960,
@@ -84,20 +79,27 @@ test("fitTerminalViewport avoids redraw when the geometry is unchanged", () => {
         // Keep the existing geometry.
       },
     },
-    terminal: {
-      cols: 120,
-      rows: 30,
-      reset() {
-        resetCalls += 1;
-      },
-      write() {
-        writeCalls += 1;
-      },
-    },
-    replayOutput: "prompt> pwd",
+    terminal: { cols: 120, rows: 30 },
   });
 
   assert.deepEqual(result, { didFit: true, sizeChanged: false });
-  assert.equal(resetCalls, 0);
-  assert.equal(writeCalls, 0);
+});
+
+test("isUsableTerminalSize rejects slivers and accepts phone-sized grids", () => {
+  assert.equal(
+    isUsableTerminalSize({
+      cols: MIN_USABLE_TERMINAL_COLS - 1,
+      rows: 24,
+    }),
+    false,
+  );
+  assert.equal(
+    isUsableTerminalSize({
+      cols: 80,
+      rows: MIN_USABLE_TERMINAL_ROWS - 1,
+    }),
+    false,
+  );
+  assert.equal(isUsableTerminalSize({ cols: Number.NaN, rows: 24 }), false);
+  assert.equal(isUsableTerminalSize({ cols: 44, rows: 24 }), true);
 });

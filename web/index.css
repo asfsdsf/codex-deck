@@ -618,6 +618,22 @@ select option {
 }
 
 /*
+ * Live terminal surface: keep text off the pane edges. FitAddon subtracts the
+ * .xterm element's own padding when it sizes the grid, so the padding goes
+ * here rather than on the host element.
+ */
+.terminal-host .xterm {
+  height: 100%;
+  padding: 6px 4px 4px 10px;
+}
+
+/* xterm.css paints this layer black and xterm 6 no longer themes it; let the
+   themed host background show through the padding and leftover space. */
+.terminal-host .xterm .xterm-viewport {
+  background-color: transparent;
+}
+
+/*
  * Pane surfaces (Codex desktop layout): a slightly lifted sidebar, a flat
  * main canvas, and a quiet side pane. These beat the bg-zinc-950 utility
  * on the same elements because unlayered CSS wins over Tailwind layers.

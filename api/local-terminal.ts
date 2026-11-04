@@ -4,6 +4,7 @@ import {
 } from "node:child_process";
 import { chmodSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type {
   TerminalSnapshotResponse,
@@ -20,6 +21,7 @@ import {
   removeTerminalStateSync,
 } from "./terminal-state";
 import { TerminalSnapshotCapture } from "./terminal-snapshot";
+import { appendTerminalOutput } from "../web/terminal-output-writer";
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -108,6 +110,9 @@ class TerminalInstance {
   private removed = false;
   private firstCommand: string | null = null;
   private pendingFirstCommandInput = "";
+  // Last size requested by the write owner; new shells start at this size.
+  private cols = DEFAULT_COLS;
+  private rows = DEFAULT_ROWS;
   private readonly frozenBlockCapture = new TerminalSnapshotCapture(
     DEFAULT_COLS,
     DEFAULT_ROWS,
@@ -159,6 +164,8 @@ class TerminalInstance {
       output: this.output,
       seq: this.seq,
       writeOwnerId: this.writeOwnerId,
+      cols: this.cols,
+      rows: this.rows,
     };
   }
 
@@ -173,6 +180,8 @@ class TerminalInstance {
       type: "reset",
       output: "",
       running: false,
+      cols: this.cols,
+      rows: this.rows,
     });
     this.publish({
       terminalId: this.terminalId,
@@ -188,10 +197,18 @@ class TerminalInstance {
       }
     }
 
-    this.start();
-    this.onStateChange();
+    // Reset capture state before start(), which may already write a startup
+    // notice that belongs to the new shell.
     this.frozenBlockCapture.reset();
     this.frozenBlockTranscript = "";
+    this.pendingFirstCommandInput = "";
+    try {
+      this.start();
+    } finally {
+      // Report the stopped state even when the new shell could not start
+      // (for example because its directory was deleted).
+      this.onStateChange();
+    }
     return this.getSnapshot();
   }
 
@@ -208,6 +225,8 @@ class TerminalInstance {
   }
 
   public resize(cols: number, rows: number): void {
+    this.cols = cols;
+    this.rows = rows;
     this.terminalProcess?.resize(cols, rows);
     this.frozenBlockCapture.resize(cols, rows);
   }
@@ -325,7 +344,10 @@ class TerminalInstance {
   }
 
   private start(): void {
-    const created = createTerminalProcess(this.cwd, this.env);
+    const created = createTerminalProcess(this.cwd, this.env, {
+      cols: this.cols,
+      rows: this.rows,
+    });
     this.shell = created.shell;
     this.terminalProcess = created.process;
     this.running = true;
@@ -375,10 +397,7 @@ class TerminalInstance {
     if (!chunk) {
       return;
     }
-    this.output += chunk;
-    if (this.output.length > MAX_OUTPUT_CHARS) {
-      this.output = this.output.slice(this.output.length - MAX_OUTPUT_CHARS);
-    }
+    this.output = appendTerminalOutput(this.output, chunk, MAX_OUTPUT_CHARS);
     this.frozenBlockCapture.write(chunk);
     this.frozenBlockTranscript += chunk;
     if (this.frozenBlockTranscript.length > MAX_FROZEN_TRANSCRIPT_CHARS) {
@@ -481,7 +500,7 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
   }
 
   public createTerminal(cwd?: string): TerminalSnapshotResponse {
-    const normalizedCwd = resolve((cwd?.trim() || process.cwd()).trim());
+    const normalizedCwd = resolveTerminalCwd(cwd);
     const terminalId = createTerminalId();
     const terminal = this.createTerminalInstance({
       terminalId,
@@ -685,6 +704,41 @@ class NodePtyLocalTerminalManager implements LocalTerminalManager {
   }
 }
 
+export class TerminalWorkingDirectoryError extends Error {
+  public constructor(public readonly cwd: string) {
+    super(`Directory does not exist: ${cwd}`);
+    this.name = "TerminalWorkingDirectoryError";
+  }
+}
+
+// Expands a leading "~" (people type it into the project path box) and makes
+// the path absolute. An empty path means the server's working directory.
+export function resolveTerminalCwd(cwd?: string | null): string {
+  const trimmed = cwd?.trim() ?? "";
+  if (!trimmed) {
+    return resolve(process.cwd());
+  }
+  if (trimmed === "~") {
+    return homedir();
+  }
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return resolve(homedir(), trimmed.slice(2));
+  }
+  return resolve(trimmed);
+}
+
+function assertTerminalCwdExists(cwd: string): void {
+  let isDirectory = false;
+  try {
+    isDirectory = statSync(cwd).isDirectory();
+  } catch {
+    isDirectory = false;
+  }
+  if (!isDirectory) {
+    throw new TerminalWorkingDirectoryError(cwd);
+  }
+}
+
 function createTerminalId(): string {
   return `terminal-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 }
@@ -778,8 +832,17 @@ type PtySpawn = (
 
 let cachedPtySpawn: PtySpawn | null = null;
 let ptyUnavailableReason: string | null = null;
+interface TerminalProcessSize {
+  cols: number;
+  rows: number;
+}
+
 let terminalProcessFactoryOverride:
-  | ((cwd: string, env: Record<string, string>) => CreatedTerminalProcess)
+  | ((
+      cwd: string,
+      env: Record<string, string>,
+      size: TerminalProcessSize,
+    ) => CreatedTerminalProcess)
   | null = null;
 
 function summarizePtyUnavailableReason(reason: string | null): string {
@@ -855,10 +918,15 @@ function getNodePtySpawn(): PtySpawn | null {
 function createTerminalProcess(
   cwd: string,
   env: Record<string, string>,
+  size: TerminalProcessSize,
 ): CreatedTerminalProcess {
   if (terminalProcessFactoryOverride) {
-    return terminalProcessFactoryOverride(cwd, env);
+    return terminalProcessFactoryOverride(cwd, env, size);
   }
+
+  // Without this, the shell fails to start in a missing directory and the
+  // terminal disappears again without telling anyone why.
+  assertTerminalCwdExists(cwd);
 
   const shellCandidates = resolveShellCandidates();
   const shellForPty = shellCandidates[0] ?? resolveShell();
@@ -871,8 +939,8 @@ function createTerminalProcess(
           process: wrapNodePtyProcess(
             ptySpawn(shell, [], {
               name: "xterm-256color",
-              cols: DEFAULT_COLS,
-              rows: DEFAULT_ROWS,
+              cols: size.cols,
+              rows: size.rows,
               cwd,
               env,
             }),
@@ -932,7 +1000,11 @@ function wrapNodePtyProcess(processHandle: PtyProcess): TerminalProcessAdapter {
       processHandle.write(data);
     },
     resize: (cols, rows) => {
-      processHandle.resize(cols, rows);
+      try {
+        processHandle.resize(cols, rows);
+      } catch {
+        // The process may have exited between the request and the resize.
+      }
     },
     interrupt: () => {
       processHandle.write("\u0003");
@@ -1063,7 +1135,11 @@ export function setLocalTerminalManagerForTests(
 
 export function setTerminalProcessFactoryForTests(
   override:
-    | ((cwd: string, env: Record<string, string>) => CreatedTerminalProcess)
+    | ((
+        cwd: string,
+        env: Record<string, string>,
+        size: TerminalProcessSize,
+      ) => CreatedTerminalProcess)
     | null,
 ): void {
   terminalProcessFactoryOverride = override;

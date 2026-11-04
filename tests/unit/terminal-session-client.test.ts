@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
   TerminalCommandResponse,
+  TerminalInputResponse,
   TerminalStreamEvent,
 } from "@codex-deck/api";
 import {
@@ -95,6 +96,106 @@ test("buffered terminal input controller reports send failures without replaying
   assert.equal(attempts, 1);
   assert.deepEqual(seenErrors, ["send failed"]);
   assert.deepEqual(sentInputs, []);
+});
+
+test("buffered terminal input controller batches keys typed while a request is in flight", async () => {
+  const sentInputs: string[] = [];
+  let releaseFirstRequest = () => {};
+  const controller = createBufferedTerminalInputController({
+    terminalId: "terminal-1",
+    clientId: "client-a",
+    isDisposed: () => false,
+    getWriteOwnerId: () => "client-a",
+    setError: () => {
+      assert.fail("batched input should not error");
+    },
+    sendInput: async (_terminalId, request) => {
+      sentInputs.push(request.input);
+      if (sentInputs.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirstRequest = resolve;
+        });
+      }
+      return { ok: true } as TerminalInputResponse;
+    },
+  });
+
+  controller.queueInput("l");
+  controller.queueInput("s");
+  controller.queueInput(" -la");
+  controller.queueInput("\r");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(sentInputs, ["l"]);
+
+  releaseFirstRequest();
+  await controller.flush();
+
+  assert.deepEqual(sentInputs, ["l", "s -la\r"]);
+});
+
+test("buffered terminal input controller only sends automatic replies as the write owner", async () => {
+  const sentInputs: string[] = [];
+  let readOnlyAttempts = 0;
+  let writeOwnerId: string | null = null;
+  const controller = createBufferedTerminalInputController({
+    terminalId: "terminal-1",
+    clientId: "client-a",
+    isDisposed: () => false,
+    getWriteOwnerId: () => writeOwnerId,
+    setError: () => {
+      assert.fail("automatic replies should not error");
+    },
+    onReadOnlyAttempt: () => {
+      readOnlyAttempts += 1;
+    },
+    sendInput: async (_terminalId, request) => {
+      sentInputs.push(request.input);
+      return { ok: true } as TerminalInputResponse;
+    },
+  });
+
+  // Nobody owns write: a reply must not claim it for this client.
+  controller.queueInput("\u001b[3;1R", { userInitiated: false });
+  // Another client owns write: drop silently, no read-only warning.
+  writeOwnerId = "client-b";
+  controller.queueInput("\u001b[3;1R", { userInitiated: false });
+  await controller.flush();
+  assert.deepEqual(sentInputs, []);
+  assert.equal(readOnlyAttempts, 0);
+
+  writeOwnerId = "client-a";
+  controller.queueInput("\u001b[3;1R", { userInitiated: false });
+  await controller.flush();
+  assert.deepEqual(sentInputs, ["\u001b[3;1R"]);
+});
+
+test("buffered terminal input controller reset drops input that has not been sent", async () => {
+  const sentInputs: string[] = [];
+  let releaseFirstRequest = () => {};
+  const controller = createBufferedTerminalInputController({
+    terminalId: "terminal-1",
+    clientId: "client-a",
+    isDisposed: () => false,
+    getWriteOwnerId: () => "client-a",
+    setError: () => undefined,
+    sendInput: async (_terminalId, request) => {
+      sentInputs.push(request.input);
+      if (sentInputs.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirstRequest = resolve;
+        });
+      }
+      return { ok: true } as TerminalInputResponse;
+    },
+  });
+
+  controller.queueInput("a");
+  controller.queueInput("b");
+  controller.reset();
+  releaseFirstRequest();
+  await controller.flush();
+
+  assert.deepEqual(sentInputs, ["a"]);
 });
 
 test("connectTerminalSession hydrates from bootstrap stream event and forwards incremental events", async () => {
