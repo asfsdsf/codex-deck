@@ -57,11 +57,13 @@ export function registerConfigRoutes(
   app.get("/api/codex-deck/config", async (c) => {
     try {
       const file = await readCodexDeckHomeConfigFile(options.codexHome);
+      const loaded = loadCodexDeckConfig(process.cwd(), options.codexHome);
       const response: CodexDeckConfigFileResponse = {
         ...file,
+        effectiveConfig: loaded.config,
+        configPaths: loaded.paths,
         hoverSettings: resolveConversationHoverSettings(
-          loadCodexDeckConfig(process.cwd(), options.codexHome).config
-            .conversationHover,
+          loaded.config.conversationHover,
         ),
       };
       return c.json(response);
@@ -116,15 +118,15 @@ export function registerConfigRoutes(
           options.codexHome,
           body.content as string,
         );
-        const nextConfig = loadCodexDeckConfig(
-          process.cwd(),
-          options.codexHome,
-        ).config;
+        const loaded = loadCodexDeckConfig(process.cwd(), options.codexHome);
+        const nextConfig = loaded.config;
         const applied = await options.applyConfig(previousConfig, nextConfig);
         return {
           ok: true,
           ...file,
           ...applied,
+          effectiveConfig: nextConfig,
+          configPaths: loaded.paths,
           hoverSettings: resolveConversationHoverSettings(
             nextConfig.conversationHover,
           ),

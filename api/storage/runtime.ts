@@ -56,6 +56,7 @@ import type { CodexHookRun } from "../hook-runs";
 export type { CodexHookRun } from "../hook-runs";
 export type { CodexMemoryStatus, CodexThreadMemory } from "../codex-memory";
 import type { CodexModelServiceTier } from "../service-tiers";
+import type { CodexDeckConfig } from "../config";
 export type { CodexModelServiceTier } from "../service-tiers";
 export type { CodexReviewTarget, CodexReviewResult } from "../codex-review";
 import {
@@ -769,6 +770,8 @@ export interface CodexDeckConfigFileResponse {
   path: string;
   content: string;
   revision: string;
+  effectiveConfig?: CodexDeckConfig;
+  configPaths?: string[];
   hoverSettings?: ConversationHoverSettings;
 }
 

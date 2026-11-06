@@ -1,3 +1,4 @@
+import type { CodexDeckConfigFileResponse } from "@codex-deck/api";
 import {
   CONVERSATION_HOVER_FIELDS,
   isConversationHoverSetting,
@@ -68,6 +69,87 @@ export function createEmptyCodexDeckConfig(): EditableCodexDeckConfig {
     conversationHover: {},
     codexHomes: [],
     remote: emptyRemoteConfig(),
+  };
+}
+
+export function readCodexDeckConfigForm(
+  response: CodexDeckConfigFileResponse,
+): EditableCodexDeckConfig {
+  const config = response.effectiveConfig;
+  if (!config) return parseCodexDeckConfigContent(response.content);
+  return {
+    port: config.port === undefined ? "" : String(config.port),
+    dir: config.dir ?? "",
+    dev: config.dev ?? null,
+    open: config.open ?? null,
+    translationCommand: config.translationCommand ?? "",
+    conversationHover: { ...config.conversationHover },
+    codexHomes: Object.entries(config.codexHomes ?? {}).map(([id, home]) => ({
+      id,
+      label: home.label ?? "",
+      path: home.path ?? "",
+    })),
+    remote: { ...emptyRemoteConfig(), ...config.remote },
+  };
+}
+
+function applyChangedProperties<T extends object>(
+  base: T,
+  previous: T,
+  next: T,
+): T {
+  const result = { ...base };
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  for (const key of keys as Set<keyof T>) {
+    if (previous[key] === next[key]) continue;
+    if (key in next) result[key] = next[key];
+    else delete result[key];
+  }
+  return result;
+}
+
+/** Apply only edited fields, leaving values inherited from other files alone. */
+export function applyCodexDeckConfigFormChanges(
+  base: EditableCodexDeckConfig,
+  previous: EditableCodexDeckConfig,
+  next: EditableCodexDeckConfig,
+): EditableCodexDeckConfig {
+  const previousHomes = new Map(
+    previous.codexHomes.map((home) => [home.id, home]),
+  );
+  const nextIds = new Set(next.codexHomes.map((home) => home.id));
+  const homes = new Map(
+    base.codexHomes
+      .filter((home) => !previousHomes.has(home.id) || nextIds.has(home.id))
+      .map((home) => [home.id, home]),
+  );
+  for (const home of next.codexHomes) {
+    const previousHome = previousHomes.get(home.id);
+    if (!previousHome) {
+      homes.set(home.id, { ...home });
+    } else if (
+      home.path !== previousHome.path ||
+      home.label !== previousHome.label
+    ) {
+      homes.set(
+        home.id,
+        applyChangedProperties(
+          homes.get(home.id) ?? { id: home.id, path: "", label: "" },
+          previousHome,
+          home,
+        ),
+      );
+    }
+  }
+  return {
+    ...applyChangedProperties(base, previous, next),
+    remote: applyChangedProperties(base.remote, previous.remote, next.remote),
+    conversationHover: applyChangedProperties(
+      base.conversationHover,
+      previous.conversationHover,
+      next.conversationHover,
+    ),
+    codexHomes: [...homes.values()],
   };
 }
 
