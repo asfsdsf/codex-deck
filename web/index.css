@@ -1,5 +1,110 @@
 @import "tailwindcss";
 
+/* Keep the user-message rail in the gutter of a sufficiently wide Codex pane. */
+.conversation-navigator-host {
+  container: conversation / inline-size;
+}
+
+.conversation-navigator {
+  position: absolute;
+  inset: 48px 12px 48px auto;
+  z-index: 25;
+  display: none;
+  align-items: center;
+  width: 28px;
+  pointer-events: none;
+}
+
+@container conversation (min-width: 960px) {
+  .conversation-navigator {
+    display: flex;
+  }
+}
+
+.conversation-navigator-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 100%;
+}
+
+.conversation-navigator-scroll {
+  min-height: 0;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  pointer-events: auto;
+}
+
+.conversation-navigator-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.conversation-navigator-mark {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.conversation-navigator-mark::before {
+  position: absolute;
+  top: 5px;
+  right: 0;
+  width: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-zinc-700);
+  content: "";
+  transition:
+    width 140ms ease,
+    background-color 140ms ease;
+}
+
+.conversation-navigator-mark:hover::before,
+.conversation-navigator-mark[aria-describedby]::before {
+  width: 16px;
+  background: var(--color-zinc-400);
+}
+
+.conversation-navigator-mark[aria-current]::before {
+  width: 22px;
+  background: var(--color-zinc-100);
+}
+
+.conversation-navigator-mark:focus-visible {
+  outline: 1px solid var(--color-cyan-500);
+  outline-offset: -1px;
+}
+
+.conversation-navigator-preview {
+  position: absolute;
+  right: calc(100% + 12px);
+  width: 300px;
+  max-height: 112px;
+  overflow: hidden;
+  padding: 12px;
+  border: 1px solid var(--app-border-composer);
+  border-radius: 12px;
+  background: var(--app-surface-sidebar);
+  box-shadow: 0 4px 16px #00000012;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-navigator-mark::before {
+    transition: none;
+  }
+}
+
 @theme {
   /* Codex desktop uses the platform UI font, not a web font. */
   --font-sans:

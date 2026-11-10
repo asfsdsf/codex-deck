@@ -39,6 +39,7 @@ import {
 } from "../user-input";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
 import ConversationPager from "./conversation-pager";
+import ConversationNavigator from "./conversation-navigator";
 import ConversationMessageHover from "./conversation-message-hover";
 import { getConversationHoverMetadata } from "../conversation-hover-metadata";
 import { useConversationHoverSettings } from "../hooks/use-conversation-hover-settings";
@@ -859,6 +860,7 @@ const SessionView = memo(
       const [messageJumpTarget, setMessageJumpTarget] = useState<number | null>(
         null,
       );
+      const messageJumpToStartRef = useRef(false);
       const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState<
         number | null
       >(null);
@@ -2286,7 +2288,7 @@ const SessionView = memo(
         return next;
       }, [pagedMessageChunks]);
       const jumpToMessage = useCallback(
-        (messageNumber: number) => {
+        (messageNumber: number, alignToStart = false) => {
           readingAnchorRef.current = null;
           answerResizeSpaceCleanupRef.current?.();
           const target = Math.max(
@@ -2297,6 +2299,7 @@ const SessionView = memo(
           shouldFollowActiveSearchMatchRef.current = false;
           setAutoScroll(false);
           setCurrentPage(page);
+          messageJumpToStartRef.current = alignToStart;
           setMessageJumpTarget(target);
           if (!chunksByPage.has(page)) {
             pageVirtualizer.scrollToIndex(page - 1, { align: "start" });
@@ -2320,6 +2323,20 @@ const SessionView = memo(
         chatMessages[1].type === "user"
           ? chatMessages[0]
           : null;
+      const navigationItems = useMemo(
+        () =>
+          visibleMessageEntries
+            .filter((entry) => entry.message.type === "user")
+            .map((entry) => ({
+              messageNumber: entry.visibleIndex + 1,
+              preview:
+                sanitizeText(extractMessageText(entry.message))
+                  .replace(/\s+/g, " ")
+                  .trim()
+                  .slice(0, 500) || "Image or attachment",
+            })),
+        [visibleMessageEntries],
+      );
       const turnPrompts = useMemo(
         () => collectTurnPrompts(chatMessages, agentsBootstrapMessage),
         [chatMessages, agentsBootstrapMessage],
@@ -2581,7 +2598,8 @@ const SessionView = memo(
         );
         isScrollingProgrammaticallyRef.current = true;
         pageVirtualizer.scrollToOffset(
-          messageJumpTarget >= totalMessageCount
+          messageJumpTarget >= totalMessageCount &&
+            !messageJumpToStartRef.current
             ? maxScrollTop
             : Math.max(0, Math.min(targetTop, maxScrollTop)),
         );
@@ -3295,7 +3313,7 @@ const SessionView = memo(
 
       return (
         <UserInputResizeContainer
-          className="relative h-full"
+          className="conversation-navigator-host relative h-full"
           onResizeStart={handleAnswerResizeStart}
         >
           <div
@@ -3686,6 +3704,13 @@ const SessionView = memo(
             key={`${sessionId}:${railCollapsedByDefault}`}
             containerRef={containerRef}
             getMetadata={getHoverMetadata}
+          />
+
+          <ConversationNavigator
+            key={sessionId}
+            containerRef={containerRef}
+            items={navigationItems}
+            onNavigate={(messageNumber) => jumpToMessage(messageNumber, true)}
           />
 
           {totalMessageCount > 0 && (
