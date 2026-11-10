@@ -1303,12 +1303,14 @@ function TerminalRestartNoticeCallout(props: { notice: string }) {
 
 function RestartNoticeAwareMarkdown(props: {
   content: string;
+  isTranslation?: boolean;
   onFilePathLinkClick?: (href: string) => boolean;
 }) {
+  const Renderer = props.isTranslation ? SafeMarkdown : MarkdownRenderer;
   const parsedRestartNotice = parseTerminalRestartNoticeMessage(props.content);
   if (!parsedRestartNotice) {
     return (
-      <MarkdownRenderer
+      <Renderer
         content={sanitizeText(props.content)}
         onFilePathLinkClick={props.onFilePathLinkClick}
       />
@@ -1318,14 +1320,14 @@ function RestartNoticeAwareMarkdown(props: {
   return (
     <div className="space-y-2">
       {parsedRestartNotice.leadingMarkdown ? (
-        <MarkdownRenderer
+        <Renderer
           content={sanitizeText(parsedRestartNotice.leadingMarkdown)}
           onFilePathLinkClick={props.onFilePathLinkClick}
         />
       ) : null}
       <TerminalRestartNoticeCallout notice={parsedRestartNotice.notice} />
       {parsedRestartNotice.trailingMarkdown ? (
-        <MarkdownRenderer
+        <Renderer
           content={sanitizeText(parsedRestartNotice.trailingMarkdown)}
           onFilePathLinkClick={props.onFilePathLinkClick}
         />
@@ -1961,6 +1963,8 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     messageTranslation.showing && messageTranslation.translated !== null
       ? messageTranslation.translated
       : null;
+  const displayMessageText =
+    translatedMessageText ?? (typeof content === "string" ? content : null);
 
   useEffect(() => {
     if (!searchForcePrimaryExpanded) {
@@ -2175,7 +2179,9 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const hasAuxiliary = auxiliaryBlocks.length > 0;
   const messageCopyText = getMessageCopyText(content);
   const rawMessageText = getMessageRawText(content);
-  const reviewReport = parseReviewReport(rawMessageText ?? "");
+  const reviewReport = parseReviewReport(
+    translatedMessageText ?? rawMessageText ?? "",
+  );
   const showMessageCopyButton =
     (isUser || message.type === "assistant") && !!messageCopyText;
   const canEditMessage =
@@ -2825,20 +2831,15 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 aria-label="Edit history message"
                 className="block min-h-24 w-full resize-y rounded-lg border border-zinc-500/40 bg-zinc-950/30 py-2 pl-3 pr-3 font-mono md:pr-24 text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400/70 disabled:cursor-wait disabled:opacity-70"
               />
-            ) : translatedMessageText !== null ? (
-              <SafeMarkdown
-                content={translatedMessageText}
-                onFilePathLinkClick={onFilePathLinkClick}
-              />
-            ) : typeof content === "string" ? (
+            ) : displayMessageText !== null ? (
               (() => {
-                const sanitized = sanitizeText(content);
+                const sanitized = sanitizeText(displayMessageText);
                 const review = parseReviewReport(sanitized);
                 if (review) {
                   return (
                     <ReviewReportRenderer
                       report={review}
-                      raw={content}
+                      raw={displayMessageText}
                       forceExpanded={searchForcePrimaryExpanded}
                       onFilePathLinkClick={onFilePathLinkClick}
                     />
@@ -2880,7 +2881,8 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 }
                 return (
                   <RestartNoticeAwareMarkdown
-                    content={content}
+                    content={displayMessageText}
+                    isTranslation={translatedMessageText !== null}
                     onFilePathLinkClick={onFilePathLinkClick}
                   />
                 );
