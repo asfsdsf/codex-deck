@@ -37,6 +37,7 @@ import OrganizationDialogBody, {
   type OrganizationDialogKind,
 } from "../components/organization-dialog";
 import OperationalNotices from "../components/operational-notices";
+import ConversationCanvas from "../components/conversation-canvas";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import RunningTurnComposerActions from "../components/running-turn-composer-actions";
 import {
@@ -4103,6 +4104,7 @@ export default function CodexDeckApp() {
     useState(false);
   const terminalEmbeddedRawMessagesRef = useRef<ConversationMessage[]>([]);
   const [centerView, setCenterView] = useState<CenterViewMode>("session");
+  const [conversationViewMode, setConversationViewMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingTerminals, setLoadingTerminals] = useState(true);
   const [loadingWorkflows, setLoadingWorkflows] = useState(true);
@@ -13854,6 +13856,10 @@ export default function CodexDeckApp() {
   }, [selectedSession]);
 
   useEffect(() => {
+    setConversationViewMode(false);
+  }, [selectedSession, selectedCodexHomeId, centerView]);
+
+  useEffect(() => {
     setShowCollabModePicker(false);
     setShowStatusModal(false);
     setStatusTokenUsage(null);
@@ -14364,7 +14370,10 @@ export default function CodexDeckApp() {
   }
 
   return (
-    <div className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100">
+    <div
+      className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100"
+      data-conversation-view-mode={conversationViewMode || undefined}
+    >
       {!sidebarCollapsed && (
         <aside
           className="pane-left relative shrink-0 border-r border-zinc-800/60 flex flex-col bg-zinc-950"
@@ -14883,12 +14892,18 @@ export default function CodexDeckApp() {
         </div>
 
         {interactionError && (
-          <div className="px-4 py-2 text-xs text-red-300 bg-red-950/40 border-b border-red-900/50">
+          <div
+            data-conversation-chrome
+            className="px-4 py-2 text-xs text-red-300 bg-red-950/40 border-b border-red-900/50"
+          >
             {interactionError}
           </div>
         )}
         {commandNotice && (
-          <div className="px-4 py-2 text-xs text-emerald-200 bg-emerald-950/40 border-b border-emerald-900/50">
+          <div
+            data-conversation-chrome
+            className="px-4 py-2 text-xs text-emerald-200 bg-emerald-950/40 border-b border-emerald-900/50"
+          >
             {commandNotice}
           </div>
         )}
@@ -16509,7 +16524,10 @@ export default function CodexDeckApp() {
             </div>
           ) : selectedSession ? (
             <div className="h-full flex flex-col">
-              <div className="relative flex-1 overflow-hidden">
+              <ConversationCanvas
+                viewMode={conversationViewMode}
+                onViewModeChange={setConversationViewMode}
+              >
                 <SessionView
                   ref={sessionViewRef}
                   sessionId={selectedSession}
@@ -16594,7 +16612,10 @@ export default function CodexDeckApp() {
                 />
                 {(isGeneratingForSelectedSession ||
                   selectedSessionConnectionFailureNotice) && (
-                  <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
+                  <div
+                    data-conversation-chrome
+                    className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3"
+                  >
                     <div
                       className={
                         selectedSessionConnectionFailureNotice
@@ -16650,7 +16671,7 @@ export default function CodexDeckApp() {
                     )}
                   </div>
                 )}
-              </div>
+              </ConversationCanvas>
 
               {renderComposerFooter({
                 sessionId: selectedSession,

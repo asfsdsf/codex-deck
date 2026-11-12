@@ -771,6 +771,15 @@ select option {
   border-color: var(--app-border-subtle);
 }
 
+/* Keep the canvas and composer mounted so view mode preserves drafts and panes. */
+[data-conversation-view-mode] .pane-left,
+[data-conversation-view-mode] .pane-right,
+[data-conversation-view-mode] .pane-header-center,
+[data-conversation-view-mode] .composer-shell,
+[data-conversation-view-mode] [data-conversation-chrome] {
+  display: none;
+}
+
 /* Floating, rounded composer box. */
 .composer-card {
   background-color: var(--app-surface-composer);

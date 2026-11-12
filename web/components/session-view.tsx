@@ -3332,7 +3332,10 @@ const SessionView = memo(
             className="h-full overflow-y-auto bg-zinc-950"
           >
             {hasSessionShortcut ? (
-              <div className="sticky top-0 z-20 px-4 pt-3 md:px-6">
+              <div
+                data-conversation-chrome
+                className="sticky top-0 z-20 px-4 pt-3 md:px-6"
+              >
                 <div
                   className={`flex items-start justify-between gap-2 ${
                     diffGuideShortcut || originSessionShortcut
@@ -3575,6 +3578,11 @@ const SessionView = memo(
 
                             <div
                               className="min-w-0 flex-1"
+                              data-conversation-click-action={
+                                isCollapsed && !autoForceBlockMode
+                                  ? "true"
+                                  : undefined
+                              }
                               onClick={(event: MouseEvent<HTMLDivElement>) => {
                                 if (autoForceBlockMode) {
                                   return;
