@@ -17,7 +17,7 @@ import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
 import type { CodexElicitationResponse } from "../mcp-elicitation";
 import { cors } from "hono/cors";
-import { serveStatic } from "@hono/node-server/serve-static";
+import { registerWebAssets } from "./web-assets";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
@@ -5580,12 +5580,13 @@ export function createServer(options: ServerOptions) {
 
   const webDistPath = getWebDistPath();
 
-  app.use("/*", serveStatic({ root: webDistPath }));
+  registerWebAssets(app, webDistPath);
 
   app.get("/*", async (c) => {
     const indexPath = join(webDistPath, "index.html");
     try {
       const html = readFileSync(indexPath, "utf-8");
+      c.header("Cache-Control", "no-cache");
       return c.html(html);
     } catch {
       return c.text("UI not found. Run 'pnpm build' first.", 404);

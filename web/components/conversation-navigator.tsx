@@ -138,7 +138,7 @@ export default function ConversationNavigator({
       onPointerEnter={() => (pointerInsideRef.current = true)}
       onPointerLeave={() => {
         pointerInsideRef.current = false;
-        setPreviewMessage(focusedMessage);
+        setPreviewMessage(null);
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -190,9 +190,11 @@ export default function ConversationNavigator({
                 onPointerMove={() =>
                   setPreviewMessage(items[index].messageNumber)
                 }
-                onFocus={() => {
+                onFocus={(event) => {
                   setFocusedMessage(items[index].messageNumber);
-                  setPreviewMessage(items[index].messageNumber);
+                  if (event.currentTarget.matches(":focus-visible")) {
+                    setPreviewMessage(items[index].messageNumber);
+                  }
                 }}
                 onBlur={() => {
                   setFocusedMessage(null);

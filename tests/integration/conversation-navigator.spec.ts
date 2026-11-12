@@ -167,6 +167,10 @@ test("user message navigation uses the pane width and theme colors", async ({
     await page.screenshot({
       path: testInfo.outputPath(`navigator-${theme}.png`),
     });
+    await first.click();
+    await expect(tooltip).toContainText("Review the launch checklist");
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toHaveCount(0);
   }
   expect(colors[0]).not.toBe(colors[1]);
   await page.setViewportSize({ width: 1100, height: 900 });

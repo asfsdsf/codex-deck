@@ -55,9 +55,10 @@ import {
 } from "../shared-message-queue";
 import ServiceTierSelect from "../components/service-tier-select";
 import { serviceTierOverride } from "../../api/service-tiers";
-import ReviewModal from "../components/review-modal";
 import {
+  lazy,
   memo,
+  Suspense,
   useState,
   useEffect,
   useLayoutEffect,
@@ -155,8 +156,6 @@ import {
   DiffSkillInstallDialog,
 } from "../components/diff-guide-viewer";
 import LatestSessionMessageBox from "../components/latest-session-message-box";
-import TerminalView from "../components/terminal-view";
-import WorkflowView from "../components/workflow-view";
 import DiffPane, { type RightPaneMode } from "../components/diff-pane";
 import ProjectSelector from "../components/project-selector";
 import ComposerPicker, {
@@ -178,8 +177,6 @@ import {
   takeComposerDraft,
 } from "../composer-draft-requests";
 import { PetCompanion, PetPicker } from "../components/pet-companion";
-import MemoriesModal from "../components/memories-modal";
-import ConfigModal from "../components/config-modal";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
@@ -433,6 +430,23 @@ import {
   createSettleChimeTracker,
   playSessionSettleChime,
 } from "../session-settle-chime";
+
+const TerminalView = lazy(() => import("../components/terminal-view"));
+const WorkflowView = lazy(() => import("../components/workflow-view"));
+const ConfigModal = lazy(() => import("../components/config-modal"));
+const MemoriesModal = lazy(() => import("../components/memories-modal"));
+const ReviewModal = lazy(() => import("../components/review-modal"));
+
+function PanelLoading() {
+  return (
+    <div
+      className="flex h-full items-center justify-center text-sm text-zinc-500"
+      role="status"
+    >
+      Loading...
+    </div>
+  );
+}
 
 interface SessionHeaderProps {
   session: Session;
@@ -4343,6 +4357,10 @@ export default function CodexDeckApp() {
   );
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [hasOpenedConfigModal, setHasOpenedConfigModal] = useState(false);
+  useEffect(() => {
+    if (showConfigModal) setHasOpenedConfigModal(true);
+  }, [showConfigModal]);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renamingSession, setRenamingSession] = useState(false);
@@ -15197,73 +15215,83 @@ export default function CodexDeckApp() {
           </NativeDialog>
         )}
         {reviewDialog && (
-          <ReviewModal
-            key={reviewDialog.threadId}
-            {...reviewDialog}
-            onClose={() => setReviewDialog(null)}
-            onStarted={({ threadId, turnId }) => {
-              if (threadId !== reviewDialog.threadId) {
-                const parent = sessions.find(
-                  (session) => session.id === reviewDialog.threadId,
-                );
-                const createdAt = Date.now();
-                upsertSessionInLocalState({
-                  id: threadId,
-                  display: `Review: ${parent?.display || reviewDialog.threadId}`,
-                  createdAt,
-                  lastUserMessageAt: createdAt,
-                  timestamp: createdAt,
-                  project: parent?.project ?? "",
-                  projectName: parent?.projectName ?? "",
-                });
-                setSelectedSession(threadId);
-                setCenterView("session");
-                if (isMobilePhone) setSidebarCollapsed(true);
-              }
-              trackWebManagedSessionTurn(threadId, turnId);
-              setPendingTurn({ sessionId: threadId, turnId });
-              showCommandNoticeForDuration("Review started.");
-              void syncSessionWaitState(threadId);
-            }}
-          />
+          <Suspense fallback={null}>
+            <ReviewModal
+              key={reviewDialog.threadId}
+              {...reviewDialog}
+              onClose={() => setReviewDialog(null)}
+              onStarted={({ threadId, turnId }) => {
+                if (threadId !== reviewDialog.threadId) {
+                  const parent = sessions.find(
+                    (session) => session.id === reviewDialog.threadId,
+                  );
+                  const createdAt = Date.now();
+                  upsertSessionInLocalState({
+                    id: threadId,
+                    display: `Review: ${parent?.display || reviewDialog.threadId}`,
+                    createdAt,
+                    lastUserMessageAt: createdAt,
+                    timestamp: createdAt,
+                    project: parent?.project ?? "",
+                    projectName: parent?.projectName ?? "",
+                  });
+                  setSelectedSession(threadId);
+                  setCenterView("session");
+                  if (isMobilePhone) setSidebarCollapsed(true);
+                }
+                trackWebManagedSessionTurn(threadId, turnId);
+                setPendingTurn({ sessionId: threadId, turnId });
+                showCommandNoticeForDuration("Review started.");
+                void syncSessionWaitState(threadId);
+              }}
+            />
+          </Suspense>
         )}
-        <MemoriesModal
-          threadId={activeComposerSessionId}
-          homeId={selectedCodexHomeId}
-          open={showMemoriesModal}
-          useEnabled={memoriesUseEnabled}
-          generateEnabled={memoriesGenerateEnabled}
-          loading={loadingMemoriesSettings}
-          saving={savingMemoriesSettings}
-          resetting={resettingMemories}
-          showResetConfirm={showMemoriesResetConfirm}
-          onClose={() => setShowMemoriesModal(false)}
-          onChangeUseEnabled={setMemoriesUseEnabled}
-          onChangeGenerateEnabled={setMemoriesGenerateEnabled}
-          onSave={() => {
-            void saveMemoriesSettings();
-          }}
-          onShowResetConfirm={() => setShowMemoriesResetConfirm(true)}
-          onHideResetConfirm={() => setShowMemoriesResetConfirm(false)}
-          onConfirmReset={() => {
-            void confirmResetMemories();
-          }}
-        />
+        <Suspense fallback={null}>
+          {showMemoriesModal && (
+            <MemoriesModal
+              threadId={activeComposerSessionId}
+              homeId={selectedCodexHomeId}
+              open={showMemoriesModal}
+              useEnabled={memoriesUseEnabled}
+              generateEnabled={memoriesGenerateEnabled}
+              loading={loadingMemoriesSettings}
+              saving={savingMemoriesSettings}
+              resetting={resettingMemories}
+              showResetConfirm={showMemoriesResetConfirm}
+              onClose={() => setShowMemoriesModal(false)}
+              onChangeUseEnabled={setMemoriesUseEnabled}
+              onChangeGenerateEnabled={setMemoriesGenerateEnabled}
+              onSave={() => {
+                void saveMemoriesSettings();
+              }}
+              onShowResetConfirm={() => setShowMemoriesResetConfirm(true)}
+              onHideResetConfirm={() => setShowMemoriesResetConfirm(false)}
+              onConfirmReset={() => {
+                void confirmResetMemories();
+              }}
+            />
+          )}
 
-        <ConfigModal
-          open={showConfigModal}
-          onClose={() => setShowConfigModal(false)}
-          onApplied={(response) => {
-            setCodexHomes(response.homes);
-            const selectedHome = response.homes.find(
-              (home) => home.id === selectedCodexHomeId,
-            );
-            if (!selectedHome?.available) {
-              resetHomeBrowsingState(response.mainHomeId || MAIN_CODEX_HOME_ID);
-            }
-            showCommandNoticeForDuration("Applied Codex Deck config.");
-          }}
-        />
+          {(showConfigModal || hasOpenedConfigModal) && (
+            <ConfigModal
+              open={showConfigModal}
+              onClose={() => setShowConfigModal(false)}
+              onApplied={(response) => {
+                setCodexHomes(response.homes);
+                const selectedHome = response.homes.find(
+                  (home) => home.id === selectedCodexHomeId,
+                );
+                if (!selectedHome?.available) {
+                  resetHomeBrowsingState(
+                    response.mainHomeId || MAIN_CODEX_HOME_ID,
+                  );
+                }
+                showCommandNoticeForDuration("Applied Codex Deck config.");
+              }}
+            />
+          )}
+        </Suspense>
 
         {showRenameModal && (
           <div
@@ -16297,105 +16325,107 @@ export default function CodexDeckApp() {
           {centerView === "workflow" ? (
             <div className="h-full flex flex-col">
               <div className="relative flex-1 overflow-hidden">
-                <WorkflowView
-                  workflow={workflowDetail}
-                  daemonStatus={workflowDaemonStatus}
-                  selectedTaskId={selectedWorkflowTaskId}
-                  latestBoundSessionMessage={
-                    workflowLatestSessionPreview.sessionId ===
-                    workflowComposerSessionId
-                      ? workflowLatestSessionPreview.message
-                      : null
-                  }
-                  latestBoundSessionMessageLoading={
-                    workflowLatestSessionPreviewLoading
-                  }
-                  loading={workflowDetailLoading || loadingWorkflows}
-                  error={workflowDetailError}
-                  logData={workflowLog}
-                  logLoading={workflowLogLoading}
-                  logError={workflowLogError}
-                  actionBusy={workflowActionBusy}
-                  actionLabel={workflowActionLabel}
-                  actionResultLabel={workflowActionResultLabel}
-                  actionResultOutput={workflowActionResultOutput}
-                  stopAllHint={workflowStopHint}
-                  onChatInSession={() => {
-                    void handleChatInWorkflowSession();
-                  }}
-                  onStopAllWorkflowProcesses={() => {
-                    if (!selectedWorkflowKey) {
-                      return;
+                <Suspense fallback={<PanelLoading />}>
+                  <WorkflowView
+                    workflow={workflowDetail}
+                    daemonStatus={workflowDaemonStatus}
+                    selectedTaskId={selectedWorkflowTaskId}
+                    latestBoundSessionMessage={
+                      workflowLatestSessionPreview.sessionId ===
+                      workflowComposerSessionId
+                        ? workflowLatestSessionPreview.message
+                        : null
                     }
-                    void handleWorkflowAction(
-                      "Stopping workflow processes...",
-                      async () => {
-                        if (isGeneratingForWorkflowComposer) {
-                          await handleStopWorkflowComposerConversation();
-                        }
-                        const result =
-                          await stopWorkflowProcessesRequest(
-                            selectedWorkflowKey,
+                    latestBoundSessionMessageLoading={
+                      workflowLatestSessionPreviewLoading
+                    }
+                    loading={workflowDetailLoading || loadingWorkflows}
+                    error={workflowDetailError}
+                    logData={workflowLog}
+                    logLoading={workflowLogLoading}
+                    logError={workflowLogError}
+                    actionBusy={workflowActionBusy}
+                    actionLabel={workflowActionLabel}
+                    actionResultLabel={workflowActionResultLabel}
+                    actionResultOutput={workflowActionResultOutput}
+                    stopAllHint={workflowStopHint}
+                    onChatInSession={() => {
+                      void handleChatInWorkflowSession();
+                    }}
+                    onStopAllWorkflowProcesses={() => {
+                      if (!selectedWorkflowKey) {
+                        return;
+                      }
+                      void handleWorkflowAction(
+                        "Stopping workflow processes...",
+                        async () => {
+                          if (isGeneratingForWorkflowComposer) {
+                            await handleStopWorkflowComposerConversation();
+                          }
+                          const result =
+                            await stopWorkflowProcessesRequest(
+                              selectedWorkflowKey,
+                            );
+                          setWorkflowStopHint(
+                            formatWorkflowStopHint(result.output),
                           );
-                        setWorkflowStopHint(
-                          formatWorkflowStopHint(result.output),
-                        );
-                        return result;
-                      },
-                    );
-                  }}
-                  onOpenSession={(sessionId) => {
-                    handleSelectSession(sessionId);
-                  }}
-                  onSelectTask={setSelectedWorkflowTaskId}
-                  onLaunchTask={(taskId) => {
-                    if (!selectedWorkflowKey) {
-                      return;
-                    }
-                    setSelectedWorkflowTaskId(taskId);
-                    void handleWorkflowAction("Launching task...", () =>
-                      launchWorkflowTaskRequest(selectedWorkflowKey, taskId),
-                    );
-                  }}
-                  onLoadLog={(scope, taskId) => {
-                    if (taskId) {
+                          return result;
+                        },
+                      );
+                    }}
+                    onOpenSession={(sessionId) => {
+                      handleSelectSession(sessionId);
+                    }}
+                    onSelectTask={setSelectedWorkflowTaskId}
+                    onLaunchTask={(taskId) => {
+                      if (!selectedWorkflowKey) {
+                        return;
+                      }
                       setSelectedWorkflowTaskId(taskId);
-                    }
-                    void handleLoadWorkflowLog(scope, taskId);
-                  }}
-                  onStartDaemon={() => {
-                    void handleWorkflowAction("Starting daemon...", () =>
-                      startWorkflowDaemonRequest(),
-                    );
-                  }}
-                  onStopDaemon={() => {
-                    setShowWorkflowDangerConfirm({
-                      action: "daemon-stop",
-                      title: "Stop codex-deck-flow daemon?",
-                      message:
-                        "This stops the shared codex-deck-flow daemon for the current CODEX_HOME.",
-                      onConfirm: () => {
-                        void handleWorkflowAction("Stopping daemon...", () =>
-                          stopWorkflowDaemonRequest(),
-                        );
-                      },
-                    });
-                  }}
-                  onSendControlMessage={(input) => {
-                    if (!selectedWorkflowKey) {
-                      return;
-                    }
-                    void handleWorkflowAction(
-                      "Sending control message...",
-                      () =>
-                        sendWorkflowControlMessageRequest(
-                          selectedWorkflowKey,
-                          input,
-                        ),
-                    );
-                  }}
-                  onFilePathLinkClick={handleFilePathLinkClick}
-                />
+                      void handleWorkflowAction("Launching task...", () =>
+                        launchWorkflowTaskRequest(selectedWorkflowKey, taskId),
+                      );
+                    }}
+                    onLoadLog={(scope, taskId) => {
+                      if (taskId) {
+                        setSelectedWorkflowTaskId(taskId);
+                      }
+                      void handleLoadWorkflowLog(scope, taskId);
+                    }}
+                    onStartDaemon={() => {
+                      void handleWorkflowAction("Starting daemon...", () =>
+                        startWorkflowDaemonRequest(),
+                      );
+                    }}
+                    onStopDaemon={() => {
+                      setShowWorkflowDangerConfirm({
+                        action: "daemon-stop",
+                        title: "Stop codex-deck-flow daemon?",
+                        message:
+                          "This stops the shared codex-deck-flow daemon for the current CODEX_HOME.",
+                        onConfirm: () => {
+                          void handleWorkflowAction("Stopping daemon...", () =>
+                            stopWorkflowDaemonRequest(),
+                          );
+                        },
+                      });
+                    }}
+                    onSendControlMessage={(input) => {
+                      if (!selectedWorkflowKey) {
+                        return;
+                      }
+                      void handleWorkflowAction(
+                        "Sending control message...",
+                        () =>
+                          sendWorkflowControlMessageRequest(
+                            selectedWorkflowKey,
+                            input,
+                          ),
+                      );
+                    }}
+                    onFilePathLinkClick={handleFilePathLinkClick}
+                  />
+                </Suspense>
                 {isGeneratingForWorkflowComposer && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
                     <div className="inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg">
@@ -16439,25 +16469,29 @@ export default function CodexDeckApp() {
               <div className="relative flex min-h-0 flex-1 flex-col">
                 {selectedTerminalId ? (
                   <div className="min-h-0 flex-1">
-                    <TerminalView
-                      terminalId={selectedTerminalId}
-                      resolvedTheme={resolvedTheme}
-                      boundSessionId={terminalComposerSessionId}
-                      embeddedMessages={
-                        terminalEmbeddedMessages.sessionId ===
-                        terminalComposerSessionId
-                          ? terminalEmbeddedMessageCards
-                          : []
-                      }
-                      embeddedMessagesLoading={terminalEmbeddedMessagesLoading}
-                      chatBusy={terminalBindingBusy}
-                      onChatInSession={() => {
-                        void handleChatInTerminalSession();
-                      }}
-                      onFilePathLinkClick={handleFilePathLinkClick}
-                      onApproveAiTerminalStep={handleApproveAiTerminalStep}
-                      onRejectAiTerminalStep={handleRejectAiTerminalStep}
-                    />
+                    <Suspense fallback={<PanelLoading />}>
+                      <TerminalView
+                        terminalId={selectedTerminalId}
+                        resolvedTheme={resolvedTheme}
+                        boundSessionId={terminalComposerSessionId}
+                        embeddedMessages={
+                          terminalEmbeddedMessages.sessionId ===
+                          terminalComposerSessionId
+                            ? terminalEmbeddedMessageCards
+                            : []
+                        }
+                        embeddedMessagesLoading={
+                          terminalEmbeddedMessagesLoading
+                        }
+                        chatBusy={terminalBindingBusy}
+                        onChatInSession={() => {
+                          void handleChatInTerminalSession();
+                        }}
+                        onFilePathLinkClick={handleFilePathLinkClick}
+                        onApproveAiTerminalStep={handleApproveAiTerminalStep}
+                        onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                      />
+                    </Suspense>
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-zinc-500">

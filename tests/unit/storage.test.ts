@@ -324,6 +324,12 @@ test("session listing scans once for history-only entries and discovers new roll
     assert.deepEqual(await getSessions(), sessions);
     assert.equal(readdirSpy.mock.calls.length, discoveryReads);
 
+    // Reconnecting clients and active turns invalidate summaries repeatedly.
+    // Confirmed missing history entries must not trigger rediscovery again.
+    invalidateHistoryCache();
+    assert.deepEqual(await getSessions(), sessions);
+    assert.equal(readdirSpy.mock.calls.length, discoveryReads);
+
     await appendFile(
       join(rootDir, "history.jsonl"),
       JSON.stringify({
@@ -338,6 +344,7 @@ test("session listing scans once for history-only entries and discovers new roll
       updatedHistory.find((session) => session.id === SESSION_B)?.display,
       "New history",
     );
+    const updatedDiscoveryReads = readdirSpy.mock.calls.length;
 
     const latestTimestamp = "2027-01-01T00:00:00.000Z";
     await appendFile(
@@ -356,6 +363,27 @@ test("session listing scans once for history-only entries and discovers new roll
       updatedSessions.find((session) => session.id === SESSION_A)
         ?.lastUserMessageAt,
       Date.parse(latestTimestamp),
+    );
+    assert.equal(readdirSpy.mock.calls.length, updatedDiscoveryReads);
+
+    // A previously missing ID can acquire a rollout before its watcher event.
+    await writeSessionFile(sessionsDir, `${SESSION_B}.jsonl`, [
+      sessionMetaLine(SESSION_B, "/repo/reappeared", Date.now()),
+      responseItemMessageLine("user", "Reappeared rollout"),
+    ]);
+    await appendFile(
+      join(rootDir, "history.jsonl"),
+      JSON.stringify({
+        session_id: SESSION_B,
+        ts: 1700000002,
+        text: "Reappeared rollout",
+      }) + "\n",
+    );
+    invalidateHistoryCache();
+    assert.equal(
+      (await getSessions()).find((session) => session.id === SESSION_B)
+        ?.project,
+      "/repo/reappeared",
     );
   } finally {
     restoreReaddir();

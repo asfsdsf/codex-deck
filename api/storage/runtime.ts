@@ -1945,6 +1945,13 @@ let codexSessionsDir = join(codexDir, "sessions");
 
 const fileIndex = new Map<string, string>();
 const sessionMetaIndex = new Map<string, SessionMeta>();
+const sessionMetaFileCache = new Map<
+  string,
+  { signature: string; meta: SessionMeta | null }
+>();
+// Remember confirmed misses until their history timestamp changes or a watcher
+// discovers their rollout. Old history entries must not force repeated scans.
+const missingSessionHistoryTimestamps = new Map<string, number>();
 let sessionSummaryIndex = new Map<string, SessionSummary>();
 const sessionDisplayCache = new Map<string, string>();
 const sessionWaitStateCache = new Map<string, SessionWaitStateCacheEntry>();
@@ -1979,6 +1986,8 @@ const sessionStreamTokenUsageUpdates = new Map<
 
 export function initStorage(dir?: string): void {
   invalidateSessionsCache();
+  sessionMetaFileCache.clear();
+  missingSessionHistoryTimestamps.clear();
   sessionDisplayCache.clear();
   clearConversationIndexes();
   sessionStreamPendingModelOutputs.clear();
@@ -2021,6 +2030,7 @@ export function addToFileIndex(
   invalidateSessionsCache();
   sessionSummaryIndex.delete(plainRolloutPath(filePath));
   fileIndex.set(sessionId, filePath);
+  missingSessionHistoryTimestamps.delete(sessionId);
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
   sessionUserMessageTimestampCache.delete(sessionId);
@@ -3037,9 +3047,19 @@ async function readSessionMetaFromFile(
   filePath: string,
 ): Promise<SessionMeta | null> {
   try {
-    const prefix = await readRolloutPrefix(filePath);
+    const source = await resolveRolloutSource(filePath);
+    const stats = await stat(source);
+    const signature = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+    const cached = sessionMetaFileCache.get(source);
+    if (cached?.signature === signature) return cached.meta;
+
+    const prefix = await readRolloutPrefix(source);
     const [firstLine, ...followingLines] = prefix.toString("utf8").split("\n");
-    return firstLine ? parseSessionMetaLine(firstLine, followingLines) : null;
+    const meta = firstLine
+      ? parseSessionMetaLine(firstLine, followingLines)
+      : null;
+    sessionMetaFileCache.set(source, { signature, meta });
+    return meta;
   } catch {
     return null;
   }
@@ -3113,12 +3133,23 @@ async function buildFileIndex(invalidateSessionList = true): Promise<void> {
       });
   }
 
-  for (const filePath of files) {
+  const rolloutMetas = new Array<SessionMeta | null>(files.length);
+  let nextMetadataIndex = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(8, files.length) }, async () => {
+      while (nextMetadataIndex < files.length) {
+        const index = nextMetadataIndex++;
+        rolloutMetas[index] = await readSessionMetaFromFile(files[index]);
+      }
+    }),
+  );
+
+  for (const [index, filePath] of files.entries()) {
     const fileSessionId = extractSessionIdFromPath(filePath);
 
     let sessionId = fileSessionId;
     const summary = summaries.get(plainRolloutPath(filePath));
-    const rolloutMeta = await readSessionMetaFromFile(filePath);
+    const rolloutMeta = rolloutMetas[index];
     const meta = summary
       ? {
           id: summary.id,
@@ -3157,6 +3188,10 @@ async function buildFileIndex(invalidateSessionList = true): Promise<void> {
   for (const [id, meta] of nextMetaIndex) sessionMetaIndex.set(id, meta);
   sessionSummaryIndex = summaries;
   sessionWaitStateCache.clear();
+  const availableSources = new Set(files);
+  for (const source of sessionMetaFileCache.keys()) {
+    if (!availableSources.has(source)) sessionMetaFileCache.delete(source);
+  }
 }
 
 function collectTurnLifecycle(lines: Iterable<string>): {
@@ -5464,6 +5499,7 @@ async function getPrefixUserMessageTimestamp(
 
 export async function loadStorage(): Promise<void> {
   sessionDisplayCache.clear();
+  missingSessionHistoryTimestamps.clear();
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
 }
 
@@ -5565,17 +5601,30 @@ export async function getSessions(): Promise<Session[]> {
     const version = sessionsVersion;
     const history = historyCache ?? (await loadHistoryCache());
 
-    // History can retain sessions whose rollout files were removed. Refresh
-    // discovery once for the whole listing, rather than rebuilding the index
-    // for every missing entry (including on each browser refresh).
+    // Discover unknown history entries once. Confirmed missing rollouts stay
+    // missing across cache invalidations unless new history or a watcher finds
+    // them; otherwise every active turn makes the next listing scan all files.
     if (
       [...history.keys(), ...sessionMetaIndex.keys()].some(
-        (sessionId) => !fileIndex.has(sessionId),
+        (sessionId) =>
+          !fileIndex.has(sessionId) &&
+          missingSessionHistoryTimestamps.get(sessionId) !==
+            (history.get(sessionId)?.timestamp ?? 0),
       )
     ) {
       // This listing owns the new snapshot; keep its version so intervening
       // watcher events can still prevent caching a stale result.
       await buildFileIndex(false);
+      for (const sessionId of [...history.keys(), ...sessionMetaIndex.keys()]) {
+        if (!fileIndex.has(sessionId)) {
+          missingSessionHistoryTimestamps.set(
+            sessionId,
+            history.get(sessionId)?.timestamp ?? 0,
+          );
+        } else {
+          missingSessionHistoryTimestamps.delete(sessionId);
+        }
+      }
     }
 
     const sessionIds = [
