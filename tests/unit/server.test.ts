@@ -6838,6 +6838,82 @@ test("conversation route returns empty list for unknown session", async () => {
   }
 });
 
+test("thread state route keeps an accepted first turn running before startup notifications or its session file", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-state-first-turn",
+  );
+  const server = createServer({ port: 13012, codexDir: rootDir, open: false });
+  const client = new appServerTestOnly.CodexAppServerClient();
+  const rpc = client as unknown as {
+    request(method: string): Promise<unknown>;
+    handleServerNotification(method: string, params: unknown): void;
+  };
+  rpc.request = async (method) => {
+    if (method === "config/read") return { config: {} };
+    if (method === "thread/settings/update") return {};
+    if (method === "turn/start") return { turn: { id: "first-turn" } };
+    assert.equal(method, "thread/read");
+    return { thread: { status: { type: "idle" }, turns: [] } };
+  };
+
+  try {
+    await loadStorage();
+    setCodexAppServerClientForTests({
+      listModels: () => client.listModels(),
+      listCollaborationModes: () => client.listCollaborationModes(),
+      createThread: (input) => client.createThread(input),
+      sendMessage: (input) => client.sendMessage(input),
+      getThreadState: (id, turnId) => client.getThreadState(id, turnId),
+      getLastTurnDiff: (id) => client.getLastTurnDiff(id),
+      interruptThread: (id) => client.interruptThread(id),
+      listPendingUserInputRequests: (id) =>
+        client.listPendingUserInputRequests(id),
+      submitUserInput: (id, requestId, response) =>
+        client.submitUserInput(id, requestId, response),
+    });
+    const sent = await requestJson(
+      server,
+      `/api/codex/threads/${SESSION_ID}/messages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "hello" }),
+      },
+    );
+    assert.equal(sent.status, 200);
+    assert.deepEqual(sent.body, { ok: true, turnId: "first-turn" });
+
+    const path = `/api/codex/threads/${SESSION_ID}/state?turnId=first-turn`;
+    const running = await requestJson(server, path);
+    assert.equal(running.status, 200);
+    assert.deepEqual(running.body, {
+      threadId: SESSION_ID,
+      activeTurnId: "first-turn",
+      isGenerating: true,
+      requestedTurnId: "first-turn",
+      requestedTurnStatus: "inProgress",
+      statusDetails: null,
+    });
+
+    rpc.handleServerNotification("turn/completed", {
+      threadId: SESSION_ID,
+      turn: { id: "first-turn", status: "completed" },
+    });
+    const completed = await requestJson(server, path);
+    assert.equal(completed.status, 200);
+    assert.equal(
+      (completed.body as { isGenerating: boolean }).isGenerating,
+      false,
+    );
+    assert.equal(existsSync(join(sessionsDir, `${SESSION_ID}.jsonl`)), false);
+  } finally {
+    setCodexAppServerClientForTests(null);
+    await client.close();
+    server.stop();
+    await cleanup();
+  }
+});
+
 test("thread state route preserves non-generating state when session log has no dangling turn", async () => {
   const { rootDir, sessionsDir, cleanup } =
     await createTempCodexDir("server-state-idle");

@@ -993,6 +993,7 @@ class CodexAppServerClient {
     (event: CodexAppServerEvent) => void
   >();
   private readonly readCoalescer = createReadCoalescer();
+  private readonly liveActiveTurnIdsByThread = new Map<string, string>();
   private readonly newlyStartedThreadIds = new Set<string>();
   private authFileFingerprint: string | null = null;
   private authReloadInFlight: Promise<void> | null = null;
@@ -2700,7 +2701,7 @@ class CodexAppServerClient {
     try {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
-      const result = await this.request("turn/start", params);
+      const result = await this.startTurn(threadId, params);
       this.organization.environments.confirmSelection(threadId, params);
       this.newlyStartedThreadIds.delete(threadId);
       return {
@@ -2715,11 +2716,54 @@ class CodexAppServerClient {
       this.newlyStartedThreadIds.delete(threadId);
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
-      const result = await this.request("turn/start", params);
+      const result = await this.startTurn(threadId, params);
       this.organization.environments.confirmSelection(threadId, params);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
       };
+    }
+  }
+
+  private async startTurn(
+    threadId: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    const previousLiveTurnId = this.liveActiveTurnIdsByThread.get(threadId);
+    const observedTurnIds = new Set<string>();
+    const unsubscribe = this.subscribeAppServerEvents((event) => {
+      if (
+        event.type === "thread_status" &&
+        event.threadId === threadId &&
+        event.turnId
+      ) {
+        observedTurnIds.add(event.turnId);
+      }
+    });
+    try {
+      const result = await this.request("turn/start", params);
+      const turnId = extractTurnIdFromTurnStartResult(result);
+      const status = toTurnStatus(asRecord(asRecord(result)?.turn)?.status);
+      if (
+        turnId &&
+        (status === null || status === "inProgress") &&
+        !observedTurnIds.has(turnId) &&
+        this.liveActiveTurnIdsByThread.get(threadId) === previousLiveTurnId
+      ) {
+        // Startup instructions (including AGENTS.md) can delay turn/started
+        // and history after the send succeeds. The accepted turn is already
+        // running. Do not overwrite lifecycle events that beat the response.
+        this.liveActiveTurnIdsByThread.set(threadId, turnId);
+        this.clearThreadStateCache(threadId);
+        this.emitAppServerEvent({
+          type: "thread_status",
+          threadId,
+          status: "active",
+          turnId,
+        });
+      }
+      return result;
+    } finally {
+      unsubscribe();
     }
   }
 
@@ -3003,7 +3047,23 @@ class CodexAppServerClient {
         ? requestedTurnId.trim()
         : null;
 
-    return this.readCoalescer.getOrLoad(
+    // The first turn can start before its rollout is materialized. Live
+    // lifecycle notifications are authoritative during that gap.
+    const liveTurnId = this.liveActiveTurnIdsByThread.get(normalizedThreadId);
+    if (
+      liveTurnId &&
+      (!normalizedRequestedTurnId || normalizedRequestedTurnId === liveTurnId)
+    ) {
+      return {
+        threadId: normalizedThreadId,
+        activeTurnId: liveTurnId,
+        isGenerating: true,
+        requestedTurnId: normalizedRequestedTurnId,
+        requestedTurnStatus: normalizedRequestedTurnId ? "inProgress" : null,
+      };
+    }
+
+    const state = await this.readCoalescer.getOrLoad(
       this.getThreadStateCacheKey(
         normalizedThreadId,
         normalizedRequestedTurnId,
@@ -3052,6 +3112,21 @@ class CodexAppServerClient {
         };
       },
     );
+
+    // A turn may have started while the history read was in flight.
+    const latestLiveTurnId =
+      this.liveActiveTurnIdsByThread.get(normalizedThreadId);
+    return latestLiveTurnId
+      ? {
+          ...state,
+          activeTurnId: latestLiveTurnId,
+          isGenerating: true,
+          requestedTurnStatus:
+            normalizedRequestedTurnId === latestLiveTurnId
+              ? "inProgress"
+              : state.requestedTurnStatus,
+        }
+      : state;
   }
 
   public async getLastTurnDiff(threadId: string): Promise<CodexLastTurnDiff> {
@@ -3573,6 +3648,8 @@ class CodexAppServerClient {
     for (const message of this.stdoutMessageParser.finish()) {
       this.handleStdoutMessage(message);
     }
+    this.liveActiveTurnIdsByThread.clear();
+    this.readCoalescer.clearMatching(() => true);
 
     this.stderrReader?.close();
     this.stderrReader = null;
@@ -4335,10 +4412,19 @@ class CodexAppServerClient {
       return;
     }
 
+    const status = toThreadRuntimeStatus(record?.status);
+    if (
+      status === "idle" ||
+      status === "notLoaded" ||
+      status === "systemError"
+    ) {
+      this.liveActiveTurnIdsByThread.delete(threadId);
+    }
+    this.clearThreadStateCache(threadId);
     this.emitAppServerEvent({
       type: "thread_status",
       threadId,
-      status: toThreadRuntimeStatus(record?.status),
+      status,
       turnId: null,
     });
   }
@@ -4357,6 +4443,14 @@ class CodexAppServerClient {
       return;
     }
 
+    if (turnId) {
+      if (method === "turn/started") {
+        this.liveActiveTurnIdsByThread.set(threadId, turnId);
+      } else if (this.liveActiveTurnIdsByThread.get(threadId) === turnId) {
+        this.liveActiveTurnIdsByThread.delete(threadId);
+      }
+    }
+    this.clearThreadStateCache(threadId);
     this.emitAppServerEvent({
       type: "thread_status",
       threadId,
@@ -5000,6 +5094,8 @@ class CodexAppServerClient {
     for (const message of this.stdoutMessageParser.finish()) {
       this.handleStdoutMessage(message);
     }
+    this.liveActiveTurnIdsByThread.clear();
+    this.readCoalescer.clearMatching(() => true);
     this.stderrReader?.close();
     this.stderrReader = null;
 

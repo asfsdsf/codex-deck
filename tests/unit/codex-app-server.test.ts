@@ -941,6 +941,188 @@ test("app-server client starts first turn for new thread without pre-resume", as
   }
 });
 
+test("accepted first turn stays running before startup notifications and history arrive", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const rpc = client as unknown as {
+    request(method: string): Promise<unknown>;
+    handleServerNotification(method: string, params: unknown): void;
+  };
+  let historyReadable = true;
+  rpc.request = async (method) => {
+    if (method === "config/read") return { config: {} };
+    if (method === "thread/start") return { thread: { id: "new-thread" } };
+    if (method === "thread/settings/update") return {};
+    if (method === "turn/start") return { turn: { id: "first-turn" } };
+    assert.equal(method, "thread/read");
+    if (!historyReadable) {
+      throw new CodexAppServerRpcError(-32600, "thread not materialized yet");
+    }
+    return { thread: { status: { type: "idle" }, turns: [] } };
+  };
+
+  try {
+    const threadId = await client.createThread({ cwd: "/repo" });
+    await client.sendMessage({ threadId, text: "hello", cwd: "/repo" });
+    // Loading AGENTS.md can delay turn/started until after turn/start replies.
+    for (historyReadable of [true, false]) {
+      assert.deepEqual(await client.getThreadState(threadId, "first-turn"), {
+        threadId,
+        activeTurnId: "first-turn",
+        isGenerating: true,
+        requestedTurnId: "first-turn",
+        requestedTurnStatus: "inProgress",
+      });
+    }
+    rpc.handleServerNotification("turn/started", {
+      threadId,
+      turn: { id: "first-turn", status: "inProgress" },
+    });
+    assert.equal((await client.getThreadState(threadId)).isGenerating, true);
+    historyReadable = true;
+    rpc.handleServerNotification("turn/completed", {
+      threadId,
+      turn: { id: "first-turn", status: "completed" },
+    });
+    assert.equal((await client.getThreadState(threadId)).isGenerating, false);
+  } finally {
+    await client.close();
+  }
+});
+
+test("late turn/start response does not resurrect a completed turn or replace a newer turn", async () => {
+  for (const newerTurnRunning of [false, true]) {
+    const client = new __TEST_ONLY__.CodexAppServerClient();
+    const rpc = client as unknown as {
+      request(method: string): Promise<unknown>;
+      handleServerNotification(method: string, params: unknown): void;
+    };
+    rpc.request = async (method) => {
+      if (method === "config/read") return { config: {} };
+      if (method === "thread/start") return { thread: { id: "thread" } };
+      if (method === "thread/settings/update") return {};
+      if (method === "turn/start") {
+        rpc.handleServerNotification("turn/started", {
+          threadId: "thread",
+          turn: { id: "turn-1", status: "inProgress" },
+        });
+        rpc.handleServerNotification("turn/completed", {
+          threadId: "thread",
+          turn: { id: "turn-1", status: "completed" },
+        });
+        if (newerTurnRunning) {
+          rpc.handleServerNotification("turn/started", {
+            threadId: "thread",
+            turn: { id: "turn-2", status: "inProgress" },
+          });
+        }
+        return { turn: { id: "turn-1" } };
+      }
+      assert.equal(method, "thread/read");
+      return { thread: { status: { type: "idle" }, turns: [] } };
+    };
+    try {
+      const threadId = await client.createThread({ cwd: "/repo" });
+      await client.sendMessage({ threadId, text: "hello" });
+      const state = await client.getThreadState(threadId);
+      assert.equal(state.isGenerating, newerTurnRunning);
+      assert.equal(state.activeTurnId, newerTurnRunning ? "turn-2" : null);
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test("first-turn state stays generating before its rollout is readable", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const rpc = client as unknown as {
+    request(method: string): Promise<unknown>;
+    handleServerNotification(method: string, params: unknown): void;
+  };
+  let rolloutReadable = false;
+  rpc.request = async (method) => {
+    if (method === "config/read") return { config: {} };
+    if (method === "thread/resume") return { thread: { id: "new-thread" } };
+    assert.equal(method, "thread/read");
+    if (!rolloutReadable) {
+      throw new CodexAppServerRpcError(-32600, "thread not materialized yet");
+    }
+    return { thread: { status: { type: "idle" }, turns: [] } };
+  };
+
+  try {
+    rpc.handleServerNotification("turn/started", {
+      threadId: "new-thread",
+      turn: { id: "first-turn", status: "inProgress" },
+    });
+    assert.deepEqual(await client.getThreadState("new-thread", "first-turn"), {
+      threadId: "new-thread",
+      activeTurnId: "first-turn",
+      isGenerating: true,
+      requestedTurnId: "first-turn",
+      requestedTurnStatus: "inProgress",
+    });
+    assert.equal(
+      (await client.getThreadState("new-thread")).isGenerating,
+      true,
+    );
+
+    // A readable but not-yet-updated rollout must also stay running.
+    rolloutReadable = true;
+    assert.equal(
+      (await client.getThreadState("new-thread", "first-turn")).isGenerating,
+      true,
+    );
+    rpc.handleServerNotification("turn/completed", {
+      threadId: "new-thread",
+      turn: { id: "first-turn", status: "completed" },
+    });
+    assert.equal(
+      (await client.getThreadState("new-thread", "first-turn")).isGenerating,
+      false,
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("live turn notifications supersede cached idle state without clearing a newer turn", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const rpc = client as unknown as {
+    request(method: string): Promise<unknown>;
+    handleServerNotification(method: string, params: unknown): void;
+  };
+  rpc.request = async (method) => {
+    assert.equal(method, "thread/read");
+    return { thread: { status: { type: "idle" }, turns: [] } };
+  };
+
+  try {
+    assert.equal((await client.getThreadState("thread")).isGenerating, false);
+    for (const id of ["turn-1", "turn-2"]) {
+      rpc.handleServerNotification("turn/started", {
+        threadId: "thread",
+        turn: { id, status: "inProgress" },
+      });
+    }
+    rpc.handleServerNotification("turn/completed", {
+      threadId: "thread",
+      turn: { id: "turn-1", status: "completed" },
+    });
+    assert.equal(
+      (await client.getThreadState("thread")).activeTurnId,
+      "turn-2",
+    );
+
+    rpc.handleServerNotification("thread/status/changed", {
+      threadId: "thread",
+      status: { type: "idle" },
+    });
+    assert.equal((await client.getThreadState("thread")).isGenerating, false);
+  } finally {
+    await client.close();
+  }
+});
+
 test("app-server client restarts when model provider changes and threads are idle", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
   const requests: Array<{ method: string; params: Record<string, unknown> }> =
