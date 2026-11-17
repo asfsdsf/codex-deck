@@ -32,9 +32,6 @@ const REMOTE_RPC_TIMING_LOG_ENABLED = /^(1|true|yes|on)$/i.test(
 const REMOTE_ACCOUNT_NOT_FOUND_ERROR =
   "Remote account not found. Start the CLI first.";
 const REMOTE_ACCOUNT_NOT_FOUND_CODE = RemoteAuthErrorCode.accountNotFound;
-const REMOTE_AUTH_UPGRADE_ERROR =
-  "Legacy remote auth has been removed. Re-register the CLI with the current codex-deck version.";
-const REMOTE_AUTH_UPGRADE_CODE = RemoteAuthErrorCode.authUpgradeRequired;
 const RPC_SIGNING_KEY_FILE_VERSION = 1;
 const REMOTE_BOOTSTRAP_LOGIN_URL_SERVER_PARAM = "codexdeck_remote_server_url";
 const REMOTE_BOOTSTRAP_LOGIN_URL_REALM_PARAM = "codexdeck_remote_realm_id";
@@ -497,9 +494,7 @@ export class RemoteServerClient {
       loginStartResponse.status !== 409 ||
       !(
         loginStartPayload.code === REMOTE_ACCOUNT_NOT_FOUND_CODE ||
-        loginStartPayload.code === REMOTE_AUTH_UPGRADE_CODE ||
-        loginStartPayload.error === REMOTE_ACCOUNT_NOT_FOUND_ERROR ||
-        loginStartPayload.error === REMOTE_AUTH_UPGRADE_ERROR
+        loginStartPayload.error === REMOTE_ACCOUNT_NOT_FOUND_ERROR
       )
     ) {
       throw new Error(

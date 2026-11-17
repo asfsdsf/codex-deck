@@ -66,14 +66,6 @@ const INVALID_REMOTE_LOGIN_STATE_ERROR =
 const INVALID_REMOTE_LOGIN_STATE_CODE = RemoteAuthErrorCode.invalidLoginState;
 const INVALID_ADMIN_PASSWORD_ERROR = "Invalid admin password.";
 const INVALID_ADMIN_PASSWORD_CODE = RemoteAuthErrorCode.adminPasswordInvalid;
-const RETIRED_PASSWORD_AUTH_ERROR =
-  "Raw password auth has been removed. Use the remote login flow in the web app and the current CLI remote registration flow.";
-const RETIRED_QR_AUTH_ERROR =
-  "QR authentication has been removed. Use the remote login flow in the web app and the current CLI remote registration flow.";
-const REMOTE_AUTH_UPGRADE_ERROR =
-  "Legacy remote auth has been removed. Re-register the CLI with the current codex-deck version.";
-const REMOTE_AUTH_UPGRADE_CODE = RemoteAuthErrorCode.authUpgradeRequired;
-
 const AuthErrorResponseSchema = z.object({
   error: z.string(),
   code: z.string().optional(),
@@ -130,7 +122,7 @@ type RemoteOpaqueLoginState = z.infer<typeof RemoteOpaqueLoginStateSchema>;
 
 function buildTokenExtras(
   clientKind: AuthClientKind,
-  issuedVia: "setup-token" | "signature" | "opaque",
+  issuedVia: "setup-token" | "opaque",
   machineId?: string,
 ): AuthTokenExtras {
   return {
@@ -153,7 +145,7 @@ function getClientBindingError(clientKind: AuthClientKind, machineId?: string) {
 async function issueAccountToken(
   userId: string,
   clientKind: AuthClientKind,
-  issuedVia: "setup-token" | "signature" | "opaque",
+  issuedVia: "setup-token" | "opaque",
   machineId?: string,
 ) {
   return auth.createToken(
@@ -268,27 +260,6 @@ function clearAdminSessionCookie(): string {
     expires: new Date(0),
     maxAgeSeconds: 0,
   });
-}
-
-function qrAuthRemoved(_request: unknown, reply: any) {
-  return reply.code(410).send({
-    error: RETIRED_QR_AUTH_ERROR,
-  });
-}
-
-function passwordAuthRemoved(_request: unknown, reply: any) {
-  return reply.code(410).send({
-    error: RETIRED_PASSWORD_AUTH_ERROR,
-  });
-}
-
-function remoteAuthUpgradeRequired(_request: unknown, reply: any) {
-  return sendAuthError(
-    reply,
-    410,
-    REMOTE_AUTH_UPGRADE_ERROR,
-    REMOTE_AUTH_UPGRADE_CODE,
-  );
 }
 
 async function findRemoteAccountByHandle(loginHandle: string) {
@@ -757,8 +728,8 @@ export function authRoutes(app: Fastify) {
         return sendAuthError(
           reply,
           409,
-          REMOTE_AUTH_UPGRADE_ERROR,
-          REMOTE_AUTH_UPGRADE_CODE,
+          REMOTE_ACCOUNT_NOT_FOUND_ERROR,
+          REMOTE_ACCOUNT_NOT_FOUND_CODE,
         );
       }
 
@@ -922,51 +893,6 @@ export function authRoutes(app: Fastify) {
       reply.header("Set-Cookie", clearBrowserSessionCookie());
       return reply.send({ success: true });
     },
-  );
-
-  app.post(
-    "/v1/auth/challenge",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-            code: z.string().optional(),
-          }),
-        },
-      },
-    },
-    remoteAuthUpgradeRequired,
-  );
-
-  app.post(
-    "/v1/auth",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-            code: z.string().optional(),
-          }),
-        },
-      },
-    },
-    remoteAuthUpgradeRequired,
-  );
-
-  app.post(
-    "/v1/auth/machine",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-            code: z.string().optional(),
-          }),
-        },
-      },
-    },
-    remoteAuthUpgradeRequired,
   );
 
   app.post(
@@ -1196,131 +1122,5 @@ export function authRoutes(app: Fastify) {
       }
       return reply.send({ success: true });
     },
-  );
-
-  app.post(
-    "/v1/auth/cli",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    passwordAuthRemoved,
-  );
-
-  app.get(
-    "/v1/auth/password/status",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    passwordAuthRemoved,
-  );
-
-  app.post(
-    "/v1/auth/password",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    passwordAuthRemoved,
-  );
-
-  app.post(
-    "/v1/auth/password/rotate",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    passwordAuthRemoved,
-  );
-
-  app.post(
-    "/v1/auth/request",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    qrAuthRemoved,
-  );
-
-  app.get(
-    "/v1/auth/request/status",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    qrAuthRemoved,
-  );
-
-  app.post(
-    "/v1/auth/response",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    qrAuthRemoved,
-  );
-
-  app.post(
-    "/v1/auth/account/request",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    qrAuthRemoved,
-  );
-
-  app.post(
-    "/v1/auth/account/response",
-    {
-      schema: {
-        response: {
-          410: z.object({
-            error: z.string(),
-          }),
-        },
-      },
-    },
-    qrAuthRemoved,
   );
 }

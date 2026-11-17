@@ -804,38 +804,59 @@ describe("authRoutes", () => {
     expect(newLoginResponse.statusCode).toBe(200);
   });
 
-  it("returns 410 for retired raw password auth routes", async () => {
+  it.each([
+    ["GET", "/v1/auth/password/status"],
+    ["POST", "/v1/auth/password"],
+    ["POST", "/v1/auth/password/rotate"],
+    ["POST", "/v1/auth/cli"],
+    ["POST", "/v1/auth/challenge"],
+    ["POST", "/v1/auth"],
+    ["POST", "/v1/auth/machine"],
+    ["POST", "/v1/auth/request"],
+    ["GET", "/v1/auth/request/status"],
+    ["POST", "/v1/auth/response"],
+    ["POST", "/v1/auth/account/request"],
+    ["POST", "/v1/auth/account/response"],
+  ] as const)(
+    "does not expose removed auth endpoint %s %s",
+    async (method, url) => {
+      const response = await app.inject({ method, url });
+      expect(response.statusCode).toBe(404);
+      expect(authMock.createToken).not.toHaveBeenCalled();
+      expect(authMock.createBrowserSessionToken).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires registration when an account has no OPAQUE record", async () => {
+    const { loginHandle } = await registerCli();
+    state.simpleCache.delete(`remote-opaque-record:${loginHandle}`);
+    authMock.createToken.mockClear();
+    authMock.createBrowserSessionToken.mockClear();
+
+    const loginStart = await startRemoteOpaqueLogin(
+      "correct horse battery staple",
+    );
     const response = await app.inject({
       method: "POST",
-      url: "/v1/auth/password",
+      url: "/v1/auth/opaque/login/start",
       payload: {
-        password: "unused",
+        loginHandle,
+        clientKind: "browser",
+        startLoginRequest: loginStart.startLoginRequest,
       },
     });
 
-    expect(response.statusCode).toBe(410);
+    expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({
-      error:
-        "Raw password auth has been removed. Use the remote login flow in the web app and the current CLI remote registration flow.",
+      code: RemoteAuthErrorCode.accountNotFound,
+      error: "Remote account not found. Start the CLI first.",
     });
-  });
+    expect(authMock.createToken).not.toHaveBeenCalled();
+    expect(authMock.createBrowserSessionToken).not.toHaveBeenCalled();
 
-  it("returns 410 for the legacy machine bootstrap endpoint", async () => {
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/auth/machine",
-      payload: {
-        setupToken: "setup-a",
-        loginHandle: "legacy",
-        machineId: "machine-a",
-      },
-    });
-
-    expect(response.statusCode).toBe(410);
-    expect(response.json()).toEqual({
-      code: RemoteAuthErrorCode.authUpgradeRequired,
-      error:
-        "Legacy remote auth has been removed. Re-register the CLI with the current codex-deck version.",
-    });
+    const registered = await registerCli();
+    expect(registered.finishResponse.statusCode).toBe(200);
+    const login = await loginBrowser();
+    expect(login.finishResponse?.statusCode).toBe(200);
   });
 });

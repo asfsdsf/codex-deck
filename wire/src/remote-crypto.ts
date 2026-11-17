@@ -1,11 +1,6 @@
 import * as opaque from "@serenity-kit/opaque";
 import tweetnacl from "tweetnacl";
-
-const PASSWORD_SECRET_SALT = "codexdeck-password-bootstrap-v2";
-const PASSWORD_SECRET_ITERATIONS = 200_000;
-const PASSWORD_SECRET_LENGTH_BITS = 256;
 const TRANSPORT_BUNDLE_VERSION = 0;
-const REMOTE_SECRET_LENGTH_BYTES = 32;
 const REMOTE_OPAQUE_KEY_STRETCHING = "memory-constrained";
 const REMOTE_RELAY_KEY_SALT = "codexdeck:remote-relay-salt:v2";
 const REMOTE_RELAY_KEY_INFO = "codexdeck:remote-relay-info:v2";
@@ -104,106 +99,6 @@ function normalizeRealmId(realmId: string): string {
   return normalized;
 }
 
-function normalizeCredentialInputs(
-  username: string,
-  password: string,
-  realmId: string,
-): { username: string; password: string; realmId: string } {
-  const normalizedUsername = normalizeUsername(username);
-  if (!normalizedUsername) {
-    throw new Error("Username must not be empty");
-  }
-
-  const normalizedPassword = normalizePassword(password);
-  if (normalizedPassword.trim().length === 0) {
-    throw new Error("Password must not be empty");
-  }
-
-  return {
-    username: normalizedUsername,
-    password: normalizedPassword,
-    realmId: normalizeRealmId(realmId),
-  };
-}
-
-async function deriveCredentialSecret(
-  username: string,
-  password: string,
-  realmId: string,
-): Promise<Uint8Array> {
-  const normalized = normalizeCredentialInputs(username, password, realmId);
-
-  const cryptoObject = await getCrypto();
-  const baseKey = await cryptoObject.subtle.importKey(
-    "raw",
-    encoder.encode(normalized.password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const bits = await cryptoObject.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: encoder.encode(
-        `${PASSWORD_SECRET_SALT}\n${normalized.realmId}\n${normalized.username}`,
-      ),
-      iterations: PASSWORD_SECRET_ITERATIONS,
-    },
-    baseKey,
-    PASSWORD_SECRET_LENGTH_BITS,
-  );
-  return new Uint8Array(bits);
-}
-
-function normalizeSecretBytes(secret: Uint8Array): Uint8Array {
-  if (secret.length !== REMOTE_SECRET_LENGTH_BYTES) {
-    throw new Error(
-      `Remote secret must be ${REMOTE_SECRET_LENGTH_BYTES} bytes`,
-    );
-  }
-  return Uint8Array.from(secret);
-}
-
-function deriveSubkey(secret: Uint8Array, label: string): Uint8Array {
-  const digest = tweetnacl.hash(
-    concatBytes(secret, encoder.encode(`codexdeck:${label}`)),
-  );
-  return digest.slice(0, 32);
-}
-
-function deriveContentKeyPair(secret: Uint8Array): {
-  publicKey: Uint8Array;
-  secretKey: Uint8Array;
-} {
-  const seed = deriveSubkey(secret, "content-seed");
-  const boxSecretKey = tweetnacl.hash(seed).slice(0, 32);
-  const keyPair = tweetnacl.box.keyPair.fromSecretKey(boxSecretKey);
-  return {
-    publicKey: keyPair.publicKey,
-    secretKey: keyPair.secretKey,
-  };
-}
-
-export interface RemoteAuthMaterial {
-  secret: Uint8Array;
-  relayKey: Uint8Array;
-  authKeyPair: {
-    publicKey: Uint8Array;
-    secretKey: Uint8Array;
-  };
-  contentKeyPair: {
-    publicKey: Uint8Array;
-    secretKey: Uint8Array;
-  };
-  publicKeyHex: string;
-}
-
-export interface RemoteCredentialMaterial extends RemoteAuthMaterial {
-  loginHandle: string;
-  realmId: string;
-}
-
 export interface RemoteOpaqueClientRegistrationStart {
   clientRegistrationState: string;
   registrationRequest: string;
@@ -232,42 +127,6 @@ export interface RemoteOpaqueLoginFinishResult {
   exportKey: string;
   relayKey: Uint8Array;
   serverStaticPublicKey: string;
-}
-
-export type RemoteAuthClientKind = "browser" | "cli" | "api";
-
-export interface RemoteAuthChallengeBinding {
-  challengeId: string;
-  challenge: string;
-  clientKind: RemoteAuthClientKind;
-  machineId?: string | null;
-}
-
-function deriveRemoteMaterialFromSecret(
-  secret: Uint8Array,
-): RemoteAuthMaterial {
-  const normalizedSecret = normalizeSecretBytes(secret);
-  const authKeyPair = tweetnacl.sign.keyPair.fromSeed(normalizedSecret);
-  const contentKeyPair = deriveContentKeyPair(normalizedSecret);
-  const relayKey = deriveSubkey(normalizedSecret, "remote-relay");
-  return {
-    secret: normalizedSecret,
-    relayKey,
-    authKeyPair,
-    contentKeyPair,
-    publicKeyHex: Array.from(authKeyPair.publicKey as Uint8Array)
-      .map((value: number) => value.toString(16).padStart(2, "0"))
-      .join("")
-      .toUpperCase(),
-  };
-}
-
-export function deriveRemoteAuthMaterialFromSecret(
-  secret: Uint8Array | string,
-): RemoteAuthMaterial {
-  const normalizedSecret =
-    typeof secret === "string" ? decodeBase64(secret) : secret;
-  return deriveRemoteMaterialFromSecret(normalizedSecret);
 }
 
 async function digestSha256(input: Uint8Array): Promise<Uint8Array> {
@@ -501,102 +360,6 @@ export async function finishRemoteOpaqueServerLogin(params: {
       params.realmId,
     ),
   });
-}
-
-export function encodeRemoteStoredSecret(secret: Uint8Array): string {
-  return encodeBase64(normalizeSecretBytes(secret));
-}
-
-export function decodeRemoteStoredSecret(secret: string): Uint8Array {
-  return normalizeSecretBytes(decodeBase64(secret));
-}
-
-export async function deriveRemoteStoredAccessMaterial(
-  storedSecret: string,
-): Promise<RemoteAuthMaterial> {
-  return deriveRemoteAuthMaterialFromSecret(
-    decodeRemoteStoredSecret(storedSecret),
-  );
-}
-
-export async function deriveRemoteAccessStorageSecret(
-  username: string,
-  password: string,
-  realmId: string,
-): Promise<string> {
-  const material = await deriveRemoteAccessMaterial(
-    username,
-    password,
-    realmId,
-  );
-  return encodeRemoteStoredSecret(material.secret);
-}
-
-export async function deriveRemoteAccessMaterial(
-  username: string,
-  password: string,
-  realmId: string,
-): Promise<RemoteCredentialMaterial> {
-  const normalized = normalizeCredentialInputs(username, password, realmId);
-  const secret = await deriveCredentialSecret(
-    normalized.username,
-    normalized.password,
-    normalized.realmId,
-  );
-  return {
-    ...deriveRemoteMaterialFromSecret(secret),
-    loginHandle: await deriveRemoteLoginHandle(
-      normalized.username,
-      normalized.realmId,
-    ),
-    realmId: normalized.realmId,
-  };
-}
-
-export async function deriveRemoteAuthMaterial(
-  username: string,
-  password: string,
-  realmId: string,
-): Promise<RemoteCredentialMaterial> {
-  return deriveRemoteAccessMaterial(username, password, realmId);
-}
-
-export function buildRemoteAuthChallengeMessage(
-  binding: RemoteAuthChallengeBinding,
-): Uint8Array {
-  const machineId = binding.machineId?.trim() || "";
-  return encoder.encode(
-    [
-      "codexdeck-auth-v1",
-      binding.challengeId,
-      binding.challenge,
-      binding.clientKind,
-      machineId,
-    ].join("\n"),
-  );
-}
-
-export function signRemoteAuthChallenge(
-  secretKey: Uint8Array,
-  binding: RemoteAuthChallengeBinding,
-): string {
-  const signature = tweetnacl.sign.detached(
-    buildRemoteAuthChallengeMessage(binding),
-    secretKey,
-  );
-  return encodeBase64(signature);
-}
-
-export function verifyRemoteAuthChallengeSignature(
-  publicKey: Uint8Array,
-  signature: Uint8Array,
-  binding: RemoteAuthChallengeBinding,
-): boolean {
-  return tweetnacl.sign.detached.verify(
-    buildRemoteAuthChallengeMessage(binding),
-    signature,
-    publicKey,
-  );
 }
 
 function parseSigningPublicKey(publicKey: Uint8Array | string): Uint8Array {

@@ -62,8 +62,8 @@ for (const theme of ["dark", "light"] as const) {
       await ui.selectSession("Review the launch checklist");
       if (mobile)
         await page.getByRole("button", { name: "Collapse left pane" }).click();
-      await page.getByPlaceholder("Message Codex...").fill("/mcp");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page.getByPlaceholder("Ask Codex anything...").fill("/mcp");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const dialog = page.getByRole("dialog", { name: "MCP administration" });
       await expect(
         dialog.getByText("example-mcp", { exact: true }),
@@ -146,8 +146,8 @@ for (const theme of ["dark", "light"] as const) {
             },
           });
       });
-      await page.getByPlaceholder("Message Codex...").fill("/usage");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page.getByPlaceholder("Ask Codex anything...").fill("/usage");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const usage = page.getByRole("dialog", { name: "Usage dashboard" });
       await expect(usage.getByText("85% used", { exact: true })).toBeVisible();
       await expect(
@@ -184,8 +184,8 @@ for (const theme of ["dark", "light"] as const) {
           },
         });
       });
-      await page.getByPlaceholder("Message Codex...").fill("/recap");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page.getByPlaceholder("Ask Codex anything...").fill("/recap");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const recap = page.getByRole("dialog", { name: "Conversation recap" });
       await expect(
         recap.getByText("The launch checklist is ready and validated.", {
@@ -202,9 +202,9 @@ for (const theme of ["dark", "light"] as const) {
       });
       await recap.getByRole("button", { name: "Close", exact: true }).click();
       await page
-        .getByPlaceholder("Message Codex...")
+        .getByPlaceholder("Ask Codex anything...")
         .fill("/export launch-notes.md");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const exported = page.getByRole("dialog", { name: "Export transcript" });
       await expect(
         exported.getByRole("textbox", { name: "Markdown preview" }),
@@ -242,8 +242,10 @@ for (const theme of ["dark", "light"] as const) {
         }
         await route.fulfill({ json: { features: [feature()], warning: null } });
       });
-      await page.getByPlaceholder("Message Codex...").fill("/experimental");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page
+        .getByPlaceholder("Ask Codex anything...")
+        .fill("/experimental");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const experimental = page.getByRole("dialog", {
         name: "Experimental features",
       });
@@ -291,8 +293,8 @@ for (const theme of ["dark", "light"] as const) {
           },
         });
       });
-      await page.getByPlaceholder("Message Codex...").fill("/daybreak");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page.getByPlaceholder("Ask Codex anything...").fill("/daybreak");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const daybreak = page.getByRole("dialog", { name: "Daybreak selection" });
       await daybreak.getByRole("button", { name: "Turn Daybreak on" }).click();
       await expect(
@@ -351,8 +353,8 @@ for (const theme of ["dark", "light"] as const) {
           },
         });
       });
-      await page.getByPlaceholder("Message Codex...").fill("/warnings");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page.getByPlaceholder("Ask Codex anything...").fill("/warnings");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const warnings = page.getByRole("dialog", { name: "Retained warnings" });
       await expect(
         warnings.getByText("2 retained warnings", { exact: true }),
@@ -409,8 +411,10 @@ for (const theme of ["dark", "light"] as const) {
           },
         });
       });
-      await page.getByPlaceholder("Message Codex...").fill("/debug-config");
-      await page.getByPlaceholder("Message Codex...").press("Enter");
+      await page
+        .getByPlaceholder("Ask Codex anything...")
+        .fill("/debug-config");
+      await page.getByPlaceholder("Ask Codex anything...").press("Enter");
       const config = page.getByRole("dialog", {
         name: "Configuration diagnostics",
       });

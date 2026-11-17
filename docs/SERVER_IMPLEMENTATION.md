@@ -6,16 +6,13 @@ You can change this doc content when you change you plan. You can change todo li
 
 This document defines the implementation plan for codex-deck remote mode and the remote `server` package.
 
-Current auth status note:
+Current remote authentication uses OPAQUE registration and login:
 
-- The historical single-owner password-bootstrap text below is superseded by the implemented opaque-handle remote auth flow.
-- Current remote auth uses:
-  - server admin password via `CODEXDECK_REMOTE_ADMIN_PASSWORD`
-  - reusable CLI setup tokens managed by the admin UI/API
-  - one username/password-derived remote identity per CLI
-  - browser and CLI derivation of an opaque `loginHandle`, auth keys, and relay keys client-side
-  - browser login via challenge/signature plus cookie-backed session
-- The server does not receive the raw remote username or remote password used by the browser and CLI.
+- The server admin signs in with `CODEXDECK_REMOTE_ADMIN_PASSWORD` and manages reusable CLI setup tokens.
+- Each CLI registers a username/password-derived remote identity with a setup token.
+- Browser and CLI derive an opaque `loginHandle` locally and authenticate through OPAQUE.
+- Browsers receive a cookie-backed session; CLIs receive a machine-bound bearer token.
+- The server does not receive the raw remote username or password used by the browser and CLI.
 
 Terminology used in this document:
 
@@ -41,32 +38,34 @@ The remote design relies on four core implementation areas:
 
 The codex-deck target behavior depends on three core requirements:
 
-- password bootstrap is the first-device auth flow
+- CLI registration requires a setup token and OPAQUE; browser login uses OPAQUE
 - `server` is the browser entrypoint in remote mode
 - the existing `web app` UX is preserved and routed through a remote `cli`
 
 Security model for codex-deck remote mode:
 
-- authentication: password bootstrap derives the account identity, then the server issues bearer/device credentials
+- authentication: OPAQUE verifies the remote identity; the server issues browser sessions or machine-bound CLI tokens
 - synced Codex data: end-to-end encrypted between `cli` and `web app`
 - `server`: stores ciphertext, presence, routing metadata, and device/session records, but not plaintext session content
 - server-owned secrets: may still use server-side encryption at rest through [`server/sources/modules/encrypt.ts`](../server/sources/modules/encrypt.ts)
 
-## Public Interfaces To Add
+## Public Interfaces
 
-The implementation should standardize these public interfaces before coding the remote path:
+The remote path uses these interfaces:
 
 - `cli` startup/config
-  - add a remote mode flag/config set for `server` URL
-  - add password input/env/config for first registration
-  - persist an issued device token for reconnects
+  - remote server URL, username/password, machine ID, and optional setup token through CLI flags/env/config
+  - OPAQUE login on startup, with setup-token registration when the account is not registered
+  - keep the issued bearer token in memory for socket reconnects
 - `server` browser entry
   - serve the built codex-deck `web app`
   - expose the same browser-facing `/api/*` surface wherever possible
 - `server` auth
-  - password bootstrap endpoint for browser login and CLI registration
-  - device-token refresh/revoke endpoints
-  - authenticated browser session handling
+  - `/v1/auth/bootstrap` for realm, OPAQUE server public key, and browser persistence configuration
+  - `/v1/auth/opaque/register/start` and `/finish` for setup-token-authorized CLI registration
+  - `/v1/auth/opaque/login/start` and `/finish` for browser/CLI login
+  - `/v1/auth/session` and `/v1/auth/logout` for browser sessions
+  - `/v1/admin/*` for admin sessions, admin password rotation, and setup-token management
 - `cli <-> server` transport
   - long-lived authenticated bidirectional channel
   - command/request routing from `server` to `cli`
@@ -136,28 +135,28 @@ Implementation decisions:
 
 ### Auth
 
-Goal: keep strong token structure while using password bootstrap instead of approval-based first-device flows.
+The implemented authentication flow is:
 
-Target auth flow:
+1. The server persists a realm ID, OPAQUE server setup, token-signing secret, and admin password verifier.
+2. The admin creates a reusable CLI setup token through `/admin`.
+3. The CLI fetches `/v1/auth/bootstrap` and derives its `loginHandle` from the username and realm ID locally.
+4. The CLI performs OPAQUE login. If its registration is missing, a valid setup token authorizes OPAQUE registration for that handle and machine ID.
+5. The browser uses the same remote username/password, validates server trust pins, and completes OPAQUE login.
+6. The server issues a machine-bound bearer token to the CLI or an HTTP-only session cookie to the browser.
+7. Re-registering the same machine can update its username/password. Registration increments `Account.authVersion`, invalidating existing account tokens and browser sessions.
 
-1. Server owner chooses a password that all of their codex-deck clients know.
-2. Browser login or first `cli` registration sends the password to `POST /v1/auth/password`.
-3. `server` derives the account auth public key from the password and either:
-   - bootstraps the first account when the server has no account yet, or
-   - matches the existing single-owner account and issues a bearer token
-4. Later reconnects can either reuse the bearer token or re-authenticate through `POST /v1/auth` using the password-derived signing keypair.
-5. Password rotation updates the stored account public key and increments `authVersion`, revoking previously issued bearer tokens.
+Admin password rotation is separate: `/v1/admin/password` updates the admin verifier and admin session version. It does not change remote account credentials or relay keys.
 
-Password handling rules:
+Session behavior:
 
-- Store only the derived account auth public key on `server`, not the raw password.
-- Use a deterministic password KDF so browser and `cli` can derive the same account secret locally.
-- Derive auth material and encryption material separately.
-- Keep long-term auth state focused on password-bootstrap and signed re-auth flows.
+- Browser persistence is configured as `session` or `remember`; browser session tokens last 7 or 30 days respectively.
+- The browser saves the OPAQUE export key and login context in the configured browser storage to restore its relay key alongside the server session.
+- The CLI authenticates on process start and uses its in-memory bearer token for socket reconnects.
+- Setup-token disable/delete prevents further registration with that token; account token validation remains governed by `authVersion`.
 
 ### Encryption
 
-Goal: prevent the password-auth change from weakening the zero-knowledge data model.
+Goal: keep remote payload encryption between the CLI and browser.
 
 Relevant implementation references:
 
@@ -170,14 +169,13 @@ Target encryption boundaries:
 - `server` stores encrypted session content, encrypted machine state, and encrypted thread metadata blobs.
 - `server` may decrypt only server-owned secrets such as stored vendor tokens or operational secrets.
 
-Recommended key strategy:
+Key strategy:
 
-- derive an account/root secret from the password on the client side
-- split derived material into:
-  - auth verifier input
-  - device registration secret
-  - content-encryption key seed
-- keep wire payloads versioned so key rotation is possible later
+- OPAQUE registration/login produces the same client export key for the registered credentials.
+- `wire/src/remote-crypto.ts` derives the relay key from that export key, login handle, and realm ID.
+- The browser and CLI encrypt RPC payloads with the relay key; the server forwards ciphertext.
+- The CLI signs RPC results with its persisted signing identity, and the browser verifies the signature against its pinned CLI public key.
+- Changing remote credentials through registration changes relay material and requires clients to authenticate with the new credentials.
 
 Todo:
 
@@ -196,39 +194,26 @@ Todo:
 - [x] Preserve current local mode without forcing remote configuration into existing workflows.
   - Local mode remains the default startup path for both the CLI and the web app.
   - Remote mode is opt-in through CLI flags/env vars and explicit browser UI state.
-- [x] Replace approval-based bootstrap endpoints with password bootstrap endpoints.
-  - `POST /v1/auth/password` now bootstraps or logs into the single owner account.
-  - Retired legacy bootstrap routes return `410` with an explicit password-bootstrap error.
-- [x] Remove approval-polling assumptions from server routes and docs.
-  - Legacy bootstrap request/response routes no longer implement polling-based approval.
-  - Server docs/debug notes now point to password bootstrap and signed re-auth.
-- [x] Keep the token generator/verifier structure where it still fits.
-  - `server/sources/app/auth/auth.ts` still uses the persistent token generator/verifier.
-  - Tokens now include `authVersion` and client context so rotation can revoke old bearer tokens.
-- [x] Define browser session lifetime, CLI device-token lifetime, and refresh behavior.
-  - Browser remote auth is memory-only: reload requires entering the password again.
-  - The CLI currently bootstraps a fresh bearer token on process start and keeps it in memory for socket reconnects.
-  - Token invalidation is handled through `authVersion` on password rotation.
-- [x] Add token revocation and password rotation requirements.
-  - `POST /v1/auth/password/rotate` rotates the password-derived identity.
-  - `Account.authVersion` revokes previously issued tokens when the password changes.
-- [x] Ensure both browser and `cli` auth are mandatory in remote mode.
-  - Browser/bootstrap flows require password auth.
-  - Machine-scoped remote connections require a valid CLI token.
+- [x] Implement setup-token-authorized OPAQUE registration and OPAQUE login.
+  - Registration binds one remote identity to a machine ID; a valid setup token authorizes re-registration.
+  - Browser and CLI login exchange OPAQUE messages without sending raw remote credentials to the server.
+- [x] Require authenticated browser sessions and machine-bound CLI tokens.
+  - The token generator/verifier validates `authVersion` and client context.
+  - Browser persistence supports `session` and `remember`; the CLI authenticates on startup.
+- [x] Keep admin authentication separate from remote account authentication.
+  - Admin sessions manage setup tokens and the admin password.
+  - Account re-registration invalidates previous account sessions/tokens through `authVersion`.
 - [x] Define which fields remain plaintext routing metadata and which fields become encrypted blobs.
   - Plaintext routing metadata includes `machineId`, socket RPC method names, bearer-token client kind, activity timestamps, and active/offline presence bits.
   - Encrypted blobs include machine metadata, daemon state, and all remote request/response payload bodies proxied between browser and CLI.
 - [x] Preserve `wire` as the single source of truth for encrypted message/update containers.
   - Step 2 reuses the existing encrypted wire envelopes without moving payload crypto into ad hoc route shapes.
 - [x] Define how browser and `cli` recover encryption keys after login.
-  - Browser and CLI both derive auth/content/relay material from the same password through the shared `@zuoyehaoduoa/wire` remote crypto helper.
-  - The server does not participate in plaintext key recovery beyond validating the password-derived account identity.
+  - Both derive relay material from the OPAQUE export key through `@zuoyehaoduoa/wire`.
+  - Browser session restoration recovers relay material from the saved export key and validates its server session.
 - [x] Keep server-side encryption only for server-owned secrets.
   - Step 2 keeps `server/sources/modules/encrypt.ts` scoped to server-owned secret storage.
   - Session and machine content remain encrypted client blobs.
-- [x] Document how password rotation affects content keys and device tokens.
-  - Password rotation changes the derived account identity and revokes old bearer tokens through `authVersion`.
-  - Clients must re-bootstrap/re-authenticate after rotation before they can resume sync.
 - [x] Require ciphertext-only persistence for session content on `server`.
   - Existing `wire` session content and versioned metadata/state fields remain ciphertext-oriented in server persistence.
 
@@ -315,7 +300,7 @@ Todo:
   - The remote server now serves the built root web app from `dist/web`.
   - The served HTML injects remote bootstrap metadata so the browser enters remote login mode by default on machine B.
 - [x] Add browser login/session handling for remote mode.
-  - The web app now has an explicit remote login screen using password bootstrap against the remote server.
+  - The web app has an OPAQUE remote login screen with server trust pins and cookie-backed session restoration.
 - [x] Add UI state for remote/local mode and selected `cli`.
   - The web app now tracks local vs remote mode and exposes remote machine selection in the sidebar.
 - [x] Preserve live update behavior in the `web app`.
@@ -335,7 +320,7 @@ Todo:
   - Browser selection itself remains client-side state; the server provides the default machine ordering.
 - [x] Define cleanup behavior for stale CLI/device records.
   - Existing presence timeouts mark stale machines offline.
-  - Password rotation revokes stale bearer tokens through `authVersion`.
+  - Account re-registration revokes existing bearer tokens and browser sessions through `authVersion`.
 - [x] Keep server-managed secrets encrypted at rest.
   - Server-owned secrets continue to use the server encryption module, while remote relay payloads stay client-encrypted.
 
@@ -354,7 +339,7 @@ Required environment/config shape:
 
 - server port
 - public URL/base URL
-- password verifier/bootstrap secret configuration
+- admin password and optional initial CLI setup tokens
 - data directory/PGlite directory
 - optional external service URLs
 
@@ -387,8 +372,8 @@ Validation matrix:
 
 Todo:
 
-- [x] Add automated tests for password bootstrap, device-token verification, and token revocation.
-  - `server` auth route and auth token tests cover password bootstrap, signed re-auth, and token invalidation via `authVersion`.
+- [x] Add automated tests for OPAQUE registration/login, machine-bound tokens, and session invalidation.
+  - `server` auth route and token tests cover setup tokens, browser/admin sessions, account re-registration, and invalidation via `authVersion`.
 - [x] Add automated tests for remote crypto and protocol contracts.
   - `wire` now has dedicated tests for remote crypto derivation/payload encryption and remote protocol schema parsing.
 - [x] Validate local-mode regression checks after remote-mode changes.
@@ -409,4 +394,4 @@ These items should not block the first remote codex-deck server release:
 - push notification parity work
 - broad product cleanup in `server/` unrelated to remote codex-deck hosting
 
-Focus the first implementation on: password auth, encrypted remote transport, browser-hosted remote access, and preserving the existing codex-deck workflows through a remote `server`.
+Focus the implementation on OPAQUE authentication, encrypted remote transport, browser-hosted remote access, and preserving existing codex-deck workflows through a remote `server`.

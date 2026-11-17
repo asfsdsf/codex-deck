@@ -9,7 +9,6 @@ export const RemoteAuthErrorCode = {
   invalidRegister: "remote_invalid_register",
   invalidLoginState: "remote_invalid_login_state",
   adminPasswordInvalid: "remote_admin_password_invalid",
-  authUpgradeRequired: "remote_auth_upgrade_required",
 } as const;
 
 export type RemoteAuthErrorCode =
@@ -68,9 +67,6 @@ export function getRemoteAuthHint(params: {
     code === RemoteAuthErrorCode.machineAlreadyBound
   ) {
     return "This remote login or machine is already bound to different credentials. Verify --remote-username, --remote-password, and --remote-machine-id.";
-  }
-  if (code === RemoteAuthErrorCode.authUpgradeRequired) {
-    return "Legacy remote auth is no longer supported. Re-register this CLI using the current codex-deck version.";
   }
   if (code === RemoteAuthErrorCode.adminPasswordInvalid) {
     return "Admin password is incorrect.";

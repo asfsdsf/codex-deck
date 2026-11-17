@@ -68,7 +68,7 @@ When working inside `server/`, also read `server/CLAUDE.md` for package-specific
 
 React 19 SPA built with Vite 6 + Tailwind CSS 4.
 
-- **`app.tsx`** — Main orchestrator: three-pane layout (session list | conversation | diff/files), local/remote connection mode, message composer, model/plan mode selection, and live-update integration.
+- **`app.tsx`** — React entry point; `app/codex-deck-app.tsx` is the main orchestrator: three-pane layout (session list | conversation | diff/files), local/remote connection mode, message composer, model/plan mode selection, and live-update integration.
 - **`components/`** — Session list, session view, diff pane, message block, markdown renderer, and `tool-renderers/` for specific tool output (bash, edit, read, search, tasks, etc.).
 - **`api.ts`** — Browser API wrapper. Chooses local vs remote transport, exposes remote login/admin helpers, and notifies conversation subscribers after mutating calls.
 - **`transport/`** — Unified browser transport abstraction. `local.ts` uses EventSource against `/api/*`; `remote.ts` adapts the same UI to a remote CLI via encrypted polling.
@@ -119,7 +119,7 @@ For remote-server work tracked in `docs/SERVER_IMPLEMENTATION.md`, preserve the 
 
 1. The remote `server` is the browser entrypoint in remote mode.
 2. The remote `cli` connects outward to `server`; browsers do not connect directly to `cli`.
-3. Password bootstrap is the first connection flow.
+3. CLI registration uses a setup token and OPAQUE; browser and CLI login use OPAQUE.
 4. `wire` remains the canonical encrypted payload boundary, and synced Codex payloads stay end-to-end encrypted.
 5. Multi-browser access to one remote `cli` must remain safe, especially for terminal write ownership and live-update fan-out.
 

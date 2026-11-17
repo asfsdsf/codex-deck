@@ -43,8 +43,6 @@ model Account {
 
     Session             Session[]
     AccountPushToken    AccountPushToken[]
-    TerminalAuthRequest TerminalAuthRequest[]
-    AccountAuthRequest  AccountAuthRequest[]
     UsageReport         UsageReport[]
     Machine             Machine[]
     UploadedFile        UploadedFile[]
@@ -55,27 +53,6 @@ model Account {
     AccessKey           AccessKey[]
     UserFeedItem        UserFeedItem[]
     UserKVStore         UserKVStore[]
-}
-
-model TerminalAuthRequest {
-    id                String   @id @default(cuid())
-    publicKey         String   @unique
-    supportsV2        Boolean  @default(false)
-    response          String?
-    responseAccountId String?
-    responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
-    createdAt         DateTime @default(now())
-    updatedAt         DateTime @updatedAt
-}
-
-model AccountAuthRequest {
-    id                String   @id @default(cuid())
-    publicKey         String   @unique
-    response          String?
-    responseAccountId String?
-    responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
-    createdAt         DateTime @default(now())
-    updatedAt         DateTime @updatedAt
 }
 
 model AccountPushToken {

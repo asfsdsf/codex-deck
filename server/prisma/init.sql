@@ -27,31 +27,6 @@ CREATE TABLE "Account" (
 );
 
 -- CreateTable
-CREATE TABLE "TerminalAuthRequest" (
-    "id" TEXT NOT NULL,
-    "publicKey" TEXT NOT NULL,
-    "supportsV2" BOOLEAN NOT NULL DEFAULT false,
-    "response" TEXT,
-    "responseAccountId" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "TerminalAuthRequest_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "AccountAuthRequest" (
-    "id" TEXT NOT NULL,
-    "publicKey" TEXT NOT NULL,
-    "response" TEXT,
-    "responseAccountId" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "AccountAuthRequest_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "AccountPushToken" (
     "id" TEXT NOT NULL,
     "accountId" TEXT NOT NULL,
@@ -291,12 +266,6 @@ CREATE UNIQUE INDEX "Account_githubUserId_key" ON "Account"("githubUserId");
 CREATE UNIQUE INDEX "Account_username_key" ON "Account"("username");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "TerminalAuthRequest_publicKey_key" ON "TerminalAuthRequest"("publicKey");
-
--- CreateIndex
-CREATE UNIQUE INDEX "AccountAuthRequest_publicKey_key" ON "AccountAuthRequest"("publicKey");
-
--- CreateIndex
 CREATE UNIQUE INDEX "AccountPushToken_accountId_token_key" ON "AccountPushToken"("accountId", "token");
 
 -- CreateIndex
@@ -379,12 +348,6 @@ CREATE UNIQUE INDEX "UserKVStore_accountId_key_key" ON "UserKVStore"("accountId"
 
 -- AddForeignKey
 ALTER TABLE "Account" ADD CONSTRAINT "Account_githubUserId_fkey" FOREIGN KEY ("githubUserId") REFERENCES "GithubUser"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "TerminalAuthRequest" ADD CONSTRAINT "TerminalAuthRequest_responseAccountId_fkey" FOREIGN KEY ("responseAccountId") REFERENCES "Account"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "AccountAuthRequest" ADD CONSTRAINT "AccountAuthRequest_responseAccountId_fkey" FOREIGN KEY ("responseAccountId") REFERENCES "Account"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AccountPushToken" ADD CONSTRAINT "AccountPushToken_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

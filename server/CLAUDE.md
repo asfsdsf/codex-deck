@@ -208,9 +208,9 @@ The project includes a multi-stage Dockerfile:
 
 #### Auth Flow Debugging
 
-- Browser login uses `POST /v1/auth/challenge` followed by `POST /v1/auth` with the browser account secret-derived publicKey/challengeId/signature
-- CLI bootstrap uses `POST /v1/auth/machine` with a reusable setup token plus the machine access public key
-- Retired QR routes and raw password auth routes now return `410` and should not be used
+- Browser and CLI login use `POST /v1/auth/opaque/login/start` and `/v1/auth/opaque/login/finish`.
+- CLI registration uses `POST /v1/auth/opaque/register/start` and `/v1/auth/opaque/register/finish` with a reusable setup token.
+- Browser sessions use HTTP-only cookies; CLI bearer tokens are bound to the registered machine.
 - **Tell**: "Auth failed - user not found" = token issue or user doesn't exist
 
 #### Session Creation Flow
@@ -222,7 +222,7 @@ The project includes a multi-stage Dockerfile:
 
 #### Environment Variables
 
-- CLI: Use the codex-deck remote CLI mode described in the repo docs rather than the old QR flow
+- CLI: Use the codex-deck remote CLI mode described in `docs/START_GUIDE.md`.
 - Server: Use `pnpm dev` to start with proper env files
 - **Tell**: Wrong server URL = check `CODEXDECK_SERVER_URL` env var
 - **Tell**: Wrong home dir = check `CODEXDECK_HOME_DIR` (should be `~/.codexdeck-dev` for local)

@@ -14,7 +14,7 @@ export type AuthClientKind = "browser" | "cli" | "api";
 
 export interface AuthTokenExtras extends Record<string, unknown> {
   clientKind?: AuthClientKind;
-  issuedVia?: "setup-token" | "signature" | "opaque";
+  issuedVia?: "setup-token" | "opaque";
   machineId?: string;
   session?: string;
 }

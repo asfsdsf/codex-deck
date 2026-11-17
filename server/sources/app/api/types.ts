@@ -54,7 +54,7 @@ declare module "fastify" {
     authContext?: {
       authVersion: number;
       clientKind?: "browser" | "cli" | "api";
-      issuedVia?: "setup-token" | "signature" | "opaque";
+      issuedVia?: "setup-token" | "opaque";
       machineId?: string;
       session?: string;
     };
