@@ -55,6 +55,7 @@ function getCodexAppServerEventKey(event: CodexAppServerEvent): string {
       return JSON.stringify(event);
     case "user_input_requests_changed":
     case "elicitation_requests_changed":
+    case "approval_requests_changed":
       return [event.type, event.threadId, event.requestId, event.pending].join(
         "|",
       );

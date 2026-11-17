@@ -2389,6 +2389,7 @@ export function createServer(options: ServerOptions) {
       event.type === "thread_status" ||
       event.type === "user_input_requests_changed" ||
       event.type === "elicitation_requests_changed" ||
+      event.type === "approval_requests_changed" ||
       event.type === "subagent_activity" ||
       event.type === "collab_agent_tool_call" ||
       event.type === "error"

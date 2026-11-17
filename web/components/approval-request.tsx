@@ -16,11 +16,19 @@ export function ApprovalRequestRenderer(props: {
 
   return (
     <div className="mt-2 min-w-0 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
-      <div className="text-[11px] font-medium text-amber-200">
-        Approval required
+      <div className="text-[11px] font-medium text-amber-800 dark:text-amber-200">
+        {request.kind === "humanCommand"
+          ? "Human approval required"
+          : "Approval required"}
       </div>
+      {request.kind === "humanCommand" && (
+        <p className="mt-1 text-xs text-amber-900 dark:text-amber-100/85">
+          Approve this checkpoint once to continue. This decision cannot be
+          saved for later commands.
+        </p>
+      )}
       {request.reason && (
-        <div className="mt-1 whitespace-pre-wrap break-words text-xs text-amber-100/85">
+        <div className="mt-1 whitespace-pre-wrap break-words text-xs text-amber-900 dark:text-amber-100/85">
           {request.reason}
         </div>
       )}

@@ -2269,6 +2269,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     CodexApprovalRequest
   >();
   for (const request of pendingApprovalRequests) {
+    if (request.kind === "humanCommand") continue;
     if (request.itemId) {
       pendingApprovalRequestByItemId.set(request.itemId, request);
     }

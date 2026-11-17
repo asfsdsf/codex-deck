@@ -382,7 +382,10 @@ export type CodexAppServerEvent =
     }
   | ({ type: "hook_run" } & CodexHookRun)
   | {
-      type: "user_input_requests_changed" | "elicitation_requests_changed";
+      type:
+        | "user_input_requests_changed"
+        | "elicitation_requests_changed"
+        | "approval_requests_changed";
       threadId: string;
       requestId: string;
       pending: boolean;
@@ -698,6 +701,7 @@ export interface CodexUserInputResponsePayload {
 }
 
 export type CodexApprovalRequestKind =
+  | "humanCommand"
   | "commandExecution"
   | "fileChange"
   | "permissions";

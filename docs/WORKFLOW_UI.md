@@ -4,6 +4,8 @@ This document records the current button-to-command mapping for the Workflow pan
 
 ## Notes
 
+- Managed human-command checkpoints appear in Pending approvals even without a tool block. They require a one-time human decision, and resolution updates all browsers.
+
 - The Codex, Terminal, and Workflow panes share `web/components/message-composer.tsx`. The main app supplies each pane's send, queue, interrupt, and initialization callbacks; draft, attachments, translation, and picker state stay inside the composer.
 
 - The Workflow viewport loads its component when first opened, with a loading indicator inside the viewport while its code downloads. The surrounding sidebar and composer remain available.

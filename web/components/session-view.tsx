@@ -621,6 +621,7 @@ function buildPendingApprovalByItemId(
   const next = new Map<string, CodexApprovalRequest>();
 
   for (const request of pendingApprovalRequests) {
+    if (request.kind === "humanCommand") continue;
     const itemId = request.itemId.trim();
     if (!itemId) {
       continue;
@@ -1088,6 +1089,8 @@ const SessionView = memo(
             onCodexAppServerEvent: (event) => {
               if (event.type === "elicitation_requests_changed")
                 setElicitationRevision((current) => current + 1);
+              if (event.type === "approval_requests_changed")
+                refreshApprovalRequestsRef.current();
               if (event.type === "user_input_requests_changed") {
                 refreshUserInputRequestsRef.current();
               }
@@ -1319,6 +1322,7 @@ const SessionView = memo(
         };
       }, [pollPendingUserInputRequests]);
 
+      const refreshApprovalRequestsRef = useRef<() => void>(() => {});
       const pollPendingApprovalRequests = useCallback(async () => {
         if (approvalPollInFlightRef.current) {
           approvalPollRerunRequestedRef.current = true;
@@ -1393,6 +1397,10 @@ const SessionView = memo(
           }
         }
       }, [isPageVisible, sessionId]);
+
+      refreshApprovalRequestsRef.current = () => {
+        void pollPendingApprovalRequests();
+      };
 
       useEffect(() => {
         if (!isPageVisible) {

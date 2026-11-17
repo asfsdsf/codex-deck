@@ -478,6 +478,7 @@ export interface CodexUserInputResponsePayload {
 
 export type CodexApprovalRequestKind =
   | "commandExecution"
+  | "humanCommand"
   | "fileChange"
   | "permissions";
 
@@ -3340,7 +3341,7 @@ class CodexAppServerClient {
       if (
         this.pendingApprovalRequests.get(normalizedRequestId) === pendingRequest
       ) {
-        this.pendingApprovalRequests.delete(normalizedRequestId);
+        this.removePendingApprovalRequest(normalizedRequestId);
       }
     } finally {
       pendingRequest.responseInFlight = false;
@@ -3374,6 +3375,13 @@ class CodexAppServerClient {
     const decisionId = asTrimmedString(response.decisionId);
     if (!decisionId) {
       throw new Error("response.decisionId is required");
+    }
+
+    if (
+      pendingRequest.kind === "humanCommand" &&
+      !["accept", "decline", "cancel"].includes(decisionId)
+    ) {
+      throw new Error("Human checkpoints require a one-time decision.");
     }
 
     const selectedDecision = pendingRequest.availableDecisions.find(
@@ -3637,7 +3645,7 @@ class CodexAppServerClient {
   public async close(): Promise<void> {
     this.rejectAll(new CodexAppServerTransportError("app-server closed"));
     this.clearPendingUserInputRequests();
-    this.pendingApprovalRequests.clear();
+    this.clearPendingApprovalRequests();
     this.clearPendingElicitations();
     this.recaps.cancelAll();
     this.realtimeVoice.resetAll("The Codex app-server stopped, ending voice.");
@@ -4050,6 +4058,7 @@ class CodexAppServerClient {
           },
           capabilities: {
             experimentalApi: true,
+            requiredHumanApproval: true,
             mcpServerOpenaiFormElicitation: true,
             extensions: {
               "openai/form": {},
@@ -4985,7 +4994,7 @@ class CodexAppServerClient {
 
     this.removePendingUserInputRequest(String(requestId));
     this.removePendingElicitation(String(requestId));
-    this.pendingApprovalRequests.delete(String(requestId));
+    this.removePendingApprovalRequest(String(requestId));
   }
 
   private handleApprovalRequest(
@@ -5011,7 +5020,30 @@ class CodexAppServerClient {
     }
 
     this.pendingApprovalRequests.set(String(requestId), request);
+    this.emitAppServerEvent({
+      type: "approval_requests_changed",
+      threadId: request.threadId,
+      requestId: request.requestId,
+      pending: true,
+    });
     return true;
+  }
+
+  private removePendingApprovalRequest(requestId: string): void {
+    const request = this.pendingApprovalRequests.get(requestId);
+    if (!request) return;
+    this.pendingApprovalRequests.delete(requestId);
+    this.emitAppServerEvent({
+      type: "approval_requests_changed",
+      threadId: request.threadId,
+      requestId,
+      pending: false,
+    });
+  }
+
+  private clearPendingApprovalRequests(): void {
+    for (const requestId of this.pendingApprovalRequests.keys())
+      this.removePendingApprovalRequest(requestId);
   }
 
   private resolvePendingRequest(
@@ -5109,7 +5141,7 @@ class CodexAppServerClient {
     this.liveTerminalProcessByItemByThread.clear();
     this.liveTerminalPendingDeltaByItemByThread.clear();
     this.clearPendingUserInputRequests();
-    this.pendingApprovalRequests.clear();
+    this.clearPendingApprovalRequests();
     this.clearPendingElicitations();
     this.dynamicTools.reset();
 
@@ -5671,9 +5703,16 @@ function parseCommandExecutionApprovalRequest(
     return null;
   }
 
+  const humanCommand = record.kind === "humanCommand";
+  const allowedHumanDecisions = ["accept", "decline", "cancel"];
   const availableDecisions = normalizeApprovalDecisionOptions(
     record.availableDecisions ?? record.available_decisions,
-    DEFAULT_COMMAND_APPROVAL_DECISIONS_V2,
+    humanCommand
+      ? allowedHumanDecisions
+      : DEFAULT_COMMAND_APPROVAL_DECISIONS_V2,
+  ).filter(
+    (option) =>
+      !humanCommand || allowedHumanDecisions.includes(String(option.decision)),
   );
 
   return {
@@ -5682,7 +5721,7 @@ function parseCommandExecutionApprovalRequest(
     threadId,
     turnId: asTrimmedString(record.turnId ?? record.turn_id) ?? null,
     itemId,
-    kind: "commandExecution",
+    kind: humanCommand ? "humanCommand" : "commandExecution",
     reason: asTrimmedString(record.reason) ?? null,
     command: asTrimmedString(record.command) ?? null,
     cwd: asTrimmedString(record.cwd) ?? null,
@@ -7254,8 +7293,10 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.createThread(input),
     setThreadName: (threadId: string, name: string) =>
       client!.setThreadName(threadId, name),
-    forkThread: (threadId: string, options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string }) =>
-      client!.forkThread(threadId, options),
+    forkThread: (
+      threadId: string,
+      options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string },
+    ) => client!.forkThread(threadId, options),
     revertThread: (threadId: string, beforeTurnId: string) =>
       client!.revertThread(threadId, beforeTurnId),
     listThreadAttachments: (threadId) =>

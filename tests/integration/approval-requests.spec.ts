@@ -176,7 +176,10 @@ for (const theme of ["light", "dark"] as const) {
       theme,
     );
     const state = await mockApprovals(context, app, [
-      approval(app, { command: `echo ${"long-command-".repeat(40)}` }),
+      approval(app, {
+        kind: "humanCommand",
+        command: `echo ${"long-command-".repeat(40)}`,
+      }),
     ]);
     state.failNext = true;
     const ui = new CodexDeckPage(page);
@@ -243,7 +246,9 @@ test("approval responses are submitted once and all open pages catch up", async 
   context,
   app,
 }) => {
-  const state = await mockApprovals(context, app, [approval(app)]);
+  const state = await mockApprovals(context, app, [
+    approval(app, { kind: "humanCommand" }),
+  ]);
   let release!: () => void;
   state.holdResponse = new Promise<void>((resolve) => {
     release = resolve;
