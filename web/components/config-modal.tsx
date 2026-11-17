@@ -53,6 +53,7 @@ import {
 
 interface ConfigModalProps {
   open: boolean;
+  addHomeOnOpen?: boolean;
   onClose: () => void;
   onApplied: (response: CodexDeckConfigWriteResponse) => void;
 }
@@ -297,7 +298,7 @@ function validateConfig(config: EditableCodexDeckConfig): ConfigValidation {
 }
 
 export default function ConfigModal(props: ConfigModalProps) {
-  const { open, onClose, onApplied } = props;
+  const { open, addHomeOnOpen = false, onClose, onApplied } = props;
   const [activeSection, setActiveSection] = useState<ConfigSection>("general");
   const [path, setPath] = useState("");
   const [configPaths, setConfigPaths] = useState<string[]>([]);
@@ -307,6 +308,9 @@ export default function ConfigModal(props: ConfigModalProps) {
   const [config, setConfig] = useState<EditableCodexDeckConfig>(() =>
     createEmptyCodexDeckConfig(),
   );
+  const [homeToFocus, setHomeToFocus] = useState<number | null>(null);
+  const newHomeIdInputRef = useRef<HTMLInputElement>(null);
+  const configLoadRequestIdRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [effectiveHoverSettings, setEffectiveHoverSettings] = useState(
     DEFAULT_CONVERSATION_HOVER_SETTINGS,
@@ -347,6 +351,23 @@ export default function ConfigModal(props: ConfigModalProps) {
     updateStatus?.updateInProgress ||
     updateOutput?.updateInProgress,
   );
+
+  useEffect(() => {
+    if (
+      !open ||
+      disabled ||
+      activeSection !== "homes" ||
+      homeToFocus === null
+    ) {
+      return;
+    }
+    const input = newHomeIdInputRef.current;
+    if (input) {
+      input.focus({ preventScroll: true });
+      input.scrollIntoView({ block: "nearest" });
+      setHomeToFocus(null);
+    }
+  }, [activeSection, disabled, homeToFocus, open]);
 
   const receiveUpdateOutput = (response: CodexDeckUpdateOutputResponse) => {
     // A freshly restarted daemon has no build output. Keep the completed log.
@@ -399,27 +420,42 @@ export default function ConfigModal(props: ConfigModalProps) {
     }
   }, [applyingUpdate]);
 
-  const loadConfig = async () => {
+  const loadConfig = async (addHome = false) => {
+    const requestId = ++configLoadRequestIdRef.current;
     setLoading(true);
+    setHomeToFocus(null);
     setError(null);
     setResult(null);
     try {
       const response = await getCodexDeckConfig();
+      if (configLoadRequestIdRef.current !== requestId) {
+        return;
+      }
       setPath(response.path);
       setConfigPaths(response.configPaths ?? []);
       setContent(response.content);
       setLoadedContent(response.content);
       setRevision(response.revision);
-      setConfig(readCodexDeckConfigForm(response));
+      const loadedConfig = readCodexDeckConfigForm(response);
+      if (addHome) {
+        setHomeToFocus(loadedConfig.codexHomes.length);
+        loadedConfig.codexHomes.push({ id: "", label: "", path: "" });
+      }
+      setConfig(loadedConfig);
       setEffectiveHoverSettings(
         response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
       );
     } catch (loadError) {
+      if (configLoadRequestIdRef.current !== requestId) {
+        return;
+      }
       setError(
         loadError instanceof Error ? loadError.message : String(loadError),
       );
     } finally {
-      setLoading(false);
+      if (configLoadRequestIdRef.current === requestId) {
+        setLoading(false);
+      }
     }
   };
 
@@ -427,12 +463,15 @@ export default function ConfigModal(props: ConfigModalProps) {
     if (!open) {
       return;
     }
-    setActiveSection("general");
+    setActiveSection(addHomeOnOpen ? "homes" : "general");
     setUpdateStatus(null);
     setUpdateError(null);
     setUpdateResult(null);
-    void loadConfig();
-  }, [open]);
+    void loadConfig(addHomeOnOpen);
+    return () => {
+      configLoadRequestIdRef.current += 1;
+    };
+  }, [addHomeOnOpen, open]);
 
   useEffect(() => {
     if (!open || activeSection !== "updates" || updateStatus) {
@@ -984,15 +1023,16 @@ export default function ConfigModal(props: ConfigModalProps) {
                       action={
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            setHomeToFocus(config.codexHomes.length);
                             updateStructuredConfig({
                               ...config,
                               codexHomes: [
                                 ...config.codexHomes,
                                 { id: "", label: "", path: "" },
                               ],
-                            })
-                          }
+                            });
+                          }}
                           disabled={disabled}
                           className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-600/60 bg-cyan-500/10 px-2.5 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                         >
@@ -1014,7 +1054,7 @@ export default function ConfigModal(props: ConfigModalProps) {
                           const homeErrors = validation.homes[index] ?? [];
                           return (
                             <div
-                              key={`${index}:${home.id}`}
+                              key={index}
                               className={`rounded-md border bg-zinc-900/45 p-3 ${
                                 homeErrors.length > 0
                                   ? "border-red-500/45"
@@ -1025,6 +1065,11 @@ export default function ConfigModal(props: ConfigModalProps) {
                                 <Field label="Home ID">
                                   <input
                                     type="text"
+                                    ref={
+                                      index === homeToFocus
+                                        ? newHomeIdInputRef
+                                        : undefined
+                                    }
                                     value={home.id}
                                     onChange={(event) => {
                                       const codexHomes = [...config.codexHomes];

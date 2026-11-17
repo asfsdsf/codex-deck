@@ -158,6 +158,7 @@ import {
 import LatestSessionMessageBox from "../components/latest-session-message-box";
 import DiffPane, { type RightPaneMode } from "../components/diff-pane";
 import ProjectSelector from "../components/project-selector";
+import CodexHomeSelector from "../components/codex-home-selector";
 import ComposerPicker, {
   type ComposerPickerItem,
 } from "../components/composer-picker";
@@ -4356,7 +4357,10 @@ export default function CodexDeckApp() {
     [],
   );
   const [showStatusModal, setShowStatusModal] = useState(false);
-  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [configModalAction, setConfigModalAction] = useState<
+    "settings" | "add-home" | null
+  >(null);
+  const showConfigModal = configModalAction !== null;
   const [hasOpenedConfigModal, setHasOpenedConfigModal] = useState(false);
   useEffect(() => {
     if (showConfigModal) setHasOpenedConfigModal(true);
@@ -4704,7 +4708,7 @@ export default function CodexDeckApp() {
     setAttachmentsThreadId(null);
     setReviewDialog(null);
     setShowStatusModal(false);
-    setShowConfigModal(false);
+    setConfigModalAction(null);
     setShowRenameModal(false);
     setRenameDraft("");
     setRenamingSession(false);
@@ -14449,38 +14453,13 @@ export default function CodexDeckApp() {
             </div>
 
             <div className="px-2 pb-1">
-              <label className="block">
-                <span className="sr-only">Codex home</span>
-                <select
-                  value={selectedCodexHomeId}
-                  onChange={(event) =>
-                    handleSelectCodexHome(event.target.value)
-                  }
-                  disabled={codexHomesLoading || codexHomes.length === 0}
-                  aria-label="Codex home"
-                  className="h-8 w-full cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {codexHomes.length === 0 ? (
-                    <option value={MAIN_CODEX_HOME_ID}>
-                      {codexHomesLoading ? "Loading Codex homes..." : "Main"}
-                    </option>
-                  ) : (
-                    codexHomes.map((home) => (
-                      <option
-                        key={`${home.id}:${home.isMain ? "main" : "configured"}`}
-                        value={home.id}
-                        disabled={!home.available}
-                      >
-                        {home.label}
-                        {home.isMain ? " · Main" : ""}
-                        {!home.available
-                          ? ` · ${home.unavailableReason || "Unavailable"}`
-                          : ""}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
+              <CodexHomeSelector
+                homes={codexHomes}
+                selectedHomeId={selectedCodexHomeId}
+                loading={codexHomesLoading}
+                onSelectHome={handleSelectCodexHome}
+                onAddHome={() => setConfigModalAction("add-home")}
+              />
               {codexHomesError ? (
                 <p
                   className="mt-1 truncate text-[10px] text-red-400"
@@ -14744,7 +14723,7 @@ export default function CodexDeckApp() {
           <div className="shrink-0 p-2">
             <button
               type="button"
-              onClick={() => setShowConfigModal(true)}
+              onClick={() => setConfigModalAction("settings")}
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
               title="Codex Deck settings"
               aria-label="Codex Deck settings"
@@ -15276,7 +15255,8 @@ export default function CodexDeckApp() {
           {(showConfigModal || hasOpenedConfigModal) && (
             <ConfigModal
               open={showConfigModal}
-              onClose={() => setShowConfigModal(false)}
+              addHomeOnOpen={configModalAction === "add-home"}
+              onClose={() => setConfigModalAction(null)}
               onApplied={(response) => {
                 setCodexHomes(response.homes);
                 const selectedHome = response.homes.find(
