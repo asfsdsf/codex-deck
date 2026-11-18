@@ -1,3 +1,10 @@
+import {
+  getAnswerRestriction,
+  readConversationItemMetadata,
+  retainConversationItemMetadata,
+  withConversationItemMetadata,
+  type ConversationItemMetadata,
+} from "./conversation-item-metadata";
 import { SIDE_CONVERSATION_BOUNDARY_PROMPT } from "./session-origins";
 import { parseMcpAppToolCall } from "./codex-mcp-apps";
 import { isVisibleConversationMessage } from "./conversation-pagination";
@@ -76,6 +83,14 @@ export class ConversationParserState {
   private readonly persistedCounts = new Map<string, number>();
   private readonly streamingCounts = new Map<string, number>();
   private readonly completedItems = new Set<string>();
+  private readonly startedItems = new Map<string, ConversationItemMetadata>();
+  private readonly assistantCompletionsAwaitingRaw = new Map<
+    string,
+    string[]
+  >();
+  private readonly rawAssistantIndexes = new Set<number>();
+  private readonly restrictedAssistantRawItems = new Map<string, string>();
+
   private readonly pendingTokenUsageIndexes = new Set<number>();
   readonly changedIndexes = new Set<number>();
   readonly pendingEditableLines = new Map<string, LineWithOffset[]>();
@@ -90,11 +105,20 @@ export class ConversationParserState {
           const index = Number(property);
           const previous = target[index];
           const input = value as ConversationMessage;
-          const message = {
+          if (
+            input.type === "assistant" &&
+            /^\d+:message:/.test(input.uuid ?? "")
+          )
+            this.rawAssistantIndexes.add(index);
+          const parsed = {
             ...input,
             turnId: input.turnId ?? this.currentTurnId,
             itemId: input.itemId ?? this.sourceItemId,
           };
+          const message = previous
+            ? retainConversationItemMetadata(previous, parsed)
+            : withConversationItemMetadata(parsed, {});
+
           target[index] = {
             ...message,
             uuid: previous?.uuid ?? message.uuid,
@@ -212,12 +236,16 @@ export class ConversationParserState {
         ? ordinalIndex
         : undefined);
     if (index === undefined) return false;
+    const previous = this.messages[index];
     this.persistedCounts.set(key, ordinal + 1);
     this.slots.set(`${key}:${ordinal}`, index);
     this.messages[index] = {
       ...message,
       turnId,
-      itemId: itemId ?? this.messages[index].itemId,
+      itemId: itemId ?? previous.itemId,
+      ...(message.message && previous.message?.phase && !message.message.phase
+        ? { message: { ...message.message, phase: previous.message.phase } }
+        : {}),
       streaming: false,
     };
     this.pendingTokenUsageIndexes.add(index);
@@ -262,6 +290,7 @@ export class ConversationParserState {
           type,
           turnId,
           itemId,
+          ...this.startedItems.get(JSON.stringify([turnId, itemId])),
           streaming: true,
           uuid: `stream:${turnId}:${itemId}:${type}`,
           timestamp: new Date().toISOString(),
@@ -291,16 +320,72 @@ export class ConversationParserState {
     };
   }
 
+  noteItemStart(
+    turnId: string,
+    itemId: string,
+    metadata: ConversationItemMetadata,
+  ): void {
+    if (metadata.startedAtMs === undefined) return;
+    const key = JSON.stringify([turnId, itemId]);
+    if (this.completedItems.has(key)) return;
+    this.startedItems.set(key, metadata);
+    for (const type of ["assistant", "reasoning", "agent_reasoning"]) {
+      const index = this.itemSlots.get(this.itemKey(turnId, itemId, type));
+      if (index !== undefined)
+        this.messages[index] = withConversationItemMetadata(
+          this.messages[index],
+          metadata,
+        );
+    }
+  }
+
+  matchCompletedAssistantToRaw(
+    turnId: string | undefined,
+    itemId: string | undefined,
+    text: string,
+  ): string | undefined {
+    if (!turnId) return itemId;
+    const rawKey = JSON.stringify([turnId, text]);
+    const previousRestriction = this.restrictedAssistantRawItems.get(rawKey);
+    const pending = this.assistantCompletionsAwaitingRaw.get(turnId);
+    const candidate = itemId ?? previousRestriction;
+    const pendingIndex = candidate ? (pending?.indexOf(candidate) ?? -1) : 0;
+    const matched = pending?.[pendingIndex] ?? candidate;
+    if (pending?.[pendingIndex]) {
+      pending.splice(pendingIndex, 1);
+      if (!pending.length) this.assistantCompletionsAwaitingRaw.delete(turnId);
+    }
+    if (matched) {
+      const index = this.itemSlots.get(
+        this.itemKey(turnId, matched, "assistant"),
+      );
+      if (
+        index !== undefined &&
+        getAnswerRestriction(this.messages[index].moderation)
+      ) {
+        this.restrictedAssistantRawItems.set(rawKey, matched);
+      }
+    }
+    return matched;
+  }
+
   completeStreamItem(
     turnId: string,
     itemId: string,
     item?: Record<string, unknown>,
+    metadata: ConversationItemMetadata = item
+      ? readConversationItemMetadata(item)
+      : {},
+    rollout?: { timestamp?: string },
   ): void {
+    const completedKey = JSON.stringify([turnId, itemId]);
+    metadata = { ...this.startedItems.get(completedKey), ...metadata };
+    this.startedItems.delete(completedKey);
     if (item && parseGeneratedImage(item)) {
-      this.applyStreamImage(turnId, itemId, item, true);
+      this.applyStreamImage(turnId, itemId, item, true, metadata);
       return;
     }
-    this.completedItems.add(JSON.stringify([turnId, itemId]));
+    this.completedItems.add(completedKey);
     const imageIndex = this.messages.findIndex(
       (m) =>
         m.turnId === turnId &&
@@ -335,6 +420,42 @@ export class ConversationParserState {
       typeof item?.type === "string"
         ? item.type.toLowerCase().replace(/_/g, "")
         : "";
+    const assistantText = readAgentItemText(item);
+    const isRecordedAssistant =
+      itemType === "agentmessage" && Object.keys(metadata).length > 0;
+    const assistantKey = this.itemKey(turnId, itemId, "assistant");
+
+    if (
+      isRecordedAssistant &&
+      rollout &&
+      !this.itemSlots.has(assistantKey) &&
+      assistantText
+    ) {
+      // Some older journals wrote the ID-less response before its completed item.
+      for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+        const candidate = this.messages[index];
+        if (candidate.turnId !== turnId || candidate.type === "user") break;
+        if (candidate.type !== "assistant") continue;
+        const content = candidate.message?.content;
+        if (
+          !candidate.itemId &&
+          Array.isArray(content) &&
+          content
+            .map((block) => block.text ?? "")
+            .join("")
+            .trim() === assistantText.trim()
+        ) {
+          this.itemSlots.set(assistantKey, index);
+          if (getAnswerRestriction(metadata.moderation)) {
+            this.restrictedAssistantRawItems.set(
+              JSON.stringify([turnId, assistantText.trim()]),
+              itemId,
+            );
+          }
+        }
+        break;
+      }
+    }
     const kinds =
       itemType === "agentmessage" || itemType === "plan"
         ? ["assistant"]
@@ -346,14 +467,53 @@ export class ConversationParserState {
       if (this.itemSlots.has(key)) continue;
       const kind = this.kindKey(turnId, type);
       const { ordinal, index } = this.findStreamSlot(kind, itemId);
-      if (index !== undefined) {
+      if (index !== undefined && !(rollout && isRecordedAssistant)) {
         this.itemSlots.set(key, index);
         this.streamingCounts.set(kind, ordinal + 1);
       }
     }
+    let assistantIndex = this.itemSlots.get(assistantKey);
+    if (
+      isRecordedAssistant &&
+      assistantIndex === undefined &&
+      (assistantText || getAnswerRestriction(metadata.moderation))
+    ) {
+      assistantIndex = this.messages.length;
+      const kind = this.kindKey(turnId, "assistant");
+      const { ordinal } = this.findStreamSlot(kind, itemId);
+      this.streamingCounts.set(kind, ordinal + 1);
+      this.slots.set(`${kind}:${ordinal}`, assistantIndex);
+      this.sourceStreaming = true;
+      this.messages.push(
+        withConversationItemMetadata(
+          {
+            type: "assistant",
+            turnId,
+            itemId,
+            uuid: `stream:${turnId}:${itemId}:assistant`,
+            timestamp: rollout?.timestamp,
+            message: { role: "assistant", ...this.modelMetadata, content: [] },
+          },
+          metadata,
+        ),
+      );
+      this.sourceStreaming = false;
+    }
+    if (rollout && isRecordedAssistant && assistantIndex !== undefined) {
+      const pending = this.assistantCompletionsAwaitingRaw.get(turnId) ?? [];
+      if (
+        !pending.includes(itemId) &&
+        !this.rawAssistantIndexes.has(assistantIndex)
+      ) {
+        pending.push(itemId);
+        this.assistantCompletionsAwaitingRaw.set(turnId, pending);
+      }
+      this.pendingTokenUsageIndexes.add(assistantIndex);
+    }
     for (const type of ["assistant", "reasoning", "agent_reasoning"] as const) {
       const index = this.itemSlots.get(this.itemKey(turnId, itemId, type));
-      if (index === undefined || !this.messages[index].streaming) continue;
+      if (index === undefined || (!item && !this.messages[index].streaming))
+        continue;
       const previous = this.messages[index];
       const phase =
         type === "assistant" &&
@@ -362,37 +522,38 @@ export class ConversationParserState {
           : undefined;
       const finalText =
         type === "assistant" && item
-          ? [
-              typeof item.text === "string" ? item.text : "",
-              getAsyncQuestionText(item.questions),
-            ]
+          ? [assistantText, getAsyncQuestionText(item.questions)]
               .filter(Boolean)
               .join("\n\n") || undefined
           : type === "reasoning" && Array.isArray(item?.summary)
             ? item.summary.filter((part) => typeof part === "string").join("\n")
             : undefined;
-      this.messages[index] = {
-        ...previous,
-        streaming: false,
-        ...(finalText || phase
-          ? {
-              message: {
-                ...previous.message!,
-                ...(phase ? { phase } : {}),
-                ...(finalText
-                  ? {
-                      content: [
-                        {
-                          type: type === "assistant" ? "text" : type,
-                          text: finalText,
-                        },
-                      ],
-                    }
-                  : {}),
-              },
-            }
-          : {}),
-      };
+      this.messages[index] = withConversationItemMetadata(
+        {
+          ...previous,
+          itemId,
+          streaming: false,
+          ...(finalText || phase
+            ? {
+                message: {
+                  ...previous.message!,
+                  ...(phase ? { phase } : {}),
+                  ...(finalText
+                    ? {
+                        content: [
+                          {
+                            type: type === "assistant" ? "text" : type,
+                            text: finalText,
+                          },
+                        ],
+                      }
+                    : {}),
+                },
+              }
+            : {}),
+        },
+        metadata,
+      );
     }
   }
 
@@ -401,6 +562,7 @@ export class ConversationParserState {
     itemId: string,
     item: Record<string, unknown>,
     completed: boolean,
+    metadata: ConversationItemMetadata = {},
   ): void {
     let block = parseGeneratedImage(item);
     if (!block) return;
@@ -420,6 +582,7 @@ export class ConversationParserState {
       block = mergeGeneratedImage(previous, block);
     }
     const message: ConversationMessage = {
+      ...metadata,
       type: "assistant",
       turnId,
       itemId,
@@ -1528,6 +1691,14 @@ function parseToolResultFromPayload(payload: Record<string, unknown>): {
   };
 }
 
+function readAgentItemText(item: Record<string, unknown> | undefined): string {
+  if (typeof item?.text === "string") return item.text;
+  if (!Array.isArray(item?.content)) return "";
+  return item.content
+    .map((block) => (typeof block?.text === "string" ? block.text : ""))
+    .join("");
+}
+
 function parseCodexConversation(
   lines: LineWithOffset[],
   knownToolNames?: Map<string, string>,
@@ -1595,6 +1766,13 @@ function parseCodexConversation(
         `${offset}:image-generation`,
         timestamp,
       );
+      Object.assign(
+        imageMessage,
+        readConversationItemMetadata(
+          payload,
+          (payload.item ?? payload) as Record<string, unknown>,
+        ),
+      );
       imageMessage.itemId = generatedImage.id;
       imageMessage.streaming = isGeneratedImageRunning(generatedImage);
       pushConversationMessage(messages, imageMessage);
@@ -1615,6 +1793,31 @@ function parseCodexConversation(
           ),
         );
         continue;
+      }
+      if (
+        state &&
+        (normalizedPayloadType === "itemstarted" ||
+          normalizedPayloadType === "itemcompleted") &&
+        payload.item &&
+        typeof payload.item === "object"
+      ) {
+        const item = payload.item as Record<string, unknown>;
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId);
+        const itemId = asTrimmedString(item.id);
+        const type = String(item.type).replace(/_/g, "").toLowerCase();
+        if (
+          turnId &&
+          itemId &&
+          ["agentmessage", "reasoning", "plan"].includes(type)
+        ) {
+          const metadata = readConversationItemMetadata(payload, item);
+          if (normalizedPayloadType === "itemstarted")
+            state.noteItemStart(turnId, itemId, metadata);
+          else if (Object.keys(metadata).length)
+            state.completeStreamItem(turnId, itemId, item, metadata, {
+              timestamp,
+            });
+        }
       }
       if (normalizedPayloadType === "itemcompleted") {
         const collaborationBlock = parsePersistedCollaborationItem(
@@ -1850,22 +2053,35 @@ function parseCodexConversation(
         record as Record<string, unknown>,
         offset,
       );
-
+      const message = createChatMessage(
+        role,
+        content,
+        `${offset}:message:${messages.length}`,
+        timestamp,
+        editableRecord && editableMessagePairs.has(offset)
+          ? { editId: editableRecord.editId, text: editableRecord.text }
+          : undefined,
+        parseLastTokenUsage(payload.last_token_usage ?? payload.usage),
+        { ...modelMetadata, ...parseConversationModelMetadata(payload) },
+      );
+      if (role === "assistant") {
+        const phase = payload.phase;
+        if (
+          message.message &&
+          (phase === "commentary" || phase === "final_answer")
+        )
+          message.message.phase = phase;
+        message.itemId = state?.matchCompletedAssistantToRaw(
+          state.currentTurnId,
+          state.sourceItemId,
+          text,
+        );
+      }
       pushConversationMessage(
         messages,
-        createChatMessage(
-          role,
-          content,
-          `${offset}:message:${messages.length}`,
-          timestamp,
-          editableRecord && editableMessagePairs.has(offset)
-            ? {
-                editId: editableRecord.editId,
-                text: editableRecord.text,
-              }
-            : undefined,
-          parseLastTokenUsage(payload.last_token_usage ?? payload.usage),
-          { ...modelMetadata, ...parseConversationModelMetadata(payload) },
+        withConversationItemMetadata(
+          message,
+          readConversationItemMetadata(payload),
         ),
       );
       continue;
@@ -2075,7 +2291,11 @@ export function parseConversationTextChunk(
         matched.add(responseOffset);
         matched.add(eventOffset);
         const index = state.responseMessageIndexes.get(responseOffset);
-        if (index === undefined) continue;
+        if (
+          index === undefined ||
+          getAnswerRestriction(state.messages[index].moderation)
+        )
+          continue;
         const response = candidates.find(
           (line) => line.offset === responseOffset,
         )!;

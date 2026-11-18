@@ -1,5 +1,6 @@
 import type { ConversationMessage } from "@codex-deck/api";
 import { isVisibleConversationMessage } from "../api/conversation-pagination";
+import { getAnswerRestriction } from "../api/conversation-item-metadata";
 import { sanitizeText } from "./utils";
 
 /** Attach one set of answer actions after each completed task's last block. */
@@ -65,6 +66,7 @@ export function getCompletedTaskAnswer(
       break;
     if (
       message.type !== "assistant" ||
+      getAnswerRestriction(message.moderation) ||
       message.streaming ||
       (completion.turnId &&
         message.turnId &&

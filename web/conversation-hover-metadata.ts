@@ -59,6 +59,21 @@ export function getConversationHoverMetadata(
       details.push({ label, value: Math.round(value).toLocaleString() });
     }
   };
+  if (message.startedAtMs !== undefined) {
+    addText(
+      "item_timing",
+      "Started",
+      formatLocalTimestamp(message.startedAtMs),
+    );
+  }
+  if (message.completedAtMs !== undefined) {
+    addText(
+      "item_timing",
+      "Completed",
+      formatLocalTimestamp(message.completedAtMs),
+    );
+  }
+  addCount("content_tokens", "Content tokens", message.contentTokenCount);
 
   // A message's overall usage belongs to its primary text, not sibling tools.
   const usage =

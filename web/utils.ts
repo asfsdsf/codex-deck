@@ -127,7 +127,7 @@ function getLocalTimeZoneAbbreviation(date: Date): string {
 }
 
 export function formatLocalTimestamp(
-  timestamp: string | null | undefined,
+  timestamp: string | number | null | undefined,
 ): string | null {
   if (!timestamp) {
     return null;

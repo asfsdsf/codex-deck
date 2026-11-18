@@ -304,11 +304,25 @@ export async function applyConversationLiveEvent(
         event.delta,
       );
       break;
+    case "item_started":
+      state.noteItemStart(event.turnId, event.itemId, event.metadata ?? {});
+      break;
     case "item_completed":
-      state.completeStreamItem(event.turnId, event.itemId, event.item);
+      state.completeStreamItem(
+        event.turnId,
+        event.itemId,
+        event.item,
+        event.metadata,
+      );
       break;
     case "image_generation_updated":
-      state.applyStreamImage(event.turnId, event.itemId, event.item, false);
+      state.applyStreamImage(
+        event.turnId,
+        event.itemId,
+        event.item,
+        false,
+        event.metadata,
+      );
       break;
     case "thread_status":
       if (

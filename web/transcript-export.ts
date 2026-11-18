@@ -1,4 +1,5 @@
 import type { ContentBlock, ConversationMessage } from "@codex-deck/api";
+import { getAnswerRestriction } from "../api/conversation-item-metadata";
 
 function codeBlock(text: string, language = "") {
   const longest = Math.max(
@@ -63,19 +64,24 @@ export function transcriptMarkdown(
           ? "Assistant"
           : message.type.replace(/[-_]/g, " ");
     const content = message.message?.content;
+    const restriction = getAnswerRestriction(message.moderation);
     const body =
-      typeof content === "string"
+      restriction ??
+      (typeof content === "string"
         ? content
         : Array.isArray(content)
           ? content.map(blockMarkdown).filter(Boolean).join("\n\n")
           : message.summary ||
             (message.threadGoal
               ? codeBlock(printable(message.threadGoal), "json")
-              : "");
+              : ""));
     const metadata = [
       message.timestamp,
       message.message?.model,
       message.message?.phase,
+      message.contentTokenCount === undefined
+        ? null
+        : `${message.contentTokenCount} content tokens`,
       message.streaming ? "In progress" : null,
     ]
       .filter(Boolean)

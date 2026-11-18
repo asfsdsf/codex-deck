@@ -13,6 +13,7 @@ import { registerReviewRoutes } from "./review-routes";
 import { registerExtensionRoutes } from "./extension-routes";
 import { registerThreadHistoryRoutes } from "./thread-history-routes";
 import { sideConversationItems } from "../session-origins";
+import { getAnswerRestriction } from "../conversation-item-metadata";
 import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
 import type { CodexElicitationResponse } from "../mcp-elicitation";
@@ -34,6 +35,7 @@ import {
   getSessionContext,
   getCodexConfigDefaults,
   getConversation,
+  RestrictedConversationError,
   getConversationRawChunk,
   getConversationRawWindow,
   getConversationMessageWindow,
@@ -2419,11 +2421,28 @@ export function createServer(options: ServerOptions) {
           )
           .map((session) => session.id),
       );
+      const sessionIds: string[] = [];
+      const match = query.toLocaleLowerCase();
+      for (const sessionId of result.sessionIds) {
+        if (!activeSessionIds.has(sessionId)) continue;
+        const messages = await getConversation(sessionId);
+        if (
+          messages.some((message) => getAnswerRestriction(message.moderation))
+        ) {
+          const found = messages.some(
+            (message) =>
+              !getAnswerRestriction(message.moderation) &&
+              JSON.stringify(message.message?.content ?? "")
+                .toLocaleLowerCase()
+                .includes(match),
+          );
+          if (!found) continue;
+        }
+        sessionIds.push(sessionId);
+      }
       return c.json({
         ...result,
-        sessionIds: result.sessionIds.filter((sessionId) =>
-          activeSessionIds.has(sessionId),
-        ),
+        sessionIds,
       } satisfies SessionContentSearchResponse);
     } catch (error) {
       const message = toErrorMessage(error);
@@ -4090,8 +4109,13 @@ export function createServer(options: ServerOptions) {
         ? parsedMaxBytes
         : DEFAULT_CONVERSATION_RAW_CHUNK_MAX_BYTES;
 
-    const chunk = await getConversationRawChunk(sessionId, offset, maxBytes);
-    return c.json(chunk satisfies ConversationRawChunkResponse);
+    try {
+      const chunk = await getConversationRawChunk(sessionId, offset, maxBytes);
+      return c.json(chunk satisfies ConversationRawChunkResponse);
+    } catch (error) {
+      if (!(error instanceof RestrictedConversationError)) throw error;
+      return c.json({ error: error.message }, 409);
+    }
   });
 
   app.get("/api/conversation/:id/messages", async (c) => {
@@ -4136,12 +4160,17 @@ export function createServer(options: ServerOptions) {
         ? parsedMaxBytes
         : DEFAULT_CONVERSATION_RAW_CHUNK_MAX_BYTES;
 
-    const window = await getConversationRawWindow(
-      sessionId,
-      beforeOffset,
-      maxBytes,
-    );
-    return c.json(window satisfies ConversationRawWindowResponse);
+    try {
+      const window = await getConversationRawWindow(
+        sessionId,
+        beforeOffset,
+        maxBytes,
+      );
+      return c.json(window satisfies ConversationRawWindowResponse);
+    } catch (error) {
+      if (!(error instanceof RestrictedConversationError)) throw error;
+      return c.json({ error: error.message }, 409);
+    }
   });
 
   app.get("/api/conversation/:id/stream", async (c) => {

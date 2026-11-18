@@ -1,3 +1,4 @@
+import { getAnswerRestriction } from "../api/conversation-item-metadata";
 import type { ContentBlock, ConversationMessage } from "@codex-deck/api";
 import { shouldShowTokenLimitNotice } from "./token-limit-notices";
 import { formatDurationMs, sanitizeText } from "./utils";
@@ -945,6 +946,8 @@ export function getViewportMessageGroup(
     return "default";
   }
 
+  if (getAnswerRestriction(message.moderation)) return "important";
+
   const content = message.message?.content;
   if (hasAssistantPrimaryText(content)) {
     return "important";
@@ -968,6 +971,9 @@ export function getCollapsedViewportLine(
   const content = message.message?.content;
 
   if (message.type === "assistant") {
+    const restriction = getAnswerRestriction(message.moderation);
+    if (restriction)
+      return plainLine("assistant", restriction, [detailSegment(restriction)]);
     return getAssistantInlinePreview(content, context);
   }
 

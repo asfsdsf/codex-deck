@@ -73,6 +73,7 @@ import { mergeDisplayConversationMessages } from "../conversation-message-merge"
 import { computeRailScrollDelta } from "../rail-scroll-utils";
 import { shouldToggleCollapsedSegmentFromContentClick } from "../segment-toggle-click";
 import { findConversationSearchMatches } from "../conversation-search";
+import { getAnswerRestriction } from "../../api/conversation-item-metadata";
 import { isVisibleConversationMessage } from "../../api/conversation-pagination";
 import {
   deriveAiTerminalStepStatesByMessageKey,
@@ -2408,6 +2409,7 @@ const SessionView = memo(
         };
 
         for (const entry of visibleMessageEntries) {
+          if (getAnswerRestriction(entry.message.moderation)) continue;
           const content = entry.message.message?.content;
 
           if (typeof content === "string") {

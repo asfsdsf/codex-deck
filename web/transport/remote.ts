@@ -60,6 +60,7 @@ function getCodexAppServerEventKey(event: CodexAppServerEvent): string {
         "|",
       );
     case "image_generation_updated":
+    case "item_started":
     case "item_completed":
       return [event.type, event.threadId, event.turnId, event.itemId].join("|");
     case "error":

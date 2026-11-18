@@ -1,3 +1,4 @@
+import { retainConversationItemMetadata } from "../api/conversation-item-metadata";
 import type { ContentBlock, ConversationMessage } from "@codex-deck/api";
 import { isLiveConversationMessage } from "./live-codex-deltas";
 
@@ -407,7 +408,12 @@ export function mergeDisplayConversationMessages(
     for (const message of incomingMessages) {
       const previous = numbered.get(message.sequence!);
       if (!previous || (message.revision ?? 0) > (previous.revision ?? -1)) {
-        numbered.set(message.sequence!, message);
+        numbered.set(
+          message.sequence!,
+          previous
+            ? retainConversationItemMetadata(previous, message)
+            : message,
+        );
         changed = true;
       }
     }

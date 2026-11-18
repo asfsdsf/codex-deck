@@ -1,5 +1,9 @@
 import { CodexInputError } from "./codex-input-error";
 import {
+  getAnswerRestriction,
+  readConversationItemMetadata,
+} from "./conversation-item-metadata";
+import {
   ATTACHED_SIDE_CHAT_SOURCE,
   sideConversationItems,
 } from "./session-origins";
@@ -4837,17 +4841,28 @@ class CodexAppServerClient {
 
     const turnId = asTrimmedString(notification.turnId ?? notification.turn_id);
     const itemId = asTrimmedString(item.id);
+    const startedType = String(item.type).replace(/_/g, "").toLowerCase();
     if (
       turnId &&
       itemId &&
-      String(item.type).replace(/_/g, "").toLowerCase() === "imagegeneration"
+      ["agentmessage", "reasoning", "plan", "imagegeneration"].includes(
+        startedType,
+      )
     ) {
+      const metadata = readConversationItemMetadata(notification, item);
       this.emitAppServerEvent({
-        type: "image_generation_updated",
+        type:
+          startedType === "imagegeneration"
+            ? "image_generation_updated"
+            : "item_started",
         threadId,
         turnId,
         itemId,
-        item,
+        item:
+          startedType === "imagegeneration"
+            ? item
+            : { type: item.type, id: itemId },
+        metadata,
       });
     }
 
@@ -4909,14 +4924,19 @@ class CodexAppServerClient {
       ["agentmessage", "reasoning", "plan", "imagegeneration"].includes(
         completedType ?? "",
       )
-    )
+    ) {
+      const metadata = readConversationItemMetadata(notification, item);
       this.emitAppServerEvent({
         type: "item_completed",
         threadId,
         turnId,
         itemId,
-        item,
+        item: getAnswerRestriction(metadata.moderation)
+          ? { id: itemId, type: item.type, phase: item.phase }
+          : item,
+        metadata,
       });
+    }
 
     this.emitCollabAgentItemEvent(
       threadId,

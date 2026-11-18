@@ -1,3 +1,4 @@
+import { getAnswerRestriction } from "../../api/conversation-item-metadata";
 import { useEffect, useState, memo, type JSX } from "react";
 import type {
   ConversationMessage,
@@ -1910,6 +1911,20 @@ function getBlockTranslationSource(block: ContentBlock): string | null {
 }
 
 const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
+  const restriction = getAnswerRestriction(props.message.moderation);
+  if (restriction) {
+    return (
+      <p className="rounded-lg border border-zinc-500/30 bg-zinc-500/10 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300">
+        {restriction}
+      </p>
+    );
+  }
+  return <VisibleMessageBlock {...props} />;
+});
+
+const VisibleMessageBlock = memo(function VisibleMessageBlock(
+  props: MessageBlockProps,
+) {
   const {
     message,
     sessionId,

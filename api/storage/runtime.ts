@@ -91,6 +91,10 @@ import { basename, isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
 import { randomUUID } from "node:crypto";
 import { mergeGeneratedImage, parseGeneratedImage } from "../generated-images";
+import {
+  getAnswerRestriction,
+  type ConversationItemMetadata,
+} from "../conversation-item-metadata";
 export type {
   CodexElicitationRequest,
   CodexElicitationResponse,
@@ -399,11 +403,12 @@ export type CodexAppServerEvent =
       pending: boolean;
     }
   | {
-      type: "item_completed" | "image_generation_updated";
+      type: "item_started" | "item_completed" | "image_generation_updated";
       threadId: string;
       turnId: string;
       itemId: string;
       item: Record<string, unknown>;
+      metadata?: ConversationItemMetadata;
     }
   | {
       type: "error";
@@ -1692,7 +1697,7 @@ export interface SessionSkillConfigWriteResponse {
   effectiveEnabled: boolean;
 }
 
-export interface ConversationMessage {
+export interface ConversationMessage extends ConversationItemMetadata {
   type:
     | "user"
     | "assistant"
@@ -6205,6 +6210,7 @@ export async function getConversationRawChunk(
       done: true,
     };
   }
+  await assertRawConversationAvailable(filePath);
 
   let fileHandle;
   try {
@@ -6273,6 +6279,7 @@ export async function getConversationRawWindow(
       done: true,
     };
   }
+  await assertRawConversationAvailable(filePath);
 
   let fileHandle;
   try {
@@ -6707,6 +6714,28 @@ export async function getSessionContext(
   });
 }
 
+export class RestrictedConversationError extends Error {
+  constructor() {
+    super(
+      "This conversation has restricted answers. Use the parsed transcript.",
+    );
+    this.name = "RestrictedConversationError";
+  }
+}
+
+async function hasRestrictedAnswers(filePath: string): Promise<boolean> {
+  const messages = await readConversationMessageSnapshot(
+    filePath,
+    findHistoryRollout,
+  ).catch(() => []);
+  return messages.some((message) => getAnswerRestriction(message.moderation));
+}
+
+async function assertRawConversationAvailable(filePath: string): Promise<void> {
+  if (await hasRestrictedAnswers(filePath))
+    throw new RestrictedConversationError();
+}
+
 export async function getConversationStream(
   sessionId: string,
   fromOffset: number = 0,
@@ -6716,6 +6745,14 @@ export async function getConversationStream(
 
   if (!filePath) {
     return { messages: [], nextOffset: 0, done: true };
+  }
+  if (await hasRestrictedAnswers(filePath)) {
+    return readConversationMessageUpdates(
+      filePath,
+      fromOffset,
+      options.maxPayloadBytes,
+      findHistoryRollout,
+    );
   }
 
   let fileHandle;

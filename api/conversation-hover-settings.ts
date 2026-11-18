@@ -8,6 +8,12 @@ export const CONVERSATION_HOVER_FIELDS = [
   },
   { key: "timestamp", label: "Message time", group: "Basic", default: true },
   {
+    key: "item_timing",
+    label: "Item start and completion times",
+    group: "Basic",
+    default: true,
+  },
+  {
     key: "input_tokens",
     label: "Input tokens",
     group: "Tokens",
@@ -16,6 +22,12 @@ export const CONVERSATION_HOVER_FIELDS = [
   {
     key: "output_tokens",
     label: "Output tokens",
+    group: "Tokens",
+    default: true,
+  },
+  {
+    key: "content_tokens",
+    label: "Message content tokens",
     group: "Tokens",
     default: true,
   },
