@@ -24,6 +24,7 @@ export type NativeRpc = (
 ) => Promise<unknown>;
 export interface McpServerInventory {
   name: string;
+  environmentId?: string | null;
   runtimeStatus: string | null;
   authStatus: string;
   tools: Record<
@@ -36,6 +37,7 @@ export interface McpServerInventory {
 }
 export interface McpRuntimeUpdate {
   name: string;
+  environmentId?: string | null;
   threadId: string | null;
   status?: string;
   success?: boolean;

@@ -2174,10 +2174,11 @@ export function getCodexMcpInventory(
 export function loginCodexMcpServer(
   name: string,
   threadId: string | null,
+  environmentId?: string | null,
 ): Promise<{ authorizationUrl: string; loginId?: string }> {
   return requestJson("/api/codex/mcp/login", {
     method: "POST",
-    body: JSON.stringify({ name, threadId }),
+    body: JSON.stringify({ name, threadId, environmentId }),
   });
 }
 export function reloadCodexMcpServers(): Promise<{ ok: boolean }> {

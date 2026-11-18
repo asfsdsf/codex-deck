@@ -41,6 +41,7 @@ const params = {
   threadId: "thread",
   turnId: null,
   serverName: "example",
+  environmentId: "workspace-b",
   mode: "form",
   message: "Configure",
   requestedSchema: schema,

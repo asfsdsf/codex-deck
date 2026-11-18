@@ -94,6 +94,15 @@ export function parseMcpAppToolCall(
   const preferred =
     ui?.preferredModelDisplayMode ?? ui?.preferred_model_display_mode;
   const invocation = legacy ? asRecord(source.invocation) : source;
+  const environment =
+    invocation?.environmentId !== undefined
+      ? invocation.environmentId
+      : invocation?.environment_id;
+  if (
+    environment != null &&
+    (typeof environment !== "string" || !environment.trim())
+  )
+    return null;
   const server = asString(invocation?.server);
   const tool = asString(invocation?.tool);
   const callId = asString(legacy ? source.call_id : source.id);
@@ -111,6 +120,9 @@ export function parseMcpAppToolCall(
   return {
     callId,
     server,
+    ...(environment !== undefined
+      ? { environmentId: environment as string | null }
+      : {}),
     tool,
     resourceUri,
     displayMode:

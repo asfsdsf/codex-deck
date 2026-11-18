@@ -1282,6 +1282,8 @@ class CodexAppServerClient {
   }
 
   private mcpUpdates: McpRuntimeUpdate[] = [];
+  // OAuth completion carries the login ID, but may omit the environment.
+  private mcpLoginScopes = new Map<string, string | null>();
   private notifyNativeState(
     scope: NativeScope,
     threadId: string | null = null,
@@ -1370,9 +1372,16 @@ class CodexAppServerClient {
     }
     return {
       servers,
-      updates: this.mcpUpdates.filter(
-        (update) => !update.threadId || update.threadId === id,
-      ),
+      updates: this.mcpUpdates
+        .filter((update) => !update.threadId || update.threadId === id)
+        .map((update) => {
+          const scope = update.loginId
+            ? this.mcpLoginScopes.get(update.loginId)
+            : undefined;
+          return scope === undefined
+            ? update
+            : { ...update, environmentId: scope };
+        }),
     };
   }
   /** `mcpServer/resource/read` scoped to the originating tool call. */
@@ -1381,6 +1390,8 @@ class CodexAppServerClient {
     server: string;
     uri: string;
     originCallId: string;
+    environmentId?: string | null;
+    meta?: Record<string, unknown>;
   }): Promise<unknown> {
     return this.requestNativeThread(
       "mcpServer/resource/read",
@@ -1389,6 +1400,10 @@ class CodexAppServerClient {
         server: input.server,
         uri: input.uri,
         originCallId: input.originCallId,
+        ...(input.environmentId != null
+          ? { environmentId: input.environmentId }
+          : {}),
+        ...(input.meta ? { _meta: input.meta } : {}),
       },
       input.threadId,
     );
@@ -1396,6 +1411,7 @@ class CodexAppServerClient {
   public async callMcpServerTool(input: {
     threadId: string;
     server: string;
+    environmentId?: string | null;
     tool: string;
     arguments: Record<string, unknown>;
   }): Promise<unknown> {
@@ -1404,6 +1420,9 @@ class CodexAppServerClient {
       {
         threadId: input.threadId,
         server: input.server,
+        ...(input.environmentId != null
+          ? { environmentId: input.environmentId }
+          : {}),
         tool: input.tool,
         arguments: input.arguments,
       },
@@ -1413,11 +1432,16 @@ class CodexAppServerClient {
   public async loginMcpServer(
     name: string,
     threadId?: string | null,
+    environmentId?: string | null,
   ): Promise<{ authorizationUrl: string; loginId?: string }> {
     const result = nativeRecord(
       await this.requestNativeThread(
         "mcpServer/oauth/login",
-        { name: name.trim(), ...(threadId ? { threadId } : {}) },
+        {
+          name: name.trim(),
+          ...(threadId ? { threadId } : {}),
+          ...(environmentId != null ? { environmentId } : {}),
+        },
         threadId,
       ),
     );
@@ -1426,6 +1450,13 @@ class CodexAppServerClient {
       !/^https?:\/\//i.test(result.authorizationUrl)
     )
       throw new Error("Invalid MCP authorization URL");
+    if (typeof result.loginId === "string") {
+      this.mcpLoginScopes.set(result.loginId, environmentId ?? null);
+      if (this.mcpLoginScopes.size > 256) {
+        const oldest = this.mcpLoginScopes.keys().next().value;
+        if (oldest !== undefined) this.mcpLoginScopes.delete(oldest);
+      }
+    }
     this.notifyNativeState("mcp", threadId || null);
     return {
       authorizationUrl: result.authorizationUrl,
@@ -4285,6 +4316,8 @@ class CodexAppServerClient {
             !(
               old.name === update.name &&
               old.threadId === update.threadId &&
+              (old.environmentId ?? null) === (update.environmentId ?? null) &&
+              (old.loginId ?? null) === (update.loginId ?? null) &&
               (old.status !== undefined) === (update.status !== undefined)
             ),
         );
@@ -7070,16 +7103,20 @@ export interface CodexAppServerClientFacade {
     server: string;
     uri: string;
     originCallId: string;
+    environmentId?: string | null;
+    meta?: Record<string, unknown>;
   }) => Promise<unknown>;
   callMcpServerTool?: (input: {
     threadId: string;
     server: string;
+    environmentId?: string | null;
     tool: string;
     arguments: Record<string, unknown>;
   }) => Promise<unknown>;
   loginMcpServer?: (
     name: string,
     threadId?: string | null,
+    environmentId?: string | null,
   ) => Promise<{ authorizationUrl: string; loginId?: string }>;
   reloadMcpServers?: () => Promise<void>;
   getExtensions?: () => CodexExtensions;
@@ -7278,7 +7315,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       ),
     readMcpAppResource: (input) => client!.readMcpAppResource(input),
     callMcpServerTool: (input) => client!.callMcpServerTool(input),
-    loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
+    loginMcpServer: (name, id, environmentId) =>
+      client!.loginMcpServer(name, id, environmentId),
     reloadMcpServers: () => client!.reloadMcpServers(),
     getExtensions: () => client!.getExtensions(),
     organization: () => client!.organization,

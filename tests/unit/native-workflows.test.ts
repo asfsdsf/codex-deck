@@ -101,6 +101,81 @@ test("MCP inventory subscribes shared threads, paginates, retains startup and OA
   await client.close();
 });
 
+test("MCP retains both same-name environments and correlates OAuth completions by login ID", async () => {
+  const calls: { method: string; params: Record<string, unknown> }[] = [];
+  const { client, internal } = mockClient(async (method, params) => {
+    calls.push({ method, params });
+    switch (method) {
+      case "mcpServerStatus/list":
+        return {
+          data: ["a", "b"].map((environmentId) => ({
+            name: "shop",
+            environmentId,
+            tools: {},
+            resources: [],
+            resourceTemplates: [],
+          })),
+        };
+      case "mcpServer/oauth/login":
+        return {
+          authorizationUrl: "https://auth.example/login",
+          loginId: "login-b",
+        };
+      default:
+        return {};
+    }
+  });
+  for (const environmentId of ["a", "b"]) {
+    internal.handleServerNotification("mcpServer/startupStatus/updated", {
+      name: "shop",
+      threadId: "thread",
+      environmentId,
+      status: environmentId === "a" ? "ready" : "failed",
+    });
+  }
+  internal.handleServerNotification("mcpServer/oauthLogin/completed", {
+    name: "shop",
+    threadId: "thread",
+    loginId: "login-b",
+    success: true,
+  });
+  await client.loginMcpServer("shop", "thread", "b");
+  await client.readMcpAppResource({
+    threadId: "thread",
+    server: "shop",
+    environmentId: "b",
+    uri: "ui://search",
+    originCallId: "tool-1",
+    meta: { locale: "en" },
+  });
+  const result = await client.listMcpServers("thread");
+  assert.deepEqual(
+    result.updates.map(({ environmentId, status, success }) => [
+      environmentId,
+      status ?? success,
+    ]),
+    [
+      ["a", "ready"],
+      ["b", "failed"],
+      ["b", true],
+    ],
+  );
+  assert.deepEqual(calls[0].params, {
+    name: "shop",
+    threadId: "thread",
+    environmentId: "b",
+  });
+  assert.deepEqual(calls[1].params, {
+    threadId: "thread",
+    server: "shop",
+    environmentId: "b",
+    uri: "ui://search",
+    originCallId: "tool-1",
+    _meta: { locale: "en" },
+  });
+  await client.close();
+});
+
 test("MCP administration routes validate input and preserve transport-neutral payloads", async () => {
   const app = new Hono();
   let subscriptions = 0;
@@ -115,9 +190,10 @@ test("MCP administration routes validate input and preserve transport-neutral pa
           { name: "server", threadId: threadId || null, status: "starting" },
         ],
       }),
-      loginMcpServer: async (name, threadId) => {
+      loginMcpServer: async (name, threadId, environmentId) => {
         assert.equal(name, "server");
         assert.equal(threadId, "thread");
+        assert.equal(environmentId, "workspace-a");
         return { authorizationUrl: "https://auth.example", loginId: "id" };
       },
       reloadMcpServers: async () => {},
@@ -132,7 +208,11 @@ test("MCP administration routes validate input and preserve transport-neutral pa
       await app.request("/api/codex/mcp/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "server", threadId: "thread" }),
+        body: JSON.stringify({
+          name: "server",
+          threadId: "thread",
+          environmentId: "workspace-a",
+        }),
       })
     ).status,
     200,

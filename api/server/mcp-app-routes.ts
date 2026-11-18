@@ -34,6 +34,15 @@ function stringField(
     : null;
 }
 
+const resourceRoutingKeys = new Set([
+  "x-codex-turn-metadata",
+  "threadId",
+  "codex/connectionLease",
+  "connector_id",
+  "link_id",
+  "_codex_apps",
+]);
+
 async function readBody(c: Context): Promise<Record<string, unknown> | null> {
   try {
     const body = await c.req.json();
@@ -74,6 +83,16 @@ export function registerMcpAppRoutes(
     if (!body || !threadId || !callId) {
       return c.json({ error: "threadId and callId are required" }, 400);
     }
+    const meta = body._meta;
+    if (
+      meta != null &&
+      (typeof meta !== "object" ||
+        Array.isArray(meta) ||
+        JSON.stringify(meta).length > 16_384 ||
+        Object.keys(meta).some((key) => resourceRoutingKeys.has(key)))
+    ) {
+      return c.json({ error: "Invalid MCP resource metadata." }, 400);
+    }
     try {
       const mcp = client();
       if (!mcp.readMcpAppResource) {
@@ -83,12 +102,38 @@ export function registerMcpAppRoutes(
       if (!origin) {
         return c.json({ error: "MCP App tool call not found" }, 404);
       }
+      // Codex Apps resolves resource provenance by call ID. Other registries
+      // use the environment and server name, including for widget resources.
+      if (
+        origin.environmentId == null &&
+        origin.server !== "codex_apps" &&
+        mcp.listMcpServers
+      ) {
+        const inventory = await mcp.listMcpServers(threadId);
+        const peers = inventory.servers.filter(
+          (entry) => entry.name === origin.server,
+        );
+        if (
+          (origin.environmentId === undefined && peers.length > 1) ||
+          (origin.environmentId === null &&
+            !peers.some((entry) => entry.environmentId == null))
+        ) {
+          return c.json(
+            { error: "MCP registration is unavailable or ambiguous." },
+            409,
+          );
+        }
+      }
       deps.subscribe?.();
       const response = await mcp.readMcpAppResource({
         threadId,
         server: origin.server,
         uri: origin.resourceUri,
         originCallId: origin.callId,
+        ...(origin.environmentId !== undefined
+          ? { environmentId: origin.environmentId }
+          : {}),
+        ...(meta != null ? { meta: meta as Record<string, unknown> } : {}),
       });
       return c.json(extractMcpAppResource(response, origin.resourceUri));
     } catch (error) {
@@ -125,9 +170,15 @@ export function registerMcpAppRoutes(
       }
       // Only the originating server's tools that are visible to apps.
       const inventory = await mcp.listMcpServers(threadId);
-      const server = inventory.servers.find(
-        (entry) => entry.name === origin.server,
+      const matches = inventory.servers.filter(
+        (entry) =>
+          entry.name === origin.server &&
+          (origin.environmentId === undefined ||
+            (entry.environmentId ?? null) === origin.environmentId),
       );
+      if (matches.length > 1)
+        return c.json({ error: "MCP registration is ambiguous." }, 409);
+      const server = matches[0];
       if (!isToolCallableFromApp(server, tool)) {
         return c.json(
           { error: `${tool} is not available to this MCP App.` },
@@ -141,6 +192,9 @@ export function registerMcpAppRoutes(
       const raw = await mcp.callMcpServerTool({
         threadId,
         server: origin.server,
+        ...(server.environmentId != null
+          ? { environmentId: server.environmentId }
+          : {}),
         tool,
         arguments: args as Record<string, unknown>,
       });

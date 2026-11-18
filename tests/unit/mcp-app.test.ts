@@ -232,7 +232,7 @@ test("app tool visibility and rate limiting", () => {
   assert.equal(limiter.allow("a"), true);
 });
 
-function widgetConversation(): ConversationMessage[] {
+function widgetConversation(environmentId?: string): ConversationMessage[] {
   return [
     {
       type: "assistant",
@@ -242,7 +242,10 @@ function widgetConversation(): ConversationMessage[] {
           {
             type: "mcp_app",
             id: "call-1",
-            mcpApp: parseMcpAppToolCall(paginatedItem)!,
+            mcpApp: parseMcpAppToolCall({
+              ...paginatedItem,
+              item: { ...paginatedItem.item, environment_id: environmentId },
+            })!,
           },
         ],
       },
@@ -254,7 +257,7 @@ test("MCP App routes only act for the originating server and app-visible tools",
   const calls: Array<{ method: string; input: unknown }> = [];
   const app = new Hono();
   registerMcpAppRoutes(app, {
-    readConversation: async () => widgetConversation(),
+    readConversation: async () => widgetConversation("workspace-b"),
     rateLimiter: new McpAppRateLimiter(1),
     getClient: () => ({
       readMcpAppResource: async (input) => {
@@ -277,6 +280,16 @@ test("MCP App routes only act for the originating server and app-visible tools",
         servers: [
           {
             name: "shop",
+            environmentId: "workspace-a",
+            runtimeStatus: null,
+            authStatus: "none",
+            resources: [],
+            resourceTemplates: [],
+            tools: { secret: { name: "secret" } },
+          },
+          {
+            name: "shop",
+            environmentId: "workspace-b",
             runtimeStatus: null,
             authStatus: "none",
             resources: [],
@@ -304,6 +317,8 @@ test("MCP App routes only act for the originating server and app-visible tools",
   const resource = await post("/api/codex/mcp-apps/resource", {
     threadId: "thread-1",
     callId: "call-1",
+    environmentId: "workspace-a",
+    _meta: { locale: "en" },
   });
   assert.equal(resource.status, 200);
   assert.equal((await resource.json()).html, "<p>w</p>");
@@ -314,8 +329,20 @@ test("MCP App routes only act for the originating server and app-visible tools",
       server: "shop",
       uri: "ui://widget/search.html",
       originCallId: "call-1",
+      environmentId: "workspace-b",
+      meta: { locale: "en" },
     },
   });
+  assert.equal(
+    (
+      await post("/api/codex/mcp-apps/resource", {
+        threadId: "thread-1",
+        callId: "call-1",
+        _meta: { threadId: "another-thread" },
+      })
+    ).status,
+    400,
+  );
   assert.equal(
     (
       await post("/api/codex/mcp-apps/resource", {
@@ -351,6 +378,7 @@ test("MCP App routes only act for the originating server and app-visible tools",
     tool: "refresh",
     // A widget cannot redirect the call to another server.
     server: "other",
+    environmentId: "workspace-a",
     arguments: { page: 2 },
   });
   assert.equal(ok.status, 200);
@@ -363,6 +391,7 @@ test("MCP App routes only act for the originating server and app-visible tools",
     input: {
       threadId: "thread-1",
       server: "shop",
+      environmentId: "workspace-b",
       tool: "refresh",
       arguments: { page: 2 },
     },

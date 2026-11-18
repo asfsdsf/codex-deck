@@ -82,10 +82,15 @@ export default function McpAdmin({ threadId }: { threadId: string | null }) {
       {data && !data.servers.length && <p>No MCP servers configured.</p>}
       {data?.servers.map((server) => (
         <article
-          key={server.name}
+          key={JSON.stringify([server.name, server.environmentId ?? null])}
           className="min-w-0 space-y-2 rounded-lg border border-zinc-700 bg-zinc-950/40 p-3"
         >
           <h3 className="break-all font-semibold">{server.name}</h3>
+          {server.environmentId && (
+            <p className="break-all text-xs text-zinc-600 dark:text-zinc-400">
+              Environment: {server.environmentId}
+            </p>
+          )}
           <p className="text-xs text-zinc-400">
             {server.runtimeStatus || "Connection status unavailable"} ·
             Authentication: {server.authStatus}
@@ -99,9 +104,12 @@ export default function McpAdmin({ threadId }: { threadId: string | null }) {
                   const result = await loginCodexMcpServer(
                     server.name,
                     threadId,
+                    server.environmentId,
                   );
                   setLogin({
-                    name: server.name,
+                    name: server.environmentId
+                      ? `${server.name} (${server.environmentId})`
+                      : server.name,
                     authorizationUrl: result.authorizationUrl,
                   });
                 })
@@ -141,7 +149,12 @@ export default function McpAdmin({ threadId }: { threadId: string | null }) {
             {server.resourceTemplates.length} resource templates
           </p>
           {data.updates
-            .filter((update) => update.name === server.name)
+            .filter(
+              (update) =>
+                update.name === server.name &&
+                (update.environmentId ?? null) ===
+                  (server.environmentId ?? null),
+            )
             .map((update, index) => (
               <p
                 key={index}

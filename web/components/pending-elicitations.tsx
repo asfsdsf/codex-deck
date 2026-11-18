@@ -137,6 +137,7 @@ export function ElicitationCard({
     >
       <div className="text-sm font-semibold">
         MCP request · {request.serverName}
+        {request.environmentId && ` · ${request.environmentId}`}
       </div>
       <p className="whitespace-pre-wrap break-words text-sm">
         {request.message}

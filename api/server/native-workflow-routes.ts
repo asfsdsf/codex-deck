@@ -183,17 +183,29 @@ export function registerNativeWorkflowRoutes(
     run(c, async (client) => {
       const body = await c.req.json();
       if (
-        typeof body.name !== "string" ||
+        typeof body?.name !== "string" ||
         !body.name.trim() ||
-        (body.threadId != null && typeof body.threadId !== "string")
+        (body.threadId != null && typeof body.threadId !== "string") ||
+        (body.environmentId != null &&
+          (typeof body.environmentId !== "string" ||
+            !body.environmentId.trim() ||
+            body.environmentId.length > 256 ||
+            !body.threadId?.trim()))
       )
         return c.json(
-          { error: "MCP server name and optional thread ID are required." },
+          {
+            error:
+              "An MCP server name is required. Environment registration also requires a conversation.",
+          },
           400,
         );
       if (!client.loginMcpServer)
         throw new Error("MCP OAuth is unavailable on this server.");
-      return client.loginMcpServer(body.name, body.threadId);
+      return client.loginMcpServer(
+        body.name,
+        body.threadId,
+        body.environmentId?.trim(),
+      );
     }),
   );
 }

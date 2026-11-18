@@ -3,6 +3,7 @@ export interface CodexElicitationRequest {
   threadId: string;
   turnId: string | null;
   serverName: string;
+  environmentId?: string | null;
   mode:
     | "form"
     | "openai/form"
@@ -73,6 +74,9 @@ export function parseElicitationRequest(
     threadId: value.threadId,
     turnId: typeof value.turnId === "string" ? value.turnId : null,
     serverName: value.serverName,
+    ...(value.environmentId === null || typeof value.environmentId === "string"
+      ? { environmentId: value.environmentId }
+      : {}),
     mode: mode as CodexElicitationRequest["mode"],
     message:
       mode === "openai/userVerification"

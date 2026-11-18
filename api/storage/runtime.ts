@@ -1773,6 +1773,7 @@ export interface ContentBlock {
 }
 
 export interface CodexMcpAppBlock {
+  environmentId?: string | null;
   /** Originating MCP tool call id. */
   callId: string;
   server: string;
