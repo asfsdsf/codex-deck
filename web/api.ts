@@ -1109,6 +1109,20 @@ export async function forkCodexThread(
   );
 }
 
+export function implementCodexPlanInFreshThread(
+  threadId: string,
+  markdown: string,
+) {
+  return requestJson<{ thread: CodexThreadSummary; turnId: string | null }>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/implement-plan`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markdown }),
+    },
+  );
+}
+
 export async function forkCodexThreadAtTurn(
   threadId: string,
   boundary: { lastTurnId: string } | { beforeTurnId: string },

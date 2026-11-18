@@ -1,3 +1,4 @@
+import { CodexInputError } from "./codex-input-error";
 import { CodexOrganizationService } from "./codex-organization";
 import {
   readConfigDiagnostics,
@@ -87,8 +88,9 @@ import {
 } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, join } from "node:path";
+import { extname, join, resolve } from "node:path";
 import {
   createInterface,
   type Interface as ReadlineInterface,
@@ -2113,6 +2115,89 @@ class CodexAppServerClient {
 
     this.newlyStartedThreadIds.add(threadId);
     return threadId;
+  }
+
+  private readonly planHandoffs = new Set<string>();
+
+  public async implementPlanInFreshThread(sourceId: string, markdown: string) {
+    if (this.planHandoffs.has(sourceId)) {
+      throw new CodexInputError(
+        "A plan handoff is already in progress for this conversation.",
+      );
+    }
+
+    this.planHandoffs.add(sourceId);
+    const codexHome = this.env?.CODEX_HOME || getCodexDir();
+    let threadId: string | undefined;
+    let attachmentDirectory: string | undefined;
+    let prepared = false;
+    try {
+      const source = await this.getThreadSummary(sourceId);
+      if (source.canAcceptDirectInput === false) {
+        throw new CodexInputError(
+          "This conversation cannot start an implementation.",
+        );
+      }
+      threadId = await this.createThread({ cwd: source.cwd });
+      const thread = await this.getThreadSummary(threadId);
+      let attachmentPath: string | undefined;
+      try {
+        const root = resolve(codexHome, "attachments");
+        await mkdir(root, { recursive: true, mode: 0o700 });
+        attachmentDirectory = await mkdtemp(join(root, "approved-plan-"));
+        const path = join(attachmentDirectory, "approved-plan.md");
+        await writeFile(path, markdown, { flag: "wx", mode: 0o600 });
+        attachmentPath = path;
+      } catch {
+        // Codex can insert the plan into the new thread when it cannot read a file.
+        if (attachmentDirectory) {
+          await rm(attachmentDirectory, { recursive: true, force: true }).catch(
+            () => {},
+          );
+          attachmentDirectory = undefined;
+        }
+      }
+
+      let result: unknown;
+      try {
+        result = await this.request("thread/prepareApprovedPlan", {
+          threadId,
+          markdown,
+          ...(attachmentPath ? { attachmentPath } : {}),
+        });
+      } catch (error) {
+        if (error instanceof CodexAppServerRpcError && error.code === -32601) {
+          throw new CodexInputError(
+            "This version of Codex does not support implementing a plan in a new conversation.",
+          );
+        }
+        throw error;
+      }
+      const prompt = asTrimmedString(asRecord(result)?.prompt);
+      if (!prompt)
+        throw new Error("Codex did not return an implementation prompt.");
+      prepared = true;
+      // Once sent, keep the attachment even if a connection fails before the reply.
+      const { turnId } = await this.sendMessage({
+        threadId,
+        cwd: thread.cwd,
+        text: prompt,
+      });
+      return { thread, turnId };
+    } catch (error) {
+      if (!prepared && threadId) {
+        this.newlyStartedThreadIds.delete(threadId);
+        await this.request("thread/unsubscribe", { threadId }).catch(() => {});
+        if (attachmentDirectory) {
+          await rm(attachmentDirectory, { recursive: true, force: true }).catch(
+            () => {},
+          );
+        }
+      }
+      throw error;
+    } finally {
+      this.planHandoffs.delete(sourceId);
+    }
   }
 
   public async setThreadName(threadId: string, name: string): Promise<void> {
@@ -7147,6 +7232,13 @@ export interface CodexAppServerClientFacade {
   readThreadMemory?: (threadId: string) => Promise<CodexThreadMemory>;
   readMemoryStatus?: () => Promise<CodexMemoryStatus>;
   resetMemories?: () => Promise<void>;
+  implementPlanInFreshThread?: (
+    sourceId: string,
+    markdown: string,
+  ) => Promise<{
+    thread: CodexThreadSummary;
+    turnId: string | null;
+  }>;
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
   forkThread?: (
@@ -7327,6 +7419,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     setThreadMemoryMode: (threadId: string, mode: CodexThreadMemoryMode) =>
       client!.setThreadMemoryMode(threadId, mode),
     resetMemories: () => client!.resetMemories(),
+    implementPlanInFreshThread: (sourceId, markdown) =>
+      client!.implementPlanInFreshThread(sourceId, markdown),
     createThread: (input: CreateCodexThreadInput) =>
       client!.createThread(input),
     setThreadName: (threadId: string, name: string) =>

@@ -119,7 +119,7 @@ interface MessageBlockProps {
   fallbackToolMap?: Map<string, string>;
   fallbackToolInputMap?: Map<string, Record<string, unknown>>;
   fallbackToolTimestampMap?: Map<string, string>;
-  onPlanAction?: (action: "implement" | "stay") => void;
+  onPlanAction?: PlanProposalHandler;
   onFilePathLinkClick?: (href: string) => boolean;
   onEditMessage?: (message: ConversationMessage, text: string) => Promise<void>;
   /** Fork/rewind menu; omitted when the message's turn ID is unknown. */
@@ -544,47 +544,51 @@ function extractSkillBlockContent(text: string): SkillBlockContent | null {
   };
 }
 
+export type PlanProposalAction = "implement" | "implement-fresh" | "stay";
+type PlanProposalHandler = (
+  action: PlanProposalAction,
+  markdown: string,
+) => Promise<boolean>;
+
 function ProposedPlanRenderer(props: {
   planMarkdown: string;
+  approvedMarkdown?: string;
   trailingMarkdown: string;
-  onPlanAction?: (action: "implement" | "stay") => void;
+  onPlanAction?: PlanProposalHandler;
   onFilePathLinkClick?: (href: string) => boolean;
 }) {
-  const { planMarkdown, trailingMarkdown, onPlanAction, onFilePathLinkClick } =
-    props;
-  const [chosenAction, setChosenAction] = useState<"implement" | "stay" | null>(
+  const {
+    planMarkdown,
+    approvedMarkdown = planMarkdown,
+    trailingMarkdown,
+    onPlanAction,
+    onFilePathLinkClick,
+  } = props;
+  const [chosenAction, setChosenAction] = useState<PlanProposalAction | null>(
     null,
   );
-  const [pendingAction, setPendingAction] = useState<
-    "implement" | "stay" | null
-  >(null);
+  const [pendingAction, setPendingAction] = useState<PlanProposalAction | null>(
+    null,
+  );
 
-  const handlePlanActionClick = (action: "implement" | "stay") => {
+  const handlePlanActionClick = async (action: PlanProposalAction) => {
     if (!onPlanAction || pendingAction || chosenAction) {
       return;
     }
 
-    setChosenAction(action);
     setPendingAction(action);
-
     try {
-      const result = onPlanAction(action);
-      void Promise.resolve(result)
-        .catch(() => {
-          setChosenAction((current) => (current === action ? null : current));
-        })
-        .finally(() => {
-          setPendingAction((current) => (current === action ? null : current));
-        });
-    } catch {
-      setChosenAction(null);
+      if (await onPlanAction(action, approvedMarkdown)) {
+        setChosenAction(action);
+      }
+    } finally {
       setPendingAction(null);
     }
   };
 
   return (
     <div className="my-1 rounded-xl border border-sky-400/35 bg-sky-500/10 p-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-sky-200/90">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-sky-800 dark:text-sky-200/90">
         Plan Proposal
       </div>
       <MarkdownRenderer
@@ -593,38 +597,44 @@ function ProposedPlanRenderer(props: {
       />
       {onPlanAction && !chosenAction && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => handlePlanActionClick("implement")}
-            disabled={pendingAction !== null}
-            className="rounded-lg border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-1.5 text-[11px] text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {pendingAction === "implement"
-              ? "Implementing..."
-              : "Yes, implement this plan"}
-          </button>
-          <button
-            type="button"
-            onClick={() => handlePlanActionClick("stay")}
-            disabled={pendingAction !== null}
-            className="rounded-lg border border-zinc-500/35 bg-zinc-500/10 px-2.5 py-1.5 text-[11px] text-zinc-200 transition-colors hover:bg-zinc-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {pendingAction === "stay"
-              ? "Staying in Plan mode..."
-              : "No, stay in Plan mode"}
-          </button>
+          {(
+            [
+              ["implement", "Implement here", "Sending..."],
+              [
+                "implement-fresh",
+                "Implement in a new conversation",
+                "Starting conversation...",
+              ],
+              ["stay", "Stay in Plan mode", "Switching mode..."],
+            ] as const
+          ).map(([action, label, pendingLabel]) => (
+            <button
+              key={action}
+              type="button"
+              onClick={() => void handlePlanActionClick(action)}
+              disabled={pendingAction !== null}
+              className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors disabled:opacity-50 ${
+                action === "stay"
+                  ? "border-zinc-500/35 bg-zinc-500/10 text-zinc-700 hover:bg-zinc-500/20 dark:text-zinc-200"
+                  : "border-emerald-500/30 bg-emerald-500/15 text-emerald-900 hover:bg-emerald-500/25 dark:text-emerald-100"
+              }`}
+            >
+              {pendingAction === action ? pendingLabel : label}
+            </button>
+          ))}
         </div>
       )}
-      {chosenAction === "stay" && (
-        <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-zinc-500/35 bg-zinc-500/10 px-2.5 py-1.5 text-[11px] text-zinc-200">
+      {chosenAction && (
+        <div
+          role="status"
+          className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-zinc-700 dark:text-zinc-200"
+        >
           <Check size={12} className="opacity-70" />
-          <span>Staying in Plan mode</span>
-        </div>
-      )}
-      {chosenAction === "implement" && (
-        <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/35 bg-emerald-500/15 px-2.5 py-1.5 text-[11px] text-emerald-100">
-          <Check size={12} className="opacity-70" />
-          <span>Implementing this plan</span>
+          {chosenAction === "stay"
+            ? "Staying in Plan mode"
+            : chosenAction === "implement-fresh"
+              ? "Implementation started in a new conversation"
+              : "Implementation requested"}
         </div>
       )}
       {trailingMarkdown && (
@@ -2861,11 +2871,17 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 }
                 const proposedPlan = parseProposedPlanBlock(sanitized);
                 if (proposedPlan) {
+                  const originalPlan = parseProposedPlanBlock(
+                    messageTranslationSource ?? displayMessageText,
+                  );
                   return (
                     <ProposedPlanRenderer
                       planMarkdown={proposedPlan.planMarkdown}
                       trailingMarkdown={proposedPlan.trailingMarkdown}
-                      onPlanAction={planActionHandler}
+                      approvedMarkdown={originalPlan?.planMarkdown}
+                      onPlanAction={
+                        originalPlan ? planActionHandler : undefined
+                      }
                       onFilePathLinkClick={onFilePathLinkClick}
                     />
                   );
@@ -3077,7 +3093,7 @@ interface ContentBlockRendererProps {
   fallbackToolMap?: Map<string, string>;
   fallbackToolInputMap?: Map<string, Record<string, unknown>>;
   fallbackToolTimestampMap?: Map<string, string>;
-  onPlanAction?: (action: "implement" | "stay") => void;
+  onPlanAction?: PlanProposalHandler;
   aiTerminalContext?: MessageBlockProps["aiTerminalContext"];
   onFilePathLinkClick?: (href: string) => boolean;
   pendingUserInputRequestByItemId?: Map<string, CodexUserInputRequest>;

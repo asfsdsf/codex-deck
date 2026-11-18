@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { CodexInputError } from "../codex-input-error";
 import {
   getCodexAppServerClient,
   type CodexAppServerClientFacade,
@@ -17,6 +18,7 @@ import { responseStatusForError, toErrorMessage } from "./utils";
 
 type ThreadHistoryClient = Pick<
   CodexAppServerClientFacade,
+  | "implementPlanInFreshThread"
   | "forkThread"
   | "revertThread"
   | "listThreadAttachments"
@@ -51,6 +53,8 @@ export function registerThreadHistoryRoutes(
     } catch (error) {
       if (error instanceof ThreadHistoryRequestError)
         return c.json({ error: error.message }, error.status);
+      if (error instanceof CodexInputError)
+        return c.json({ error: error.message }, 400);
       return c.json(
         { error: toErrorMessage(error) },
         responseStatusForError(error),
@@ -64,6 +68,30 @@ export function registerThreadHistoryRoutes(
       throw new ThreadHistoryRequestError("Request body must be JSON.");
     }
   };
+
+  app.post("/api/codex/threads/:id/implement-plan", (c) =>
+    run(c, async (client, threadId) => {
+      const input = (await body(c)) as { markdown?: unknown } | null;
+      if (
+        typeof input?.markdown !== "string" ||
+        !input.markdown.trim() ||
+        Buffer.byteLength(input.markdown, "utf8") > 1_000_000
+      ) {
+        throw new ThreadHistoryRequestError(
+          "A nonempty plan under one megabyte is required.",
+        );
+      }
+      if (!client.implementPlanInFreshThread) {
+        return c.json({ error: "Fresh plan handoff is unavailable." }, 503);
+      }
+      const result = await client.implementPlanInFreshThread(
+        threadId,
+        input.markdown,
+      );
+      deps.wake?.(result.thread.threadId);
+      return result;
+    }),
+  );
 
   app.post("/api/codex/threads/:id/fork-at", (c) =>
     run(c, async (client, threadId) => {

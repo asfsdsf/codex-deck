@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Hono } from "hono";
 import type { ConversationMessage } from "../../api/storage";
-import { __TEST_ONLY__ } from "../../api/codex-app-server";
+import {
+  CodexAppServerRpcError,
+  __TEST_ONLY__,
+} from "../../api/codex-app-server";
 import {
   parseForkBoundary,
   promptFromUserInputs,
@@ -22,11 +26,13 @@ import {
   pullRequestAttachmentFromUrl,
 } from "../../web/thread-attachments";
 import { parseAttachmentInput } from "../../api/codex-thread-history";
+import { createTempCodexDir } from "./test-utils";
 
 function mockClient(
   rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+  env?: NodeJS.ProcessEnv,
 ) {
-  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const client = new __TEST_ONLY__.CodexAppServerClient({ env });
   const internal = client as unknown as {
     request: typeof rpc;
     ensureConnected: () => Promise<void>;
@@ -55,6 +61,74 @@ const threadSummary = (id: string) => ({
   status: "idle" as const,
   updatedAt: null,
 });
+
+for (const supported of [true, false]) {
+  test(`fresh plan handoff ${supported ? "sends the returned prompt to the new thread" : "cleans up if Codex cannot prepare it"}`, async (t) => {
+    const { rootDir, cleanup } = await createTempCodexDir("approved-plan");
+    t.after(cleanup);
+    const markdown = "## Plan\n\nMake the change.";
+    const calls: string[] = [];
+    let attachment: string | undefined;
+    const { client } = mockClient(
+      async (method, params) => {
+        calls.push(method);
+        assert.equal(params.threadId, "fresh");
+        if (method === "thread/unsubscribe") return {};
+        assert.equal(method, "thread/prepareApprovedPlan");
+        assert.equal(params.markdown, markdown);
+        assert.equal(typeof params.attachmentPath, "string");
+        attachment = params.attachmentPath as string;
+        assert.equal(await readFile(attachment, "utf8"), markdown);
+        if (!supported) {
+          throw new CodexAppServerRpcError(-32601, "Method not found");
+        }
+        return { prompt: "Codex's implementation prompt" };
+      },
+      { CODEX_HOME: rootDir },
+    );
+    client.getThreadSummary = async (id) => threadSummary(id);
+    client.createThread = async (input) => {
+      calls.push("thread/start");
+      assert.deepEqual(input, { cwd: "/repo" });
+      return "fresh";
+    };
+    client.sendMessage = async (input) => {
+      calls.push("turn/start");
+      assert.deepEqual(input, {
+        threadId: "fresh",
+        cwd: "/repo",
+        text: "Codex's implementation prompt",
+      });
+      return { threadId: "fresh", turnId: "turn-1" };
+    };
+    if (supported) {
+      assert.deepEqual(
+        await client.implementPlanInFreshThread("source", markdown),
+        {
+          thread: threadSummary("fresh"),
+          turnId: "turn-1",
+        },
+      );
+      assert.deepEqual(calls, [
+        "thread/start",
+        "thread/prepareApprovedPlan",
+        "turn/start",
+      ]);
+    } else {
+      await assert.rejects(
+        client.implementPlanInFreshThread("source", markdown),
+        /does not support implementing a plan in a new conversation/,
+      );
+      assert.deepEqual(calls, [
+        "thread/start",
+        "thread/prepareApprovedPlan",
+        "thread/unsubscribe",
+      ]);
+      if (attachment)
+        await assert.rejects(readFile(attachment), { code: "ENOENT" });
+    }
+  });
+}
 
 function message(
   type: ConversationMessage["type"],

@@ -22,7 +22,7 @@ import type {
   CodexUserInputRequest,
   CodexUserInputResponsePayload,
 } from "@codex-deck/api";
-import MessageBlock from "./message-block";
+import MessageBlock, { type PlanProposalAction } from "./message-block";
 import { PendingElicitations } from "./pending-elicitations";
 import { PendingUserInputRequests } from "./pending-user-input-requests";
 import { PendingApprovalRequests } from "./pending-approval-requests";
@@ -305,7 +305,11 @@ interface SessionViewProps {
     title?: string;
     onClick: () => void;
   } | null;
-  onPlanAction?: (sessionId: string, action: "implement" | "stay") => void;
+  onPlanAction?: (
+    sessionId: string,
+    action: PlanProposalAction,
+    markdown: string,
+  ) => Promise<boolean>;
   onFilePathLinkClick?: (href: string) => boolean;
   onMessageHistoryChange?: (
     sessionId: string,
@@ -2494,9 +2498,8 @@ const SessionView = memo(
           ? null
           : (conversationSearchMatches[activeSearchMatchIndex] ?? null);
       const handlePlanAction = useCallback(
-        (action: "implement" | "stay") => {
-          onPlanAction?.(sessionId, action);
-        },
+        (action: PlanProposalAction, markdown: string) =>
+          onPlanAction?.(sessionId, action, markdown) ?? Promise.resolve(false),
         [onPlanAction, sessionId],
       );
       const toggleDefaultSegment = useCallback(

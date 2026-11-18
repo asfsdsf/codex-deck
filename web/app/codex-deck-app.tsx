@@ -1,3 +1,4 @@
+import type { PlanProposalAction } from "../components/message-block";
 import PermissionsPanel from "../components/permissions-panel";
 import WorktreePanel from "../components/worktree-panel";
 import { AutoReviewDenials } from "../components/auto-review";
@@ -205,6 +206,7 @@ import {
 } from "../running-turn-send";
 import {
   createCodexThread,
+  implementCodexPlanInFreshThread,
   deleteWorkflow as deleteWorkflowRequest,
   deleteSession as deleteSessionRequest,
   deleteTerminal as deleteTerminalRequest,
@@ -9965,9 +9967,43 @@ export default function CodexDeckApp() {
   );
 
   const handlePlanProposalAction = useCallback(
-    async (sessionId: string, action: "implement" | "stay") => {
-      if (!selectedSession || sessionId !== selectedSession) {
-        return;
+    async (sessionId: string, action: PlanProposalAction, markdown: string) => {
+      if (sessionId !== activeComposerSessionId) {
+        return false;
+      }
+
+      if (action === "implement-fresh") {
+        const selectionRequestId = sessionSelectionRequestIdRef.current;
+        const stillSelected = () =>
+          selectionRequestId === sessionSelectionRequestIdRef.current &&
+          activeWaitSessionRef.current === sessionId;
+        setInteractionError(null);
+        try {
+          const { thread, turnId } = await implementCodexPlanInFreshThread(
+            sessionId,
+            markdown,
+          );
+          if (selectionRequestId !== sessionSelectionRequestIdRef.current)
+            return true;
+          upsertSessionFromThreadSummary(thread);
+          trackWebManagedSessionTurn(thread.threadId, turnId);
+          if (stillSelected()) {
+            setSessionMode(thread.threadId, DEFAULT_MODE_KEY);
+            setSelectedSession(thread.threadId);
+            setCenterView("session");
+            if (isMobilePhone) setSidebarCollapsed(true);
+            setPendingTurn({ sessionId: thread.threadId, turnId });
+            void syncSessionWaitState(thread.threadId, turnId);
+          }
+          return true;
+        } catch (error) {
+          if (stillSelected()) {
+            setInteractionError(
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          return false;
+        }
       }
 
       if (action === "stay") {
@@ -9982,22 +10018,27 @@ export default function CodexDeckApp() {
             "Plan mode unavailable. Continue in Default mode.",
           );
         }
-        return;
+        return true;
       }
 
-      await sendMessageText(
+      return sendMessageText(
         {
           text: PLAN_IMPLEMENTATION_MESSAGE,
           images: [],
         },
         {
+          sessionIdOverride: sessionId,
           modeOverride: DEFAULT_MODE_KEY,
         },
       );
     },
     [
-      selectedSession,
+      activeComposerSessionId,
       hasPlanMode,
+      isMobilePhone,
+      syncSessionWaitState,
+      trackWebManagedSessionTurn,
+      upsertSessionFromThreadSummary,
       sendMessageText,
       setSessionMode,
       showCommandNoticeForDuration,
