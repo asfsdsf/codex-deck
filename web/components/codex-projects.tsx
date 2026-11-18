@@ -159,7 +159,10 @@ export default function CodexProjects({
 }: {
   threadId: string | null;
 }) {
-  const load = useCallback(() => getCodexProjects(), []);
+  const load = useCallback(
+    () => getCodexProjects(threadId ? [threadId] : []),
+    [threadId],
+  );
   const { data, loading, error, refresh } = useNativeSnapshot(
     "projects",
     null,

@@ -59,9 +59,10 @@ test("project snapshots combine projects, sections, and recent thread assignment
   const snapshot = await service.snapshot();
   assert.deepEqual(
     snapshot.projects.map((entry) => entry.id),
-    ["a", "b"],
+    ["b", "a"],
   );
-  assert.deepEqual(snapshot.projects[0].roots, ["/w/a"]);
+  assert.deepEqual(snapshot.projects[0].roots, ["/w/b"]);
+  assert.equal(Object.hasOwn(snapshot.projects[0], "position"), false);
   assert.deepEqual(snapshot.threads.t1, {
     projectId: "a",
     sectionId: "s1",
@@ -85,6 +86,49 @@ test("project snapshots combine projects, sections, and recent thread assignment
   assert.equal(unavailable.available, false);
   assert.equal(getThreadOrganizationLabel(unavailable, "t1"), null);
   assert.throws(() => parseProject({ id: "x" }), /Invalid project/);
+});
+
+test("project snapshots look up older visible rows in bounded ID batches and ignore the legacy full-page response", async () => {
+  const batchSizes: number[] = [];
+  let sectionId = "start";
+  let legacy = false;
+  const service = new ProjectService(
+    async (method, params) => {
+      if (method === "project/list") return { data: [project("a", 0)] };
+      if (method === "threadSection/list") return { data: [] };
+      const ids = params.includedThreadIds as string[] | undefined;
+      if (!ids) return { data: [{ id: "recent", projectId: "a" }] };
+      batchSizes.push(ids.length);
+      if (legacy) return { data: [{ id: "recent", projectId: "unexpected" }] };
+      return {
+        data: ids.map((id) => ({
+          id,
+          projectId: "a",
+          section: { id: sectionId },
+        })),
+      };
+    },
+    () => {},
+  );
+  const oldThreads = Array.from({ length: 101 }, (_, index) => `old-${index}`);
+  const snapshot = await service.snapshot([
+    "recent",
+    ...oldThreads,
+    oldThreads[0],
+  ]);
+  assert.deepEqual(batchSizes, [100, 1]);
+  assert.equal(snapshot.threads["old-100"].sectionId, "start");
+  sectionId = "moved";
+  service.handleNotification("thread/section/changed");
+  assert.equal(
+    (await service.snapshot(["old-100"])).threads["old-100"].sectionId,
+    "moved",
+  );
+  legacy = true;
+  service.handleNotification("thread/section/changed");
+  const fallback = await service.snapshot(["old-100"]);
+  assert.equal(fallback.threads["old-100"], undefined);
+  assert.equal(fallback.threads.recent.projectId, "a");
 });
 
 test("project and section mutations use upstream semantics and broadcast", async () => {
@@ -174,9 +218,14 @@ test("project notifications from any Codex client refresh every browser", () => 
     threadId: "t1",
     projectId: null,
   });
+  internal.handleServerNotification("thread/section/changed", {
+    threadId: "t1",
+    sectionId: "s1",
+  });
   assert.deepEqual(
     events.map((event) => [event.type, event.scope, event.threadId]),
     [
+      ["native_state_changed", "projects", null],
       ["native_state_changed", "projects", null],
       ["native_state_changed", "projects", null],
     ],

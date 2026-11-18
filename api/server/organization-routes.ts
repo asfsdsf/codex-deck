@@ -261,7 +261,11 @@ export function registerOrganizationRoutes(
     }),
   );
   app.get("/api/codex/projects", (c) =>
-    run(c, "projects", (projects) => projects.snapshot()),
+    run(c, "projects", (projects) =>
+      projects.snapshot(
+        optionalIdList(c.req.queries("threadId"), "thread ID") ?? [],
+      ),
+    ),
   );
   app.post("/api/codex/projects", (c) =>
     run(c, "projects", async (projects) => {

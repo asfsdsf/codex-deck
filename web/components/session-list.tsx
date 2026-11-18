@@ -1,6 +1,7 @@
 import {
   useState,
   useMemo,
+  useEffect,
   memo,
   useRef,
   type ReactNode,
@@ -119,6 +120,7 @@ interface SessionListProps {
   onSelectSession: (sessionId: string) => void;
   onRequestDeleteSession?: (sessionId: string) => void;
   onToggleReadReceipt?: (sessionId: string, unread: boolean) => void;
+  onVisibleSessionIdsChange?: (ids: string[]) => void;
   loading?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
   emptyLabel?: string;
@@ -140,6 +142,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     onSelectSession,
     onRequestDeleteSession,
     onToggleReadReceipt,
+    onVisibleSessionIdsChange,
     loading,
     searchInputRef,
     emptyLabel = "No sessions found",
@@ -242,6 +245,19 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     overscan: 10,
     measureElement: (element) => element.getBoundingClientRect().height,
   });
+  const virtualItems = virtualizer.getVirtualItems();
+  const visibleSessionIds = onVisibleSessionIdsChange
+    ? virtualItems
+        .map(({ index }) => filteredSessions[index]?.id)
+        .filter(Boolean)
+        .sort()
+        .join("\n")
+    : "";
+  useEffect(() => {
+    onVisibleSessionIdsChange?.(
+      visibleSessionIds ? visibleSessionIds.split("\n") : [],
+    );
+  }, [onVisibleSessionIdsChange, visibleSessionIds]);
 
   return (
     <div className="session-list-surface h-full overflow-hidden bg-zinc-950 flex flex-col">
@@ -396,7 +412,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
               position: "relative",
             }}
           >
-            {virtualizer.getVirtualItems().map((virtualItem) => {
+            {virtualItems.map((virtualItem) => {
               const session = filteredSessions[virtualItem.index];
               const sessionTypeLabel =
                 session.sessionType === "diff-guide"

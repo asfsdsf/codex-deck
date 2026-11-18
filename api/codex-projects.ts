@@ -8,7 +8,6 @@ export interface CodexProject {
   id: string;
   name: string;
   roots: string[];
-  position: number;
   createdAt: number;
   updatedAt: number;
   recencyAt: number | null;
@@ -32,7 +31,7 @@ export interface ProjectsSnapshot {
   projects: CodexProject[];
   /** Null when the server does not expose sections. */
   sections: CodexThreadSection[] | null;
-  /** Recent threads' assignments keyed by thread ID. */
+  /** Recent and explicitly requested thread assignments keyed by thread ID. */
   threads: Record<string, ThreadOrganization>;
 }
 
@@ -74,7 +73,6 @@ export function parseProject(value: unknown): CodexProject {
           : null,
       )
       .filter((path): path is string => typeof path === "string"),
-    position: optionalNumber(record.position) ?? 0,
     createdAt: optionalNumber(record.createdAt) ?? 0,
     updatedAt: optionalNumber(record.updatedAt) ?? 0,
     recencyAt: optionalNumber(record.recencyAt),
@@ -114,7 +112,10 @@ export class ProjectService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  public snapshot(): Promise<ProjectsSnapshot> {
+  public snapshot(
+    threadIds: readonly string[] = [],
+  ): Promise<ProjectsSnapshot> {
+    if (threadIds.length) return this.snapshotWithThreads(threadIds);
     if (this.cache && this.now() - this.cache.at < CACHE_MS)
       return Promise.resolve(this.cache.snapshot);
     if (this.inFlight) return this.inFlight;
@@ -130,6 +131,34 @@ export class ProjectService {
       });
     this.inFlight = load;
     return load;
+  }
+
+  private async snapshotWithThreads(
+    threadIds: readonly string[],
+  ): Promise<ProjectsSnapshot> {
+    const snapshot = await this.snapshot();
+    if (!snapshot.available) return snapshot;
+    const missing = [...new Set(threadIds)].filter(
+      (id) => !Object.prototype.hasOwnProperty.call(snapshot.threads, id),
+    );
+    if (!missing.length) return snapshot;
+
+    const threads = { ...snapshot.threads };
+    for (let offset = 0; offset < missing.length; offset += THREAD_PAGE_SIZE) {
+      const batch = missing.slice(offset, offset + THREAD_PAGE_SIZE);
+      try {
+        Object.assign(threads, await this.readThreads(batch));
+      } catch (error) {
+        // Compatibility with servers that reject unknown filters.
+        if (
+          !isProjectApiUnsupported(error) &&
+          !/includedThreadIds/i.test(message(error))
+        )
+          throw error;
+        break;
+      }
+    }
+    return { ...snapshot, threads };
   }
 
   private async load(): Promise<ProjectsSnapshot> {
@@ -148,7 +177,6 @@ export class ProjectService {
         threads: {},
       };
     }
-    projects.sort((a, b) => a.position - b.position);
     let sections: CodexThreadSection[] | null = null;
     try {
       sections = (
@@ -166,8 +194,11 @@ export class ProjectService {
     };
   }
 
-  private async readThreads(): Promise<Record<string, ThreadOrganization>> {
-    const threads: Record<string, ThreadOrganization> = {};
+  private async readThreads(
+    includedThreadIds?: string[],
+  ): Promise<Record<string, ThreadOrganization>> {
+    const threads: Record<string, ThreadOrganization> = Object.create(null);
+    const included = includedThreadIds ? new Set(includedThreadIds) : null;
     const seen = new Set<string>();
     let cursor: string | null = null;
     for (let page = 0; page < THREAD_MAX_PAGES; page++) {
@@ -176,6 +207,8 @@ export class ProjectService {
           limit: THREAD_PAGE_SIZE,
           sortKey: "updated_at",
           useStateDbOnly: true,
+          modelProviders: [],
+          ...(includedThreadIds ? { includedThreadIds } : {}),
           ...(cursor ? { cursor } : {}),
         }),
       );
@@ -183,7 +216,11 @@ export class ProjectService {
       for (const entry of result.data) {
         if (!entry || typeof entry !== "object") continue;
         const thread = entry as Record<string, unknown>;
-        if (typeof thread.id !== "string") continue;
+        if (
+          typeof thread.id !== "string" ||
+          (included && !included.has(thread.id))
+        )
+          continue;
         const section =
           thread.section && typeof thread.section === "object"
             ? (thread.section as Record<string, unknown>)
@@ -324,7 +361,11 @@ export class ProjectService {
   }
 
   public handleNotification(method: string): boolean {
-    if (method !== "project/changed" && method !== "thread/project/updated")
+    if (
+      method !== "project/changed" &&
+      method !== "thread/project/updated" &&
+      method !== "thread/section/changed"
+    )
       return false;
     this.changed();
     return true;

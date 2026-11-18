@@ -109,8 +109,14 @@ export function setCodexThreadEnvironmentSelection(
 }
 
 // Named projects and thread sections (upstream `project/*`, `threadSection/*`).
-export function getCodexProjects(): Promise<ProjectsSnapshot> {
-  return requestJson("/api/codex/projects");
+export function getCodexProjects(
+  threadIds: readonly string[] = [],
+): Promise<ProjectsSnapshot> {
+  const query = new URLSearchParams();
+  for (const threadId of threadIds) query.append("threadId", threadId);
+  return requestJson(
+    query.size ? `/api/codex/projects?${query}` : "/api/codex/projects",
+  );
 }
 
 export function createCodexProject(input: {

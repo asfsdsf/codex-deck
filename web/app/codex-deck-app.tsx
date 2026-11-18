@@ -1673,7 +1673,14 @@ export default function CodexDeckApp() {
     selectedCodexHomeId,
     sessions,
   );
-  const codexProjects = useCodexProjects(apiReady, selectedCodexHomeId);
+  const [visibleProjectThreadIds, setVisibleProjectThreadIds] = useState<
+    string[]
+  >([]);
+  const codexProjects = useCodexProjects(
+    apiReady,
+    selectedCodexHomeId,
+    visibleProjectThreadIds,
+  );
   const [contextRefreshVersion, setContextRefreshVersion] = useState(0);
   const [isTouchResizeOverlayVisible, setIsTouchResizeOverlayVisible] =
     useState(false);
@@ -12138,6 +12145,11 @@ export default function CodexDeckApp() {
               onRequestDeleteSession={handleRequestDeleteLeftPaneItem}
               onToggleReadReceipt={
                 centerView === "session" ? handleToggleReadReceipt : undefined
+              }
+              onVisibleSessionIdsChange={
+                centerView === "session"
+                  ? setVisibleProjectThreadIds
+                  : undefined
               }
               loading={
                 centerView === "terminal"

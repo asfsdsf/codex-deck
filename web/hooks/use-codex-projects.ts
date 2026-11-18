@@ -11,13 +11,14 @@ import { useNativeSnapshot } from "./use-native-snapshot";
 export function useCodexProjects(
   enabled: boolean,
   scopeKey: string,
+  threadIds: readonly string[],
 ): ProjectsSnapshot {
   const load = useCallback(
     () =>
       enabled && scopeKey
-        ? getCodexProjects().catch(() => EMPTY_PROJECTS)
+        ? getCodexProjects(threadIds).catch(() => EMPTY_PROJECTS)
         : Promise.resolve(EMPTY_PROJECTS),
-    [enabled, scopeKey],
+    [enabled, scopeKey, threadIds],
   );
   return useNativeSnapshot("projects", null, load).data ?? EMPTY_PROJECTS;
 }
