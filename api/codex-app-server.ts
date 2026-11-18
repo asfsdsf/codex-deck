@@ -1,4 +1,8 @@
 import { CodexInputError } from "./codex-input-error";
+import {
+  ATTACHED_SIDE_CHAT_SOURCE,
+  sideConversationItems,
+} from "./session-origins";
 import { CodexOrganizationService } from "./codex-organization";
 import {
   readConfigDiagnostics,
@@ -416,6 +420,7 @@ export interface CodexThreadSummary {
   agentNickname: string | null;
   agentRole: string | null;
   parentThreadId: string | null;
+  attachedToThreadId?: string;
   canAcceptDirectInput: boolean | null;
   agentPath: string | null;
   source: string | null;
@@ -564,6 +569,7 @@ interface AppServerThreadRecord {
   cwd?: unknown;
   parentThreadId?: unknown;
   parent_thread_id?: unknown;
+  attachedToThreadId?: unknown;
   canAcceptDirectInput?: unknown;
   can_accept_direct_input?: unknown;
   agentPath?: unknown;
@@ -2230,7 +2236,12 @@ class CodexAppServerClient {
 
   public async forkThread(
     threadId: string,
-    options: { cwd?: string; lastTurnId?: string; beforeTurnId?: string } = {},
+    options: {
+      cwd?: string;
+      lastTurnId?: string;
+      beforeTurnId?: string;
+      attachToSource?: boolean;
+    } = {},
   ): Promise<CodexThreadSummary> {
     const normalizedThreadId = threadId.trim();
     if (!normalizedThreadId) {
@@ -2242,6 +2253,13 @@ class CodexAppServerClient {
       ...(options.cwd ? { cwd: options.cwd, deferGoalContinuation: true } : {}),
       ...(options.lastTurnId ? { lastTurnId: options.lastTurnId } : {}),
       ...(options.beforeTurnId ? { beforeTurnId: options.beforeTurnId } : {}),
+      ...(options.attachToSource
+        ? {
+            attachToSource: true,
+            excludeTurns: true,
+            threadSource: ATTACHED_SIDE_CHAT_SOURCE,
+          }
+        : {}),
     };
 
     try {
@@ -2256,6 +2274,92 @@ class CodexAppServerClient {
       const result = await this.request("thread/fork", params);
       return extractThreadSummaryFromResult(result);
     }
+  }
+
+  public async startSideChat(threadId: string): Promise<CodexThreadSummary> {
+    const source = asRecord(
+      asRecord(await this.readThread(threadId, false))?.thread,
+    );
+    if (
+      asTrimmedString(source?.attachedToThreadId) ||
+      source?.canAcceptDirectInput === false
+    ) {
+      throw new CodexInputError(
+        "Select a main conversation to start a side chat.",
+      );
+    }
+    let thread: CodexThreadSummary | undefined;
+    if (
+      source?.historyMode === "paginated" &&
+      source.ephemeral !== true &&
+      Object.hasOwn(source, "attachedToThreadId")
+    ) {
+      try {
+        thread = await this.forkThread(threadId, { attachToSource: true });
+      } catch (error) {
+        if (
+          !(
+            error instanceof CodexAppServerRpcError &&
+            error.code === -32601 &&
+            error.message === "attached threads is not supported yet"
+          )
+        ) {
+          throw error;
+        }
+      }
+    }
+    thread ??= await this.forkThread(threadId);
+    try {
+      await this.injectThreadItems(
+        thread.threadId,
+        sideConversationItems(Boolean(thread.attachedToThreadId)),
+      );
+    } catch (error) {
+      if (thread.attachedToThreadId) {
+        await this.request("thread/delete", {
+          threadId: thread.threadId,
+        }).catch(() => {});
+      }
+      throw error;
+    }
+    this.notifyNativeState("side-chats", threadId);
+    return thread;
+  }
+
+  public async listSideChats(threadId: string): Promise<CodexThreadSummary[]> {
+    const filters = {
+      attachedToThreadId: threadId,
+      archived: false,
+      modelProviders: [],
+      useStateDbOnly: true,
+      sortDirection: "asc",
+    };
+    // Servers predating attached threads silently ignore the filter.
+    try {
+      await this.request("thread/list", {
+        ...filters,
+        parentThreadId: threadId,
+        limit: 1,
+      });
+      return [];
+    } catch (error) {
+      if (!(error instanceof CodexAppServerRpcError) || error.code !== -32600)
+        throw error;
+      if (!error.message.includes("attachedToThreadId cannot be combined"))
+        return [];
+    }
+    const entries = await nativePages<unknown>(
+      (method, params) => this.request(method, params),
+      "thread/list",
+      filters,
+    );
+    return entries.flatMap((entry) => {
+      const summary = extractThreadSummaryFromValue(entry);
+      return summary?.source === ATTACHED_SIDE_CHAT_SOURCE &&
+        summary.attachedToThreadId === threadId
+        ? [summary]
+        : [];
+    });
   }
 
   /** `thread/revert`: drop the selected turn and later ones (files are kept). */
@@ -4451,6 +4555,17 @@ class CodexAppServerClient {
       return;
     }
 
+    if (
+      [
+        "thread/deleted",
+        "thread/archived",
+        "thread/unarchived",
+        "thread/name/updated",
+      ].includes(method)
+    ) {
+      this.notifyNativeState("side-chats");
+    }
+
     if (method === "turn/started" || method === "turn/completed") {
       this.handleTurnLifecycleNotification(method, params);
       return;
@@ -6310,6 +6425,7 @@ function extractThreadSummaryFromValue(
   }
 
   const metadata = extractThreadSourceMetadata(thread);
+  const attachedToThreadId = asTrimmedString(thread.attachedToThreadId);
   return {
     threadId,
     name: asNullableString(thread.name),
@@ -6318,6 +6434,7 @@ function extractThreadSummaryFromValue(
     agentNickname: metadata.agentNickname,
     agentRole: metadata.agentRole,
     parentThreadId: metadata.parentThreadId,
+    ...(attachedToThreadId ? { attachedToThreadId } : {}),
     canAcceptDirectInput: metadata.canAcceptDirectInput,
     agentPath: metadata.agentPath,
     source: metadata.source,
@@ -7240,6 +7357,8 @@ export interface CodexAppServerClientFacade {
     turnId: string | null;
   }>;
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
+  startSideChat?: (threadId: string) => Promise<CodexThreadSummary>;
+  listSideChats?: (threadId: string) => Promise<CodexThreadSummary[]>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
   forkThread?: (
     threadId: string,
@@ -7423,6 +7542,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.implementPlanInFreshThread(sourceId, markdown),
     createThread: (input: CreateCodexThreadInput) =>
       client!.createThread(input),
+    startSideChat: (threadId) => client!.startSideChat(threadId),
+    listSideChats: (threadId) => client!.listSideChats(threadId),
     setThreadName: (threadId: string, name: string) =>
       client!.setThreadName(threadId, name),
     forkThread: (

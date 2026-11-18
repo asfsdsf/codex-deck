@@ -28,6 +28,7 @@ interface SessionListItem {
   readReceipt?: "read" | "unread" | null;
   /** Named Codex project/section ("Project · Section"), if assigned. */
   organizationLabel?: string | null;
+  origin?: { attached?: boolean };
 }
 
 function SessionStatusIcon({
@@ -126,7 +127,10 @@ interface SessionListProps {
   deleteButtonLabel?: string;
   searchControls?: ReactNode;
   searchPlaceholder?: string;
-  onDeepSearch?: (query: string) => Promise<SessionContentSearchResponse>;
+  onDeepSearch?: (
+    query: string,
+    includeAttachedThreads: boolean,
+  ) => Promise<SessionContentSearchResponse>;
 }
 
 const SessionList = memo(function SessionList(props: SessionListProps) {
@@ -147,6 +151,13 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     onDeepSearch,
   } = props;
   const [search, setSearch] = useState("");
+  const [includeAttached, setIncludeAttached] = useState(false);
+  const includeAttachedInSearch = Boolean(
+    onDeepSearch && search.trim() && includeAttached,
+  );
+  const hasAttached = Boolean(
+    onDeepSearch && sessions.some((session) => session.origin?.attached),
+  );
   const [deepSearchResult, setDeepSearchResult] = useState<{
     query: string;
     sessionIds: Set<string>;
@@ -176,7 +187,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     setDeepSearchLoading(true);
     setDeepSearchError(null);
     try {
-      const result = await onDeepSearch(query);
+      const result = await onDeepSearch(query, includeAttachedInSearch);
       if (deepSearchRequestIdRef.current !== requestId) {
         return;
       }
@@ -201,21 +212,28 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
   };
 
   const filteredSessions = useMemo(() => {
-    if (!search.trim()) {
-      return sessions;
-    }
+    const visible = sessions.filter(
+      (session) => includeAttachedInSearch || !session.origin?.attached,
+    );
+    if (!search.trim()) return visible;
     if (onDeepSearch && deepSearchResult?.query === search.trim()) {
-      return sessions.filter((session) =>
+      return visible.filter((session) =>
         deepSearchResult.sessionIds.has(session.id),
       );
     }
     const query = search.toLowerCase();
-    return sessions.filter(
-      (s) =>
-        s.display.toLowerCase().includes(query) ||
-        s.projectName.toLowerCase().includes(query),
+    return visible.filter(
+      (session) =>
+        session.display.toLowerCase().includes(query) ||
+        session.projectName.toLowerCase().includes(query),
     );
-  }, [deepSearchResult, onDeepSearch, sessions, search]);
+  }, [
+    deepSearchResult,
+    includeAttachedInSearch,
+    onDeepSearch,
+    sessions,
+    search,
+  ]);
 
   const virtualizer = useVirtualizer({
     count: filteredSessions.length,
@@ -317,6 +335,19 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
             ) : null}
           </div>
         </div>
+        {search.trim() && hasAttached && (
+          <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={includeAttached}
+              onChange={(event) => {
+                setIncludeAttached(event.target.checked);
+                handleSearchChange(search);
+              }}
+            />
+            Include attached side chats
+          </label>
+        )}
         {onDeepSearch && deepSearchError ? (
           <p className="text-[10px] text-red-400" role="alert">
             {deepSearchError}

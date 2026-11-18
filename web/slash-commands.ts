@@ -334,7 +334,7 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   },
   {
     name: "/side",
-    description: "Start a side conversation in an ephemeral fork",
+    description: "Start a side chat from the current conversation",
     supportsInlineArgs: true,
   },
   {

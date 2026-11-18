@@ -12,7 +12,7 @@ import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
 import { registerExtensionRoutes } from "./extension-routes";
 import { registerThreadHistoryRoutes } from "./thread-history-routes";
-import { SIDE_CONVERSATION_BOUNDARY_PROMPT } from "../session-origins";
+import { sideConversationItems } from "../session-origins";
 import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
 import type { CodexElicitationResponse } from "../mcp-elicitation";
@@ -42,6 +42,7 @@ import {
   getConversationStream,
   editConversationMessage,
   deleteSession,
+  AttachedSessionConflictError,
   archiveSession,
   fixDanglingTurns,
   getSessionWaitState,
@@ -232,19 +233,6 @@ const DEFAULT_CONVERSATION_STREAM_BATCH_MAX_BYTES = 128 * 1024;
 const CONVERSATION_RECONCILE_INTERVAL_MS = 2_000;
 const SESSION_DELTA_LOG_LIMIT = 500;
 const ENABLE_WAIT_MODE_DETECTION_LOG = false;
-
-function createSideConversationBoundaryItem(): Record<string, unknown> {
-  return {
-    type: "message",
-    role: "user",
-    content: [
-      {
-        type: "input_text",
-        text: SIDE_CONVERSATION_BOUNDARY_PROMPT,
-      },
-    ],
-  };
-}
 
 function getWebDistPath(): string {
   const prodPath = join(__dirname, "web");
@@ -2423,7 +2411,13 @@ export function createServer(options: ServerOptions) {
         signal: c.req.raw.signal,
       });
       const activeSessionIds = new Set(
-        (await getSessions()).map((session) => session.id),
+        (await getSessions())
+          .filter(
+            (session) =>
+              c.req.query("includeAttachedThreads") === "true" ||
+              !session.origin?.attached,
+          )
+          .map((session) => session.id),
       );
       return c.json({
         ...result,
@@ -2519,6 +2513,9 @@ export function createServer(options: ServerOptions) {
       });
       return c.json(response);
     } catch (error) {
+      if (error instanceof AttachedSessionConflictError) {
+        return c.json({ error: error.message }, 409);
+      }
       const message = toErrorMessage(error);
       if (message.toLowerCase().includes("session not found")) {
         return c.json({ error: message }, 404);
@@ -4570,6 +4567,23 @@ export function createServer(options: ServerOptions) {
     }
   });
 
+  app.get("/api/codex/threads/:id/side", async (c) => {
+    const threadId = c.req.param("id")?.trim();
+    if (!threadId) return c.json({ error: "thread id is required" }, 400);
+    try {
+      ensureAppServerEventSourceSubscribed();
+      const client = getCodexAppServerClient();
+      return c.json({
+        threads: (await client.listSideChats?.(threadId)) ?? [],
+      });
+    } catch (error) {
+      return c.json(
+        { error: toErrorMessage(error) },
+        responseStatusForError(error),
+      );
+    }
+  });
+
   app.post("/api/codex/threads/:id/side", async (c) => {
     const threadId = c.req.param("id")?.trim();
     if (!threadId) {
@@ -4577,7 +4591,15 @@ export function createServer(options: ServerOptions) {
     }
 
     try {
+      ensureAppServerEventSourceSubscribed();
       const client = getCodexAppServerClient();
+      if (client.startSideChat) {
+        const thread = await client.startSideChat(threadId);
+        return c.json({
+          thread,
+          parentThreadId: threadId,
+        } satisfies CodexThreadSideStartResponse);
+      }
       if (!client.forkThread) {
         return c.json(
           {
@@ -4596,9 +4618,7 @@ export function createServer(options: ServerOptions) {
       }
 
       const thread = await client.forkThread(threadId);
-      await client.injectThreadItems(thread.threadId, [
-        createSideConversationBoundaryItem(),
-      ]);
+      await client.injectThreadItems(thread.threadId, sideConversationItems());
       const response: CodexThreadSideStartResponse = {
         thread,
         parentThreadId: threadId,

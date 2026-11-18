@@ -33,6 +33,7 @@ import OrganizationDialogBody, {
 } from "../components/organization-dialog";
 import OperationalNotices from "../components/operational-notices";
 import ConversationCanvas from "../components/conversation-canvas";
+import SideChatTabs from "../components/side-chat-tabs";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
 import { OUTPUT_SCHEMA_RUNNING_TURN_ERROR } from "../output-schema";
 import { useNativeSnapshot } from "../hooks/use-native-snapshot";
@@ -715,6 +716,7 @@ const EMPTY_SHARED_QUEUE_ITEMS: CodexQueuedMessage[] = [];
 
 interface SideThreadState {
   parentThreadId: string;
+  attached?: boolean;
 }
 
 interface AgentActivityEntry {
@@ -1607,6 +1609,7 @@ export default function CodexDeckApp() {
       if (session.origin?.kind === "side") {
         sideThreads[session.id] = {
           parentThreadId: session.origin.parentSessionId,
+          attached: session.origin.attached,
         };
       }
     }
@@ -3107,6 +3110,18 @@ export default function CodexDeckApp() {
       sessionsWithThreadNames.find((s) => s.id === selectedSession) || null
     );
   }, [sessionsWithThreadNames, selectedSession]);
+  const sideChatParentId = selectedSession
+    ? (sideThreadsById[selectedSession]?.parentThreadId ?? selectedSession)
+    : null;
+  const sideChatSessions = useMemo(
+    () =>
+      sessionsWithThreadNames.filter(
+        (session) =>
+          session.origin?.kind === "side" &&
+          session.origin.parentSessionId === sideChatParentId,
+      ),
+    [sessionsWithThreadNames, sideChatParentId],
+  );
   const selectedSessionOriginId = selectedSession
     ? (diffGuidesBySession[selectedSession]?.parentSessionId ??
       selectedSessionData?.origin?.parentSessionId ??
@@ -5158,7 +5173,8 @@ export default function CodexDeckApp() {
       return;
     }
 
-    const firstSessionId = filteredSessions[0]?.id ?? null;
+    const firstSessionId =
+      filteredSessions.find((session) => !session.origin?.attached)?.id ?? null;
     if (!firstSessionId) {
       return;
     }
@@ -8313,7 +8329,7 @@ export default function CodexDeckApp() {
   );
 
   const upsertSessionFromThreadSummary = useCallback(
-    (thread: CodexThreadSummary) => {
+    (thread: CodexThreadSummary, origin?: Session["origin"]) => {
       setThreadSummaryById((current) => {
         const previous = current.get(thread.threadId);
         if (previous && JSON.stringify(previous) === JSON.stringify(thread)) {
@@ -8325,6 +8341,15 @@ export default function CodexDeckApp() {
       });
 
       const nextSession = toSessionFromThreadSummary(thread);
+      nextSession.origin =
+        origin ??
+        (thread.attachedToThreadId && thread.source === "tui_side_chat"
+          ? {
+              kind: "side",
+              parentSessionId: thread.attachedToThreadId,
+              attached: true,
+            }
+          : undefined);
       setSessions((current) => {
         const sessionMap = new Map(
           current.map((session) => [session.id, session]),
@@ -8335,7 +8360,7 @@ export default function CodexDeckApp() {
           existing
             ? {
                 ...nextSession,
-                origin: existing.origin,
+                origin: nextSession.origin ?? existing.origin,
                 createdAt: existing.createdAt,
                 lastUserMessageAt: existing.lastUserMessageAt,
                 timestamp: existing.timestamp,
@@ -8360,10 +8385,50 @@ export default function CodexDeckApp() {
     [],
   );
 
+  const selectSideChat = useCallback(
+    (id: string, thread?: CodexThreadSummary) => {
+      if (!thread) {
+        handleSelectSession(id);
+        return;
+      }
+      sessionSelectionRequestIdRef.current += 1;
+      upsertSessionFromThreadSummary(thread);
+      setSelectedSession(id);
+      setCenterView("session");
+      setInteractionError(null);
+      if (isMobilePhone) setSidebarCollapsed(true);
+    },
+    [handleSelectSession, isMobilePhone, upsertSessionFromThreadSummary],
+  );
+
+  const createSideChat = useCallback(
+    async (parentThreadId: string) => {
+      const requestId = sessionSelectionRequestIdRef.current;
+      const result = await startCodexSideThread(parentThreadId);
+      if (requestId === sessionSelectionRequestIdRef.current) {
+        upsertSessionFromThreadSummary(result.thread, {
+          kind: "side",
+          parentSessionId: result.parentThreadId,
+          attached: Boolean(result.thread.attachedToThreadId),
+        });
+        setSelectedSession(result.thread.threadId);
+        setCenterView("session");
+        if (isMobilePhone) setSidebarCollapsed(true);
+        showCommandNoticeForDuration("Started side conversation.");
+      }
+      return result.thread;
+    },
+    [
+      isMobilePhone,
+      showCommandNoticeForDuration,
+      upsertSessionFromThreadSummary,
+    ],
+  );
+
   const handleRenameThread = useCallback(
     async (threadId: string, rawName: string): Promise<boolean> => {
-      if (sideThreadsById[threadId]) {
-        setInteractionError("Side conversations cannot be renamed.");
+      if (sideThreadsById[threadId] && !sideThreadsById[threadId].attached) {
+        setInteractionError("This side conversation cannot be renamed.");
         return false;
       }
 
@@ -9642,11 +9707,7 @@ export default function CodexDeckApp() {
         }
 
         try {
-          const result = await startCodexSideThread(commandSessionId);
-          upsertSessionFromThreadSummary(result.thread);
-          setSelectedSession(result.thread.threadId);
-          setCenterView("session");
-          showCommandNoticeForDuration("Started side conversation.");
+          const thread = await createSideChat(commandSessionId);
 
           if (normalizedArgs) {
             const sent = await sendMessageText(
@@ -9655,8 +9716,8 @@ export default function CodexDeckApp() {
                 images: [],
               },
               {
-                sessionIdOverride: result.thread.threadId,
-                cwdOverride: result.thread.cwd || commandSessionData?.project,
+                sessionIdOverride: thread.threadId,
+                cwdOverride: thread.cwd || commandSessionData?.project,
               },
             );
             return sent;
@@ -9904,6 +9965,7 @@ export default function CodexDeckApp() {
       openMemoriesModalFromCommand,
       openAgentPickerFromCommand,
       upsertSessionFromThreadSummary,
+      createSideChat,
       syncSessionWaitState,
       sendMessageText,
       trackWebManagedSessionTurn,
@@ -13937,6 +13999,28 @@ export default function CodexDeckApp() {
             </div>
           ) : selectedSession ? (
             <div className="h-full flex flex-col">
+              {apiReady && sideChatParentId && (
+                <SideChatTabs
+                  key={`${selectedCodexHomeId}:${sideChatParentId}`}
+                  parentId={sideChatParentId}
+                  activeId={selectedSession}
+                  sessions={sideChatSessions}
+                  onSelect={selectSideChat}
+                  onStart={async () => {
+                    try {
+                      await createSideChat(sideChatParentId);
+                    } catch (error) {
+                      setInteractionError(
+                        error instanceof Error ? error.message : String(error),
+                      );
+                    }
+                  }}
+                  onDelete={(id, thread) => {
+                    if (thread) upsertSessionFromThreadSummary(thread);
+                    handleRequestDeleteSession(id);
+                  }}
+                />
+              )}
               <ConversationCanvas
                 viewMode={conversationViewMode}
                 onViewModeChange={setConversationViewMode}

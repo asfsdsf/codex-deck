@@ -1,3 +1,4 @@
+import { SIDE_CONVERSATION_BOUNDARY_PROMPT } from "./session-origins";
 import { parseMcpAppToolCall } from "./codex-mcp-apps";
 import { isVisibleConversationMessage } from "./conversation-pagination";
 import {
@@ -1828,6 +1829,9 @@ function parseCodexConversation(
         .map((block) => block.text ?? "")
         .join("\n\n")
         .trim();
+      if (role === "user" && text === SIDE_CONVERSATION_BOUNDARY_PROMPT) {
+        continue;
+      }
       const turnAbortedText =
         role === "user" ? extractTurnAbortedText(text) : null;
       if (turnAbortedText) {

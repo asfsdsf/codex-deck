@@ -82,16 +82,28 @@ export async function readInheritedHistory(
         base.end_ordinal_exclusive < 0
       )
         throw new Error("Invalid fork history reference");
-      const parent = await resolveSessionFile?.(base.thread_id);
-      if (!parent)
-        throw new Error(`Fork history source ${base.thread_id} is unavailable`);
-      if (visited.has(parent)) throw new Error("Cyclic fork history reference");
-      visited.add(parent);
-      await visit(
-        parent,
-        base.end_byte_offset,
-        Math.min(base.end_ordinal_exclusive, ordinalLimit ?? Infinity),
-      );
+      const forkOrdinal = payload?.forked_from_ordinal_exclusive;
+      // A reverted child can reference its own earlier rollout. Follow that
+      // reference up to the original fork boundary.
+      const hidesParent =
+        payload?.attached_thread === true &&
+        (typeof forkOrdinal !== "number" ||
+          base.end_ordinal_exclusive <= forkOrdinal);
+      if (!hidesParent) {
+        const parent = await resolveSessionFile?.(base.thread_id);
+        if (!parent)
+          throw new Error(
+            `Fork history source ${base.thread_id} is unavailable`,
+          );
+        if (visited.has(parent))
+          throw new Error("Cyclic fork history reference");
+        visited.add(parent);
+        await visit(
+          parent,
+          base.end_byte_offset,
+          Math.min(base.end_ordinal_exclusive, ordinalLimit ?? Infinity),
+        );
+      }
     }
     if (end === undefined) return;
     const handle = await openRollout(path, "r");

@@ -117,7 +117,11 @@ import {
 } from "../conversation-edit-records";
 import { splitPathSegments } from "../path-utils";
 import type { ConversationHoverSettings } from "../conversation-hover-settings";
-import { getSessionOrigin, type SessionOrigin } from "../session-origins";
+import {
+  getSessionOrigin,
+  SIDE_CONVERSATION_BOUNDARY_PROMPT,
+  type SessionOrigin,
+} from "../session-origins";
 export type { SessionOrigin } from "../session-origins";
 
 export interface HistoryEntry {
@@ -479,6 +483,7 @@ export interface CodexThreadSummary {
   agentNickname: string | null;
   agentRole: string | null;
   parentThreadId: string | null;
+  attachedToThreadId?: string;
   canAcceptDirectInput: boolean | null;
   agentPath: string | null;
   source: string | null;
@@ -905,6 +910,13 @@ export interface DeleteSessionSqliteResult {
 export interface DeleteSessionOptions {
   /** Defaults to true. Set false to retain the saved diff guide files. */
   deleteDiffGuide?: boolean;
+}
+
+export class AttachedSessionConflictError extends Error {
+  constructor() {
+    super("Delete the attached side chats before deleting this conversation.");
+    this.name = "AttachedSessionConflictError";
+  }
 }
 
 export interface DeleteSessionResponse {
@@ -1866,6 +1878,7 @@ interface SessionMeta {
   timestamp: number;
   archivedAt: number | null;
   origin?: SessionOrigin;
+  attachedParentId?: string;
 }
 
 interface SessionHistory {
@@ -3036,6 +3049,11 @@ function parseSessionMetaLine(
   return {
     id,
     origin: getSessionOrigin(record.payload, followingLines),
+    attachedParentId:
+      record.payload.attached_thread === true &&
+      typeof record.payload.forked_from_id === "string"
+        ? record.payload.forked_from_id
+        : undefined,
     cwd:
       typeof record.payload.cwd === "string" ? record.payload.cwd.trim() : "",
     timestamp: parseTimestamp(record.payload.timestamp),
@@ -5304,7 +5322,11 @@ async function getFirstUserMessageSnippet(
         return null;
       }
 
-      if (role === "user" && extractTurnAbortedText(text)) {
+      if (
+        role === "user" &&
+        (text === SIDE_CONVERSATION_BOUNDARY_PROMPT ||
+          extractTurnAbortedText(text))
+      ) {
         return null;
       }
 
@@ -5799,6 +5821,36 @@ export async function sessionExists(
   };
 }
 
+async function assertNoAttachedSessions(sessionId: string): Promise<void> {
+  const stateDbPath = await findVersionedDbPath(
+    await resolveSqliteHome(codexDir),
+    STATE_DB_FILE_REGEX,
+    LEGACY_STATE_DB_FILE,
+  );
+  if (stateDbPath) {
+    let child: string | undefined;
+    try {
+      child = runSqliteCommand(
+        stateDbPath,
+        `SELECT id FROM threads WHERE attached_thread_parent_id='${sessionId.replaceAll("'", "''")}' LIMIT 1;`,
+      );
+    } catch {
+      // Older schemas and hosts without sqlite3 can still check the rollouts.
+    }
+    if (child) throw new AttachedSessionConflictError();
+    if (child !== undefined) return;
+  }
+  const paths: string[] = [];
+  await Promise.all([
+    collectSessionFiles(codexSessionsDir, paths),
+    collectSessionFiles(join(codexDir, "archived_sessions"), paths),
+  ]);
+  for (const path of paths) {
+    if ((await readSessionMetaFromFile(path))?.attachedParentId === sessionId)
+      throw new AttachedSessionConflictError();
+  }
+}
+
 export async function deleteSession(
   sessionId: string,
   options: DeleteSessionOptions = {},
@@ -5809,6 +5861,7 @@ export async function deleteSession(
       throw new Error("session id is required");
     }
 
+    await assertNoAttachedSessions(normalizedSessionId);
     const filePaths = await findSessionFilesForDeletion(normalizedSessionId);
     const removedSessionFilePaths: string[] = [];
 

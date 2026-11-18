@@ -528,3 +528,95 @@ test("attachment operations paginate, validate, and broadcast updates", async ()
   );
   assert.deepEqual(removed, [["t", { attachmentType: "x", identityKey: "k" }]]);
 });
+
+test("side chats request native attachment only from a supported paginated source", async () => {
+  for (const attached of [true, false]) {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const { client } = mockClient(async (method, params) => {
+      calls.push({ method, params });
+      switch (method) {
+        case "thread/read":
+          return {
+            thread: {
+              id: "parent",
+              historyMode: "paginated",
+              ...(attached ? { attachedToThreadId: null } : {}),
+            },
+          };
+        case "thread/fork":
+          assert.equal(params.attachToSource, attached ? true : undefined);
+          assert.equal(params.excludeTurns, attached ? true : undefined);
+          assert.equal(
+            params.threadSource,
+            attached ? "tui_side_chat" : undefined,
+          );
+          return {
+            thread: {
+              id: "child",
+              ...(attached
+                ? {
+                    threadSource: "tui_side_chat",
+                    attachedToThreadId: "parent",
+                  }
+                : {}),
+            },
+          };
+        case "thread/inject_items":
+          assert.equal(params.threadId, "child");
+          assert.deepEqual(
+            (params.items as Array<{ role: string }>).map((item) => item.role),
+            attached ? ["developer", "user"] : ["user"],
+          );
+          return {};
+        default:
+          assert.fail(`Unexpected method ${method}`);
+      }
+    });
+    const result = await client.startSideChat("parent");
+    assert.equal(result.attachedToThreadId, attached ? "parent" : undefined);
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ["thread/read", "thread/fork", "thread/inject_items"],
+    );
+  }
+});
+
+test("side chat discovery accepts exact attached children, with a legacy negotiation fallback", async () => {
+  for (const supported of [true, false]) {
+    const { client } = mockClient(async (method, params) => {
+      assert.equal(method, "thread/list");
+      assert.equal(params.attachedToThreadId, "parent");
+      if (params.parentThreadId) {
+        if (!supported) return { data: [] };
+        throw new CodexAppServerRpcError(
+          -32600,
+          "attachedToThreadId cannot be combined with parentThreadId or ancestorThreadId",
+        );
+      }
+      return {
+        data: [
+          {
+            id: "child",
+            attachedToThreadId: "parent",
+            threadSource: "tui_side_chat",
+          },
+          {
+            id: "other-feature",
+            attachedToThreadId: "parent",
+            threadSource: "other",
+          },
+          {
+            id: "unrelated-chat",
+            attachedToThreadId: "other",
+            threadSource: "tui_side_chat",
+          },
+        ],
+      };
+    });
+    assert.deepEqual(
+      (await client.listSideChats("parent")).map((thread) => thread.threadId),
+      supported ? ["child"] : [],
+    );
+  }
+});

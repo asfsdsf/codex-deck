@@ -1240,6 +1240,12 @@ export function getDiffGuideSource(
   );
 }
 
+export function listCodexSideThreads(threadId: string) {
+  return requestJson<{ threads: CodexThreadSummary[] }>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/side`,
+  );
+}
+
 export async function startCodexSideThread(
   threadId: string,
 ): Promise<CodexThreadSideStartResponse> {
@@ -1513,8 +1519,10 @@ export async function getSessionExists(
 
 export async function searchSessionContent(
   query: string,
+  includeAttachedThreads = false,
 ): Promise<SessionContentSearchResponse> {
   const params = new URLSearchParams({ query });
+  if (includeAttachedThreads) params.set("includeAttachedThreads", "true");
   return requestJson<SessionContentSearchResponse>(
     `/api/sessions/search?${params.toString()}`,
   );

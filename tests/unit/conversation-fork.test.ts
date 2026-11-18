@@ -9,6 +9,7 @@ import {
   readConversationMessageUpdates,
   readConversationMessageWindow,
 } from "../../api/conversation-index";
+import { SIDE_CONVERSATION_BOUNDARY_PROMPT } from "../../api/session-origins";
 import {
   createTempCodexDir,
   eventMsgLine,
@@ -62,6 +63,38 @@ async function withFiles(
     await cleanup();
   }
 }
+
+test("attached side chats page through their own transcript without reading the parent", async () => {
+  await withFiles(async (paths) => {
+    const meta = JSON.parse(forkMeta("child", "parent", 4, 512));
+    meta.payload.attached_thread = true;
+    meta.payload.forked_from_ordinal_exclusive = 4;
+    await writeFile(
+      paths.child,
+      JSON.stringify(meta) +
+        "\n" +
+        record(
+          responseItemMessageLine("user", SIDE_CONVERSATION_BOUNDARY_PROMPT),
+          5,
+        ) +
+        record(responseItemMessageLine("user", "Side question"), 6) +
+        reply("Side reply", 7),
+    );
+    const page = await readConversationMessageWindow(
+      paths.child,
+      undefined,
+      async () => {
+        assert.fail("The parent's rollout should not be needed");
+      },
+    );
+    assert.equal(page.totalMessages, 2);
+    assert.match(JSON.stringify(page.messages), /Side question.*Side reply/);
+    assert.doesNotMatch(
+      JSON.stringify(page.messages),
+      /Side conversation boundary/,
+    );
+  });
+});
 
 test("referenced forks paginate inherited history and never include later parent messages", async () => {
   await withFiles(async (paths, resolve) => {

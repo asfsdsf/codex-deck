@@ -285,3 +285,40 @@ test("side detection requires a fork's own boundary and excludes ordinary or inh
     undefined,
   );
 });
+
+test("an attached side chat protects its parent until the child is deleted", async (t) => {
+  const { rootDir, sessionsDir, cleanup } =
+    await createTempCodexDir("attached-side-chat");
+  t.after(cleanup);
+  await writeSessionFile(sessionsDir, "parent.jsonl", [
+    sessionMetaLine("parent", "/repo", Date.now()),
+    responseItemMessageLine("user", "Parent request"),
+  ]);
+  const child = JSON.parse(sessionMetaLine("child", "/repo", Date.now()));
+  Object.assign(child.payload, {
+    forked_from_id: "parent",
+    thread_source: "tui_side_chat",
+    attached_thread: true,
+  });
+  await writeSessionFile(sessionsDir, "child.jsonl", [
+    JSON.stringify(child),
+    responseItemMessageLine("user", SIDE_CONVERSATION_BOUNDARY_PROMPT),
+    responseItemMessageLine("user", "Child request"),
+  ]);
+  initStorage(rootDir);
+  await loadStorage();
+  const sessions = await getSessions();
+  assert.deepEqual(sessions.find((session) => session.id === "child")?.origin, {
+    kind: "side",
+    parentSessionId: "parent",
+    attached: true,
+  });
+  await assert.rejects(
+    deleteSession("parent"),
+    /Delete the attached side chats/,
+  );
+  await deleteSession("child");
+  assert.equal((await getSessions())[0]?.id, "parent");
+  await deleteSession("parent");
+  assert.deepEqual(await getSessions(), []);
+});
