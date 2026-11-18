@@ -15,6 +15,7 @@ export type NativeScope =
   | "guardian"
   | "worktrees"
   | "voice"
+  | "voice-history"
   | "side-chats"
   | import("./codex-organization").OrganizationScope
   | "history"

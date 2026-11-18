@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { Mic, MicOff, Settings2, Square, Volume2, X } from "lucide-react";
 import type {
@@ -12,6 +13,7 @@ import type {
 } from "@codex-deck/api";
 import { useNativeSnapshot } from "../hooks/use-native-snapshot";
 import { getVoiceSnapshot } from "../voice/voice-api";
+import VoiceHistory from "./voice-history";
 import {
   getVoiceController,
   type VoiceLocalState,
@@ -160,9 +162,20 @@ export default function VoiceSessionBar({
     </button>
   );
 
+  const withHistory = (controls: ReactNode) => (
+    <>
+      {controls}
+      <VoiceHistory
+        key={threadId}
+        threadId={threadId}
+        live={session?.transcript ?? []}
+      />
+    </>
+  );
+
   if (ownedHere) {
     const live = local.status === "connected";
-    return (
+    return withHistory(
       <section
         aria-label="Voice conversation"
         className="mx-auto mb-2 w-full max-w-4xl rounded-xl border border-emerald-800/60 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-200"
@@ -225,12 +238,12 @@ export default function VoiceSessionBar({
             Speak to Codex. Requests it works on appear in the conversation.
           </p>
         )}
-      </section>
+      </section>,
     );
   }
 
   if (otherDevice && session) {
-    return (
+    return withHistory(
       <section
         aria-label="Voice conversation"
         className="mx-auto mb-2 w-full max-w-4xl rounded-xl border border-cyan-800/50 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-200"
@@ -254,12 +267,12 @@ export default function VoiceSessionBar({
           </button>
         </div>
         <Transcript entries={session.transcript} />
-      </section>
+      </section>,
     );
   }
 
   if (ownedElsewhere) {
-    return (
+    return withHistory(
       <section
         aria-label="Voice conversation"
         className="mx-auto mb-2 flex w-full max-w-4xl flex-wrap items-center gap-2 rounded-xl border border-emerald-800/60 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-200"
@@ -276,7 +289,7 @@ export default function VoiceSessionBar({
           <Square className="h-3 w-3" />
           Stop voice
         </button>
-      </section>
+      </section>,
     );
   }
 
@@ -285,7 +298,7 @@ export default function VoiceSessionBar({
       localError ??
       (ended ? describeEndedVoiceSession(ended, controller.clientId) : "");
     const failed = !!localError || ended?.phase === "failed";
-    return (
+    return withHistory(
       <section
         aria-label="Voice conversation"
         className={`mx-auto mb-2 w-full max-w-4xl rounded-xl border px-3 py-2 text-xs ${
@@ -316,9 +329,9 @@ export default function VoiceSessionBar({
           </button>
         </div>
         {ended && <Transcript entries={ended.transcript} />}
-      </section>
+      </section>,
     );
   }
 
-  return null;
+  return withHistory(null);
 }

@@ -35,6 +35,10 @@ export type {
   RealtimeVoiceSnapshot,
 } from "../codex-realtime";
 export type {
+  RealtimeVoiceHistoryEntry,
+  RealtimeVoiceHistoryPage,
+} from "../codex-voice-history";
+export type {
   UsageDashboardSnapshot,
   UsageWindow,
   UsageLimit,

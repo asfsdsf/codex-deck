@@ -4,6 +4,7 @@ import {
   type CodexAppServerClientFacade,
 } from "../codex-app-server";
 import { RealtimeVoiceError } from "../codex-realtime";
+import { isRealtimePosition } from "../codex-voice-history";
 import { responseStatusForError, toErrorMessage } from "./utils";
 
 type VoiceClient = Pick<CodexAppServerClientFacade, "getRealtimeVoice">;
@@ -65,6 +66,41 @@ export function registerRealtimeVoiceRoutes(
     run(c, async (voice) =>
       voice.snapshot(c.req.param("id"), c.req.query("clientId") || null),
     ),
+  );
+  app.get("/api/codex/threads/:id/realtime/history", (c) =>
+    run(c, async (voice) => {
+      const cursor = c.req.query("cursor");
+      const position = (value: string | undefined) => {
+        if (value === undefined) return undefined;
+        if (!/^\d+$/.test(value) || !isRealtimePosition(Number(value))) {
+          throw new RealtimeVoiceError(
+            "Invalid realtime history position.",
+            400,
+          );
+        }
+        return Number(value);
+      };
+      const snapshotEnd = position(c.req.query("snapshotEnd"));
+      const requiredThroughPosition = position(
+        c.req.query("requiredThroughPosition"),
+      );
+      if (
+        cursor !== undefined &&
+        (!cursor || cursor.length > 4096 || snapshotEnd === undefined)
+      ) {
+        throw new RealtimeVoiceError(
+          "A cursor requires its original realtime snapshot.",
+          400,
+        );
+      }
+      return voice.listHistory(c.req.param("id"), {
+        ...(cursor ? { cursor } : {}),
+        ...(snapshotEnd !== undefined ? { snapshotEnd } : {}),
+        ...(requiredThroughPosition !== undefined
+          ? { requiredThroughPosition }
+          : {}),
+      });
+    }),
   );
   app.post("/api/codex/threads/:id/realtime/start", (c) =>
     run(c, async (voice) => {

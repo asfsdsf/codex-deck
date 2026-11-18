@@ -1,5 +1,6 @@
 import type {
   RealtimeVoiceCatalog,
+  RealtimeVoiceHistoryPage,
   RealtimeVoiceSnapshot,
 } from "@codex-deck/api";
 import { requestJson } from "../transport";
@@ -35,6 +36,21 @@ export function getVoiceSnapshot(
 ): Promise<RealtimeVoiceSnapshot> {
   return requestJson(
     `${threadPath(threadId)}?clientId=${encodeURIComponent(clientId)}`,
+  );
+}
+
+export function getVoiceHistory(
+  threadId: string,
+  page?: { cursor: string; snapshotEnd: number },
+): Promise<RealtimeVoiceHistoryPage> {
+  const query = page
+    ? new URLSearchParams({
+        cursor: page.cursor,
+        snapshotEnd: String(page.snapshotEnd),
+      })
+    : null;
+  return requestJson(
+    `${threadPath(threadId, "/history")}${query ? `?${query}` : ""}`,
   );
 }
 

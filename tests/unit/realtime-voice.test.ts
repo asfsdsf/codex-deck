@@ -389,3 +389,150 @@ test("voice routes validate input and map ownership conflicts to HTTP status", a
   assert.equal(stopped.status, 200);
   assert.equal((await stopped.json()).session.phase, "stopping");
 });
+
+test("saved realtime pages preserve the cursor snapshot and canonical frame identity", async () => {
+  const { manager, calls } = createManager(async () => ({
+    coverage: "ready",
+    snapshotEnd: 16,
+    projectedThroughItemIndex: 21,
+    nextCursor: null,
+    data: [
+      {
+        position: 12,
+        item: {
+          id: "speech",
+          realtimeSessionId: "s1",
+          observedAtMs: 1700000000123,
+          type: "frame",
+          channels: {
+            voice_transcript: { role: "user", text: "Fix the button" },
+          },
+        },
+      },
+      {
+        position: 13,
+        item: {
+          id: "handoff",
+          realtimeSessionId: "s1",
+          observedAtMs: 1700000000200,
+          type: "turnInputAccepted",
+          mode: "steer",
+          handoffId: "h1",
+          turnId: "turn1",
+          inputItemId: "user1",
+          sourceEventIds: ["speech"],
+          input: "Fix the button",
+        },
+      },
+      {
+        position: 14,
+        item: {
+          id: "saved",
+          realtimeSessionId: "s1",
+          type: "sessionEndInputSaved",
+          inputItemId: "user2",
+          sourceEventIds: ["speech"],
+          input: "Save this thought",
+        },
+      },
+    ],
+  }));
+  const result = await manager.listHistory("thread1", {
+    cursor: "cursor1",
+    snapshotEnd: 16,
+  });
+  assert.deepEqual(calls, [
+    {
+      method: "thread/realtime/list",
+      params: {
+        threadId: "thread1",
+        order: "observedAt",
+        limit: 50,
+        cursor: "cursor1",
+        snapshotEnd: 16,
+      },
+    },
+  ]);
+  assert.equal(result.snapshotEnd, 16);
+  assert.equal(result.projectedThroughItemIndex, 21);
+  assert.deepEqual(
+    result.data.map((item) => [item.kind, item.eventId]),
+    [
+      ["transcript", "speech"],
+      ["handoff", "handoff"],
+      ["saved", "saved"],
+    ],
+  );
+  assert.deepEqual(result.data[0], {
+    kind: "transcript",
+    eventId: "speech",
+    realtimeSessionId: "s1",
+    observedAtMs: 1700000000123,
+    position: 12,
+    role: "user",
+    text: "Fix the button",
+  });
+  await assert.rejects(
+    manager.listHistory("thread1", { cursor: "cursor1", snapshotEnd: 15 }),
+    /Invalid Codex realtime history page/,
+  );
+});
+
+test("realtime history accepts pending coverage and reports older servers as unsupported", async () => {
+  const { manager } = createManager(async () => ({
+    coverage: "pending",
+    snapshotEnd: 16,
+    projectedThroughItemIndex: 14,
+    nextCursor: null,
+    data: [],
+  }));
+  const page = await manager.listHistory("thread1", {
+    requiredThroughPosition: 15,
+  });
+  assert.equal(page.coverage, "pending");
+  assert.deepEqual(page.data, []);
+  const legacy = createManager(async () => {
+    throw Object.assign(new Error("unknown variant thread/realtime/list"), {
+      code: -32600,
+    });
+  });
+  assert.equal(
+    (await legacy.manager.listHistory("thread1", {})).coverage,
+    "unsupported",
+  );
+});
+
+test("canonical live transcript suppresses the matching legacy notifications", () => {
+  const changes: string[] = [];
+  const { manager } = createManager(async () => ({}), {
+    historyChanged: (id) => changes.push(id),
+  });
+  const notify = (method: string, params: Record<string, unknown>) =>
+    manager.handleNotification(`thread/realtime/${method}`, {
+      threadId: "thread1",
+      ...params,
+    });
+  notify("started", { realtimeSessionId: "s1" });
+  notify("transcript/delta", { role: "user", delta: "Fix" });
+  const item = {
+    id: "speech",
+    realtimeSessionId: "s1",
+    type: "transcriptSegment",
+    role: "user",
+    text: "",
+  };
+  notify("item/started", { item });
+  notify("item/transcript/delta", { itemId: "speech", delta: "Fix" });
+  notify("transcript/delta", { role: "user", delta: "Fix" });
+  assert.equal(manager.snapshot("thread1").session?.transcript[0].text, "Fix");
+  notify("item/completed", {
+    item: { ...item, text: "Fix the button", observedAtMs: 1700000000123 },
+  });
+  notify("transcript/done", { role: "user", text: "Fix the button" });
+  const transcript = manager.snapshot("thread1").session?.transcript ?? [];
+  assert.equal(transcript.length, 1);
+  assert.equal(transcript[0].eventId, "speech");
+  assert.equal(transcript[0].text, "Fix the button");
+  assert.equal(transcript[0].final, true);
+  assert.deepEqual(changes, ["thread1"]);
+});

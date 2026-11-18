@@ -1237,6 +1237,7 @@ class CodexAppServerClient {
     threadRpc: (method, params, id) =>
       this.requestNativeThread(method, params, id),
     notify: (id) => this.notifyNativeState("voice", id),
+    historyChanged: (id) => this.notifyNativeState("voice-history", id),
   });
   public getRealtimeVoice(): RealtimeVoiceManager {
     return this.realtimeVoice;
@@ -4683,6 +4684,9 @@ class CodexAppServerClient {
     );
     if (!threadId) {
       return;
+    }
+    if (this.realtimeVoice.hasLiveSession(threadId)) {
+      this.notifyNativeState("voice-history", threadId);
     }
 
     if (turnId) {

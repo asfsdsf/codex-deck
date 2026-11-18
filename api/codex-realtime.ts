@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { nativeRecord, type NativeRpc } from "./codex-native";
+import {
+  listRealtimeVoiceHistory,
+  parseRealtimeHistoryItem,
+  type RealtimeVoiceHistoryQuery,
+} from "./codex-voice-history";
 
 /**
  * Thread-scoped realtime voice sessions bridged from `thread/realtime/*`.
@@ -27,6 +32,8 @@ export interface RealtimeTranscriptEntry {
   text: string;
   final: boolean;
   at: number;
+  eventId?: string;
+  realtimeSessionId?: string;
 }
 
 export interface RealtimeVoiceSessionView {
@@ -83,6 +90,7 @@ export interface RealtimeVoiceManagerOptions {
     threadId: string,
   ) => Promise<unknown>;
   notify: (threadId: string) => void;
+  historyChanged?: (threadId: string) => void;
   now?: () => number;
   answerTimeoutMs?: number;
   ownerTimeoutMs?: number;
@@ -182,9 +190,15 @@ export class RealtimeVoiceManager {
     ReturnType<typeof setTimeout>
   >();
   private readonly options: Required<
-    Omit<RealtimeVoiceManagerOptions, "rpc" | "threadRpc" | "notify">
+    Omit<
+      RealtimeVoiceManagerOptions,
+      "rpc" | "threadRpc" | "notify" | "historyChanged"
+    >
   > &
-    Pick<RealtimeVoiceManagerOptions, "rpc" | "threadRpc" | "notify">;
+    Pick<
+      RealtimeVoiceManagerOptions,
+      "rpc" | "threadRpc" | "notify" | "historyChanged"
+    >;
 
   public constructor(options: RealtimeVoiceManagerOptions) {
     this.options = {
@@ -306,6 +320,15 @@ export class RealtimeVoiceManager {
       session: this.cloneView(record.view),
       answerSdp: owner ? record.answerSdp : null,
     };
+  }
+
+  public listHistory(threadId: string, query: RealtimeVoiceHistoryQuery) {
+    return listRealtimeVoiceHistory(this.options.rpc, threadId, query);
+  }
+
+  public hasLiveSession(threadId: string): boolean {
+    const phase = this.sessions.get(threadId)?.view.phase;
+    return phase !== undefined && isLiveRealtimePhase(phase);
   }
 
   public async start(
@@ -541,7 +564,12 @@ export class RealtimeVoiceManager {
       case "thread/realtime/transcript/delta": {
         const delta = typeof value.delta === "string" ? value.delta : "";
         const role = stringField(value.role) ?? "assistant";
-        if (!record || !delta || !isLiveRealtimePhase(record.view.phase))
+        if (
+          !record ||
+          !delta ||
+          !isLiveRealtimePhase(record.view.phase) ||
+          record.view.transcript.some((entry) => entry.eventId)
+        )
           return true;
         this.appendTranscript(record, role, delta, false);
         return true;
@@ -549,8 +577,63 @@ export class RealtimeVoiceManager {
       case "thread/realtime/transcript/done": {
         const text = typeof value.text === "string" ? value.text : "";
         const role = stringField(value.role) ?? "assistant";
-        if (!record) return true;
+        if (!record || record.view.transcript.some((entry) => entry.eventId))
+          return true;
         this.appendTranscript(record, role, text, true);
+        return true;
+      }
+      case "thread/realtime/item/started":
+      case "thread/realtime/item/completed": {
+        const item = parseRealtimeHistoryItem(value.item);
+        const final = method === "thread/realtime/item/completed";
+        if (final) this.options.historyChanged?.(threadId);
+        if (
+          !record ||
+          item?.kind !== "transcript" ||
+          (record.view.realtimeSessionId &&
+            record.view.realtimeSessionId !== item.realtimeSessionId)
+        ) {
+          return true;
+        }
+        const transcript = record.view.transcript.filter(
+          (entry) => entry.eventId,
+        );
+        const index = transcript.findIndex(
+          (entry) =>
+            entry.eventId === item.eventId &&
+            entry.realtimeSessionId === item.realtimeSessionId,
+        );
+        const existing = transcript[index];
+        const entry: RealtimeTranscriptEntry = {
+          id: JSON.stringify([item.realtimeSessionId, item.eventId]),
+          eventId: item.eventId,
+          realtimeSessionId: item.realtimeSessionId,
+          role: item.role,
+          text: (item.text || existing?.text || "").slice(
+            0,
+            MAX_TRANSCRIPT_TEXT,
+          ),
+          final: final || existing?.final === true,
+          at: item.observedAtMs ?? existing?.at ?? this.options.now(),
+        };
+        if (index >= 0) transcript[index] = entry;
+        else transcript.push(entry);
+        record.view.transcript = transcript.slice(-MAX_TRANSCRIPT_ENTRIES);
+        this.touch(record);
+        this.notifySoon(threadId, final);
+        return true;
+      }
+      case "thread/realtime/item/transcript/delta": {
+        const itemId = stringField(value.itemId);
+        const delta = typeof value.delta === "string" ? value.delta : "";
+        const entry = record?.view.transcript.find(
+          (candidate) => candidate.eventId === itemId,
+        );
+        if (record && entry && !entry.final && delta) {
+          entry.text = (entry.text + delta).slice(0, MAX_TRANSCRIPT_TEXT);
+          this.touch(record);
+          this.notifySoon(threadId, false);
+        }
         return true;
       }
       case "thread/realtime/error": {
@@ -567,6 +650,7 @@ export class RealtimeVoiceManager {
         return true;
       }
       case "thread/realtime/closed": {
+        this.options.historyChanged?.(threadId);
         if (!record || !isLiveRealtimePhase(record.view.phase)) return true;
         const reason = stringField(value.reason);
         const failed =
@@ -586,8 +670,7 @@ export class RealtimeVoiceManager {
         return true;
       }
       default:
-        // item/*, itemAdded and outputAudio/delta (websocket transport only)
-        // are not needed for the WebRTC transcript view.
+        // WebRTC media is owned by the browser.
         return true;
     }
   }
