@@ -8,20 +8,26 @@ const MAX_CACHE_ENTRIES = 200;
 
 const translationCache = new Map<string, string>();
 
+export type TranslationFormat = "text" | "markdown";
+
 function cacheKey(
   sourceText: string,
   inputLang: string,
   outputLang: string,
+  format: TranslationFormat,
 ): string {
-  return `${inputLang}→${outputLang}:${sourceText}`;
+  return `${format}:${inputLang}→${outputLang}:${sourceText}`;
 }
 
 export function getCachedTranslation(
   sourceText: string,
   inputLang: string,
   outputLang: string,
+  format: TranslationFormat = "text",
 ): string | undefined {
-  return translationCache.get(cacheKey(sourceText, inputLang, outputLang));
+  return translationCache.get(
+    cacheKey(sourceText, inputLang, outputLang, format),
+  );
 }
 
 export function setCachedTranslation(
@@ -29,8 +35,9 @@ export function setCachedTranslation(
   inputLang: string,
   outputLang: string,
   translated: string,
+  format: TranslationFormat = "text",
 ): void {
-  const key = cacheKey(sourceText, inputLang, outputLang);
+  const key = cacheKey(sourceText, inputLang, outputLang, format);
   if (translationCache.has(key)) {
     translationCache.delete(key);
   }

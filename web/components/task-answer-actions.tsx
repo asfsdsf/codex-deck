@@ -65,7 +65,7 @@ export function TaskAnswerActions({
   const [copied, setCopied] = useState<AnswerAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [translateOnLoad, setTranslateOnLoad] = useState(false);
-  const translation = useBlockTranslation(answerSource, "en", "zh");
+  const translation = useBlockTranslation(answerSource, "en", "zh", "markdown");
   const mounted = useRef(true);
   const copiedTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
