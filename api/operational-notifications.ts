@@ -7,6 +7,7 @@ export const OPERATIONAL_METHODS = [
   "configWarning",
   "deprecationNotice",
   "warning",
+  "guardianWarning",
 ] as const;
 export type CodexOperationalMethod = (typeof OPERATIONAL_METHODS)[number];
 export interface CodexOperationalNotification {
@@ -39,6 +40,12 @@ export class OperationalNotificationStore {
     if (
       !["configWarning", "deprecationNotice", "warning"].includes(method) &&
       !threadId
+    )
+      return null;
+    // Upstream TUI hides auto-review approval confirmations.
+    if (
+      method === "guardianWarning" &&
+      string("message")?.startsWith("Automatic approval review approved (")
     )
       return null;
     let summary = string("summary") || string("message") || method;

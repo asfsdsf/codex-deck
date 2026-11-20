@@ -713,6 +713,8 @@ export function createRemoteTransport(
               type: "reset",
               output: batch.snapshot.output,
               running: batch.snapshot.running,
+              cols: batch.snapshot.cols,
+              rows: batch.snapshot.rows,
             });
             handlers.onEvent({
               terminalId: batch.snapshot.terminalId,

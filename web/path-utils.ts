@@ -129,10 +129,18 @@ export function resolveProjectFileLinkTargetFromHref(
   }
 
   let candidatePath = decodedHref;
-  if (candidatePath.toLowerCase().startsWith("file://")) {
+  if (trimmedHref.toLowerCase().startsWith("file://")) {
     try {
-      const parsed = new URL(candidatePath);
-      candidatePath = parsed.pathname || "";
+      // Parse the raw href: URL.pathname re-encodes an already-decoded path
+      // and splits "#L3" into the hash, so decode the parts afterwards.
+      const parsed = new URL(trimmedHref);
+      let pathname = parsed.pathname || "";
+      try {
+        pathname = decodeURIComponent(pathname);
+      } catch {
+        // Keep the encoded pathname if percent-decoding fails.
+      }
+      candidatePath = `${pathname}${parsed.hash}`;
       if (/^\/[A-Za-z]:\//.test(candidatePath)) {
         candidatePath = candidatePath.slice(1);
       }

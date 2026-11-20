@@ -1,4 +1,4 @@
-import { useEffect, useState, memo } from "react";
+import { useEffect, useState, memo, type JSX } from "react";
 import type {
   ConversationMessage,
   ContentBlock,
@@ -31,7 +31,16 @@ import {
   Target,
   Languages,
   Loader2,
+  ListChecks,
 } from "lucide-react";
+import {
+  getCodexDeckToolLabel,
+  getCodexDeckToolPreview,
+  getCodexDeckToolResultPreview,
+  isCodexDeckToolFailureOutput,
+  parseCodexDeckToolName,
+} from "../codex-deck-tools";
+import { CodexDeckToolResultRenderer } from "./tool-renderers/codex-deck-tool-renderer";
 import { shouldDefaultExpandToolUse } from "../message-block-utils";
 import { getTokenLimitNoticeRepeatCount } from "../token-limit-notices";
 import {
@@ -92,6 +101,13 @@ import { ReviewReportRenderer } from "./review-report";
 
 import { GeneratedImage } from "./generated-image";
 import { ApprovalRequestRenderer } from "./approval-request";
+import { McpAppWidget } from "./mcp-app-widget";
+import { MessageTurnActions } from "./message-turn-actions";
+import type {
+  ConversationTurnAction,
+  MessageTurnBusyState,
+  MessageTurnRole,
+} from "../conversation-turn-actions";
 
 interface MessageBlockProps {
   sessionId?: string;
@@ -106,6 +122,13 @@ interface MessageBlockProps {
   onPlanAction?: (action: "implement" | "stay") => void;
   onFilePathLinkClick?: (href: string) => boolean;
   onEditMessage?: (message: ConversationMessage, text: string) => Promise<void>;
+  /** Fork/rewind menu; omitted when the message's turn ID is unknown. */
+  turnActionRole?: MessageTurnRole | null;
+  turnActionBusy?: MessageTurnBusyState;
+  onTurnAction?: (
+    message: ConversationMessage,
+    action: ConversationTurnAction,
+  ) => void;
   pendingUserInputRequests?: CodexUserInputRequest[];
   pendingApprovalRequests?: CodexApprovalRequest[];
   selectedUserInputAnswers?: Record<
@@ -1280,12 +1303,14 @@ function TerminalRestartNoticeCallout(props: { notice: string }) {
 
 function RestartNoticeAwareMarkdown(props: {
   content: string;
+  isTranslation?: boolean;
   onFilePathLinkClick?: (href: string) => boolean;
 }) {
+  const Renderer = props.isTranslation ? SafeMarkdown : MarkdownRenderer;
   const parsedRestartNotice = parseTerminalRestartNoticeMessage(props.content);
   if (!parsedRestartNotice) {
     return (
-      <MarkdownRenderer
+      <Renderer
         content={sanitizeText(props.content)}
         onFilePathLinkClick={props.onFilePathLinkClick}
       />
@@ -1295,14 +1320,14 @@ function RestartNoticeAwareMarkdown(props: {
   return (
     <div className="space-y-2">
       {parsedRestartNotice.leadingMarkdown ? (
-        <MarkdownRenderer
+        <Renderer
           content={sanitizeText(parsedRestartNotice.leadingMarkdown)}
           onFilePathLinkClick={props.onFilePathLinkClick}
         />
       ) : null}
       <TerminalRestartNoticeCallout notice={parsedRestartNotice.notice} />
       {parsedRestartNotice.trailingMarkdown ? (
-        <MarkdownRenderer
+        <Renderer
           content={sanitizeText(parsedRestartNotice.trailingMarkdown)}
           onFilePathLinkClick={props.onFilePathLinkClick}
         />
@@ -1889,6 +1914,9 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     aiTerminalContext,
     onFilePathLinkClick,
     onEditMessage,
+    turnActionRole = null,
+    turnActionBusy = "idle",
+    onTurnAction,
     pendingUserInputRequests = [],
     pendingApprovalRequests = [],
     selectedUserInputAnswers,
@@ -1936,6 +1964,8 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     messageTranslation.showing && messageTranslation.translated !== null
       ? messageTranslation.translated
       : null;
+  const displayMessageText =
+    translatedMessageText ?? (typeof content === "string" ? content : null);
 
   useEffect(() => {
     if (!searchForcePrimaryExpanded) {
@@ -2109,7 +2139,8 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
         block.type === "reasoning" ||
         block.type === "agent_reasoning" ||
         block.type === "subagent_activity" ||
-        block.type === "collab_agent_tool_call"
+        block.type === "collab_agent_tool_call" ||
+        block.type === "mcp_app"
       );
     });
   };
@@ -2124,6 +2155,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
         );
       }
       if (block.type === "image_generation") return !!block.generatedImage;
+      if (block.type === "audio") return !!block.audio_url?.trim();
       return (
         block.type === "image" &&
         typeof block.image_url === "string" &&
@@ -2148,7 +2180,9 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
   const hasAuxiliary = auxiliaryBlocks.length > 0;
   const messageCopyText = getMessageCopyText(content);
   const rawMessageText = getMessageRawText(content);
-  const reviewReport = parseReviewReport(rawMessageText ?? "");
+  const reviewReport = parseReviewReport(
+    translatedMessageText ?? rawMessageText ?? "",
+  );
   const showMessageCopyButton =
     (isUser || message.type === "assistant") && !!messageCopyText;
   const canEditMessage =
@@ -2161,6 +2195,12 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     message.editText.length > 0 &&
     (message.type === "user" || message.type === "assistant") &&
     typeof onEditMessage === "function";
+
+  const showTurnActions =
+    !isPendingUserTone &&
+    !isAgentsBootstrap &&
+    turnActionRole !== null &&
+    typeof onTurnAction === "function";
 
   const cancelEditing = () => {
     if (editSaving) {
@@ -2179,7 +2219,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
       }
       return;
     }
-    if (nextText === message.editText) {
+    if (nextText === (message.editText ?? "").trim()) {
       setEditing(false);
       setEditError(null);
       return;
@@ -2753,7 +2793,9 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
     >
       <div
         className={
-          isUser && !reviewReport ? "max-w-[85%] min-w-0" : "w-full min-w-0"
+          isUser && !reviewReport && !editing
+            ? "max-w-[85%] min-w-0"
+            : "w-full min-w-0"
         }
       >
         <div className="group relative">
@@ -2788,22 +2830,17 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 autoFocus
                 disabled={editSaving}
                 aria-label="Edit history message"
-                className="block min-h-24 w-full resize-y rounded-lg border border-white/20 bg-zinc-950/30 py-2 pl-3 pr-24 font-mono text-sm leading-relaxed text-white outline-none placeholder:text-white/45 focus:border-white/45 disabled:cursor-wait disabled:opacity-70"
+                className="block min-h-24 w-full resize-y rounded-lg border border-zinc-500/40 bg-zinc-950/30 py-2 pl-3 pr-3 font-mono md:pr-24 text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-400/70 disabled:cursor-wait disabled:opacity-70"
               />
-            ) : translatedMessageText !== null ? (
-              <SafeMarkdown
-                content={translatedMessageText}
-                onFilePathLinkClick={onFilePathLinkClick}
-              />
-            ) : typeof content === "string" ? (
+            ) : displayMessageText !== null ? (
               (() => {
-                const sanitized = sanitizeText(content);
+                const sanitized = sanitizeText(displayMessageText);
                 const review = parseReviewReport(sanitized);
                 if (review) {
                   return (
                     <ReviewReportRenderer
                       report={review}
-                      raw={content}
+                      raw={displayMessageText}
                       forceExpanded={searchForcePrimaryExpanded}
                       onFilePathLinkClick={onFilePathLinkClick}
                     />
@@ -2845,7 +2882,8 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 }
                 return (
                   <RestartNoticeAwareMarkdown
-                    content={content}
+                    content={displayMessageText}
+                    isTranslation={translatedMessageText !== null}
                     onFilePathLinkClick={onFilePathLinkClick}
                   />
                 );
@@ -2893,7 +2931,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
               </div>
             )}
           </div>
-          {(showMessageCopyButton || canEditMessage) && (
+          {(showMessageCopyButton || canEditMessage || showTurnActions) && (
             <div
               className={`mt-1 flex items-center justify-end gap-1 transition-opacity md:absolute md:right-2 md:top-2 md:mt-0 ${
                 editing
@@ -2917,7 +2955,7 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                     type="button"
                     onClick={cancelEditing}
                     disabled={editSaving}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/20 bg-zinc-950/65 text-zinc-200 hover:bg-zinc-900/80 disabled:opacity-50"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-950/65 text-zinc-200 hover:bg-zinc-900/80 disabled:opacity-50"
                     title="Cancel edit (Escape)"
                     aria-label="Cancel message edit"
                   >
@@ -2926,6 +2964,14 @@ const MessageBlock = memo(function MessageBlock(props: MessageBlockProps) {
                 </>
               ) : (
                 <>
+                  {showTurnActions && turnActionRole && onTurnAction && (
+                    <MessageTurnActions
+                      role={turnActionRole}
+                      busy={turnActionBusy}
+                      onAction={(action) => onTurnAction(message, action)}
+                      buttonClassName="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 hover:text-zinc-100"
+                    />
+                  )}
                   {canEditMessage && (
                     <button
                       type="button"
@@ -3107,6 +3153,9 @@ const TOOL_ICON_PATTERNS: Array<{ patterns: string[]; icon: typeof Wrench }> = [
 ];
 
 function getToolIcon(toolName: string) {
+  if (parseCodexDeckToolName(toolName)) {
+    return ListChecks;
+  }
   const name = toolName.toLowerCase();
 
   if (TOOL_ICONS[name]) {
@@ -3573,7 +3622,7 @@ function renderFormattedToolInput(
         <div className="space-y-3">
           {calls.map((call, index) => (
             <div key={index} className="space-y-1">
-              <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+              <div className="text-xs font-medium text-zinc-400">
                 {call.name}
               </div>
               {renderFormattedToolInput(
@@ -3589,7 +3638,7 @@ function renderFormattedToolInput(
       );
     }
     return (
-      <pre className="whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300">
+      <pre className="whitespace-pre-wrap break-words text-xs text-zinc-300">
         {rawInput}
       </pre>
     );
@@ -4006,6 +4055,10 @@ function getToolPreview(
     return null;
   }
 
+  if (parseCodexDeckToolName(toolName)) {
+    return getCodexDeckToolPreview(toolName, input);
+  }
+
   const name = toolName.toLowerCase();
   const handler = TOOL_PREVIEW_HANDLERS[name];
 
@@ -4171,6 +4224,10 @@ function getToolResultPreview(
   toolName: string,
   content: string,
 ): string | null {
+  if (parseCodexDeckToolName(toolName)) {
+    return getCodexDeckToolResultPreview(toolName, content);
+  }
+
   const name = toolName.toLowerCase();
   const parsed = tryParseJson(content);
 
@@ -4242,6 +4299,15 @@ function getToolResultPreview(
 }
 
 function ToolResultRenderer(props: ToolResultRendererProps) {
+  if (parseCodexDeckToolName(props.toolName)) {
+    return (
+      <CodexDeckToolResultRenderer
+        toolName={props.toolName}
+        content={props.content}
+        embedded={props.embedded}
+      />
+    );
+  }
   return <FunctionToolResultRenderer {...props} />;
 }
 
@@ -4504,6 +4570,12 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
     );
   };
 
+  if (block.type === "mcp_app" && block.mcpApp) {
+    return wrapSearchableBlock(
+      <McpAppWidget threadId={props.sessionId} app={block.mcpApp} />,
+    );
+  }
+
   if (block.type === "text" && block.text) {
     const parsedRestartNotice = parseTerminalRestartNoticeMessage(block.text);
     const sanitized = sanitizeText(block.text);
@@ -4581,6 +4653,20 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
           alt="User image"
           className="max-h-[360px] w-auto max-w-full"
           loading="lazy"
+        />
+      </div>,
+    );
+  }
+
+  if (block.type === "audio" && block.audio_url?.trim()) {
+    return wrapSearchableBlock(
+      <div className="w-full max-w-md rounded-lg border border-zinc-700/45 bg-zinc-950/70 p-2">
+        <audio
+          controls
+          preload="metadata"
+          src={block.audio_url}
+          aria-label="User audio"
+          className="w-full"
         />
       </div>,
     );
@@ -4808,7 +4894,10 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
               }`}
             >
               <Icon size={12} className="opacity-60" />
-              <span className="font-medium">{normalized.name}</span>
+              <span className="font-medium" title={normalized.name}>
+                {getCodexDeckToolLabel(normalized.name, input) ??
+                  normalized.name}
+              </span>
               {expandedLabel && isExpanded && (
                 <span className="font-normal text-slate-400">
                   {expandedLabel}
@@ -4904,7 +4993,6 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
   }
 
   if (block.type === "tool_result") {
-    const isError = block.is_error;
     const rawContent =
       typeof block.content === "string"
         ? block.content
@@ -4919,6 +5007,9 @@ function ContentBlockRenderer(props: ContentBlockRendererProps) {
           fallbackToolMap?.get(block.tool_use_id) ||
           ""
         : "");
+    // Deck task tools return JSON on success and plain text on failure.
+    const isError =
+      block.is_error ?? isCodexDeckToolFailureOutput(toolName, resultContent);
     const toolInput = block.tool_use_id
       ? toolInputMap?.get(block.tool_use_id) ||
         fallbackToolInputMap?.get(block.tool_use_id)

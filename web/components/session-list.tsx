@@ -24,14 +24,26 @@ interface SessionListItem {
   workflowRoleLabel?: string | null;
   sessionType?: "diff-guide" | "review" | "side";
   status?: SessionStatus;
+  /** Shared Codex read receipt; absent when the app-server has none. */
+  readReceipt?: "read" | "unread" | null;
+  /** Named Codex project/section ("Project · Section"), if assigned. */
+  organizationLabel?: string | null;
 }
 
-function SessionStatusIcon({ status }: { status: SessionStatus }) {
+function SessionStatusIcon({
+  status,
+  shared,
+}: {
+  status: SessionStatus;
+  shared?: boolean;
+}) {
   const label =
     status === "running"
       ? "Running"
       : status === "unreviewed"
-        ? "Unreviewed"
+        ? shared
+          ? "Unread"
+          : "Unreviewed"
         : "Completed";
 
   return (
@@ -41,10 +53,10 @@ function SessionStatusIcon({ status }: { status: SessionStatus }) {
       title={label}
       className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center ${
         status === "running"
-          ? "text-cyan-600 dark:text-cyan-400"
+          ? "text-cyan-400"
           : status === "unreviewed"
-            ? "text-amber-600 dark:text-amber-400"
-            : "text-emerald-600/90 dark:text-emerald-500/80"
+            ? "text-amber-400"
+            : "text-emerald-500/80"
       }`}
     >
       {status === "running" ? (
@@ -105,6 +117,7 @@ interface SessionListProps {
   selectedSession: string | null;
   onSelectSession: (sessionId: string) => void;
   onRequestDeleteSession?: (sessionId: string) => void;
+  onToggleReadReceipt?: (sessionId: string, unread: boolean) => void;
   loading?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
   emptyLabel?: string;
@@ -122,6 +135,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     selectedSession,
     onSelectSession,
     onRequestDeleteSession,
+    onToggleReadReceipt,
     loading,
     searchInputRef,
     emptyLabel = "No sessions found",
@@ -357,6 +371,16 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                 session.sessionType === "diff-guide"
                   ? "diff guide"
                   : session.sessionType;
+              const readToggle =
+                onToggleReadReceipt && session.readReceipt
+                  ? session.readReceipt
+                  : null;
+              const actionPadding =
+                onRequestDeleteSession && readToggle
+                  ? "pr-[4.5rem]"
+                  : onRequestDeleteSession || readToggle
+                    ? "pr-10"
+                    : "pr-2.5";
               const sessionTypeTitle = sessionTypeLabel
                 ? `${sessionTypeLabel[0].toUpperCase()}${sessionTypeLabel.slice(1)} session`
                 : undefined;
@@ -378,7 +402,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                     <button
                       type="button"
                       onClick={() => onSelectSession(session.id)}
-                      className={`block w-full rounded-lg px-2.5 py-2 ${onRequestDeleteSession ? "pr-10" : "pr-2.5"} text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
+                      className={`block w-full rounded-lg px-2.5 py-2 ${actionPadding} text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
                         selectedSession === session.id
                           ? "bg-zinc-800"
                           : "hover:bg-zinc-800/45"
@@ -407,11 +431,22 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                       <div className="mt-1 flex items-center justify-between gap-2">
                         <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-500">
                           {session.status ? (
-                            <SessionStatusIcon status={session.status} />
+                            <SessionStatusIcon
+                              status={session.status}
+                              shared={!!session.readReceipt}
+                            />
                           ) : null}
                           <span className="truncate">
                             {session.projectName}
                           </span>
+                          {session.organizationLabel ? (
+                            <span
+                              className="max-w-[50%] shrink-0 truncate rounded-md bg-zinc-800 px-1.5 py-px text-[10px] font-medium text-zinc-300"
+                              title={`Codex project: ${session.organizationLabel}`}
+                            >
+                              {session.organizationLabel}
+                            </span>
+                          ) : null}
                         </span>
                         <span
                           className="shrink-0 text-[11px] text-zinc-500"
@@ -424,6 +459,60 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                         </span>
                       </div>
                     </button>
+                    {readToggle && onToggleReadReceipt ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onToggleReadReceipt(
+                            session.id,
+                            readToggle === "read",
+                          );
+                        }}
+                        className={`absolute ${onRequestDeleteSession ? "right-9" : "right-1.5"} top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-zinc-700/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60`}
+                        aria-label={`${readToggle === "read" ? "Mark as unread" : "Mark as read"} ${session.id}`}
+                        title={
+                          readToggle === "read"
+                            ? "Mark as unread (shared with other Codex clients)"
+                            : "Mark as read (shared with other Codex clients)"
+                        }
+                      >
+                        {readToggle === "read" ? (
+                          <svg
+                            className="h-4 w-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <circle cx="12" cy="12" r="8" strokeWidth={1.75} />
+                            <circle
+                              cx="12"
+                              cy="12"
+                              r="3.5"
+                              fill="currentColor"
+                              stroke="none"
+                            />
+                          </svg>
+                        ) : (
+                          <svg
+                            className="h-4 w-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <circle cx="12" cy="12" r="8" strokeWidth={1.75} />
+                            <path
+                              d="m8.75 12 2.25 2.25 4.25-4.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={1.75}
+                            />
+                          </svg>
+                        )}
+                      </button>
+                    ) : null}
                     {onRequestDeleteSession && (
                       <button
                         type="button"

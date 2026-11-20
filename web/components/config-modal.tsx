@@ -37,8 +37,10 @@ import {
   updateCodexDeckDaemon,
 } from "../api";
 import {
+  applyCodexDeckConfigFormChanges,
   createEmptyCodexDeckConfig,
   parseCodexDeckConfigContent,
+  readCodexDeckConfigForm,
   updateCodexDeckConfigContent,
   type EditableCodexDeckConfig,
   type EditableRemoteConfig,
@@ -298,6 +300,7 @@ export default function ConfigModal(props: ConfigModalProps) {
   const { open, onClose, onApplied } = props;
   const [activeSection, setActiveSection] = useState<ConfigSection>("general");
   const [path, setPath] = useState("");
+  const [configPaths, setConfigPaths] = useState<string[]>([]);
   const [content, setContent] = useState("");
   const [loadedContent, setLoadedContent] = useState("");
   const [revision, setRevision] = useState("");
@@ -403,10 +406,11 @@ export default function ConfigModal(props: ConfigModalProps) {
     try {
       const response = await getCodexDeckConfig();
       setPath(response.path);
+      setConfigPaths(response.configPaths ?? []);
       setContent(response.content);
       setLoadedContent(response.content);
       setRevision(response.revision);
-      setConfig(parseCodexDeckConfigContent(response.content));
+      setConfig(readCodexDeckConfigForm(response));
       setEffectiveHoverSettings(
         response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
       );
@@ -480,7 +484,12 @@ export default function ConfigModal(props: ConfigModalProps) {
 
   const updateStructuredConfig = (nextConfig: EditableCodexDeckConfig) => {
     setConfig(nextConfig);
-    setContent(updateCodexDeckConfigContent(content, nextConfig));
+    const fileConfig = applyCodexDeckConfigFormChanges(
+      parseCodexDeckConfigContent(content),
+      config,
+      nextConfig,
+    );
+    setContent(updateCodexDeckConfigContent(content, fileConfig));
     setResult(null);
     setError(null);
   };
@@ -505,10 +514,11 @@ export default function ConfigModal(props: ConfigModalProps) {
     try {
       const response = await applyCodexDeckConfig({ content, revision });
       setPath(response.path);
+      setConfigPaths(response.configPaths ?? []);
       setContent(response.content);
       setLoadedContent(response.content);
       setRevision(response.revision);
-      setConfig(parseCodexDeckConfigContent(response.content));
+      setConfig(readCodexDeckConfigForm(response));
       setEffectiveHoverSettings(
         response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
       );
@@ -725,6 +735,15 @@ export default function ConfigModal(props: ConfigModalProps) {
               </div>
             ) : (
               <div className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+                {configPaths.some((configPath) => configPath !== path) ? (
+                  <p className="mb-4 text-xs leading-5 text-zinc-500">
+                    Values from{" "}
+                    {configPaths
+                      .filter((configPath) => configPath !== path)
+                      .join(", ")}{" "}
+                    take priority over this file.
+                  </p>
+                ) : null}
                 {activeSection === "general" ? (
                   <div>
                     <SectionHeader
@@ -1454,8 +1473,14 @@ export default function ConfigModal(props: ConfigModalProps) {
                           value={content}
                           onChange={(event) => {
                             const nextContent = event.target.value;
+                            setConfig(
+                              applyCodexDeckConfigFormChanges(
+                                config,
+                                parseCodexDeckConfigContent(content),
+                                parseCodexDeckConfigContent(nextContent),
+                              ),
+                            );
                             setContent(nextContent);
-                            setConfig(parseCodexDeckConfigContent(nextContent));
                             setResult(null);
                             setError(null);
                           }}

@@ -64,14 +64,18 @@ test("getSlashPaletteCommands only returns visible matching commands", () => {
   );
   assert.deepEqual(
     commands.map((command) => command.name),
-    ["/recap", "/rename", "/resume", "/review"],
+    ["/recap", "/remote-control", "/rename", "/resume", "/review"],
   );
 
   const hiddenAlias = getSlashPaletteCommands(
-    "/ap",
+    "/appro",
     SESSION_COMPOSER_SLASH_COMMANDS,
   );
-  assert.deepEqual(hiddenAlias, []);
+  // The hidden /approvals alias stays out of the palette; /approve is visible.
+  assert.deepEqual(
+    hiddenAlias.map((command) => command.name),
+    ["/approve"],
+  );
 
   const withArgs = getSlashPaletteCommands(
     "/review check diff",

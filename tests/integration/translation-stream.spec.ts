@@ -59,7 +59,7 @@ test("composer displays partial translations and restores the original draft on 
   const ui = new CodexDeckPage(page);
   await ui.goto(app.baseURL);
   await ui.selectSession("Review the launch checklist");
-  const input = page.getByPlaceholder("Message Codex...");
+  const input = page.getByPlaceholder("Ask Codex anything...");
   const source = "请检查流式翻译";
   await input.fill(source);
   try {

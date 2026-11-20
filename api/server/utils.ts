@@ -66,12 +66,16 @@ export function parseNonNegativeInteger(value: unknown): number | null {
   return null;
 }
 
+/** JSON-RPC code the Codex app-server returns when its request queue is full. */
+export const APP_SERVER_OVERLOADED_ERROR_CODE = -32001;
+
 export function responseStatusForError(error: unknown): 400 | 500 | 503 {
   if (error instanceof CodexAppServerTransportError) {
     return 503;
   }
   if (error instanceof CodexAppServerRpcError) {
-    return 500;
+    // "Server overloaded; retry later." is transient, so report it as 503.
+    return error.code === APP_SERVER_OVERLOADED_ERROR_CODE ? 503 : 500;
   }
   if (error instanceof SyntaxError) {
     return 400;
@@ -79,9 +83,7 @@ export function responseStatusForError(error: unknown): 400 | 500 | 503 {
   return 500;
 }
 
-export function parseOptionalString(
-  value: unknown,
-): string | null | undefined {
+export function parseOptionalString(value: unknown): string | null | undefined {
   if (value === undefined) {
     return undefined;
   }

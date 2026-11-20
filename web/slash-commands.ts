@@ -171,12 +171,65 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   },
   { name: "/recap", description: "Generate a brief conversation catch-up" },
   {
+    name: "/attachments",
+    description: "View and manage resources attached to this conversation",
+  },
+  {
     name: "/usage",
     description: "View usage, rate limits, credit estimates, and resets",
   },
   {
+    name: "/presets",
+    description: "Run or save reusable prompts and slash commands",
+  },
+  {
+    name: "/apps",
+    description: "Manage apps",
+  },
+  {
+    name: "/plugins",
+    description: "Browse plugins",
+  },
+  {
+    name: "/import",
+    description:
+      "Import setup, this project, and recent chats from Claude Code",
+  },
+  {
+    name: "/login",
+    description: "Sign in to your Codex account or set up a provider",
+  },
+  {
+    name: "/logout",
+    description: "Log out of Codex",
+  },
+  {
     name: "/mcp",
     description: "Manage MCP servers, tools, and authentication",
+  },
+  {
+    name: "/ide",
+    description:
+      "Include current selection, open files, and other context from your IDE",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/voice",
+    description: "Start or stop voice; use /voice settings to choose a voice",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/remote-control",
+    description:
+      "Pair devices with Codex remote control (separate from Deck remote access)",
+  },
+  {
+    name: "/environments",
+    description: "Register, inspect, and select remote execution environments",
+  },
+  {
+    name: "/projects",
+    description: "Manage named projects and sections for conversations",
   },
   {
     name: "/model",
@@ -241,6 +294,19 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     name: "/fork",
     description: "Fork the current chat",
+  },
+  {
+    name: "/worktree",
+    description: "Start or continue a conversation in a new worktree",
+  },
+  {
+    name: "/cd",
+    description: "Change the current working directory",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/pwd",
+    description: "Show the current working directory",
   },
   {
     name: "/codex-deck-diff",
@@ -319,7 +385,12 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   },
   {
     name: "/permissions",
-    description: "Show current permission settings",
+    description: "Choose what Codex is allowed to do",
+    supportsInlineArgs: true,
+  },
+  {
+    name: "/approve",
+    description: "Approve one retry of a recent auto-review denial",
   },
   {
     name: "/memories",

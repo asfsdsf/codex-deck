@@ -1,3 +1,5 @@
+/.npm-cache/
+pixel-workflow/
 # Dependencies
 docs/CODEX_CLI_PARITY_TODO.md
 .codex/

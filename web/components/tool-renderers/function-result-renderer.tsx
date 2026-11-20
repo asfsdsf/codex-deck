@@ -1036,6 +1036,7 @@ function ApplyPatchResultRenderer(props: {
   value: Record<string, unknown>;
   isError?: boolean;
   embedded?: boolean;
+  onFilePathLinkClick?: (href: string) => boolean;
 }) {
   const { value, isError, embedded = false } = props;
   const output = typeof value.output === "string" ? value.output.trim() : "";
@@ -1208,6 +1209,7 @@ export function FunctionToolResultRenderer(
         value={parsed}
         isError={isError}
         embedded={embedded}
+        onFilePathLinkClick={onFilePathLinkClick}
       />
     );
   }

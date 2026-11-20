@@ -1,16 +1,23 @@
+import { registerOrganizationRoutes } from "./organization-routes";
 import { registerNativeWorkflowRoutes } from "./native-workflow-routes";
+import { registerThreadQueueRoutes } from "./thread-queue-routes";
+import { parseOutputSchemaInput } from "../codex-output-schema";
+import { registerWorkspaceRoutes } from "./workspace-routes";
+import { registerRealtimeVoiceRoutes } from "./realtime-voice-routes";
 import { registerBackgroundTerminalRoutes } from "./background-terminal-routes";
 import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
 import { registerMemoryInsightRoutes } from "./memory-insight-routes";
 import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
+import { registerExtensionRoutes } from "./extension-routes";
+import { registerThreadHistoryRoutes } from "./thread-history-routes";
 import { SIDE_CONVERSATION_BOUNDARY_PROMPT } from "../session-origins";
 import { Hono } from "hono";
 import { generatedImageDataUrl } from "../generated-images";
 import type { CodexElicitationResponse } from "../mcp-elicitation";
 import { cors } from "hono/cors";
-import { serveStatic } from "@hono/node-server/serve-static";
+import { registerWebAssets } from "./web-assets";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
@@ -187,6 +194,11 @@ import {
 } from "../pets";
 import { registerWorkflowRoutes } from "./workflow-routes";
 import { registerHooksRoutes } from "./hooks-routes";
+import {
+  applyIdeContextForSend,
+  registerIdeContextRoutes,
+} from "./ide-context-routes";
+import { registerMcpAppRoutes } from "./mcp-app-routes";
 import { getWorkflowSummaryByKey, listWorkflows } from "../workflows";
 import { CodexHomeRuntimeManager } from "../codex-home-runtime-manager";
 import {
@@ -621,6 +633,24 @@ function parseSendMessageInputItems(
       }
       parsed.push({
         type: "image",
+        url,
+      });
+      continue;
+    }
+
+    if (type === "audio") {
+      if (typeof record.url !== "string") {
+        return undefined;
+      }
+      const url = record.url.trim();
+      if (!url) {
+        continue;
+      }
+      if (!/^(data:audio\/[a-z0-9.+-]+[;,]|https:\/\/)/i.test(url)) {
+        return undefined;
+      }
+      parsed.push({
+        type: "audio",
         url,
       });
       continue;
@@ -4977,7 +5007,35 @@ export function createServer(options: ServerOptions) {
   registerNativeWorkflowRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
+  registerThreadQueueRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+    wake: (id) => {
+      for (const listener of conversationWakeListeners) listener(id);
+    },
+  });
+  registerExtensionRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
+  registerIdeContextRoutes(app);
+  registerMcpAppRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
+  registerWorkspaceRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
+  registerRealtimeVoiceRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
+  registerOrganizationRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+  });
   registerReviewRoutes(app, {
+    subscribe: ensureAppServerEventSourceSubscribed,
+    wake: (id) => {
+      for (const listener of conversationWakeListeners) listener(id);
+    },
+  });
+  registerThreadHistoryRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
     wake: (id) => {
       for (const listener of conversationWakeListeners) listener(id);
@@ -5055,6 +5113,12 @@ export function createServer(options: ServerOptions) {
         return c.json({ error: "collaborationMode is invalid" }, 400);
       }
 
+      const outputSchema = parseOutputSchemaInput(body.outputSchema);
+      if (!outputSchema.ok) {
+        return c.json({ error: outputSchema.error }, 400);
+      }
+
+      let threadCwd: string | null = null;
       if (client.getThreadSummary) {
         const threadSummary = await client.getThreadSummary(threadId);
         if (threadSummary.canAcceptDirectInput === false) {
@@ -5066,17 +5130,30 @@ export function createServer(options: ServerOptions) {
             403,
           );
         }
+        threadCwd = threadSummary.cwd?.trim() || null;
       }
+
+      // Codex CLI `/ide`: fetch fresh IDE context for this turn.
+      const withIdeContext =
+        body.ideContext === true
+          ? await applyIdeContextForSend(input, normalizedCwd || threadCwd)
+          : null;
 
       const result = await client.sendMessage({
         threadId,
-        input,
+        input: withIdeContext?.input ?? input,
         ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
         ...(model !== undefined ? { model } : {}),
         ...(serviceTier !== undefined ? { serviceTier } : {}),
         ...(effort !== undefined ? { effort } : {}),
         ...(collaborationMode !== undefined ? { collaborationMode } : {}),
         ...(body.steerActiveTurn === true ? { steerActiveTurn: true } : {}),
+        ...(body.steerActiveTurn === true &&
+        typeof body.expectedTurnId === "string" &&
+        body.expectedTurnId.trim()
+          ? { expectedTurnId: body.expectedTurnId.trim() }
+          : {}),
+        ...(outputSchema.value ? { outputSchema: outputSchema.value } : {}),
       });
 
       for (const listener of conversationWakeListeners) {
@@ -5087,6 +5164,7 @@ export function createServer(options: ServerOptions) {
         ok: true,
         turnId: result.turnId,
         ...(result.steered ? { steered: true } : {}),
+        ...(withIdeContext ? { ideContext: withIdeContext.ideContext } : {}),
       };
       return c.json(response);
     } catch (error) {
@@ -5502,12 +5580,13 @@ export function createServer(options: ServerOptions) {
 
   const webDistPath = getWebDistPath();
 
-  app.use("/*", serveStatic({ root: webDistPath }));
+  registerWebAssets(app, webDistPath);
 
   app.get("/*", async (c) => {
     const indexPath = join(webDistPath, "index.html");
     try {
       const html = readFileSync(indexPath, "utf-8");
+      c.header("Cache-Control", "no-cache");
       return c.html(html);
     } catch {
       return c.text("UI not found. Run 'pnpm build' first.", 404);

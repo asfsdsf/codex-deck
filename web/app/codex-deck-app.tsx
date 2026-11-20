@@ -1,21 +1,67 @@
+import PermissionsPanel from "../components/permissions-panel";
+import WorktreePanel from "../components/worktree-panel";
+import { AutoReviewDenials } from "../components/auto-review";
+import { parsePermissionArgs } from "../permission-args";
 import ConfigDiagnostics from "../components/config-diagnostics";
 import RetainedWarnings from "../components/retained-warnings";
 import DaybreakSettings from "../components/daybreak-settings";
 import ExperimentalFeatures from "../components/experimental-features";
+import VoiceSessionBar from "../components/voice-session-bar";
+import {
+  AudioAttachButton,
+  AudioAttachmentList,
+  VoiceToggleButton,
+  useAudioAttachments,
+} from "../components/audio-attachments";
+import VoiceSettings from "../components/voice-settings";
+import { getVoiceController } from "../voice/voice-controller";
+import {
+  audioAttachmentUnavailableReason,
+  isAudioDataUrl,
+  parseVoiceCommandArgs,
+  VOICE_USAGE,
+} from "../voice/voice-support";
 import TranscriptExport from "../components/transcript-export";
 import ConversationRecapView from "../components/conversation-recap";
 import UsageDashboard from "../components/usage-dashboard";
 import NativeDialog from "../components/native-dialog";
+import ExtensionDialogs, {
+  type ExtensionDialogState,
+} from "../components/extension-dialogs";
+import ThreadAttachments from "../components/thread-attachments";
 import McpAdmin from "../components/mcp-admin";
+import OrganizationDialogBody, {
+  getOrganizationDialogForCommand,
+  getOrganizationDialogTitle,
+  isOrganizationDialogKind,
+  type OrganizationDialogKind,
+} from "../components/organization-dialog";
 import OperationalNotices from "../components/operational-notices";
+import ConversationCanvas from "../components/conversation-canvas";
 import { publishCodexRuntimeEvent } from "../codex-runtime-events";
+import RunningTurnComposerActions from "../components/running-turn-composer-actions";
+import {
+  OutputSchemaChip,
+  OutputSchemaPanel,
+  OutputSchemaToggleButton,
+  type AttachedOutputSchema,
+} from "../components/output-schema-attachment";
+import { OUTPUT_SCHEMA_RUNNING_TURN_ERROR } from "../output-schema";
+import { useNativeSnapshot } from "../hooks/use-native-snapshot";
+import {
+  mergeSharedQueueIntoPending,
+  sharedQueueItemIdFromPendingId,
+  shouldUseSharedQueue,
+} from "../shared-message-queue";
 import ServiceTierSelect from "../components/service-tier-select";
 import { serviceTierOverride } from "../../api/service-tiers";
-import ReviewModal from "../components/review-modal";
 import {
+  lazy,
   memo,
+  Suspense,
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   useRef,
@@ -30,6 +76,8 @@ import type {
   DiffGuideSummary,
   DiffGuideStartResponse,
   CodexAppServerEvent,
+  CodexQueuedMessage,
+  SendCodexMessageInputItem,
   CodexAgentAction,
   CodexAgentWaitConfig,
   CodexCollaborationModeOption,
@@ -108,8 +156,6 @@ import {
   DiffSkillInstallDialog,
 } from "../components/diff-guide-viewer";
 import LatestSessionMessageBox from "../components/latest-session-message-box";
-import TerminalView from "../components/terminal-view";
-import WorkflowView from "../components/workflow-view";
 import DiffPane, { type RightPaneMode } from "../components/diff-pane";
 import ProjectSelector from "../components/project-selector";
 import ComposerPicker, {
@@ -120,9 +166,17 @@ import CodexValuePicker, {
   type CodexValuePickerOption,
 } from "../components/codex-value-picker";
 import CenteredConfirmDialog from "../components/centered-confirm-dialog";
+import {
+  getTurnPromptText,
+  type ConversationTurnAction,
+} from "../conversation-turn-actions";
+import ConversationRewindDialog from "../components/conversation-rewind-dialog";
+import {
+  requestComposerDraft,
+  subscribeComposerDraftRequests,
+  takeComposerDraft,
+} from "../composer-draft-requests";
 import { PetCompanion, PetPicker } from "../components/pet-companion";
-import MemoriesModal from "../components/memories-modal";
-import ConfigModal from "../components/config-modal";
 import {
   EMPTY_NEW_SESSION_CWD_STATE,
   clearNewSessionCwdForProjectSelection,
@@ -134,6 +188,8 @@ import SlashCommandPalette from "../components/slash-command-palette";
 import SkillSelectorPalette from "../components/skill-selector-palette";
 import { usePageVisibility } from "../hooks/use-page-visibility";
 import { useCodexMemories } from "../hooks/use-codex-memories";
+import { useIdeContext } from "../hooks/use-ide-context";
+import { IdeContextIndicator } from "../components/ide-context-indicator";
 import { useCodexPets } from "../hooks/use-codex-pets";
 import { useSessionHooksPane } from "../hooks/use-session-hooks-pane";
 import {
@@ -190,6 +246,11 @@ import {
   resolveTerminalComposerContinueText,
 } from "../message-composer-actions";
 import {
+  isNonSteerableTurnError,
+  resolveComposerSendRoute,
+  type ComposerSendIntent,
+} from "../running-turn-send";
+import {
   createRemoteAdminSetupToken,
   createCodexThread,
   deleteWorkflow as deleteWorkflowRequest,
@@ -208,6 +269,12 @@ import {
   getCodexThreadState,
   getWorkflowSessionRoles as getWorkflowSessionRolesRequest,
   interruptCodexThread,
+  addCodexThreadQueueMessage,
+  deleteCodexThreadQueueMessage,
+  getCodexThreadQueue,
+  moveCodexThreadQueueMessage,
+  startCodexThreadQueueMessage,
+  updateCodexThreadQueueMessage,
   isRemoteTransportEnabled,
   listCodexCollaborationModes,
   listCodexModels,
@@ -274,6 +341,9 @@ import {
   sendTerminalInput as sendTerminalInputRequest,
   setCodexThreadName,
   forkCodexThread,
+  changeCodexWorkingDirectory,
+  setCodexPermissions,
+  forkCodexThreadAtTurn,
   startDiffGuide,
   getDiffGuides,
   startCodexSideThread,
@@ -315,6 +385,7 @@ import {
   consumeConfirmedPendingUserMessages,
   getPendingUserMessage,
   nextQueuedPendingUserMessage,
+  markPendingUserMessageSteered,
   removePendingUserMessage,
   updatePendingUserMessageStatus,
   type PendingUserMessage,
@@ -340,6 +411,10 @@ import {
   readBrowserTitleMode,
   type BrowserTitleMode,
 } from "../browser-title";
+import { useThreadReadStates } from "../hooks/use-thread-read-states";
+import { useCodexProjects } from "../hooks/use-codex-projects";
+import { getThreadOrganizationLabel } from "../codex-projects-view";
+import { getReadReceipt, resolveSessionReadStatus } from "../thread-read-state";
 import {
   getSessionStatusStorageKey,
   getSessionStatus,
@@ -355,6 +430,23 @@ import {
   createSettleChimeTracker,
   playSessionSettleChime,
 } from "../session-settle-chime";
+
+const TerminalView = lazy(() => import("../components/terminal-view"));
+const WorkflowView = lazy(() => import("../components/workflow-view"));
+const ConfigModal = lazy(() => import("../components/config-modal"));
+const MemoriesModal = lazy(() => import("../components/memories-modal"));
+const ReviewModal = lazy(() => import("../components/review-modal"));
+
+function PanelLoading() {
+  return (
+    <div
+      className="flex h-full items-center justify-center text-sm text-zinc-500"
+      role="status"
+    >
+      Loading...
+    </div>
+  );
+}
 
 interface SessionHeaderProps {
   session: Session;
@@ -667,6 +759,9 @@ interface PendingTurn {
   turnId: string | null;
 }
 
+const EMPTY_PENDING_USER_MESSAGES: PendingUserMessage[] = [];
+const EMPTY_SHARED_QUEUE_ITEMS: CodexQueuedMessage[] = [];
+
 interface SideThreadState {
   parentThreadId: string;
 }
@@ -738,6 +833,8 @@ interface HistoryNavigationState {
 interface MessageComposerSubmitPayload {
   text: string;
   images: string[];
+  /** Final-answer JSON schema for the turn this message starts. */
+  outputSchema?: Record<string, unknown>;
 }
 
 interface ComposerImageAttachment {
@@ -766,8 +863,20 @@ interface MessageComposerProps {
   messageBoxHeight: number;
   onResizeMessageBoxStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onSendMessage: (payload: MessageComposerSubmitPayload) => Promise<boolean>;
+  /** Queue for after the running turn (Codex TUI Tab). */
+  onQueueMessage?:
+    | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+    | null;
+  /** Interrupt the running turn, then send as a new turn. */
+  onInterruptAndSend?:
+    | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+    | null;
   onRunSlashCommand: (commandName: string, args: string) => Promise<boolean>;
   onStopConversation: () => Promise<void>;
+  /** Offer attaching a final-answer JSON schema to the next turn. */
+  allowOutputSchema?: boolean;
+  /** Shows audio attachments; a non-null reason disables them. */
+  audioInput?: { unavailableReason: string | null };
 }
 
 type ComposerSendTrigger = "textarea-enter" | "send-button" | "other";
@@ -1973,10 +2082,24 @@ const MessageComposer = memo(function MessageComposer(
     messageBoxHeight,
     onResizeMessageBoxStart,
     onSendMessage,
+    onQueueMessage,
+    onInterruptAndSend,
     onRunSlashCommand,
     onStopConversation,
+    allowOutputSchema = false,
+    audioInput,
   } = props;
+  const audio = useAudioAttachments();
+  const clearAudioAttachments = audio.clear;
   const composerResetKey = draftResetKey ?? sessionId ?? "";
+  const [outputSchema, setOutputSchema] = useState<AttachedOutputSchema | null>(
+    null,
+  );
+  const [outputSchemaEditorOpen, setOutputSchemaEditorOpen] = useState(false);
+  useEffect(() => {
+    setOutputSchema(null);
+    setOutputSchemaEditorOpen(false);
+  }, [composerResetKey]);
   const [draft, setDraft] = useState("");
   const [draftTranslation, setDraftTranslation] = useState<{
     status: "idle" | "loading" | "active" | "error";
@@ -2025,6 +2148,34 @@ const MessageComposer = memo(function MessageComposer(
   const dragDepthRef = useRef(0);
   const imageAttachmentsRef = useRef<ComposerImageAttachment[]>([]);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const composerActionsRef = useRef<HTMLDivElement | null>(null);
+
+  // The toolbar below the textarea reserves room for the floating action
+  // buttons; labeled buttons (Run, Continue, Sending...) are wider than the
+  // icon-only Send/Stop, so publish the real width to the composer card.
+  useLayoutEffect(() => {
+    const actions = composerActionsRef.current;
+    const card = actions?.closest<HTMLElement>(".composer-card");
+    if (!actions || !card) {
+      return;
+    }
+    const update = () => {
+      card.style.setProperty(
+        "--composer-actions-width",
+        `${actions.offsetWidth}px`,
+      );
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      return () => card.style.removeProperty("--composer-actions-width");
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(actions);
+    return () => {
+      observer.disconnect();
+      card.style.removeProperty("--composer-actions-width");
+    };
+  }, []);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2067,10 +2218,38 @@ const MessageComposer = memo(function MessageComposer(
     setSelectedSkillSelectorIndex(0);
     skillSelectorRequestIdRef.current += 1;
     clearImageAttachments();
+    clearAudioAttachments();
     dragDepthRef.current = 0;
     setIsDragActive(false);
     setShowMobileAttachMenu(false);
-  }, [clearImageAttachments, composerResetKey, resetDraftTranslation]);
+  }, [
+    clearAudioAttachments,
+    clearImageAttachments,
+    composerResetKey,
+    resetDraftTranslation,
+  ]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const apply = () => {
+      const text = takeComposerDraft(sessionId);
+      if (text === null) return;
+      resetDraftTranslation();
+      setHistoryNavigation({ index: null, draftBeforeNavigation: "" });
+      setDraft(text);
+      setCursorPosition(text.length);
+      requestAnimationFrame(() => {
+        const textarea = composerTextareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(text.length, text.length);
+      });
+    };
+    apply();
+    return subscribeComposerDraftRequests((requestedSessionId) => {
+      if (requestedSessionId === sessionId) apply();
+    });
+  }, [composerResetKey, resetDraftTranslation, sessionId]);
 
   useEffect(() => {
     const updateMobilePhoneState = () => {
@@ -2202,9 +2381,14 @@ const MessageComposer = memo(function MessageComposer(
   );
 
   const hasDraftText = draft.trim().length > 0;
-  const hasMessageContent = hasDraftText || imageAttachments.length > 0;
+  const hasMessageContent =
+    hasDraftText ||
+    imageAttachments.length > 0 ||
+    (!!audioInput && audio.attachments.length > 0);
   const shouldUseStopAction =
     isGeneratingForSelectedSession && !hasMessageContent;
+  const steerWhileGenerating =
+    isGeneratingForSelectedSession && hasMessageContent;
   const hasIdlePrimaryAction = typeof onIdlePrimaryAction === "function";
   const idlePrimaryActionButtonLabel = idlePrimaryActionLabel || "Send";
   const composerBusy = sendingMessage || idlePrimaryActionBusy;
@@ -2219,6 +2403,7 @@ const MessageComposer = memo(function MessageComposer(
     sendingMessage,
     shouldUseStopAction,
     stoppingTurn,
+    steerWhileGenerating,
   });
 
   const slashInvocationReady =
@@ -2230,7 +2415,12 @@ const MessageComposer = memo(function MessageComposer(
   // (Run, Init, ...) keep a short text label.
   const primaryButtonIconOnly =
     !slashInvocationReady &&
-    (primaryActionState.kind === "stop" || primaryActionState.kind === "send");
+    (primaryActionState.kind === "stop" ||
+      (primaryActionState.kind === "send" && !steerWhileGenerating));
+  const showRunningTurnActions =
+    steerWhileGenerating &&
+    !slashInvocationReady &&
+    primaryActionState.kind === "send";
 
   const normalizedImageFiles = useMemo(
     () => imageAttachments.map((attachment) => attachment.file),
@@ -2252,7 +2442,10 @@ const MessageComposer = memo(function MessageComposer(
     setDismissedSkillSelectorQuery(null);
     setSelectedSkillSelectorIndex(0);
     clearImageAttachments();
-  }, [clearImageAttachments, resetDraftTranslation]);
+    setOutputSchema(null);
+    setOutputSchemaEditorOpen(false);
+    clearAudioAttachments();
+  }, [clearAudioAttachments, clearImageAttachments, resetDraftTranslation]);
 
   const focusComposerInput = useCallback(() => {
     const applyFocus = () => {
@@ -2748,7 +2941,12 @@ const MessageComposer = memo(function MessageComposer(
   );
 
   const handleSendMessage = useCallback(
-    async (trigger: ComposerSendTrigger = "other") => {
+    async (
+      trigger: ComposerSendTrigger = "other",
+      submit: (
+        payload: MessageComposerSubmitPayload,
+      ) => Promise<boolean> = onSendMessage,
+    ) => {
       const invocation = parseSlashCommandInvocation(draft, slashCommands);
       if (invocation) {
         await executeSlashCommand(invocation.command, invocation.args);
@@ -2767,7 +2965,20 @@ const MessageComposer = memo(function MessageComposer(
         return;
       }
 
-      const sent = await onSendMessage({ text: draft, images: imageDataUrls });
+      // Audio rides in `images` as data:audio URLs; the send path maps them
+      // to `{ type: "audio" }` inputs.
+      const sent = await submit({
+        text: draft,
+        images: [
+          ...imageDataUrls,
+          ...(audioInput && !audioInput.unavailableReason
+            ? audio.attachments.map((attachment) => attachment.dataUrl)
+            : []),
+        ],
+        ...(allowOutputSchema && outputSchema
+          ? { outputSchema: outputSchema.value }
+          : {}),
+      });
       if (!sent) {
         return;
       }
@@ -2778,14 +2989,18 @@ const MessageComposer = memo(function MessageComposer(
       }
     },
     [
+      allowOutputSchema,
       clearAfterSendSuccess,
       draft,
       focusComposerInput,
       hasMessageContent,
       normalizedImageFiles,
       onSendMessage,
+      outputSchema,
       slashCommands,
       executeSlashCommand,
+      audioInput,
+      audio.attachments,
     ],
   );
   const handleIdlePrimaryAction = useCallback(
@@ -2928,6 +3143,63 @@ const MessageComposer = memo(function MessageComposer(
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+          {allowOutputSchema && outputSchemaEditorOpen ? (
+            <OutputSchemaPanel
+              key={outputSchema?.text ?? "new"}
+              attached={outputSchema}
+              onAttach={(schema) => {
+                setOutputSchema(schema);
+                setOutputSchemaEditorOpen(false);
+                focusComposerInput();
+              }}
+              onRemove={() => {
+                setOutputSchema(null);
+                setOutputSchemaEditorOpen(false);
+              }}
+              onClose={() => setOutputSchemaEditorOpen(false)}
+            />
+          ) : allowOutputSchema && outputSchema ? (
+            <OutputSchemaChip
+              schema={outputSchema}
+              disabled={composerBusy}
+              onEdit={() => setOutputSchemaEditorOpen(true)}
+              onRemove={() => setOutputSchema(null)}
+            />
+          ) : null}
+          {showRunningTurnActions && (
+            <RunningTurnComposerActions
+              touch={isMobilePhone}
+              disabled={composerBusy || stoppingTurn}
+              onQueue={
+                onQueueMessage
+                  ? () => void handleSendMessage("send-button", onQueueMessage)
+                  : null
+              }
+              onInterruptAndSend={
+                onInterruptAndSend
+                  ? () =>
+                      void handleSendMessage("send-button", onInterruptAndSend)
+                  : null
+              }
+            />
+          )}
+          {audioInput && (
+            <AudioAttachmentList
+              attachments={audio.attachments}
+              disabled={isSendingLocked || composerBusy}
+              onRemove={audio.remove}
+            />
+          )}
+          {audioInput && audio.error && (
+            <div role="alert" className="px-4 pt-2 text-xs text-red-300">
+              {audio.error}
+            </div>
+          )}
+          {audioInput?.unavailableReason && audio.attachments.length > 0 && (
+            <div className="px-4 pt-2 text-xs text-amber-200">
+              {audioInput.unavailableReason} Attached audio will not be sent.
             </div>
           )}
           {isDragActive && (
@@ -3203,6 +3475,22 @@ const MessageComposer = memo(function MessageComposer(
               }
 
               if (
+                event.key === "Tab" &&
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.nativeEvent.isComposing &&
+                showRunningTurnActions &&
+                onQueueMessage
+              ) {
+                // Codex TUI: Tab queues the draft while a task runs.
+                event.preventDefault();
+                void handleSendMessage("textarea-enter", onQueueMessage);
+                return;
+              }
+
+              if (
                 event.key === "Enter" &&
                 !event.shiftKey &&
                 !event.nativeEvent.isComposing
@@ -3230,7 +3518,22 @@ const MessageComposer = memo(function MessageComposer(
             className="block w-full min-h-[36px] resize-none border-0 bg-transparent px-4 pt-1.5 pb-1 text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
           />
         </div>
-        <div className="composer-actions absolute bottom-2 right-2 z-10 flex items-center gap-1">
+        <div
+          ref={composerActionsRef}
+          className="composer-actions absolute bottom-2 right-2 z-10 flex items-center gap-1"
+        >
+          {audioInput && (
+            <VoiceToggleButton
+              onToggle={() => void onRunSlashCommand("/voice", "")}
+            />
+          )}
+          {audioInput && !audioInput.unavailableReason && (
+            <AudioAttachButton
+              disabled={isSendingLocked || composerBusy}
+              onAdd={(entries) => void audio.addBlobs(entries)}
+              onError={audio.setError}
+            />
+          )}
           <div className="relative flex">
             <input
               ref={cameraInputRef}
@@ -3300,6 +3603,14 @@ const MessageComposer = memo(function MessageComposer(
               </svg>
             </button>
           </div>
+          {allowOutputSchema ? (
+            <OutputSchemaToggleButton
+              attached={!!outputSchema}
+              open={outputSchemaEditorOpen}
+              disabled={isSendingLocked || composerBusy}
+              onClick={() => setOutputSchemaEditorOpen((open) => !open)}
+            />
+          ) : null}
           <button
             type="button"
             onClick={handleTranslateDraft}
@@ -3807,6 +4118,7 @@ export default function CodexDeckApp() {
     useState(false);
   const terminalEmbeddedRawMessagesRef = useRef<ConversationMessage[]>([]);
   const [centerView, setCenterView] = useState<CenterViewMode>("session");
+  const [conversationViewMode, setConversationViewMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingTerminals, setLoadingTerminals] = useState(true);
   const [loadingWorkflows, setLoadingWorkflows] = useState(true);
@@ -3992,6 +4304,12 @@ export default function CodexDeckApp() {
   const resolvedRemoteServerUrl = remoteLoginTarget.serverUrl;
   const remoteTrustPins = remoteLoginTarget.pins;
   const apiReady = connectionMode === "local" || remoteConnected;
+  const threadReadStates = useThreadReadStates(
+    apiReady,
+    selectedCodexHomeId,
+    sessions,
+  );
+  const codexProjects = useCodexProjects(apiReady, selectedCodexHomeId);
   const [contextRefreshVersion, setContextRefreshVersion] = useState(0);
   const [isTouchResizeOverlayVisible, setIsTouchResizeOverlayVisible] =
     useState(false);
@@ -4012,14 +4330,37 @@ export default function CodexDeckApp() {
       | "experimental"
       | "daybreak"
       | "warnings"
-      | "debug-config";
+      | "debug-config"
+      | "voice-settings"
+      | OrganizationDialogKind;
     model?: string | null;
     filename?: string;
     threadId: string | null;
   } | null>(null);
   const closeNativeDialog = useCallback(() => setNativeDialog(null), []);
+  const [extensionDialog, setExtensionDialog] =
+    useState<ExtensionDialogState | null>(null);
+  const closeExtensionDialog = useCallback(() => setExtensionDialog(null), []);
+  // Permissions, auto-review, and worktree dialogs (kept apart from nativeDialog).
+  const [workspaceDialog, setWorkspaceDialog] = useState<{
+    kind: "permissions" | "approve" | "worktree";
+    threadId: string;
+    cwd?: string | null;
+  } | null>(null);
+  const closeWorkspaceDialog = useCallback(() => setWorkspaceDialog(null), []);
+  const [attachmentsThreadId, setAttachmentsThreadId] = useState<string | null>(
+    null,
+  );
+  const closeAttachmentsDialog = useCallback(
+    () => setAttachmentsThreadId(null),
+    [],
+  );
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [hasOpenedConfigModal, setHasOpenedConfigModal] = useState(false);
+  useEffect(() => {
+    if (showConfigModal) setHasOpenedConfigModal(true);
+  }, [showConfigModal]);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renamingSession, setRenamingSession] = useState(false);
@@ -4358,6 +4699,9 @@ export default function CodexDeckApp() {
     setDeleteTerminalTargetId(null);
     setShowCollabModePicker(false);
     setNativeDialog(null);
+    setExtensionDialog(null);
+    setWorkspaceDialog(null);
+    setAttachmentsThreadId(null);
     setReviewDialog(null);
     setShowStatusModal(false);
     setShowConfigModal(false);
@@ -5367,10 +5711,20 @@ export default function CodexDeckApp() {
             getWorkflowSessionRoleLabel(
               sessionWorkflowRolesById[session.id] ?? null,
             ),
-          status: getSessionStatus(trackedSessionStatuses, session.id),
+          status: resolveSessionReadStatus(
+            getSessionStatus(trackedSessionStatuses, session.id),
+            getReadReceipt(threadReadStates.snapshot, session.id),
+          ),
+          readReceipt: getReadReceipt(threadReadStates.snapshot, session.id),
+          organizationLabel: getThreadOrganizationLabel(
+            codexProjects,
+            session.id,
+          ),
         };
       }),
     [
+      codexProjects,
+      threadReadStates.snapshot,
       sessionTerminalRolesById,
       sessionWorkflowRolesById,
       sessions,
@@ -5582,6 +5936,12 @@ export default function CodexDeckApp() {
       ) ?? null
     );
   }, [activeComposerSessionId, sessionsWithThreadNames]);
+  const ideContext = useIdeContext({
+    threadId: activeComposerSessionId,
+    cwd: activeComposerSessionData?.project,
+    showNotice: showCommandNoticeForDuration,
+    showError: setInteractionError,
+  });
   const {
     showMemoriesModal,
     setShowMemoriesModal,
@@ -5696,6 +6056,45 @@ export default function CodexDeckApp() {
     showWorkflowCreateModal,
     workflowCreateChatSessionId,
   ]);
+
+  const { markViewed: markThreadReadStateViewed } = threadReadStates;
+  useEffect(() => {
+    markThreadReadStateViewed(
+      showWorkflowCreateModal && workflowCreateChatSessionId
+        ? workflowCreateChatSessionId
+        : activeWaitSessionId,
+      isPageVisible,
+    );
+  }, [
+    activeWaitSessionId,
+    isPageVisible,
+    markThreadReadStateViewed,
+    showWorkflowCreateModal,
+    threadReadStates.snapshot,
+    workflowCreateChatSessionId,
+  ]);
+  const { setUnread: setThreadUnread } = threadReadStates;
+  const handleToggleReadReceipt = useCallback(
+    (sessionId: string, unread: boolean) => {
+      void setThreadUnread(sessionId, unread).then(
+        (status) => {
+          if (status === "conflict")
+            showCommandNoticeForDuration(
+              "Read state changed in another Codex client. Showing the latest state.",
+            );
+          else if (status === "unavailable")
+            showCommandNoticeForDuration(
+              "Shared read state is unavailable on this Codex server.",
+            );
+        },
+        (error) =>
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          ),
+      );
+    },
+    [setThreadUnread, showCommandNoticeForDuration],
+  );
 
   useEffect(() => {
     if (!apiReady || !isPageVisible) {
@@ -7594,6 +7993,13 @@ export default function CodexDeckApp() {
       collaborationModes.find((mode) => mode.mode === selectedModeKey) ?? null,
     [collaborationModes, selectedModeKey],
   );
+  const selectedSessionAudioInput = useMemo(() => {
+    const modelId = selectedModeOption?.model || selectedModelId;
+    const model =
+      models.find((entry) => entry.id === modelId) ??
+      (modelId ? null : (models.find((entry) => entry.isDefault) ?? null));
+    return { unavailableReason: audioAttachmentUnavailableReason(model) };
+  }, [models, selectedModeOption?.model, selectedModelId]);
   const selectedModeLabel = useMemo(() => {
     if (selectedModeOption?.name.trim()) {
       return selectedModeOption.name.trim();
@@ -9700,6 +10106,76 @@ export default function CodexDeckApp() {
     workflowCreateTitle,
   ]);
 
+  // Server-side shared queue for the selected session (thread/queue/*). It
+  // refetches on thread/queue/changed, reconnect snapshots, and visibility.
+  const sharedQueueSupportedRef = useRef<boolean | null>(null);
+  const loadSelectedSharedQueue = useCallback(async () => {
+    const threadId = selectedSession;
+    if (!threadId) {
+      return { threadId: null, supported: false, items: [] };
+    }
+    const snapshot = await getCodexThreadQueue(threadId);
+    sharedQueueSupportedRef.current = snapshot.supported;
+    return { threadId, ...snapshot };
+  }, [selectedSession]);
+  const {
+    data: sharedQueueData,
+    refresh: refreshSharedQueue,
+    setData: setSharedQueueData,
+  } = useNativeSnapshot("queue", selectedSession, loadSelectedSharedQueue);
+  const selectedSharedQueueItems =
+    sharedQueueData && sharedQueueData.threadId === selectedSession
+      ? sharedQueueData.items
+      : EMPTY_SHARED_QUEUE_ITEMS;
+  const selectedSessionPendingUserMessages = useMemo(
+    () =>
+      selectedSession
+        ? mergeSharedQueueIntoPending(
+            pendingUserMessagesBySession[selectedSession] ??
+              EMPTY_PENDING_USER_MESSAGES,
+            selectedSharedQueueItems,
+          )
+        : EMPTY_PENDING_USER_MESSAGES,
+    [pendingUserMessagesBySession, selectedSession, selectedSharedQueueItems],
+  );
+
+  // Adds to the app-server queue; false means "use the local queue".
+  const enqueueSharedQueueMessage = useCallback(
+    async (
+      sessionId: string,
+      input: SendCodexMessageInputItem[],
+    ): Promise<boolean> => {
+      if (sharedQueueSupportedRef.current === false) {
+        return false;
+      }
+      try {
+        const response = await addCodexThreadQueueMessage(
+          sessionId,
+          input,
+          createPendingUserMessageId(),
+        );
+        const item = response.item;
+        if (!response.supported || !item) {
+          sharedQueueSupportedRef.current = false;
+          return false;
+        }
+        sharedQueueSupportedRef.current = true;
+        setSharedQueueData((current) =>
+          current &&
+          current.threadId === sessionId &&
+          !current.items.some((entry) => entry.id === item.id)
+            ? { ...current, items: [...current.items, item] }
+            : current,
+        );
+        refreshSharedQueue();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [refreshSharedQueue, setSharedQueueData],
+  );
+
   const enqueuePendingUserMessage = useCallback(
     (
       sessionId: string,
@@ -9797,6 +10273,8 @@ export default function CodexDeckApp() {
          * new one. Used for async question answers, as Codex CLI does.
          */
         steerActiveTurn?: boolean;
+        /** "queue" holds the message for after the running turn (Tab). */
+        intent?: ComposerSendIntent;
       },
     ): Promise<boolean> => {
       const sessionId = options?.sessionIdOverride ?? activeComposerSessionId;
@@ -9817,30 +10295,67 @@ export default function CodexDeckApp() {
           typeof imageUrl === "string" && imageUrl.trim().length > 0,
       );
       const input: Array<
-        { type: "text"; text: string } | { type: "image"; url: string }
+        | { type: "text"; text: string }
+        | { type: "image"; url: string }
+        | { type: "audio"; url: string }
       > = [
         ...(normalizedText.length > 0
           ? ([{ type: "text", text: normalizedText }] as const)
           : []),
-        ...normalizedImages.map((url) => ({ type: "image", url }) as const),
+        ...normalizedImages.map(
+          (url) =>
+            ({ type: isAudioDataUrl(url) ? "audio" : "image", url }) as const,
+        ),
       ];
       if (input.length === 0) {
         return false;
       }
 
-      // Mirror Codex CLI's client-side input queue: while a turn is running
-      // for this session (or older messages are still queued), hold the
-      // message locally as "queued" so it can be force-sent or cancelled.
-      // Queued messages auto-send one at a time when the turn settles.
+      // Mirror Codex CLI: while a turn runs, a plain send steers it
+      // (turn/steer) and an explicit queue request (Tab) holds the message
+      // as "queued" until the turn settles. Queued messages auto-send one at
+      // a time; older queued messages keep their order.
+      let steerRunningTurn = options?.steerActiveTurn === true;
       if (!options?.pendingIdOverride && !options?.bypassQueue) {
-        const turnActiveForSession =
-          pendingTurnRef.current?.sessionId === sessionId;
-        const hasQueuedBacklog =
+        const hasLocalBacklog =
           nextQueuedPendingUserMessage(
             pendingUserMessagesBySessionRef.current,
             sessionId,
           ) !== null;
-        if (turnActiveForSession || hasQueuedBacklog) {
+        const route = resolveComposerSendRoute({
+          turnActive: pendingTurnRef.current?.sessionId === sessionId,
+          hasQueuedBacklog: hasLocalBacklog,
+          intent: options?.intent ?? "default",
+        });
+        steerRunningTurn = steerRunningTurn || route === "steer";
+        if (payload.outputSchema && route !== "start") {
+          setInteractionError(OUTPUT_SCHEMA_RUNNING_TURN_ERROR);
+          return false;
+        }
+        // The app-server drains its shared queue itself; a local backlog
+        // keeps using the local queue so the two never interleave.
+        if (
+          route === "queue" &&
+          !hasLocalBacklog &&
+          pendingTurnRef.current?.sessionId === sessionId &&
+          shouldUseSharedQueue({
+            supported: sharedQueueSupportedRef.current,
+            hasSendOverrides:
+              options?.modeOverride !== undefined ||
+              options?.cwdOverride !== undefined,
+          })
+        ) {
+          setSendingMessage(true);
+          try {
+            if (await enqueueSharedQueueMessage(sessionId, input)) {
+              setInteractionError(null);
+              return true;
+            }
+          } finally {
+            setSendingMessage(false);
+          }
+        }
+        if (route === "queue") {
           const pendingId = enqueuePendingUserMessage(
             sessionId,
             payload,
@@ -9930,8 +10445,21 @@ export default function CodexDeckApp() {
             : {}),
           collaborationMode,
           ...serviceTierInput(effectiveModelIdForRequest),
-          ...(options?.steerActiveTurn ? { steerActiveTurn: true } : {}),
+          ...(payload.outputSchema
+            ? { outputSchema: payload.outputSchema }
+            : {}),
+          ...(steerRunningTurn
+            ? {
+                steerActiveTurn: true,
+                ...(pendingTurnRef.current?.sessionId === sessionId &&
+                pendingTurnRef.current.turnId
+                  ? { expectedTurnId: pendingTurnRef.current.turnId }
+                  : {}),
+              }
+            : {}),
+          ...(ideContext.enabledRef.current ? { ideContext: true } : {}),
         });
+        ideContext.handleSendResult(response.ideContext);
 
         markSessionUserMessagedAt(sessionId, Date.now());
         setSessionMode(sessionId, modeToUse);
@@ -9943,6 +10471,11 @@ export default function CodexDeckApp() {
           pendingId,
           response.steered ? null : response.turnId,
         );
+        if (response.steered) {
+          setPendingUserMessagesBySession((current) =>
+            markPendingUserMessageSteered(current, sessionId, pendingId),
+          );
+        }
         trackWebManagedSessionTurn(sessionId, response.turnId);
         setPendingTurn({
           sessionId,
@@ -9952,11 +10485,25 @@ export default function CodexDeckApp() {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (
-          options?.steerActiveTurn &&
-          /^cannot steer a (review|compact) turn$/.test(message)
+          steerRunningTurn &&
+          isNonSteerableTurnError(message) &&
+          shouldUseSharedQueue({
+            supported: sharedQueueSupportedRef.current,
+            hasSendOverrides:
+              options?.modeOverride !== undefined ||
+              options?.cwdOverride !== undefined,
+          }) &&
+          (await enqueueSharedQueueMessage(sessionId, input))
         ) {
+          // The app-server submits it when the review/compact turn ends.
+          pendingSendOptionsByIdRef.current.delete(pendingId);
+          removePendingUserMessageById(sessionId, pendingId);
+          return true;
+        }
+        if (steerRunningTurn && isNonSteerableTurnError(message)) {
           // Like Codex CLI, a rejected steer waits in the queue for the turn
           // to finish instead of being dropped.
+          queueAutosendSuppressSessionsRef.current.delete(sessionId);
           setPendingUserMessagesBySession((current) =>
             updatePendingUserMessageStatus(
               current,
@@ -9996,6 +10543,9 @@ export default function CodexDeckApp() {
       selectedEffort,
       threadSummaryById,
       enqueuePendingUserMessage,
+      enqueueSharedQueueMessage,
+      ideContext.enabledRef,
+      ideContext.handleSendResult,
       markPendingUserMessageAwaitingConfirmation,
       markSessionUserMessagedAt,
       removePendingUserMessageById,
@@ -10075,11 +10625,161 @@ export default function CodexDeckApp() {
     maybeSendNextQueuedUserMessage,
   ]);
 
+  // Interrupt the running turn and wait briefly for it to settle, so an
+  // explicit "interrupt and send" starts a fresh turn (Codex CLI Esc).
+  const interruptRunningTurnForSession = useCallback(
+    async (sessionId: string): Promise<boolean> => {
+      if (pendingTurnRef.current?.sessionId !== sessionId) {
+        return true;
+      }
+      setStoppingTurn(true);
+      try {
+        await interruptCodexThread(sessionId);
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      } finally {
+        setStoppingTurn(false);
+      }
+
+      // interruptCodexThread resolves once turn/interrupt is acknowledged;
+      // poll briefly in case the app-server still reports the turn active.
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        try {
+          const state = await getCodexThreadState(sessionId);
+          if (!state.isGenerating) {
+            break;
+          }
+        } catch {
+          // Ignore transient polling errors.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      setPendingTurn((current) =>
+        current?.sessionId === sessionId ? null : current,
+      );
+      return true;
+    },
+    [],
+  );
+
+  // "Send now" for a shared-queue item: interrupt a running turn (the
+  // server does not drain after an interrupt), then start that item.
+  const sendSharedQueueItemNow = useCallback(
+    async (sessionId: string, itemId: string): Promise<boolean> => {
+      const item = selectedSharedQueueItems.find(
+        (entry) => entry.id === itemId,
+      );
+      setInteractionError(null);
+      if (!(await interruptRunningTurnForSession(sessionId))) {
+        return false;
+      }
+      setSendingMessage(true);
+      try {
+        const { turnId } = await startCodexThreadQueueMessage(
+          sessionId,
+          itemId,
+        );
+        if (item) {
+          // Keep the prompt visible until Codex records it.
+          const pendingId = enqueuePendingUserMessage(sessionId, {
+            text: item.text,
+            images: item.images,
+          });
+          markPendingUserMessageAwaitingConfirmation(
+            sessionId,
+            pendingId,
+            turnId,
+          );
+        }
+        markSessionUserMessagedAt(sessionId, Date.now());
+        trackWebManagedSessionTurn(sessionId, turnId);
+        setPendingTurn({ sessionId, turnId });
+        return true;
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      } finally {
+        setSendingMessage(false);
+        refreshSharedQueue();
+      }
+    },
+    [
+      enqueuePendingUserMessage,
+      interruptRunningTurnForSession,
+      markPendingUserMessageAwaitingConfirmation,
+      markSessionUserMessagedAt,
+      refreshSharedQueue,
+      selectedSharedQueueItems,
+      trackWebManagedSessionTurn,
+    ],
+  );
+
+  const editPendingUserMessage = useCallback(
+    async (sessionId: string, pendingId: string, text: string) => {
+      const itemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (!itemId) {
+        return false;
+      }
+      try {
+        const { item } = await updateCodexThreadQueueMessage(
+          sessionId,
+          itemId,
+          text,
+        );
+        setSharedQueueData((current) =>
+          current && current.threadId === sessionId
+            ? {
+                ...current,
+                items: current.items.map((entry) =>
+                  entry.id === item.id ? item : entry,
+                ),
+              }
+            : current,
+        );
+        return true;
+      } catch (error) {
+        setInteractionError(
+          error instanceof Error ? error.message : String(error),
+        );
+        return false;
+      } finally {
+        refreshSharedQueue();
+      }
+    },
+    [refreshSharedQueue, setSharedQueueData],
+  );
+
+  const movePendingUserMessage = useCallback(
+    (sessionId: string, pendingId: string, direction: "up" | "down") => {
+      const itemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (!itemId) {
+        return;
+      }
+      void moveCodexThreadQueueMessage(sessionId, itemId, direction)
+        .catch((error: unknown) =>
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          ),
+        )
+        .finally(refreshSharedQueue);
+    },
+    [refreshSharedQueue],
+  );
+
   const forceSendPendingUserMessage = useCallback(
     async (sessionId: string, pendingId: string): Promise<boolean> => {
       const normalizedSessionId = sessionId.trim();
       if (!normalizedSessionId || sendingMessage || stoppingTurn) {
         return false;
+      }
+      const sharedItemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (sharedItemId) {
+        return sendSharedQueueItemNow(normalizedSessionId, sharedItemId);
       }
       const message = getPendingUserMessage(
         pendingUserMessagesBySessionRef.current,
@@ -10099,35 +10799,8 @@ export default function CodexDeckApp() {
       setInteractionError(null);
 
       try {
-        if (pendingTurnRef.current?.sessionId === normalizedSessionId) {
-          setStoppingTurn(true);
-          try {
-            await interruptCodexThread(normalizedSessionId);
-          } catch (error) {
-            setInteractionError(
-              error instanceof Error ? error.message : String(error),
-            );
-            return false;
-          } finally {
-            setStoppingTurn(false);
-          }
-
-          // interruptCodexThread resolves once turn/interrupt is acknowledged;
-          // poll briefly in case the app-server still reports the turn active.
-          for (let attempt = 0; attempt < 10; attempt += 1) {
-            try {
-              const state = await getCodexThreadState(normalizedSessionId);
-              if (!state.isGenerating) {
-                break;
-              }
-            } catch {
-              // Ignore transient polling errors.
-            }
-            await new Promise((resolve) => setTimeout(resolve, 300));
-          }
-          setPendingTurn((current) =>
-            current?.sessionId === normalizedSessionId ? null : current,
-          );
+        if (!(await interruptRunningTurnForSession(normalizedSessionId))) {
+          return false;
         }
 
         const sendOptions =
@@ -10144,13 +10817,40 @@ export default function CodexDeckApp() {
         queueDrainInFlightSessionsRef.current.delete(normalizedSessionId);
       }
     },
-    [sendMessageText, sendingMessage, stoppingTurn],
+    [
+      interruptRunningTurnForSession,
+      sendMessageText,
+      sendSharedQueueItemNow,
+      sendingMessage,
+      stoppingTurn,
+    ],
   );
 
   const cancelPendingUserMessage = useCallback(
     (sessionId: string, pendingId: string) => {
       const normalizedSessionId = sessionId.trim();
       if (!normalizedSessionId) {
+        return;
+      }
+      const sharedItemId = sharedQueueItemIdFromPendingId(pendingId);
+      if (sharedItemId) {
+        setSharedQueueData((current) =>
+          current && current.threadId === normalizedSessionId
+            ? {
+                ...current,
+                items: current.items.filter(
+                  (entry) => entry.id !== sharedItemId,
+                ),
+              }
+            : current,
+        );
+        void deleteCodexThreadQueueMessage(normalizedSessionId, sharedItemId)
+          .catch((error: unknown) =>
+            setInteractionError(
+              error instanceof Error ? error.message : String(error),
+            ),
+          )
+          .finally(refreshSharedQueue);
         return;
       }
       const message = getPendingUserMessage(
@@ -10166,14 +10866,32 @@ export default function CodexDeckApp() {
       pendingSendOptionsByIdRef.current.delete(pendingId);
       removePendingUserMessageById(normalizedSessionId, pendingId);
     },
-    [removePendingUserMessageById],
+    [refreshSharedQueue, removePendingUserMessageById, setSharedQueueData],
   );
 
-  const handleSendMessage = useCallback(
-    async (payload: MessageComposerSubmitPayload): Promise<boolean> => {
+  const submitSelectedSessionMessage = useCallback(
+    async (
+      payload: MessageComposerSubmitPayload,
+      mode: "default" | "queue" | "interrupt" = "default",
+    ): Promise<boolean> => {
       const sessionId = selectedSession;
       const normalizedText = payload.text.trim();
-      const sent = await sendMessageText(payload);
+      if (mode === "interrupt") {
+        if (!sessionId || sendingMessage || stoppingTurn) {
+          return false;
+        }
+        if (!(await interruptRunningTurnForSession(sessionId))) {
+          return false;
+        }
+      }
+      const sent = await sendMessageText(
+        payload,
+        mode === "interrupt"
+          ? { bypassQueue: true }
+          : mode === "queue"
+            ? { intent: "queue" }
+            : undefined,
+      );
       if (!sent || !sessionId) {
         return sent;
       }
@@ -10191,7 +10909,28 @@ export default function CodexDeckApp() {
       });
       return true;
     },
-    [selectedSession, sendMessageText],
+    [
+      interruptRunningTurnForSession,
+      selectedSession,
+      sendMessageText,
+      sendingMessage,
+      stoppingTurn,
+    ],
+  );
+  const handleSendMessage = useCallback(
+    (payload: MessageComposerSubmitPayload) =>
+      submitSelectedSessionMessage(payload),
+    [submitSelectedSessionMessage],
+  );
+  const handleQueueMessage = useCallback(
+    (payload: MessageComposerSubmitPayload) =>
+      submitSelectedSessionMessage(payload, "queue"),
+    [submitSelectedSessionMessage],
+  );
+  const handleInterruptAndSendMessage = useCallback(
+    (payload: MessageComposerSubmitPayload) =>
+      submitSelectedSessionMessage(payload, "interrupt"),
+    [submitSelectedSessionMessage],
   );
 
   // Mirror Codex CLI: an async answer is delivered right away, steering the
@@ -11131,12 +11870,110 @@ export default function CodexDeckApp() {
         });
         return true;
       }
+      if (commandName === "/voice") {
+        const action = parseVoiceCommandArgs(normalizedArgs);
+        const voice = getVoiceController();
+        if (!action) {
+          setInteractionError(VOICE_USAGE);
+          return false;
+        }
+        if (action === "settings") {
+          setNativeDialog({
+            kind: "voice-settings",
+            threadId: commandSessionId,
+          });
+          return true;
+        }
+        if (action === "mute") {
+          if (!voice.toggleMute()) {
+            setInteractionError("Voice is not running on this page.");
+            return false;
+          }
+          return true;
+        }
+        if (action === "stop" || voice.getState().status !== "idle") {
+          await (commandSessionId && action === "stop"
+            ? voice.stopThread(commandSessionId)
+            : voice.stop());
+          return true;
+        }
+        if (!commandSessionId) {
+          setInteractionError("Start a conversation before using voice mode.");
+          return false;
+        }
+        if (sideThreadsById[commandSessionId]) {
+          setInteractionError(
+            "Voice mode is unavailable in side conversations. Return to the main thread first.",
+          );
+          return false;
+        }
+        if (
+          threadSummaryById.get(commandSessionId)?.canAcceptDirectInput ===
+          false
+        ) {
+          setInteractionError(
+            "This sub-agent is controlled by its parent. Voice is disabled.",
+          );
+          return false;
+        }
+        // Not awaited: progress and errors appear in the voice bar.
+        void voice.start(commandSessionId);
+        return true;
+      }
+      if (commandName === "/attachments") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /attachments.");
+          return false;
+        }
+        setAttachmentsThreadId(commandSessionId);
+        return true;
+      }
       if (commandName === "/recap") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /recap.");
           return false;
         }
         setNativeDialog({ kind: "recap", threadId: commandSessionId });
+        return true;
+      }
+      if (commandName === "/presets") {
+        setExtensionDialog({
+          kind: "presets",
+          threadId: commandSessionId,
+          cwd: commandSessionData?.project ?? null,
+          draft: normalizedArgs,
+        });
+        return true;
+      }
+      if (commandName === "/login" || commandName === "/logout") {
+        setExtensionDialog({
+          kind: "account",
+          threadId: commandSessionId,
+          confirmLogout: commandName === "/logout",
+        });
+        return true;
+      }
+      if (commandName === "/import" || commandName === "/plugins") {
+        setExtensionDialog({
+          kind: commandName === "/import" ? "import" : "plugins",
+          threadId: commandSessionId,
+          cwd: commandSessionData?.project ?? null,
+        });
+        return true;
+      }
+      if (commandName === "/apps") {
+        setExtensionDialog({ kind: "apps", threadId: commandSessionId });
+        return true;
+      }
+      if (commandName === "/ide") {
+        return ideContext.runCommand(normalizedArgs);
+      }
+      const organizationDialog = getOrganizationDialogForCommand(commandName);
+      if (organizationDialog) {
+        setNativeDialog({
+          kind: organizationDialog,
+          threadId: commandSessionId,
+        });
         return true;
       }
       if (commandName === "/mcp" || commandName === "/usage") {
@@ -11156,16 +11993,72 @@ export default function CodexDeckApp() {
         return true;
       }
 
+      if (commandName === "/worktree") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /worktree.");
+          return false;
+        }
+        if (
+          sideThreadsById[commandSessionId] ||
+          pendingTurn?.sessionId === commandSessionId ||
+          pendingUserMessagesBySessionRef.current[commandSessionId]?.some(
+            (entry) => entry.status === "queued",
+          )
+        ) {
+          setInteractionError(
+            "Creating a worktree requires an idle primary session without queued input.",
+          );
+          return false;
+        }
+        setWorkspaceDialog({
+          kind: "worktree",
+          threadId: commandSessionId,
+          cwd: commandSessionData?.project ?? null,
+        });
+        return true;
+      }
+
+      if (commandName === "/approve") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /approve.");
+          return false;
+        }
+        setWorkspaceDialog({ kind: "approve", threadId: commandSessionId });
+        return true;
+      }
+
       if (commandName === "/permissions") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /permissions.");
           return false;
         }
-        setShowStatusModal(true);
-        showCommandNoticeForDuration(
-          "Permission profile details are shown in session status.",
-        );
-        return true;
+        if (!normalizedArgs) {
+          setWorkspaceDialog({
+            kind: "permissions",
+            threadId: commandSessionId,
+          });
+          return true;
+        }
+        try {
+          const selection = parsePermissionArgs(normalizedArgs);
+          if (
+            selection.profileId === ":danger-full-access" &&
+            !window.confirm(
+              "Enable full access? When Codex runs with full access, it can edit any file on your computer and run commands with network, without your approval.",
+            )
+          )
+            return false;
+          await setCodexPermissions(commandSessionId, selection);
+          showCommandNoticeForDuration(
+            `Permission selection requested: ${selection.profileId}`,
+          );
+          return true;
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+          return false;
+        }
       }
 
       if (commandName === "/memories") {
@@ -11297,6 +12190,58 @@ export default function CodexDeckApp() {
         openLeftPane();
         focusSessionSearchInput();
         return true;
+      }
+
+      if (commandName === "/pwd") {
+        if (normalizedArgs) {
+          setInteractionError("Usage: /pwd");
+          return false;
+        }
+        const cwd = commandSessionData?.project?.trim();
+        if (!commandSessionId || !cwd) {
+          setInteractionError("Select a session before using /pwd.");
+          return false;
+        }
+        showCommandNoticeForDuration(`Current working directory: ${cwd}`);
+        return true;
+      }
+
+      if (commandName === "/cd") {
+        if (!commandSessionId) {
+          setInteractionError("Select a session before using /cd.");
+          return false;
+        }
+        if (
+          sideThreadsById[commandSessionId] ||
+          pendingTurn?.sessionId === commandSessionId ||
+          pendingUserMessagesBySessionRef.current[commandSessionId]?.some(
+            (entry) => entry.status === "queued",
+          )
+        ) {
+          setInteractionError(
+            "Changing directories requires an idle primary session without queued input.",
+          );
+          return false;
+        }
+        try {
+          const result = await changeCodexWorkingDirectory(
+            commandSessionId,
+            normalizedArgs || "~",
+            commandSessionData?.project ?? null,
+          );
+          upsertSessionFromThreadSummary(result.thread);
+          setSelectedSession(result.thread.threadId);
+          setCenterView("session");
+          showCommandNoticeForDuration(
+            `Working directory changed to: ${result.cwd}`,
+          );
+          return true;
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+          return false;
+        }
       }
 
       if (commandName === "/fork") {
@@ -11562,6 +12507,7 @@ export default function CodexDeckApp() {
       return false;
     },
     [
+      ideContext.runCommand,
       selectedSessionData?.project,
       selectedSessionData?.display,
       selectedTerminalData?.cwd,
@@ -11598,8 +12544,28 @@ export default function CodexDeckApp() {
       sendMessageText,
       trackWebManagedSessionTurn,
       sideThreadsById,
+      pendingTurn?.sessionId,
       isMobilePhone,
+      threadSummaryById,
     ],
+  );
+
+  // Presets submit through the normal composer path; slash-command presets
+  // dispatch that command, as upstream `QueuedInputAction::ParseSlash` does.
+  const handleRunPreset = useCallback(
+    async (threadId: string, input: string): Promise<boolean> => {
+      const invocation = parseSlashCommandInvocation(
+        input,
+        SESSION_COMPOSER_SLASH_COMMANDS,
+      );
+      if (invocation)
+        return handleRunSlashCommand(invocation.command.name, invocation.args);
+      return sendMessageText(
+        { text: input, images: [] },
+        { sessionIdOverride: threadId },
+      );
+    },
+    [handleRunSlashCommand, sendMessageText],
   );
 
   const handleConfirmRename = useCallback(async () => {
@@ -11841,6 +12807,67 @@ export default function CodexDeckApp() {
 
   const isGeneratingForSelectedSession =
     !!selectedSession && pendingTurn?.sessionId === selectedSession;
+  const turnActionInFlightRef = useRef(false);
+  const [rewindTarget, setRewindTarget] = useState<{
+    sessionId: string;
+    turnId: string;
+    promptPreview: string;
+  } | null>(null);
+  const handleTurnAction = useCallback(
+    (
+      sessionId: string,
+      message: ConversationMessage,
+      action: ConversationTurnAction,
+    ) => {
+      const turnId = message.turnId?.trim();
+      if (!turnId || turnActionInFlightRef.current) return;
+      if (action === "rewind") {
+        if (sideThreadsById[sessionId]) {
+          setInteractionError(
+            "Editing previous prompts is unavailable in side conversations.",
+          );
+          return;
+        }
+        setRewindTarget({
+          sessionId,
+          turnId,
+          promptPreview: getTurnPromptText(message),
+        });
+        return;
+      }
+      turnActionInFlightRef.current = true;
+      void (async () => {
+        try {
+          const result = await forkCodexThreadAtTurn(
+            sessionId,
+            action === "fork-through"
+              ? { lastTurnId: turnId }
+              : { beforeTurnId: turnId },
+          );
+          upsertSessionFromThreadSummary(result.thread);
+          setSelectedSession(result.thread.threadId);
+          setCenterView("session");
+          setInteractionError(null);
+          showCommandNoticeForDuration(
+            action === "fork-through"
+              ? "Forked from the selected turn."
+              : "Forked before the selected turn.",
+          );
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+        } finally {
+          turnActionInFlightRef.current = false;
+        }
+      })();
+    },
+    [
+      showCommandNoticeForDuration,
+      sideThreadsById,
+      upsertSessionFromThreadSummary,
+    ],
+  );
   const selectedSessionConnectionFailureNotice =
     selectedSession && connectionFailureNotice?.sessionId === selectedSession
       ? connectionFailureNotice
@@ -12847,6 +13874,10 @@ export default function CodexDeckApp() {
   }, [selectedSession]);
 
   useEffect(() => {
+    setConversationViewMode(false);
+  }, [selectedSession, selectedCodexHomeId, centerView]);
+
+  useEffect(() => {
     setShowCollabModePicker(false);
     setShowStatusModal(false);
     setStatusTokenUsage(null);
@@ -13001,8 +14032,15 @@ export default function CodexDeckApp() {
     sendingMessage: boolean;
     stoppingTurn: boolean;
     onSendMessage: (payload: MessageComposerSubmitPayload) => Promise<boolean>;
+    onQueueMessage?:
+      | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+      | null;
+    onInterruptAndSend?:
+      | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
+      | null;
     onRunSlashCommand: (commandName: string, args: string) => Promise<boolean>;
     onStopConversation: () => Promise<void>;
+    allowOutputSchema?: boolean;
     idlePrimaryActionLabel?: string;
     idlePrimaryActionBusy?: boolean;
     idlePrimaryActionBusyLabel?: string;
@@ -13012,9 +14050,24 @@ export default function CodexDeckApp() {
       | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
       | null;
     composerDisabledReason?: string | null;
+    audioInput?: { unavailableReason: string | null };
   }) => (
     <div className="composer-shell shrink-0 bg-zinc-950 px-3 pb-3 pt-1 md:px-5">
+      <VoiceSessionBar
+        threadId={input.sessionId}
+        onOpenSettings={(threadId) =>
+          setNativeDialog({ kind: "voice-settings", threadId })
+        }
+      />
       <div className="composer-card relative mx-auto w-full max-w-4xl">
+        {ideContext.enabled && !input.composerDisabledReason ? (
+          <IdeContextIndicator
+            summary={ideContext.summary}
+            checking={ideContext.checking}
+            onRefresh={() => void ideContext.refresh()}
+            onDisable={ideContext.disable}
+          />
+        ) : null}
         {input.composerDisabledReason ? (
           <div className="px-4 pt-3 pb-1 text-xs text-amber-200">
             {input.composerDisabledReason}
@@ -13042,13 +14095,19 @@ export default function CodexDeckApp() {
             messageBoxHeight={messageBoxHeight}
             onResizeMessageBoxStart={handleResizeMessageBoxStart}
             onSendMessage={input.onSendMessage}
+            onQueueMessage={input.onQueueMessage}
+            onInterruptAndSend={input.onInterruptAndSend}
             onRunSlashCommand={input.onRunSlashCommand}
             onStopConversation={input.onStopConversation}
+            allowOutputSchema={input.allowOutputSchema}
+            audioInput={input.audioInput}
           />
         )}
         <div
           className={`composer-toolbar px-2 pb-2 pt-1 ${
-            input.composerDisabledReason ? "" : "pr-[7.5rem]"
+            input.composerDisabledReason
+              ? ""
+              : "pr-[calc(var(--composer-actions-width,6.5rem)+1rem)]"
           }`}
         >
           <div ref={toolbarWidthRef} className="relative">
@@ -13329,7 +14388,10 @@ export default function CodexDeckApp() {
   }
 
   return (
-    <div className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100">
+    <div
+      className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100"
+      data-conversation-view-mode={conversationViewMode || undefined}
+    >
       {!sidebarCollapsed && (
         <aside
           className="pane-left relative shrink-0 border-r border-zinc-800/60 flex flex-col bg-zinc-950"
@@ -13634,6 +14696,9 @@ export default function CodexDeckApp() {
               }
               onSelectSession={handleSelectLeftPaneItem}
               onRequestDeleteSession={handleRequestDeleteLeftPaneItem}
+              onToggleReadReceipt={
+                centerView === "session" ? handleToggleReadReceipt : undefined
+              }
               loading={
                 centerView === "terminal"
                   ? loadingTerminals
@@ -13845,12 +14910,18 @@ export default function CodexDeckApp() {
         </div>
 
         {interactionError && (
-          <div className="px-4 py-2 text-xs text-red-300 bg-red-950/40 border-b border-red-900/50">
+          <div
+            data-conversation-chrome
+            className="px-4 py-2 text-xs text-red-300 bg-red-950/40 border-b border-red-900/50"
+          >
             {interactionError}
           </div>
         )}
         {commandNotice && (
-          <div className="px-4 py-2 text-xs text-emerald-200 bg-emerald-950/40 border-b border-emerald-900/50">
+          <div
+            data-conversation-chrome
+            className="px-4 py-2 text-xs text-emerald-200 bg-emerald-950/40 border-b border-emerald-900/50"
+          >
             {commandNotice}
           </div>
         )}
@@ -13999,6 +15070,14 @@ export default function CodexDeckApp() {
           </div>
         )}
 
+        {extensionDialog && (
+          <ExtensionDialogs
+            dialog={extensionDialog}
+            homeId={selectedCodexHomeId}
+            onClose={closeExtensionDialog}
+            onRunPreset={handleRunPreset}
+          />
+        )}
         {nativeDialog && (
           <NativeDialog
             title={
@@ -14014,9 +15093,13 @@ export default function CodexDeckApp() {
                         ? "Export transcript"
                         : nativeDialog.kind === "recap"
                           ? "Conversation recap"
-                          : nativeDialog.kind === "usage"
-                            ? "Usage dashboard"
-                            : "MCP administration"
+                          : nativeDialog.kind === "voice-settings"
+                            ? "Voice settings"
+                            : nativeDialog.kind === "usage"
+                              ? "Usage dashboard"
+                              : (getOrganizationDialogTitle(
+                                  nativeDialog.kind,
+                                ) ?? "MCP administration")
             }
             onClose={closeNativeDialog}
           >
@@ -14052,9 +15135,20 @@ export default function CodexDeckApp() {
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}
               />
+            ) : nativeDialog.kind === "voice-settings" ? (
+              <VoiceSettings
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
             ) : nativeDialog.kind === "usage" ? (
               <UsageDashboard
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                threadId={nativeDialog.threadId}
+              />
+            ) : isOrganizationDialogKind(nativeDialog.kind) ? (
+              <OrganizationDialogBody
+                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
+                kind={nativeDialog.kind}
                 threadId={nativeDialog.threadId}
               />
             ) : (
@@ -14065,74 +15159,139 @@ export default function CodexDeckApp() {
             )}
           </NativeDialog>
         )}
-        {reviewDialog && (
-          <ReviewModal
-            key={reviewDialog.threadId}
-            {...reviewDialog}
-            onClose={() => setReviewDialog(null)}
-            onStarted={({ threadId, turnId }) => {
-              if (threadId !== reviewDialog.threadId) {
-                const parent = sessions.find(
-                  (session) => session.id === reviewDialog.threadId,
-                );
-                const createdAt = Date.now();
-                upsertSessionInLocalState({
-                  id: threadId,
-                  display: `Review: ${parent?.display || reviewDialog.threadId}`,
-                  createdAt,
-                  lastUserMessageAt: createdAt,
-                  timestamp: createdAt,
-                  project: parent?.project ?? "",
-                  projectName: parent?.projectName ?? "",
-                });
-                setSelectedSession(threadId);
-                setCenterView("session");
-                if (isMobilePhone) setSidebarCollapsed(true);
-              }
-              trackWebManagedSessionTurn(threadId, turnId);
-              setPendingTurn({ sessionId: threadId, turnId });
-              showCommandNoticeForDuration("Review started.");
-              void syncSessionWaitState(threadId);
-            }}
-          />
-        )}
-        <MemoriesModal
-          threadId={activeComposerSessionId}
-          homeId={selectedCodexHomeId}
-          open={showMemoriesModal}
-          useEnabled={memoriesUseEnabled}
-          generateEnabled={memoriesGenerateEnabled}
-          loading={loadingMemoriesSettings}
-          saving={savingMemoriesSettings}
-          resetting={resettingMemories}
-          showResetConfirm={showMemoriesResetConfirm}
-          onClose={() => setShowMemoriesModal(false)}
-          onChangeUseEnabled={setMemoriesUseEnabled}
-          onChangeGenerateEnabled={setMemoriesGenerateEnabled}
-          onSave={() => {
-            void saveMemoriesSettings();
-          }}
-          onShowResetConfirm={() => setShowMemoriesResetConfirm(true)}
-          onHideResetConfirm={() => setShowMemoriesResetConfirm(false)}
-          onConfirmReset={() => {
-            void confirmResetMemories();
-          }}
-        />
-
-        <ConfigModal
-          open={showConfigModal}
-          onClose={() => setShowConfigModal(false)}
-          onApplied={(response) => {
-            setCodexHomes(response.homes);
-            const selectedHome = response.homes.find(
-              (home) => home.id === selectedCodexHomeId,
-            );
-            if (!selectedHome?.available) {
-              resetHomeBrowsingState(response.mainHomeId || MAIN_CODEX_HOME_ID);
+        {workspaceDialog && (
+          <NativeDialog
+            title={
+              workspaceDialog.kind === "approve"
+                ? "Auto-review Denials"
+                : workspaceDialog.kind === "worktree"
+                  ? "Worktrees"
+                  : "Permissions"
             }
-            showCommandNoticeForDuration("Applied Codex Deck config.");
-          }}
-        />
+            onClose={closeWorkspaceDialog}
+          >
+            {workspaceDialog.kind === "worktree" ? (
+              <WorktreePanel
+                key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
+                threadId={workspaceDialog.threadId}
+                cwd={workspaceDialog.cwd ?? null}
+                onStarted={(result) => {
+                  upsertSessionFromThreadSummary(result.thread);
+                  setSelectedSession(result.thread.threadId);
+                  setCenterView("session");
+                  setWorkspaceDialog(null);
+                  showCommandNoticeForDuration(
+                    `Working directory changed to: ${result.checkout.cwd}`,
+                  );
+                }}
+                onResume={(threadId) => {
+                  setSelectedSession(threadId);
+                  setCenterView("session");
+                  setWorkspaceDialog(null);
+                }}
+              />
+            ) : workspaceDialog.kind === "approve" ? (
+              <AutoReviewDenials
+                key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
+                threadId={workspaceDialog.threadId}
+              />
+            ) : (
+              <PermissionsPanel
+                key={`${selectedCodexHomeId}:${workspaceDialog.threadId}`}
+                threadId={workspaceDialog.threadId}
+              />
+            )}
+          </NativeDialog>
+        )}
+        {attachmentsThreadId && (
+          <NativeDialog
+            title="Conversation attachments"
+            onClose={closeAttachmentsDialog}
+          >
+            <ThreadAttachments
+              key={`${selectedCodexHomeId}:${attachmentsThreadId}`}
+              threadId={attachmentsThreadId}
+            />
+          </NativeDialog>
+        )}
+        {reviewDialog && (
+          <Suspense fallback={null}>
+            <ReviewModal
+              key={reviewDialog.threadId}
+              {...reviewDialog}
+              onClose={() => setReviewDialog(null)}
+              onStarted={({ threadId, turnId }) => {
+                if (threadId !== reviewDialog.threadId) {
+                  const parent = sessions.find(
+                    (session) => session.id === reviewDialog.threadId,
+                  );
+                  const createdAt = Date.now();
+                  upsertSessionInLocalState({
+                    id: threadId,
+                    display: `Review: ${parent?.display || reviewDialog.threadId}`,
+                    createdAt,
+                    lastUserMessageAt: createdAt,
+                    timestamp: createdAt,
+                    project: parent?.project ?? "",
+                    projectName: parent?.projectName ?? "",
+                  });
+                  setSelectedSession(threadId);
+                  setCenterView("session");
+                  if (isMobilePhone) setSidebarCollapsed(true);
+                }
+                trackWebManagedSessionTurn(threadId, turnId);
+                setPendingTurn({ sessionId: threadId, turnId });
+                showCommandNoticeForDuration("Review started.");
+                void syncSessionWaitState(threadId);
+              }}
+            />
+          </Suspense>
+        )}
+        <Suspense fallback={null}>
+          {showMemoriesModal && (
+            <MemoriesModal
+              threadId={activeComposerSessionId}
+              homeId={selectedCodexHomeId}
+              open={showMemoriesModal}
+              useEnabled={memoriesUseEnabled}
+              generateEnabled={memoriesGenerateEnabled}
+              loading={loadingMemoriesSettings}
+              saving={savingMemoriesSettings}
+              resetting={resettingMemories}
+              showResetConfirm={showMemoriesResetConfirm}
+              onClose={() => setShowMemoriesModal(false)}
+              onChangeUseEnabled={setMemoriesUseEnabled}
+              onChangeGenerateEnabled={setMemoriesGenerateEnabled}
+              onSave={() => {
+                void saveMemoriesSettings();
+              }}
+              onShowResetConfirm={() => setShowMemoriesResetConfirm(true)}
+              onHideResetConfirm={() => setShowMemoriesResetConfirm(false)}
+              onConfirmReset={() => {
+                void confirmResetMemories();
+              }}
+            />
+          )}
+
+          {(showConfigModal || hasOpenedConfigModal) && (
+            <ConfigModal
+              open={showConfigModal}
+              onClose={() => setShowConfigModal(false)}
+              onApplied={(response) => {
+                setCodexHomes(response.homes);
+                const selectedHome = response.homes.find(
+                  (home) => home.id === selectedCodexHomeId,
+                );
+                if (!selectedHome?.available) {
+                  resetHomeBrowsingState(
+                    response.mainHomeId || MAIN_CODEX_HOME_ID,
+                  );
+                }
+                showCommandNoticeForDuration("Applied Codex Deck config.");
+              }}
+            />
+          )}
+        </Suspense>
 
         {showRenameModal && (
           <div
@@ -14468,6 +15627,28 @@ export default function CodexDeckApp() {
             onCancel={() => setDeleteSessionTargetId(null)}
             onConfirm={(deleteDiffGuide) => {
               void handleConfirmDeleteSession(deleteDiffGuide);
+            }}
+          />
+        )}
+
+        {rewindTarget && (
+          <ConversationRewindDialog
+            key={`${rewindTarget.sessionId}:${rewindTarget.turnId}`}
+            sessionId={rewindTarget.sessionId}
+            turnId={rewindTarget.turnId}
+            promptPreview={rewindTarget.promptPreview}
+            onCancel={() => setRewindTarget(null)}
+            onRewound={(result) => {
+              setRewindTarget(null);
+              setInteractionError(null);
+              const text = result.prompt?.text ?? rewindTarget.promptPreview;
+              if (text) requestComposerDraft(result.threadId, text);
+              const omitted = result.prompt?.omittedInputCount ?? 0;
+              showCommandNoticeForDuration(
+                omitted > 0
+                  ? `Rewound conversation; workspace files were not changed. Reattach ${omitted} image or file input${omitted === 1 ? "" : "s"} before resending.`
+                  : "Rewound conversation; workspace files were not changed.",
+              );
             }}
           />
         )}
@@ -15144,110 +16325,112 @@ export default function CodexDeckApp() {
           {centerView === "workflow" ? (
             <div className="h-full flex flex-col">
               <div className="relative flex-1 overflow-hidden">
-                <WorkflowView
-                  workflow={workflowDetail}
-                  daemonStatus={workflowDaemonStatus}
-                  selectedTaskId={selectedWorkflowTaskId}
-                  latestBoundSessionMessage={
-                    workflowLatestSessionPreview.sessionId ===
-                    workflowComposerSessionId
-                      ? workflowLatestSessionPreview.message
-                      : null
-                  }
-                  latestBoundSessionMessageLoading={
-                    workflowLatestSessionPreviewLoading
-                  }
-                  loading={workflowDetailLoading || loadingWorkflows}
-                  error={workflowDetailError}
-                  logData={workflowLog}
-                  logLoading={workflowLogLoading}
-                  logError={workflowLogError}
-                  actionBusy={workflowActionBusy}
-                  actionLabel={workflowActionLabel}
-                  actionResultLabel={workflowActionResultLabel}
-                  actionResultOutput={workflowActionResultOutput}
-                  stopAllHint={workflowStopHint}
-                  onChatInSession={() => {
-                    void handleChatInWorkflowSession();
-                  }}
-                  onStopAllWorkflowProcesses={() => {
-                    if (!selectedWorkflowKey) {
-                      return;
+                <Suspense fallback={<PanelLoading />}>
+                  <WorkflowView
+                    workflow={workflowDetail}
+                    daemonStatus={workflowDaemonStatus}
+                    selectedTaskId={selectedWorkflowTaskId}
+                    latestBoundSessionMessage={
+                      workflowLatestSessionPreview.sessionId ===
+                      workflowComposerSessionId
+                        ? workflowLatestSessionPreview.message
+                        : null
                     }
-                    void handleWorkflowAction(
-                      "Stopping workflow processes...",
-                      async () => {
-                        if (isGeneratingForWorkflowComposer) {
-                          await handleStopWorkflowComposerConversation();
-                        }
-                        const result =
-                          await stopWorkflowProcessesRequest(
-                            selectedWorkflowKey,
+                    latestBoundSessionMessageLoading={
+                      workflowLatestSessionPreviewLoading
+                    }
+                    loading={workflowDetailLoading || loadingWorkflows}
+                    error={workflowDetailError}
+                    logData={workflowLog}
+                    logLoading={workflowLogLoading}
+                    logError={workflowLogError}
+                    actionBusy={workflowActionBusy}
+                    actionLabel={workflowActionLabel}
+                    actionResultLabel={workflowActionResultLabel}
+                    actionResultOutput={workflowActionResultOutput}
+                    stopAllHint={workflowStopHint}
+                    onChatInSession={() => {
+                      void handleChatInWorkflowSession();
+                    }}
+                    onStopAllWorkflowProcesses={() => {
+                      if (!selectedWorkflowKey) {
+                        return;
+                      }
+                      void handleWorkflowAction(
+                        "Stopping workflow processes...",
+                        async () => {
+                          if (isGeneratingForWorkflowComposer) {
+                            await handleStopWorkflowComposerConversation();
+                          }
+                          const result =
+                            await stopWorkflowProcessesRequest(
+                              selectedWorkflowKey,
+                            );
+                          setWorkflowStopHint(
+                            formatWorkflowStopHint(result.output),
                           );
-                        setWorkflowStopHint(
-                          formatWorkflowStopHint(result.output),
-                        );
-                        return result;
-                      },
-                    );
-                  }}
-                  onOpenSession={(sessionId) => {
-                    handleSelectSession(sessionId);
-                  }}
-                  onSelectTask={setSelectedWorkflowTaskId}
-                  onLaunchTask={(taskId) => {
-                    if (!selectedWorkflowKey) {
-                      return;
-                    }
-                    setSelectedWorkflowTaskId(taskId);
-                    void handleWorkflowAction("Launching task...", () =>
-                      launchWorkflowTaskRequest(selectedWorkflowKey, taskId),
-                    );
-                  }}
-                  onLoadLog={(scope, taskId) => {
-                    if (taskId) {
+                          return result;
+                        },
+                      );
+                    }}
+                    onOpenSession={(sessionId) => {
+                      handleSelectSession(sessionId);
+                    }}
+                    onSelectTask={setSelectedWorkflowTaskId}
+                    onLaunchTask={(taskId) => {
+                      if (!selectedWorkflowKey) {
+                        return;
+                      }
                       setSelectedWorkflowTaskId(taskId);
-                    }
-                    void handleLoadWorkflowLog(scope, taskId);
-                  }}
-                  onStartDaemon={() => {
-                    void handleWorkflowAction("Starting daemon...", () =>
-                      startWorkflowDaemonRequest(),
-                    );
-                  }}
-                  onStopDaemon={() => {
-                    setShowWorkflowDangerConfirm({
-                      action: "daemon-stop",
-                      title: "Stop codex-deck-flow daemon?",
-                      message:
-                        "This stops the shared codex-deck-flow daemon for the current CODEX_HOME.",
-                      onConfirm: () => {
-                        void handleWorkflowAction("Stopping daemon...", () =>
-                          stopWorkflowDaemonRequest(),
-                        );
-                      },
-                    });
-                  }}
-                  onSendControlMessage={(input) => {
-                    if (!selectedWorkflowKey) {
-                      return;
-                    }
-                    void handleWorkflowAction(
-                      "Sending control message...",
-                      () =>
-                        sendWorkflowControlMessageRequest(
-                          selectedWorkflowKey,
-                          input,
-                        ),
-                    );
-                  }}
-                  onFilePathLinkClick={handleFilePathLinkClick}
-                />
+                      void handleWorkflowAction("Launching task...", () =>
+                        launchWorkflowTaskRequest(selectedWorkflowKey, taskId),
+                      );
+                    }}
+                    onLoadLog={(scope, taskId) => {
+                      if (taskId) {
+                        setSelectedWorkflowTaskId(taskId);
+                      }
+                      void handleLoadWorkflowLog(scope, taskId);
+                    }}
+                    onStartDaemon={() => {
+                      void handleWorkflowAction("Starting daemon...", () =>
+                        startWorkflowDaemonRequest(),
+                      );
+                    }}
+                    onStopDaemon={() => {
+                      setShowWorkflowDangerConfirm({
+                        action: "daemon-stop",
+                        title: "Stop codex-deck-flow daemon?",
+                        message:
+                          "This stops the shared codex-deck-flow daemon for the current CODEX_HOME.",
+                        onConfirm: () => {
+                          void handleWorkflowAction("Stopping daemon...", () =>
+                            stopWorkflowDaemonRequest(),
+                          );
+                        },
+                      });
+                    }}
+                    onSendControlMessage={(input) => {
+                      if (!selectedWorkflowKey) {
+                        return;
+                      }
+                      void handleWorkflowAction(
+                        "Sending control message...",
+                        () =>
+                          sendWorkflowControlMessageRequest(
+                            selectedWorkflowKey,
+                            input,
+                          ),
+                      );
+                    }}
+                    onFilePathLinkClick={handleFilePathLinkClick}
+                  />
+                </Suspense>
                 {isGeneratingForWorkflowComposer && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
                     <div className="inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg">
                       <span className="thinking-dot" />
-                      <span className="thinking-label">Chating...</span>
+                      <span className="thinking-label">Chatting...</span>
                     </div>
                   </div>
                 )}
@@ -15286,25 +16469,29 @@ export default function CodexDeckApp() {
               <div className="relative flex min-h-0 flex-1 flex-col">
                 {selectedTerminalId ? (
                   <div className="min-h-0 flex-1">
-                    <TerminalView
-                      terminalId={selectedTerminalId}
-                      resolvedTheme={resolvedTheme}
-                      boundSessionId={terminalComposerSessionId}
-                      embeddedMessages={
-                        terminalEmbeddedMessages.sessionId ===
-                        terminalComposerSessionId
-                          ? terminalEmbeddedMessageCards
-                          : []
-                      }
-                      embeddedMessagesLoading={terminalEmbeddedMessagesLoading}
-                      chatBusy={terminalBindingBusy}
-                      onChatInSession={() => {
-                        void handleChatInTerminalSession();
-                      }}
-                      onFilePathLinkClick={handleFilePathLinkClick}
-                      onApproveAiTerminalStep={handleApproveAiTerminalStep}
-                      onRejectAiTerminalStep={handleRejectAiTerminalStep}
-                    />
+                    <Suspense fallback={<PanelLoading />}>
+                      <TerminalView
+                        terminalId={selectedTerminalId}
+                        resolvedTheme={resolvedTheme}
+                        boundSessionId={terminalComposerSessionId}
+                        embeddedMessages={
+                          terminalEmbeddedMessages.sessionId ===
+                          terminalComposerSessionId
+                            ? terminalEmbeddedMessageCards
+                            : []
+                        }
+                        embeddedMessagesLoading={
+                          terminalEmbeddedMessagesLoading
+                        }
+                        chatBusy={terminalBindingBusy}
+                        onChatInSession={() => {
+                          void handleChatInTerminalSession();
+                        }}
+                        onFilePathLinkClick={handleFilePathLinkClick}
+                        onApproveAiTerminalStep={handleApproveAiTerminalStep}
+                        onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                      />
+                    </Suspense>
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-zinc-500">
@@ -15315,7 +16502,7 @@ export default function CodexDeckApp() {
                   <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
                     <div className="inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg">
                       <span className="thinking-dot" />
-                      <span className="thinking-label">Chating...</span>
+                      <span className="thinking-label">Chatting...</span>
                     </div>
                     {showFixDangling && (
                       <div className="pointer-events-auto flex items-center gap-2">
@@ -15371,16 +16558,20 @@ export default function CodexDeckApp() {
             </div>
           ) : selectedSession ? (
             <div className="h-full flex flex-col">
-              <div className="relative flex-1 overflow-hidden">
+              <ConversationCanvas
+                viewMode={conversationViewMode}
+                onViewModeChange={setConversationViewMode}
+              >
                 <SessionView
                   ref={sessionViewRef}
                   sessionId={selectedSession}
                   projectPath={selectedSessionData?.project ?? null}
-                  pendingUserMessages={
-                    pendingUserMessagesBySession[selectedSession] ?? []
-                  }
+                  pendingUserMessages={selectedSessionPendingUserMessages}
                   onForceSendPendingUserMessage={forceSendPendingUserMessage}
                   onCancelPendingUserMessage={cancelPendingUserMessage}
+                  onEditPendingUserMessage={editPendingUserMessage}
+                  onMovePendingUserMessage={movePendingUserMessage}
+                  turnActive={isGeneratingForSelectedSession}
                   onAnswerAsyncQuestion={handleAnswerAsyncQuestion}
                   railCollapsedByDefault={railCollapsedByDefault}
                   conversationSearchOpen={conversationSearchOpen}
@@ -15450,14 +16641,19 @@ export default function CodexDeckApp() {
                   }
                   onApproveAiTerminalStep={handleApproveAiTerminalStep}
                   onRejectAiTerminalStep={handleRejectAiTerminalStep}
+                  turnActionsRunning={isGeneratingForSelectedSession}
+                  onTurnAction={handleTurnAction}
                 />
                 {(isGeneratingForSelectedSession ||
                   selectedSessionConnectionFailureNotice) && (
-                  <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3">
+                  <div
+                    data-conversation-chrome
+                    className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex items-end justify-between gap-3 px-3"
+                  >
                     <div
                       className={
                         selectedSessionConnectionFailureNotice
-                          ? "inline-flex max-w-[min(34rem,calc(100vw-1.5rem))] items-center gap-2 rounded border border-amber-300/80 bg-amber-50/95 px-2.5 py-1.5 text-sm text-amber-900 shadow-lg dark:border-amber-500/45 dark:bg-amber-950/82 dark:text-amber-100"
+                          ? "inline-flex max-w-[min(34rem,calc(100vw-1.5rem))] items-center gap-2 rounded border border-amber-500/45 bg-amber-950/82 px-2.5 py-1.5 text-sm text-amber-100 shadow-lg"
                           : "inline-flex items-center gap-2 rounded border border-zinc-700/55 bg-zinc-900/72 px-2.5 py-1.5 text-sm text-zinc-200 shadow-lg"
                       }
                       title={
@@ -15470,7 +16666,7 @@ export default function CodexDeckApp() {
                       }
                     >
                       {selectedSessionConnectionFailureNotice ? (
-                        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500 dark:bg-amber-300" />
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-300" />
                       ) : (
                         <span className="thinking-dot" />
                       )}
@@ -15482,7 +16678,7 @@ export default function CodexDeckApp() {
                           {selectedSessionConnectionFailureNotice.detail &&
                             selectedSessionConnectionFailureNotice.detail !==
                               selectedSessionConnectionFailureNotice.message && (
-                              <span className="mt-0.5 block truncate text-xs text-amber-700 dark:text-amber-200/85">
+                              <span className="mt-0.5 block truncate text-xs text-amber-200/85">
                                 {selectedSessionConnectionFailureNotice.detail}
                               </span>
                             )}
@@ -15509,10 +16705,11 @@ export default function CodexDeckApp() {
                     )}
                   </div>
                 )}
-              </div>
+              </ConversationCanvas>
 
               {renderComposerFooter({
                 sessionId: selectedSession,
+                audioInput: selectedSessionAudioInput,
                 history: messageHistoryBySession[selectedSession] ?? [],
                 slashCommands: SESSION_COMPOSER_SLASH_COMMANDS,
                 isGeneratingForSession: isGeneratingForSelectedSession,
@@ -15520,6 +16717,9 @@ export default function CodexDeckApp() {
                 sendingMessage,
                 stoppingTurn,
                 onSendMessage: handleSendMessage,
+                onQueueMessage: handleQueueMessage,
+                onInterruptAndSend: handleInterruptAndSendMessage,
+                allowOutputSchema: true,
                 onRunSlashCommand: handleRunSlashCommand,
                 onStopConversation: handleStopConversation,
                 composerDisabledReason:

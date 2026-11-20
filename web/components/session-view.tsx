@@ -26,6 +26,7 @@ import MessageBlock from "./message-block";
 import { PendingElicitations } from "./pending-elicitations";
 import { PendingUserInputRequests } from "./pending-user-input-requests";
 import { PendingApprovalRequests } from "./pending-approval-requests";
+import { AutoReviewActivity } from "./auto-review";
 import { UserInputResizeContainer } from "./user-input-textarea";
 import {
   buildAsyncUserInputMessage,
@@ -38,6 +39,7 @@ import {
 } from "../user-input";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
 import ConversationPager from "./conversation-pager";
+import ConversationNavigator from "./conversation-navigator";
 import ConversationMessageHover from "./conversation-message-hover";
 import { getConversationHoverMetadata } from "../conversation-hover-metadata";
 import { useConversationHoverSettings } from "../hooks/use-conversation-hover-settings";
@@ -81,9 +83,18 @@ import {
 } from "../ai-terminal";
 import { CollapsedViewportSummary } from "./collapsed-viewport-summary";
 import type { PendingUserMessage } from "../pending-user-messages";
+import { STEERED_MESSAGE_CAPTION } from "../running-turn-send";
+import QueuedMessageActions from "./queued-message-actions";
 import { mergePendingConversationMessages } from "../pending-conversation-messages";
 import { getCompletedTaskAnswers } from "../task-answer";
 import { TaskAnswerActions } from "./task-answer-actions";
+import {
+  collectTurnPrompts,
+  getMessageTurnRole,
+  latestTurnId,
+  messageTurnId,
+  type ConversationTurnAction,
+} from "../conversation-turn-actions";
 import {
   captureConversationScrollAnchor,
   restoreConversationScrollAnchor,
@@ -255,6 +266,20 @@ interface SessionViewProps {
     pendingId: string,
   ) => Promise<boolean>;
   onCancelPendingUserMessage?: (sessionId: string, pendingId: string) => void;
+  /** Edit a shared-queue message's text. */
+  onEditPendingUserMessage?: (
+    sessionId: string,
+    pendingId: string,
+    text: string,
+  ) => Promise<boolean>;
+  /** Move a shared-queue message within the server queue. */
+  onMovePendingUserMessage?: (
+    sessionId: string,
+    pendingId: string,
+    direction: "up" | "down",
+  ) => void;
+  /** A turn is running for this session (queued items wait for it). */
+  turnActive?: boolean;
   onAnswerAsyncQuestion?: (sessionId: string, text: string) => Promise<boolean>;
   railCollapsedByDefault?: boolean;
   latestButtonBottomOffsetPx?: number;
@@ -313,6 +338,14 @@ interface SessionViewProps {
     step: AiTerminalStepDirective;
     reason: string;
   }) => Promise<boolean>;
+  /** Whether the session has a running turn, which limits history actions. */
+  turnActionsRunning?: boolean;
+  /** Enables per-message fork/rewind actions for messages with turn IDs. */
+  onTurnAction?: (
+    sessionId: string,
+    message: ConversationMessage,
+    action: ConversationTurnAction,
+  ) => void;
 }
 
 function clearConversationSearchHighlights(root: ParentNode): void {
@@ -690,8 +723,11 @@ function extractMessageText(message: ConversationMessage): string {
   }
 
   const textParts = content
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
-    .map((block) => block.text.trim())
+    .flatMap((block) =>
+      block?.type === "text" && typeof block.text === "string"
+        ? [block.text.trim()]
+        : [],
+    )
     .filter((text) => text.length > 0);
   return textParts.join("\n").trim();
 }
@@ -733,6 +769,9 @@ const SessionView = memo(
         pendingUserMessages = [],
         onForceSendPendingUserMessage,
         onCancelPendingUserMessage,
+        onEditPendingUserMessage,
+        onMovePendingUserMessage,
+        turnActive = false,
         onAnswerAsyncQuestion,
         railCollapsedByDefault = false,
         latestButtonBottomOffsetPx,
@@ -751,6 +790,8 @@ const SessionView = memo(
         aiTerminalTerminalId = null,
         onApproveAiTerminalStep,
         onRejectAiTerminalStep,
+        turnActionsRunning = false,
+        onTurnAction,
       } = props;
 
       const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -799,6 +840,13 @@ const SessionView = memo(
       ]);
       const [submittingApprovalRequestIds, setSubmittingApprovalRequestIds] =
         useState<string[]>([]);
+      const sharedQueuePendingIds = useMemo(
+        () =>
+          pendingUserMessages
+            .filter((entry) => entry.sharedQueueId)
+            .map((entry) => entry.pendingId),
+        [pendingUserMessages],
+      );
       const [forceSendingPendingId, setForceSendingPendingId] = useState<
         string | null
       >(null);
@@ -812,6 +860,7 @@ const SessionView = memo(
       const [messageJumpTarget, setMessageJumpTarget] = useState<number | null>(
         null,
       );
+      const messageJumpToStartRef = useRef(false);
       const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState<
         number | null
       >(null);
@@ -2239,7 +2288,7 @@ const SessionView = memo(
         return next;
       }, [pagedMessageChunks]);
       const jumpToMessage = useCallback(
-        (messageNumber: number) => {
+        (messageNumber: number, alignToStart = false) => {
           readingAnchorRef.current = null;
           answerResizeSpaceCleanupRef.current?.();
           const target = Math.max(
@@ -2250,6 +2299,7 @@ const SessionView = memo(
           shouldFollowActiveSearchMatchRef.current = false;
           setAutoScroll(false);
           setCurrentPage(page);
+          messageJumpToStartRef.current = alignToStart;
           setMessageJumpTarget(target);
           if (!chunksByPage.has(page)) {
             pageVirtualizer.scrollToIndex(page - 1, { align: "start" });
@@ -2273,6 +2323,32 @@ const SessionView = memo(
         chatMessages[1].type === "user"
           ? chatMessages[0]
           : null;
+      const navigationItems = useMemo(
+        () =>
+          visibleMessageEntries
+            .filter((entry) => entry.message.type === "user")
+            .map((entry) => ({
+              messageNumber: entry.visibleIndex + 1,
+              preview:
+                sanitizeText(extractMessageText(entry.message))
+                  .replace(/\s+/g, " ")
+                  .trim()
+                  .slice(0, 500) || "Image or attachment",
+            })),
+        [visibleMessageEntries],
+      );
+      const turnPrompts = useMemo(
+        () => collectTurnPrompts(chatMessages, agentsBootstrapMessage),
+        [chatMessages, agentsBootstrapMessage],
+      );
+      const inProgressTurnId = turnActionsRunning
+        ? latestTurnId(chatMessages)
+        : null;
+      const handleTurnAction = useCallback(
+        (message: ConversationMessage, action: ConversationTurnAction) =>
+          onTurnAction?.(sessionId, message, action),
+        [onTurnAction, sessionId],
+      );
       const conversationSearchMatches = useMemo<
         ConversationSearchMatchTarget[]
       >(() => {
@@ -2522,7 +2598,8 @@ const SessionView = memo(
         );
         isScrollingProgrammaticallyRef.current = true;
         pageVirtualizer.scrollToOffset(
-          messageJumpTarget >= totalMessageCount
+          messageJumpTarget >= totalMessageCount &&
+            !messageJumpToStartRef.current
             ? maxScrollTop
             : Math.max(0, Math.min(targetTop, maxScrollTop)),
         );
@@ -2599,6 +2676,9 @@ const SessionView = memo(
 
           if (entry.pendingUserMessage) {
             const pendingMessage = entry.pendingUserMessage;
+            const sharedQueueIndex = sharedQueuePendingIds.indexOf(
+              pendingMessage.pendingId,
+            );
             return (
               <div
                 key={entry.entryKey}
@@ -2607,55 +2687,74 @@ const SessionView = memo(
                 data-message-hover
               >
                 <MessageBlock message={message} userTone="pending" />
-                {pendingMessage.status === "queued" &&
-                (onForceSendPendingUserMessage ||
-                  onCancelPendingUserMessage) ? (
-                  <div className="mt-1 flex items-center justify-end gap-2">
-                    <span className="text-[11px] text-zinc-500">
-                      Queued — sends when the current turn finishes
-                    </span>
-                    {onForceSendPendingUserMessage ? (
-                      <button
-                        type="button"
-                        disabled={forceSendingPendingId !== null}
-                        onClick={() => {
-                          setForceSendingPendingId(pendingMessage.pendingId);
-                          void onForceSendPendingUserMessage(
-                            sessionId,
-                            pendingMessage.pendingId,
-                          ).finally(() => {
-                            setForceSendingPendingId((current) =>
-                              current === pendingMessage.pendingId
-                                ? null
-                                : current,
-                            );
-                          });
-                        }}
-                        className="rounded border border-indigo-400/40 bg-indigo-600/20 px-2.5 py-1 text-[11px] text-indigo-200 transition-colors hover:bg-indigo-600/35 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {forceSendingPendingId === pendingMessage.pendingId
-                          ? "Sending..."
-                          : "Send now"}
-                      </button>
-                    ) : null}
-                    {onCancelPendingUserMessage ? (
-                      <button
-                        type="button"
-                        disabled={
-                          forceSendingPendingId === pendingMessage.pendingId
-                        }
-                        onClick={() =>
-                          onCancelPendingUserMessage(
-                            sessionId,
-                            pendingMessage.pendingId,
-                          )
-                        }
-                        className="rounded border border-zinc-500/50 bg-zinc-800/40 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-700/50 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Cancel
-                      </button>
-                    ) : null}
+                {pendingMessage.steered &&
+                pendingMessage.status !== "queued" ? (
+                  <div className="mt-1 text-right text-[11px] text-zinc-500">
+                    {STEERED_MESSAGE_CAPTION}
                   </div>
+                ) : null}
+                {pendingMessage.status === "queued" ? (
+                  <QueuedMessageActions
+                    message={pendingMessage}
+                    turnActive={turnActive}
+                    sendingNow={
+                      forceSendingPendingId === pendingMessage.pendingId
+                    }
+                    busy={forceSendingPendingId !== null}
+                    canMoveUp={sharedQueueIndex > 0}
+                    canMoveDown={
+                      sharedQueueIndex >= 0 &&
+                      sharedQueueIndex < sharedQueuePendingIds.length - 1
+                    }
+                    onSendNow={
+                      onForceSendPendingUserMessage
+                        ? () => {
+                            setForceSendingPendingId(pendingMessage.pendingId);
+                            void onForceSendPendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                            ).finally(() => {
+                              setForceSendingPendingId((current) =>
+                                current === pendingMessage.pendingId
+                                  ? null
+                                  : current,
+                              );
+                            });
+                          }
+                        : null
+                    }
+                    onCancel={
+                      onCancelPendingUserMessage
+                        ? () =>
+                            onCancelPendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                            )
+                        : null
+                    }
+                    onEdit={
+                      pendingMessage.sharedQueueId && onEditPendingUserMessage
+                        ? (text) =>
+                            onEditPendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                              text,
+                            )
+                        : null
+                    }
+                    onMove={
+                      pendingMessage.sharedQueueId &&
+                      onMovePendingUserMessage &&
+                      sharedQueuePendingIds.length > 1
+                        ? (direction) =>
+                            onMovePendingUserMessage(
+                              sessionId,
+                              pendingMessage.pendingId,
+                              direction,
+                            )
+                        : null
+                    }
+                  />
                 ) : null}
               </div>
             );
@@ -2689,6 +2788,17 @@ const SessionView = memo(
                 onPlanAction={onPlanAction ? handlePlanAction : undefined}
                 onFilePathLinkClick={onFilePathLinkClick}
                 onEditMessage={handleEditMessage}
+                turnActionRole={
+                  onTurnAction ? getMessageTurnRole(message, turnPrompts) : null
+                }
+                turnActionBusy={
+                  !turnActionsRunning
+                    ? "idle"
+                    : messageTurnId(message) === inProgressTurnId
+                      ? "turn"
+                      : "thread"
+                }
+                onTurnAction={onTurnAction ? handleTurnAction : undefined}
                 pendingUserInputRequests={
                   usesUserInputState ? answerableUserInputRequests : undefined
                 }
@@ -2744,10 +2854,19 @@ const SessionView = memo(
           handleEditMessage,
           handlePlanAction,
           handleSelectUserInputOption,
+          handleTurnAction,
+          inProgressTurnId,
+          onTurnAction,
+          turnActionsRunning,
+          turnPrompts,
           handleSubmitUserInputAnswers,
           latestAiTerminalPlanEntryKey,
           onApproveAiTerminalStep,
           onCancelPendingUserMessage,
+          onEditPendingUserMessage,
+          onMovePendingUserMessage,
+          sharedQueuePendingIds,
+          turnActive,
           onFilePathLinkClick,
           onForceSendPendingUserMessage,
           onPlanAction,
@@ -3194,7 +3313,7 @@ const SessionView = memo(
 
       return (
         <UserInputResizeContainer
-          className="relative h-full"
+          className="conversation-navigator-host relative h-full"
           onResizeStart={handleAnswerResizeStart}
         >
           <div
@@ -3213,7 +3332,10 @@ const SessionView = memo(
             className="h-full overflow-y-auto bg-zinc-950"
           >
             {hasSessionShortcut ? (
-              <div className="sticky top-0 z-20 px-4 pt-3 md:px-6">
+              <div
+                data-conversation-chrome
+                className="sticky top-0 z-20 px-4 pt-3 md:px-6"
+              >
                 <div
                   className={`flex items-start justify-between gap-2 ${
                     diffGuideShortcut || originSessionShortcut
@@ -3456,6 +3578,11 @@ const SessionView = memo(
 
                             <div
                               className="min-w-0 flex-1"
+                              data-conversation-click-action={
+                                isCollapsed && !autoForceBlockMode
+                                  ? "true"
+                                  : undefined
+                              }
                               onClick={(event: MouseEvent<HTMLDivElement>) => {
                                 if (autoForceBlockMode) {
                                   return;
@@ -3554,6 +3681,7 @@ const SessionView = memo(
                   errors={approvalErrors}
                   onRespond={submitApprovalResponse}
                 />
+                <AutoReviewActivity key={sessionId} sessionId={sessionId} />
                 <PendingElicitations
                   key={sessionId}
                   sessionId={sessionId}
@@ -3584,6 +3712,13 @@ const SessionView = memo(
             key={`${sessionId}:${railCollapsedByDefault}`}
             containerRef={containerRef}
             getMetadata={getHoverMetadata}
+          />
+
+          <ConversationNavigator
+            key={sessionId}
+            containerRef={containerRef}
+            items={navigationItems}
+            onNavigate={(messageNumber) => jumpToMessage(messageNumber, true)}
           />
 
           {totalMessageCount > 0 && (

@@ -1,13 +1,31 @@
-export interface ExplicitTerminalInputController {
-  queueInput: (chunk: string) => void;
+// Routes everything xterm emits through `onData` to the terminal input
+// controller. That covers typed keys, IME composition, mobile keyboards that
+// only fire `input` events, paste (xterm applies bracketed paste itself),
+// mouse reporting for full-screen apps, and xterm's automatic replies to
+// terminal queries (cursor position, device attributes, colors).
+//
+// Automatic replies are only correct for live output. When historical output
+// is replayed (page load, reconnect, restart, resize redraw) xterm answers
+// queries that were already answered long ago, and those answers would be
+// typed into the shell as garbage. Callers report replays through
+// `isReplayingOutput`, and data that arrives during a replay without a recent
+// keyboard interaction is dropped.
+
+export interface TerminalInputQueueOptions {
+  // True for data that comes from the person typing or pasting. Anything else
+  // (mouse reports, focus reports, automatic query replies) is false.
+  userInitiated: boolean;
 }
 
-interface TerminalKeySubscription {
+export interface TerminalInputController {
+  queueInput: (chunk: string, options?: TerminalInputQueueOptions) => void;
+}
+
+interface TerminalSubscription {
   dispose: () => void;
 }
 
-interface TerminalTextAreaLike {
-  value: string;
+interface TerminalEventTargetLike {
   addEventListener: (
     type: string,
     listener: EventListenerOrEventListenerObject,
@@ -20,15 +38,26 @@ interface TerminalTextAreaLike {
   ) => void;
 }
 
-export interface ExplicitTerminalInputBindingTarget {
-  onKey: (
-    listener: (event: { key: string; domEvent: KeyboardEvent }) => void,
-  ) => TerminalKeySubscription;
-  textarea?: TerminalTextAreaLike | null;
-  modes: {
-    bracketedPasteMode?: boolean | null;
-  };
+export interface TerminalInputBindingTarget {
+  onData: (listener: (data: string) => void) => TerminalSubscription;
+  element?: TerminalEventTargetLike | null;
 }
+
+// xterm delivers some typed text a tick after the DOM event (IME composition
+// is flushed from a timeout), so attribution uses a short time window.
+export const USER_INPUT_ATTRIBUTION_WINDOW_MS = 250;
+
+const USER_INPUT_EVENT_TYPES = [
+  "keydown",
+  "keypress",
+  "beforeinput",
+  "input",
+  "compositionstart",
+  "compositionupdate",
+  "compositionend",
+  "paste",
+  "drop",
+] as const;
 
 export function prepareTerminalPasteInput(text: string): string {
   return text.replace(/\r?\n/g, "\r");
@@ -47,116 +76,40 @@ export function buildTerminalPasteInput(
   return normalized;
 }
 
-export function bindTerminalExplicitInputHandlers(input: {
-  terminal: ExplicitTerminalInputBindingTarget;
-  controller: ExplicitTerminalInputController;
+export function bindTerminalInputHandlers(input: {
+  terminal: TerminalInputBindingTarget;
+  controller: TerminalInputController;
+  isReplayingOutput: () => boolean;
+  now?: () => number;
 }): () => void {
-  const keySubscription = input.terminal.onKey(({ key }) => {
-    if (key) {
-      input.controller.queueInput(key);
-    }
-  });
+  const now = input.now ?? (() => Date.now());
+  let lastUserInputAt = Number.NEGATIVE_INFINITY;
 
-  const textarea = input.terminal.textarea;
-  if (!textarea) {
-    return () => {
-      keySubscription.dispose();
-    };
+  const markUserInput = () => {
+    lastUserInputAt = now();
+  };
+
+  const element = input.terminal.element ?? null;
+  for (const type of USER_INPUT_EVENT_TYPES) {
+    element?.addEventListener(type, markUserInput, true);
   }
 
-  let isComposing = false;
-  let compositionStartValue = "";
-  let compositionFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const clearCompositionFlushTimer = () => {
-    if (compositionFlushTimer) {
-      clearTimeout(compositionFlushTimer);
-      compositionFlushTimer = null;
-    }
-  };
-
-  const flushCommittedComposition = (waitForPropagation: boolean) => {
-    const deliver = () => {
-      compositionFlushTimer = null;
-      const currentValue = textarea.value;
-      const committedText = currentValue.startsWith(compositionStartValue)
-        ? currentValue.slice(compositionStartValue.length)
-        : currentValue;
-      if (committedText) {
-        input.controller.queueInput(committedText);
-      }
-      textarea.value = "";
-      compositionStartValue = "";
-    };
-
-    clearCompositionFlushTimer();
-    if (waitForPropagation) {
-      compositionFlushTimer = setTimeout(deliver, 0);
+  const dataSubscription = input.terminal.onData((data) => {
+    if (!data) {
       return;
     }
-    deliver();
-  };
-
-  const handlePaste = (event: Event) => {
-    const clipboardEvent = event as ClipboardEvent;
-    const pastedText =
-      clipboardEvent.clipboardData?.getData("text/plain") ?? "";
-    if (!pastedText) {
+    const userInitiated =
+      now() - lastUserInputAt <= USER_INPUT_ATTRIBUTION_WINDOW_MS;
+    if (!userInitiated && input.isReplayingOutput()) {
       return;
     }
-
-    clipboardEvent.preventDefault();
-    clipboardEvent.stopPropagation();
-    input.controller.queueInput(
-      buildTerminalPasteInput(pastedText, {
-        bracketedPasteMode: input.terminal.modes.bracketedPasteMode,
-      }),
-    );
-    textarea.value = "";
-  };
-
-  const handleCompositionStart = () => {
-    clearCompositionFlushTimer();
-    isComposing = true;
-    compositionStartValue = textarea.value;
-  };
-
-  const handleCompositionEnd = () => {
-    isComposing = false;
-    flushCommittedComposition(true);
-  };
-
-  const handleKeyDownCapture = (event: Event) => {
-    const keyboardEvent = event as KeyboardEvent;
-    if (!isComposing || keyboardEvent.isComposing) {
-      return;
-    }
-
-    if (keyboardEvent.key === "Enter") {
-      flushCommittedComposition(false);
-    }
-  };
-
-  const handleFocus = () => {
-    clearCompositionFlushTimer();
-    isComposing = false;
-    compositionStartValue = "";
-    textarea.value = "";
-  };
-
-  textarea.addEventListener("paste", handlePaste, true);
-  textarea.addEventListener("compositionstart", handleCompositionStart);
-  textarea.addEventListener("compositionend", handleCompositionEnd);
-  textarea.addEventListener("keydown", handleKeyDownCapture, true);
-  textarea.addEventListener("focus", handleFocus);
+    input.controller.queueInput(data, { userInitiated });
+  });
 
   return () => {
-    clearCompositionFlushTimer();
-    keySubscription.dispose();
-    textarea.removeEventListener("paste", handlePaste, true);
-    textarea.removeEventListener("compositionstart", handleCompositionStart);
-    textarea.removeEventListener("compositionend", handleCompositionEnd);
-    textarea.removeEventListener("keydown", handleKeyDownCapture, true);
-    textarea.removeEventListener("focus", handleFocus);
+    dataSubscription.dispose();
+    for (const type of USER_INPUT_EVENT_TYPES) {
+      element?.removeEventListener(type, markUserInput, true);
+    }
   };
 }

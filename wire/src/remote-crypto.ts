@@ -96,33 +96,6 @@ export function decodeBase64(base64: string): Uint8Array {
   return output;
 }
 
-async function derivePasswordSecret(password: string): Promise<Uint8Array> {
-  const normalized = normalizePassword(password);
-  if (normalized.trim().length === 0) {
-    throw new Error("Password must not be empty");
-  }
-
-  const cryptoObject = await getCrypto();
-  const baseKey = await cryptoObject.subtle.importKey(
-    "raw",
-    encoder.encode(normalized),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const bits = await cryptoObject.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: encoder.encode(PASSWORD_SECRET_SALT),
-      iterations: PASSWORD_SECRET_ITERATIONS,
-    },
-    baseKey,
-    PASSWORD_SECRET_LENGTH_BITS,
-  );
-  return new Uint8Array(bits);
-}
-
 function normalizeRealmId(realmId: string): string {
   const normalized = realmId.trim();
   if (!normalized) {

@@ -1,3 +1,22 @@
+export type * from "../codex-organization";
+export type {
+  CodexWorktreeEntry,
+  CodexWorktreeList,
+  CodexWorktreeMode,
+  CodexWorktreeStartResult,
+} from "../codex-worktrees";
+export type {
+  CodexGuardianReview,
+  CodexGuardianSnapshot,
+} from "../codex-guardian";
+export type {
+  CodexApprovalPolicy,
+  CodexApprovalsReviewer,
+  CodexPermissionOption,
+  CodexPermissionSelection,
+  CodexPermissionSnapshot,
+} from "../codex-permissions";
+export type { WorkingDirectoryChangeResult } from "../codex-working-directory";
 export type {
   ConfigDiagnostics,
   ConfigDiagnosticLayer,
@@ -8,6 +27,13 @@ export type {
   ExperimentalWriteResult,
 } from "../codex-native";
 export type { ConversationRecap } from "../codex-recap";
+export type {
+  RealtimeTranscriptEntry,
+  RealtimeVoiceCatalog,
+  RealtimeVoicePhase,
+  RealtimeVoiceSessionView,
+  RealtimeVoiceSnapshot,
+} from "../codex-realtime";
 export type {
   UsageDashboardSnapshot,
   UsageWindow,
@@ -20,12 +46,17 @@ export type {
   McpServerInventory,
 } from "../codex-native";
 export type { CodexBackgroundTerminal } from "../background-terminals";
+export type {
+  CodexQueuedMessage,
+  CodexThreadQueueSnapshot,
+} from "../codex-thread-queue";
 import type { CodexOperationalNotification } from "../operational-notifications";
 export type { CodexOperationalNotification } from "../operational-notifications";
 import type { CodexHookRun } from "../hook-runs";
 export type { CodexHookRun } from "../hook-runs";
 export type { CodexMemoryStatus, CodexThreadMemory } from "../codex-memory";
 import type { CodexModelServiceTier } from "../service-tiers";
+import type { CodexDeckConfig } from "../config";
 export type { CodexModelServiceTier } from "../service-tiers";
 export type { CodexReviewTarget, CodexReviewResult } from "../codex-review";
 import {
@@ -151,6 +182,8 @@ export interface CodexModelOption {
   hidden: boolean;
   defaultReasoningEffort: CodexReasoningEffort | null;
   supportedReasoningEfforts: CodexReasoningEffort[];
+  /** Input modalities advertised by model/list (e.g. text, image, audio). */
+  inputModalities?: string[];
   serviceTiers?: CodexModelServiceTier[];
   defaultServiceTier?: string | null;
 }
@@ -195,9 +228,51 @@ export interface SendCodexMessageRequest {
   collaborationMode?: CodexCollaborationModeInput | null;
   /**
    * Deliver into the thread's running turn (`turn/steer`) when one is active,
-   * starting a new turn otherwise. Used for async question answers.
+   * starting a new turn otherwise. Used for composer sends while a turn runs
+   * and for async question answers.
    */
   steerActiveTurn?: boolean;
+  /** Running turn the caller expects to steer (`turn/steer` precondition). */
+  expectedTurnId?: string;
+  /** JSON Schema object for this turn's final answer (`turn/start`). */
+  outputSchema?: Record<string, unknown> | null;
+  /**
+   * Fetch IDE context (active file, selection, open tabs) from the local IDE
+   * IPC router and prepend it like Codex CLI `/ide` does.
+   */
+  ideContext?: boolean;
+}
+
+export interface CodexIdeContextFile {
+  label: string;
+  path: string;
+}
+
+/** Browser-safe summary of IDE context; selection text stays on the backend. */
+export interface CodexIdeContextSummary {
+  activeFile: CodexIdeContextFile | null;
+  /** 1-based positions, matching the prompt rendering. */
+  selections: Array<{
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  }>;
+  selectionChars: number;
+  openTabs: CodexIdeContextFile[];
+  openTabCount: number;
+  hasPromptContext: boolean;
+}
+
+export type CodexIdeContextStatus =
+  | { available: true; summary: CodexIdeContextSummary }
+  | { available: false; reason: string; hint: string };
+
+export interface SendCodexMessageIdeContextResult {
+  applied: boolean;
+  summary?: CodexIdeContextSummary;
+  /** Upstream "IDE context was skipped for this message." hint. */
+  skippedHint?: string;
 }
 
 export type SendCodexMessageInputItem =
@@ -208,6 +283,10 @@ export type SendCodexMessageInputItem =
   | {
       type: "image";
       url: string;
+    }
+  | {
+      type: "audio";
+      url: string;
     };
 
 export interface SendCodexMessageResponse {
@@ -215,6 +294,7 @@ export interface SendCodexMessageResponse {
   turnId: string | null;
   /** True when the input joined the running turn instead of starting one. */
   steered?: boolean;
+  ideContext?: SendCodexMessageIdeContextResult;
 }
 
 export type CodexTurnStatus =
@@ -447,6 +527,12 @@ export interface CodexThreadGoalGetResponse {
 export interface CodexThreadGoalClearResponse {
   cleared: boolean;
 }
+
+export type {
+  CodexRewoundPrompt,
+  CodexThreadAttachment,
+  CodexThreadRevertResult,
+} from "../codex-thread-history";
 
 export interface CodexThreadForkResponse {
   thread: CodexThreadSummary;
@@ -684,6 +770,8 @@ export interface CodexDeckConfigFileResponse {
   path: string;
   content: string;
   revision: string;
+  effectiveConfig?: CodexDeckConfig;
+  configPaths?: string[];
   hoverSettings?: ConversationHoverSettings;
 }
 
@@ -985,6 +1073,10 @@ export interface TerminalSnapshotResponse {
   output: string;
   seq: number;
   writeOwnerId: string | null;
+  // PTY size the output was produced at. Clients replay the snapshot at this
+  // size and then reflow it to their own. Absent from older backends.
+  cols?: number;
+  rows?: number;
 }
 
 export interface TerminalInputRequest {
@@ -1049,6 +1141,8 @@ export type TerminalStreamEvent =
       type: "reset";
       output: string;
       running: boolean;
+      cols?: number;
+      rows?: number;
     }
   | {
       terminalId: string;
@@ -1629,6 +1723,7 @@ export interface ContentBlock {
   type:
     | "text"
     | "image"
+    | "audio"
     | "image_generation"
     | "thinking"
     | "tool_use"
@@ -1636,9 +1731,11 @@ export interface ContentBlock {
     | "reasoning"
     | "agent_reasoning"
     | "subagent_activity"
-    | "collab_agent_tool_call";
+    | "collab_agent_tool_call"
+    | "mcp_app";
   text?: string;
   image_url?: string;
+  audio_url?: string;
   generatedImage?: {
     status: string;
     prompt?: string;
@@ -1667,6 +1764,49 @@ export interface ContentBlock {
   model?: string | null;
   reasoningEffort?: CodexReasoningEffort | null;
   agentsStates?: Record<string, CodexCollabAgentState>;
+  /** MCP App widget declared by an MCP tool call (`mcpAppUi`). */
+  mcpApp?: CodexMcpAppBlock;
+}
+
+export interface CodexMcpAppBlock {
+  /** Originating MCP tool call id. */
+  callId: string;
+  server: string;
+  tool: string;
+  /** `ui://` resource holding the widget HTML. */
+  resourceUri: string;
+  /** Descriptor preference; null when only the legacy resource URI is known. */
+  displayMode: "inline" | "fullscreen" | null;
+  arguments: unknown;
+  /** CallToolResult passed to the widget (omitted when too large). */
+  result: {
+    content: unknown[];
+    structuredContent?: unknown;
+    isError?: boolean;
+    _meta?: unknown;
+  } | null;
+  error: string | null;
+  status: string;
+}
+
+export interface CodexMcpAppResourceResponse {
+  uri: string;
+  mimeType: string;
+  html: string;
+  csp: {
+    connectDomains: unknown[];
+    resourceDomains: unknown[];
+    frameDomains: unknown[];
+    baseUriDomains: unknown[];
+  };
+  prefersBorder: boolean | null;
+}
+
+export interface CodexMcpAppToolCallResponse {
+  content: unknown[];
+  structuredContent?: unknown;
+  isError?: boolean;
+  _meta?: unknown;
 }
 
 export interface TokenUsage {
@@ -1805,6 +1945,13 @@ let codexSessionsDir = join(codexDir, "sessions");
 
 const fileIndex = new Map<string, string>();
 const sessionMetaIndex = new Map<string, SessionMeta>();
+const sessionMetaFileCache = new Map<
+  string,
+  { signature: string; meta: SessionMeta | null }
+>();
+// Remember confirmed misses until their history timestamp changes or a watcher
+// discovers their rollout. Old history entries must not force repeated scans.
+const missingSessionHistoryTimestamps = new Map<string, number>();
 let sessionSummaryIndex = new Map<string, SessionSummary>();
 const sessionDisplayCache = new Map<string, string>();
 const sessionWaitStateCache = new Map<string, SessionWaitStateCacheEntry>();
@@ -1839,6 +1986,8 @@ const sessionStreamTokenUsageUpdates = new Map<
 
 export function initStorage(dir?: string): void {
   invalidateSessionsCache();
+  sessionMetaFileCache.clear();
+  missingSessionHistoryTimestamps.clear();
   sessionDisplayCache.clear();
   clearConversationIndexes();
   sessionStreamPendingModelOutputs.clear();
@@ -1881,6 +2030,7 @@ export function addToFileIndex(
   invalidateSessionsCache();
   sessionSummaryIndex.delete(plainRolloutPath(filePath));
   fileIndex.set(sessionId, filePath);
+  missingSessionHistoryTimestamps.delete(sessionId);
   sessionDisplayCache.delete(sessionId);
   sessionWaitStateCache.delete(sessionId);
   sessionUserMessageTimestampCache.delete(sessionId);
@@ -2897,9 +3047,19 @@ async function readSessionMetaFromFile(
   filePath: string,
 ): Promise<SessionMeta | null> {
   try {
-    const prefix = await readRolloutPrefix(filePath);
+    const source = await resolveRolloutSource(filePath);
+    const stats = await stat(source);
+    const signature = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+    const cached = sessionMetaFileCache.get(source);
+    if (cached?.signature === signature) return cached.meta;
+
+    const prefix = await readRolloutPrefix(source);
     const [firstLine, ...followingLines] = prefix.toString("utf8").split("\n");
-    return firstLine ? parseSessionMetaLine(firstLine, followingLines) : null;
+    const meta = firstLine
+      ? parseSessionMetaLine(firstLine, followingLines)
+      : null;
+    sessionMetaFileCache.set(source, { signature, meta });
+    return meta;
   } catch {
     return null;
   }
@@ -2973,12 +3133,23 @@ async function buildFileIndex(invalidateSessionList = true): Promise<void> {
       });
   }
 
-  for (const filePath of files) {
+  const rolloutMetas = new Array<SessionMeta | null>(files.length);
+  let nextMetadataIndex = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(8, files.length) }, async () => {
+      while (nextMetadataIndex < files.length) {
+        const index = nextMetadataIndex++;
+        rolloutMetas[index] = await readSessionMetaFromFile(files[index]);
+      }
+    }),
+  );
+
+  for (const [index, filePath] of files.entries()) {
     const fileSessionId = extractSessionIdFromPath(filePath);
 
     let sessionId = fileSessionId;
     const summary = summaries.get(plainRolloutPath(filePath));
-    const rolloutMeta = await readSessionMetaFromFile(filePath);
+    const rolloutMeta = rolloutMetas[index];
     const meta = summary
       ? {
           id: summary.id,
@@ -3017,6 +3188,10 @@ async function buildFileIndex(invalidateSessionList = true): Promise<void> {
   for (const [id, meta] of nextMetaIndex) sessionMetaIndex.set(id, meta);
   sessionSummaryIndex = summaries;
   sessionWaitStateCache.clear();
+  const availableSources = new Set(files);
+  for (const source of sessionMetaFileCache.keys()) {
+    if (!availableSources.has(source)) sessionMetaFileCache.delete(source);
+  }
 }
 
 function collectTurnLifecycle(lines: Iterable<string>): {
@@ -4120,6 +4295,8 @@ function extractContentBlocksFromPayloadContent(
       text?: unknown;
       image_url?: unknown;
       imageUrl?: unknown;
+      audio_url?: unknown;
+      audioUrl?: unknown;
     };
 
     if (
@@ -4148,6 +4325,21 @@ function extractContentBlocksFromPayloadContent(
         blocks.push({
           type: "image",
           image_url: imageUrl,
+        });
+      }
+    }
+
+    if (block.type === "input_audio") {
+      const audioUrl =
+        typeof block.audio_url === "string"
+          ? block.audio_url
+          : typeof block.audioUrl === "string"
+            ? block.audioUrl
+            : "";
+      if (audioUrl.trim().length > 0) {
+        blocks.push({
+          type: "audio",
+          audio_url: audioUrl,
         });
       }
     }
@@ -5307,7 +5499,16 @@ async function getPrefixUserMessageTimestamp(
 
 export async function loadStorage(): Promise<void> {
   sessionDisplayCache.clear();
+  missingSessionHistoryTimestamps.clear();
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
+}
+
+/** Re-resolve a thread's current rollout after `thread/revert` replaced it. */
+export async function refreshSessionRollout(sessionId: string): Promise<void> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return;
+  clearSessionCaches(normalizedSessionId);
+  await buildFileIndex();
 }
 
 export async function syncSessionFileIndex(
@@ -5400,17 +5601,30 @@ export async function getSessions(): Promise<Session[]> {
     const version = sessionsVersion;
     const history = historyCache ?? (await loadHistoryCache());
 
-    // History can retain sessions whose rollout files were removed. Refresh
-    // discovery once for the whole listing, rather than rebuilding the index
-    // for every missing entry (including on each browser refresh).
+    // Discover unknown history entries once. Confirmed missing rollouts stay
+    // missing across cache invalidations unless new history or a watcher finds
+    // them; otherwise every active turn makes the next listing scan all files.
     if (
       [...history.keys(), ...sessionMetaIndex.keys()].some(
-        (sessionId) => !fileIndex.has(sessionId),
+        (sessionId) =>
+          !fileIndex.has(sessionId) &&
+          missingSessionHistoryTimestamps.get(sessionId) !==
+            (history.get(sessionId)?.timestamp ?? 0),
       )
     ) {
       // This listing owns the new snapshot; keep its version so intervening
       // watcher events can still prevent caching a stale result.
       await buildFileIndex(false);
+      for (const sessionId of [...history.keys(), ...sessionMetaIndex.keys()]) {
+        if (!fileIndex.has(sessionId)) {
+          missingSessionHistoryTimestamps.set(
+            sessionId,
+            history.get(sessionId)?.timestamp ?? 0,
+          );
+        } else {
+          missingSessionHistoryTimestamps.delete(sessionId);
+        }
+      }
     }
 
     const sessionIds = [

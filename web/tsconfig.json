@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2021",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
@@ -23,5 +23,10 @@
     },
     "types": ["react", "react-dom", "vite/client"]
   },
-  "include": [".", "../api/storage.ts", "../api/terminal-skill-install.ts", "../wire/src/index.ts"]
+  "include": [
+    ".",
+    "../api/storage.ts",
+    "../api/terminal-skill-install.ts",
+    "../wire/src/index.ts"
+  ]
 }

@@ -12,6 +12,8 @@ export interface ComposerPrimaryActionStateInput {
   sendingMessage: boolean;
   shouldUseStopAction: boolean;
   stoppingTurn: boolean;
+  /** A turn is running, so a send steers it (Codex TUI Enter). */
+  steerWhileGenerating?: boolean;
 }
 
 export interface ComposerPrimaryActionState {
@@ -53,7 +55,11 @@ export function resolveComposerPrimaryActionState(
   return {
     kind: "send",
     disabled: input.sendingMessage || !input.hasMessageContent,
-    label: input.sendingMessage ? "Sending..." : "Send",
+    label: input.sendingMessage
+      ? "Sending..."
+      : input.steerWhileGenerating
+        ? "Steer"
+        : "Send",
   };
 }
 

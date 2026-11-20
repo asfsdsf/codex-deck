@@ -2,9 +2,11 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
+import { precompressAssets } from "./build-compression";
+import { minifyWebChunks, webVendorChunk } from "./build-chunks";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), minifyWebChunks(), precompressAssets()],
   root: resolve(__dirname),
   base: "/",
   resolve: {
@@ -39,8 +41,14 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, "../dist/web"),
     emptyOutDir: true,
-    // xterm.js can be broken by esbuild minification (runtime "ReferenceError: n is not defined"
-    // in requestMode). Keep web build unminified for runtime correctness across clients.
+    // minifyWebChunks minifies everything except the isolated xterm chunk:
+    // esbuild minification can break xterm's requestMode at runtime.
     minify: false,
+    cssMinify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks: webVendorChunk,
+      },
+    },
   },
 });

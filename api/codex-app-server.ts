@@ -1,3 +1,4 @@
+import { CodexOrganizationService } from "./codex-organization";
 import {
   readConfigDiagnostics,
   retainedWarnings,
@@ -14,14 +15,48 @@ import {
   type ExperimentalFeature,
   type ExperimentalWriteResult,
 } from "./codex-native";
+import {
+  addThreadAttachment,
+  listThreadAttachments,
+  removeThreadAttachment,
+  revertThreadBeforeTurn,
+  type CodexThreadAttachment,
+  type CodexThreadAttachmentInput,
+  type CodexThreadRevertResult,
+} from "./codex-thread-history";
 import { RecapManager, type ConversationRecap } from "./codex-recap";
+import * as threadQueue from "./codex-thread-queue";
+import type {
+  CodexQueueInputItem,
+  CodexQueuedMessage,
+  CodexThreadQueueSnapshot,
+} from "./codex-thread-queue";
+import { CodexExtensions } from "./codex-extensions";
+import { RealtimeVoiceManager } from "./codex-realtime";
 import {
   readUsageDashboard,
   type UsageDashboardSnapshot,
 } from "./codex-native";
 import {
+  WorktreeService,
+  type CodexWorktreeList,
+  type CodexWorktreeMode,
+  type CodexWorktreeStartResult,
+} from "./codex-worktrees";
+import { getCodexDir } from "./storage/runtime";
+import {
+  GuardianReviewStore,
+  type CodexGuardianSnapshot,
+} from "./codex-guardian";
+import {
+  PermissionManager,
+  type CodexPermissionSelection,
+  type CodexPermissionSnapshot,
+} from "./codex-permissions";
+import {
   nativePages,
   nativeRecord,
+  type NativeRpc,
   type NativeScope,
   type McpInventorySnapshot,
   type McpServerInventory,
@@ -73,6 +108,7 @@ import type {
   CodexCollabAgentStatus,
   CodexTurnError,
 } from "./storage";
+import { CodexDeckDynamicToolHost } from "./codex-dynamic-tools";
 import {
   buildHookStateBatchWriteInput,
   parseHooksListResult,
@@ -298,6 +334,10 @@ export interface SendCodexMessageInput {
   collaborationMode?: CodexCollaborationModeInput | null;
   /** Steer the running turn when there is one; otherwise start a turn. */
   steerActiveTurn?: boolean;
+  /** Turn the caller believes is running; the steer precondition. */
+  expectedTurnId?: string | null;
+  /** JSON Schema constraining this turn's final answer (turn/start only). */
+  outputSchema?: Record<string, unknown> | null;
 }
 
 export type CodexRawResponseItem = Record<string, unknown>;
@@ -309,6 +349,10 @@ export type SendCodexInputItem =
     }
   | {
       type: "image";
+      url: string;
+    }
+  | {
+      type: "audio";
       url: string;
     };
 
@@ -501,6 +545,7 @@ interface PendingApprovalRequest {
   cwd: string | null;
   permissions: Record<string, unknown> | null;
   availableDecisions: PendingApprovalDecisionOption[];
+  responseInFlight?: boolean;
 }
 
 interface AppServerTurnRecord {
@@ -551,6 +596,7 @@ interface ActiveCodexConfig {
   reasoningEffort: CodexReasoningEffort | null;
   serviceTier: CodexServiceTier | null;
   providerBaseUrl: string | null;
+  mcpServerNames?: string[];
 }
 
 interface ProviderRequestConfig {
@@ -947,6 +993,7 @@ class CodexAppServerClient {
     (event: CodexAppServerEvent) => void
   >();
   private readonly readCoalescer = createReadCoalescer();
+  private readonly liveActiveTurnIdsByThread = new Map<string, string>();
   private readonly newlyStartedThreadIds = new Set<string>();
   private authFileFingerprint: string | null = null;
   private authReloadInFlight: Promise<void> | null = null;
@@ -954,6 +1001,12 @@ class CodexAppServerClient {
   private lastKnownProviderBaseUrl: string | null = null;
   private providerReloadInFlight: Promise<void> | null = null;
   private appServerRestartInFlight: Promise<boolean> | null = null;
+  // Client-provided dynamic tools (`codex_deck` namespace); see api/codex-dynamic-tools.ts.
+  private readonly dynamicTools = new CodexDeckDynamicToolHost({
+    request: (method, params) => this.request(method, params),
+    setThreadName: (threadId, name) => this.setThreadName(threadId, name),
+    archiveThread: (threadId) => this.archiveThread(threadId),
+  });
 
   public constructor(options: CodexAppServerClientOptions = {}) {
     this.executablePath =
@@ -1094,12 +1147,90 @@ class CodexAppServerClient {
     );
   }
 
+  private worktrees = new WorktreeService({
+    codexHome: () => configuredCodexHome || getCodexDir(),
+    readDesktopConfig: async (cwd) => {
+      const result = asRecord(
+        await this.request("config/read", { includeLayers: false, cwd }),
+      );
+      return asRecord(asRecord(result?.config)?.desktop) ?? null;
+    },
+    getThreadSummary: (id) => this.getThreadSummary(id),
+    forkThread: (id, options) => this.forkThread(id, options),
+    createThread: async (cwd) =>
+      this.getThreadSummary(await this.createThread({ cwd })),
+    archiveThread: (id) => this.archiveThread(id),
+    hasBackgroundTerminals: async (id) =>
+      (await this.listBackgroundTerminals(id)).length > 0,
+    notify: () => this.notifyNativeState("worktrees"),
+  });
+  public listWorktrees(
+    threadId: string,
+    cwd?: string | null,
+  ): Promise<CodexWorktreeList> {
+    return this.worktrees.list(threadId, cwd);
+  }
+  public startWorktree(
+    threadId: string,
+    mode: CodexWorktreeMode,
+    cwd?: string | null,
+  ): Promise<CodexWorktreeStartResult> {
+    return this.worktrees.start(threadId, mode, cwd);
+  }
+  public removeWorktree(
+    threadId: string,
+    root: string,
+    cwd?: string | null,
+  ): Promise<{ message: string }> {
+    return this.worktrees.remove(threadId, root, cwd);
+  }
+  private guardianReviews = new GuardianReviewStore(
+    (method, params, threadId) =>
+      this.requestNativeThread(method, params, threadId),
+    (id) => this.notifyNativeState("guardian", id),
+  );
+  public readGuardianReviews(threadId: string): CodexGuardianSnapshot {
+    return this.guardianReviews.snapshot(threadId);
+  }
+  public approveGuardianDenial(
+    threadId: string,
+    reviewId: string,
+  ): Promise<CodexGuardianSnapshot> {
+    return this.guardianReviews.approveDenial(threadId, reviewId);
+  }
+  private permissions = new PermissionManager(
+    (method, params, threadId) =>
+      this.requestNativeThread(method, params, threadId),
+    (id) => this.notifyNativeState("permissions", id),
+  );
+  public readPermissions(threadId: string): Promise<CodexPermissionSnapshot> {
+    return this.permissions.read(threadId);
+  }
+  public applyPermissions(
+    threadId: string,
+    selection: CodexPermissionSelection,
+  ): Promise<CodexPermissionSnapshot> {
+    return this.permissions.apply(threadId, selection);
+  }
   private recaps = new RecapManager(
     (method, params) => this.request(method, params),
     (id) => this.notifyNativeState("recap", id),
   );
+  public readonly organization = new CodexOrganizationService({
+    rpc: (method, params) => this.request(method, params),
+    notify: (scope, id) => this.notifyNativeState(scope, id),
+  });
   public getRecap(threadId: string): ConversationRecap | null {
     return this.recaps.get(threadId);
+  }
+  private realtimeVoice = new RealtimeVoiceManager({
+    rpc: (method, params) => this.request(method, params),
+    threadRpc: (method, params, id) =>
+      this.requestNativeThread(method, params, id),
+    notify: (id) => this.notifyNativeState("voice", id),
+  });
+  public getRealtimeVoice(): RealtimeVoiceManager {
+    return this.realtimeVoice;
   }
   public startRecap(threadId: string, history: string): ConversationRecap {
     return this.recaps.start(threadId, history);
@@ -1133,6 +1264,20 @@ class CodexAppServerClient {
       throw new Error("Invalid reset-credit response");
     this.notifyNativeState("usage");
     return { outcome: String(result.outcome) };
+  }
+
+  private extensions = new CodexExtensions(
+    async (method, params, options = {}) => {
+      if (!options.timeoutMs)
+        return this.requestNativeThread(method, params ?? {}, options.threadId);
+      await this.ensureConnected();
+      await this.ensureInitialized();
+      return this.requestRaw(method, params ?? {}, options.timeoutMs);
+    },
+    (scope, threadId) => this.notifyNativeState(scope, threadId ?? null),
+  );
+  public getExtensions(): CodexExtensions {
+    return this.extensions;
   }
 
   private mcpUpdates: McpRuntimeUpdate[] = [];
@@ -1170,6 +1315,39 @@ class CodexAppServerClient {
       return this.request(method, params);
     }
   }
+  private threadQueueRpc(threadId: string): NativeRpc {
+    // Queue reads/edits go to the thread store and need no resume; only
+    // thread/queue/start needs the thread loaded on this app-server.
+    return async (method, params) => {
+      try {
+        return await this.request(method, params);
+      } catch (error) {
+        if (
+          !(error instanceof CodexAppServerRpcError) ||
+          !/resume the thread before/i.test(error.message)
+        )
+          throw error;
+        await this.resumeThread(threadId);
+        return this.request(method, params);
+      }
+    };
+  }
+  public listThreadQueue(threadId: string): Promise<CodexThreadQueueSnapshot> {
+    return threadQueue.listThreadQueue(this.threadQueueRpc(threadId), threadId);
+  }
+  public async mutateThreadQueue<T>(
+    threadId: string,
+    work: (rpc: NativeRpc) => Promise<T>,
+  ): Promise<T> {
+    this.clearThreadStateCache(threadId);
+    try {
+      return await work(this.threadQueueRpc(threadId));
+    } finally {
+      this.clearThreadStateCache(threadId);
+      // thread/queue/changed only reaches subscribed connections.
+      this.notifyNativeState("queue", threadId);
+    }
+  }
   public async listMcpServers(
     threadId?: string | null,
   ): Promise<McpInventorySnapshot> {
@@ -1195,6 +1373,41 @@ class CodexAppServerClient {
         (update) => !update.threadId || update.threadId === id,
       ),
     };
+  }
+  /** `mcpServer/resource/read` scoped to the originating tool call. */
+  public async readMcpAppResource(input: {
+    threadId: string;
+    server: string;
+    uri: string;
+    originCallId: string;
+  }): Promise<unknown> {
+    return this.requestNativeThread(
+      "mcpServer/resource/read",
+      {
+        threadId: input.threadId,
+        server: input.server,
+        uri: input.uri,
+        originCallId: input.originCallId,
+      },
+      input.threadId,
+    );
+  }
+  public async callMcpServerTool(input: {
+    threadId: string;
+    server: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+  }): Promise<unknown> {
+    return this.requestNativeThread(
+      "mcpServer/tool/call",
+      {
+        threadId: input.threadId,
+        server: input.server,
+        tool: input.tool,
+        arguments: input.arguments,
+      },
+      input.threadId,
+    );
   }
   public async loginMcpServer(
     name: string,
@@ -1276,6 +1489,13 @@ class CodexAppServerClient {
               record.defaultReasoningEffort,
             ),
             supportedReasoningEfforts: supported,
+            ...(Array.isArray(record.inputModalities)
+              ? {
+                  inputModalities: record.inputModalities.filter(
+                    (entry): entry is string => typeof entry === "string",
+                  ),
+                }
+              : {}),
             ...(modelServiceTiers(record) !== undefined
               ? {
                   serviceTiers: modelServiceTiers(record),
@@ -1834,7 +2054,11 @@ class CodexAppServerClient {
       };
     }
 
-    const result = await this.request("thread/start", params);
+    const result = await this.dynamicTools.requestThreadStart(
+      params,
+      { cwd, mcpServerNames: activeConfig.mcpServerNames },
+      (startParams) => this.request("thread/start", startParams),
+    );
     if (!result || typeof result !== "object") {
       throw new CodexAppServerTransportError(
         "Invalid thread/start response from codex app-server",
@@ -1887,17 +2111,24 @@ class CodexAppServerClient {
     }
   }
 
-  public async forkThread(threadId: string): Promise<CodexThreadSummary> {
+  public async forkThread(
+    threadId: string,
+    options: { cwd?: string; lastTurnId?: string; beforeTurnId?: string } = {},
+  ): Promise<CodexThreadSummary> {
     const normalizedThreadId = threadId.trim();
     if (!normalizedThreadId) {
       throw new Error("threadId is required");
     }
+    const params = {
+      threadId: normalizedThreadId,
+      persistExtendedHistory: true,
+      ...(options.cwd ? { cwd: options.cwd, deferGoalContinuation: true } : {}),
+      ...(options.lastTurnId ? { lastTurnId: options.lastTurnId } : {}),
+      ...(options.beforeTurnId ? { beforeTurnId: options.beforeTurnId } : {}),
+    };
 
     try {
-      const result = await this.request("thread/fork", {
-        threadId: normalizedThreadId,
-        persistExtendedHistory: true,
-      });
+      const result = await this.request("thread/fork", params);
       return extractThreadSummaryFromResult(result);
     } catch (error) {
       if (!shouldRetryAfterResume(error)) {
@@ -1905,12 +2136,64 @@ class CodexAppServerClient {
       }
 
       await this.resumeThread(normalizedThreadId);
-      const result = await this.request("thread/fork", {
-        threadId: normalizedThreadId,
-        persistExtendedHistory: true,
-      });
+      const result = await this.request("thread/fork", params);
       return extractThreadSummaryFromResult(result);
     }
+  }
+
+  /** `thread/revert`: drop the selected turn and later ones (files are kept). */
+  public async revertThread(
+    threadId: string,
+    beforeTurnId: string,
+  ): Promise<CodexThreadRevertResult> {
+    const id = threadId.trim();
+    if (!id) throw new Error("threadId is required");
+    const rpc = (method: string, params: Record<string, unknown>) =>
+      this.requestNativeThread(method, params, id);
+    const result = await revertThreadBeforeTurn(rpc, rpc, id, beforeTurnId);
+    this.clearThreadStateCache(id);
+    this.notifyNativeState("history", id);
+    return result;
+  }
+
+  // Attachments live on stored threads; none of these calls load the thread.
+  public listThreadAttachments(
+    threadId: string,
+  ): Promise<CodexThreadAttachment[]> {
+    return listThreadAttachments(
+      (method, params) => this.request(method, params),
+      threadId.trim(),
+    );
+  }
+
+  public async addThreadAttachment(
+    threadId: string,
+    input: CodexThreadAttachmentInput,
+  ): Promise<{
+    outcome: "created" | "existing";
+    attachment: CodexThreadAttachment;
+  }> {
+    const id = threadId.trim();
+    const result = await addThreadAttachment(
+      (method, params) => this.request(method, params),
+      id,
+      input,
+    );
+    this.notifyNativeState("attachments", id);
+    return result;
+  }
+
+  public async removeThreadAttachment(
+    threadId: string,
+    input: Omit<CodexThreadAttachmentInput, "payload">,
+  ): Promise<void> {
+    const id = threadId.trim();
+    await removeThreadAttachment(
+      (method, params) => this.request(method, params),
+      id,
+      input,
+    );
+    this.notifyNativeState("attachments", id);
   }
 
   public async injectThreadItems(
@@ -2285,13 +2568,13 @@ class CodexAppServerClient {
           continue;
         }
 
-        if (item.type === "image") {
+        if (item.type === "image" || item.type === "audio") {
           const url = item.url.trim();
           if (!url) {
             continue;
           }
           normalizedInput.push({
-            type: "image",
+            type: item.type,
             url,
           });
         }
@@ -2317,7 +2600,7 @@ class CodexAppServerClient {
       input: normalizedInput.map((item) =>
         item.type === "text"
           ? { type: "text", text: item.text }
-          : { type: "image", url: item.url },
+          : { type: item.type, url: item.url },
       ),
       attachments: [],
     };
@@ -2338,6 +2621,10 @@ class CodexAppServerClient {
 
     if (input.effort) {
       params.effort = input.effort;
+    }
+
+    if (input.outputSchema) {
+      params.outputSchema = input.outputSchema;
     }
 
     if (input.collaborationMode === null) {
@@ -2382,6 +2669,7 @@ class CodexAppServerClient {
     await this.reloadProviderIfChanged(activeConfig);
 
     await this.applyDaybreakToTurn(threadId, params, activeConfig);
+    this.organization.environments.applyPendingSelection(threadId, params);
 
     // Provider-switching tools commonly write config.toml before auth.json.
     // Re-check after reading the new provider config so a credential update
@@ -2398,8 +2686,13 @@ class CodexAppServerClient {
       await this.resumeThread(threadId, activeConfig);
     }
 
-    if (input.steerActiveTurn) {
-      const steered = await this.steerActiveTurn(threadId, params.input);
+    // turn/steer cannot carry an output schema; it applies to a new turn.
+    if (input.steerActiveTurn && !input.outputSchema) {
+      const steered = await this.steerActiveTurn(
+        threadId,
+        params.input,
+        input.expectedTurnId,
+      );
       if (steered) {
         return steered;
       }
@@ -2408,7 +2701,8 @@ class CodexAppServerClient {
     try {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
-      const result = await this.request("turn/start", params);
+      const result = await this.startTurn(threadId, params);
+      this.organization.environments.confirmSelection(threadId, params);
       this.newlyStartedThreadIds.delete(threadId);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
@@ -2422,10 +2716,54 @@ class CodexAppServerClient {
       this.newlyStartedThreadIds.delete(threadId);
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
-      const result = await this.request("turn/start", params);
+      const result = await this.startTurn(threadId, params);
+      this.organization.environments.confirmSelection(threadId, params);
       return {
         turnId: extractTurnIdFromTurnStartResult(result),
       };
+    }
+  }
+
+  private async startTurn(
+    threadId: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    const previousLiveTurnId = this.liveActiveTurnIdsByThread.get(threadId);
+    const observedTurnIds = new Set<string>();
+    const unsubscribe = this.subscribeAppServerEvents((event) => {
+      if (
+        event.type === "thread_status" &&
+        event.threadId === threadId &&
+        event.turnId
+      ) {
+        observedTurnIds.add(event.turnId);
+      }
+    });
+    try {
+      const result = await this.request("turn/start", params);
+      const turnId = extractTurnIdFromTurnStartResult(result);
+      const status = toTurnStatus(asRecord(asRecord(result)?.turn)?.status);
+      if (
+        turnId &&
+        (status === null || status === "inProgress") &&
+        !observedTurnIds.has(turnId) &&
+        this.liveActiveTurnIdsByThread.get(threadId) === previousLiveTurnId
+      ) {
+        // Startup instructions (including AGENTS.md) can delay turn/started
+        // and history after the send succeeds. The accepted turn is already
+        // running. Do not overwrite lifecycle events that beat the response.
+        this.liveActiveTurnIdsByThread.set(threadId, turnId);
+        this.clearThreadStateCache(threadId);
+        this.emitAppServerEvent({
+          type: "thread_status",
+          threadId,
+          status: "active",
+          turnId,
+        });
+      }
+      return result;
+    } finally {
+      unsubscribe();
     }
   }
 
@@ -2437,9 +2775,14 @@ class CodexAppServerClient {
   private async steerActiveTurn(
     threadId: string,
     input: unknown,
+    callerExpectedTurnId?: string | null,
   ): Promise<SendCodexMessageResult | null> {
     this.clearThreadStateCache(threadId);
-    let expectedTurnId = (await this.getThreadState(threadId)).activeTurnId;
+    // Prefer the turn the browser saw; a stale id is resolved by the
+    // app-server's "no active turn" / turn-mismatch replies below.
+    let expectedTurnId =
+      callerExpectedTurnId?.trim() ||
+      (await this.getThreadState(threadId)).activeTurnId;
     let retriedAfterMismatch = false;
     while (expectedTurnId) {
       try {
@@ -2704,7 +3047,23 @@ class CodexAppServerClient {
         ? requestedTurnId.trim()
         : null;
 
-    return this.readCoalescer.getOrLoad(
+    // The first turn can start before its rollout is materialized. Live
+    // lifecycle notifications are authoritative during that gap.
+    const liveTurnId = this.liveActiveTurnIdsByThread.get(normalizedThreadId);
+    if (
+      liveTurnId &&
+      (!normalizedRequestedTurnId || normalizedRequestedTurnId === liveTurnId)
+    ) {
+      return {
+        threadId: normalizedThreadId,
+        activeTurnId: liveTurnId,
+        isGenerating: true,
+        requestedTurnId: normalizedRequestedTurnId,
+        requestedTurnStatus: normalizedRequestedTurnId ? "inProgress" : null,
+      };
+    }
+
+    const state = await this.readCoalescer.getOrLoad(
       this.getThreadStateCacheKey(
         normalizedThreadId,
         normalizedRequestedTurnId,
@@ -2753,6 +3112,21 @@ class CodexAppServerClient {
         };
       },
     );
+
+    // A turn may have started while the history read was in flight.
+    const latestLiveTurnId =
+      this.liveActiveTurnIdsByThread.get(normalizedThreadId);
+    return latestLiveTurnId
+      ? {
+          ...state,
+          activeTurnId: latestLiveTurnId,
+          isGenerating: true,
+          requestedTurnStatus:
+            normalizedRequestedTurnId === latestLiveTurnId
+              ? "inProgress"
+              : state.requestedTurnStatus,
+        }
+      : state;
   }
 
   public async getLastTurnDiff(threadId: string): Promise<CodexLastTurnDiff> {
@@ -2953,7 +3327,30 @@ class CodexAppServerClient {
     }
 
     validateApprovalResponsePayload(response);
+    const result = this.buildApprovalResult(pendingRequest, response);
 
+    // Another client may be answering the same request; only one response
+    // may reach the app-server for a given request id.
+    if (pendingRequest.responseInFlight) {
+      throw new Error("request response already in progress");
+    }
+    pendingRequest.responseInFlight = true;
+    try {
+      await this.respondToServerRequest(pendingRequest.rawRequestId, result);
+      if (
+        this.pendingApprovalRequests.get(normalizedRequestId) === pendingRequest
+      ) {
+        this.pendingApprovalRequests.delete(normalizedRequestId);
+      }
+    } finally {
+      pendingRequest.responseInFlight = false;
+    }
+  }
+
+  private buildApprovalResult(
+    pendingRequest: PendingApprovalRequest,
+    response: CodexApprovalResponsePayload,
+  ): unknown {
     if (pendingRequest.kind === "permissions") {
       const grant = response.grant;
       if (grant !== "allow" && grant !== "deny") {
@@ -2965,16 +3362,13 @@ class CodexAppServerClient {
         throw new Error("response.scope must be 'turn' or 'session'");
       }
 
-      const result = {
+      return {
         scope,
         permissions:
           grant === "allow"
             ? (pendingRequest.permissions ?? {})
             : ({} as Record<string, unknown>),
       };
-      await this.respondToServerRequest(pendingRequest.rawRequestId, result);
-      this.pendingApprovalRequests.delete(normalizedRequestId);
-      return;
     }
 
     const decisionId = asTrimmedString(response.decisionId);
@@ -2989,10 +3383,7 @@ class CodexAppServerClient {
       throw new Error("response.decisionId is invalid");
     }
 
-    await this.respondToServerRequest(pendingRequest.rawRequestId, {
-      decision: selectedDecision.decision,
-    });
-    this.pendingApprovalRequests.delete(normalizedRequestId);
+    return { decision: selectedDecision.decision };
   }
 
   public listLiveTerminalRuns(threadId: string): CodexLiveTerminalRun[] {
@@ -3249,6 +3640,7 @@ class CodexAppServerClient {
     this.pendingApprovalRequests.clear();
     this.clearPendingElicitations();
     this.recaps.cancelAll();
+    this.realtimeVoice.resetAll("The Codex app-server stopped, ending voice.");
     this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
@@ -3256,6 +3648,8 @@ class CodexAppServerClient {
     for (const message of this.stdoutMessageParser.finish()) {
       this.handleStdoutMessage(message);
     }
+    this.liveActiveTurnIdsByThread.clear();
+    this.readCoalescer.clearMatching(() => true);
 
     this.stderrReader?.close();
     this.stderrReader = null;
@@ -3827,14 +4221,43 @@ class CodexAppServerClient {
         return;
       }
 
+      if (method === "item/tool/call") {
+        // Answered once by the backend (never by browsers), including failures.
+        void this.dynamicTools.handleToolCallRequest(
+          idValue,
+          message.params,
+          (response) => this.respondToServerRequest(idValue, response),
+        );
+        return;
+      }
+
       void this.respondMethodNotFound(idValue, method);
     }
   }
 
   private handleServerNotification(method: string, params: unknown): void {
     if (this.recaps.handleNotification(method, params)) return;
+    if (this.realtimeVoice.handleNotification(method, params)) return;
+    this.permissions.handleNotification(method, params);
+    if (this.guardianReviews.handleNotification(method, params)) return;
+    if (this.extensions.handleNotification(method, params)) return;
+    if (this.organization.handleNotification(method, params)) return;
     if (method === "account/rateLimits/updated") {
       this.notifyNativeState("usage");
+      return;
+    }
+    if (method === "thread/attachment/updated") {
+      const threadId = asTrimmedString(asRecord(params)?.threadId);
+      if (threadId) this.notifyNativeState("attachments", threadId);
+      return;
+    }
+    if (method === "thread/reverted") {
+      // Reverts from any client (TUI, desktop, other tabs) replace the rollout.
+      const threadId = asTrimmedString(asRecord(params)?.threadId);
+      if (threadId) {
+        this.clearThreadStateCache(threadId);
+        this.notifyNativeState("history", threadId);
+      }
       return;
     }
     if (
@@ -3886,6 +4309,13 @@ class CodexAppServerClient {
 
     if (method === "thread/status/changed") {
       this.handleThreadStatusChangedNotification(params);
+      this.dynamicTools.handleThreadStatusChanged(params);
+      return;
+    }
+
+    if (method === "thread/queue/changed") {
+      const threadId = asTrimmedString(asRecord(params)?.threadId);
+      if (threadId) this.notifyNativeState("queue", threadId);
       return;
     }
 
@@ -3982,10 +4412,19 @@ class CodexAppServerClient {
       return;
     }
 
+    const status = toThreadRuntimeStatus(record?.status);
+    if (
+      status === "idle" ||
+      status === "notLoaded" ||
+      status === "systemError"
+    ) {
+      this.liveActiveTurnIdsByThread.delete(threadId);
+    }
+    this.clearThreadStateCache(threadId);
     this.emitAppServerEvent({
       type: "thread_status",
       threadId,
-      status: toThreadRuntimeStatus(record?.status),
+      status,
       turnId: null,
     });
   }
@@ -4004,6 +4443,14 @@ class CodexAppServerClient {
       return;
     }
 
+    if (turnId) {
+      if (method === "turn/started") {
+        this.liveActiveTurnIdsByThread.set(threadId, turnId);
+      } else if (this.liveActiveTurnIdsByThread.get(threadId) === turnId) {
+        this.liveActiveTurnIdsByThread.delete(threadId);
+      }
+    }
+    this.clearThreadStateCache(threadId);
     this.emitAppServerEvent({
       type: "thread_status",
       threadId,
@@ -4647,6 +5094,8 @@ class CodexAppServerClient {
     for (const message of this.stdoutMessageParser.finish()) {
       this.handleStdoutMessage(message);
     }
+    this.liveActiveTurnIdsByThread.clear();
+    this.readCoalescer.clearMatching(() => true);
     this.stderrReader?.close();
     this.stderrReader = null;
 
@@ -4654,6 +5103,7 @@ class CodexAppServerClient {
     this.initialized = false;
     this.initializeInFlight = null;
     this.recaps.cancelAll();
+    this.realtimeVoice.resetAll("The Codex app-server stopped, ending voice.");
     this.hookRuns.clear();
     this.liveTerminalRunsByThread.clear();
     this.liveTerminalProcessByItemByThread.clear();
@@ -4661,6 +5111,7 @@ class CodexAppServerClient {
     this.clearPendingUserInputRequests();
     this.pendingApprovalRequests.clear();
     this.clearPendingElicitations();
+    this.dynamicTools.reset();
 
     this.rejectAll(new CodexAppServerTransportError(reason));
   }
@@ -5913,6 +6364,7 @@ function extractActiveConfigFromConfigReadResult(
       result,
       modelProvider,
     ),
+    mcpServerNames: Object.keys(asRecord(config.mcp_servers) ?? {}),
   };
 }
 
@@ -6488,6 +6940,31 @@ let clientOverride: CodexAppServerClientFacade | null = null;
 let configuredCodexHome: string | null = null;
 
 export interface CodexAppServerClientFacade {
+  listWorktrees?: (
+    threadId: string,
+    cwd?: string | null,
+  ) => Promise<CodexWorktreeList>;
+  startWorktree?: (
+    threadId: string,
+    mode: CodexWorktreeMode,
+    cwd?: string | null,
+  ) => Promise<CodexWorktreeStartResult>;
+  removeWorktree?: (
+    threadId: string,
+    root: string,
+    cwd?: string | null,
+  ) => Promise<{ message: string }>;
+  readGuardianReviews?: (threadId: string) => CodexGuardianSnapshot;
+  approveGuardianDenial?: (
+    threadId: string,
+    reviewId: string,
+  ) => Promise<CodexGuardianSnapshot>;
+  readPermissions?: (threadId: string) => Promise<CodexPermissionSnapshot>;
+  applyPermissions?: (
+    threadId: string,
+    selection: CodexPermissionSelection,
+  ) => Promise<CodexPermissionSnapshot>;
+  organization?: () => CodexOrganizationService;
   listRetainedWarnings?: (
     threadId?: string | null,
   ) => CodexOperationalNotification[];
@@ -6511,6 +6988,7 @@ export interface CodexAppServerClientFacade {
     updates: Record<string, boolean>,
   ) => Promise<ExperimentalWriteResult>;
   getRecap?: (threadId: string) => ConversationRecap | null;
+  getRealtimeVoice?: () => RealtimeVoiceManager;
   startRecap?: (threadId: string, history: string) => ConversationRecap;
   readUsageDashboard?: (
     threadId?: string | null,
@@ -6520,11 +6998,52 @@ export interface CodexAppServerClientFacade {
     creditId?: string | null,
   ) => Promise<{ outcome: string }>;
   listMcpServers?: (threadId?: string | null) => Promise<McpInventorySnapshot>;
+  listThreadQueue?: (threadId: string) => Promise<CodexThreadQueueSnapshot>;
+  addThreadQueueMessage?: (
+    threadId: string,
+    input: CodexQueueInputItem[],
+    clientUserMessageId: string,
+  ) => Promise<CodexQueuedMessage>;
+  updateThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string,
+    text: string,
+  ) => Promise<CodexQueuedMessage>;
+  deleteThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string,
+  ) => Promise<boolean>;
+  reorderThreadQueue?: (
+    threadId: string,
+    queuedSubmissionIds: string[],
+  ) => Promise<void>;
+  moveThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string,
+    direction: "up" | "down",
+  ) => Promise<boolean>;
+  startThreadQueueMessage?: (
+    threadId: string,
+    queuedSubmissionId: string | null,
+  ) => Promise<{ turnId: string | null }>;
+  readMcpAppResource?: (input: {
+    threadId: string;
+    server: string;
+    uri: string;
+    originCallId: string;
+  }) => Promise<unknown>;
+  callMcpServerTool?: (input: {
+    threadId: string;
+    server: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+  }) => Promise<unknown>;
   loginMcpServer?: (
     name: string,
     threadId?: string | null,
   ) => Promise<{ authorizationUrl: string; loginId?: string }>;
   reloadMcpServers?: () => Promise<void>;
+  getExtensions?: () => CodexExtensions;
   restartAppServer?: () => Promise<boolean>;
   listModels: (limit?: number) => Promise<CodexModelOption[]>;
   fetchProviderModels?: (cwd?: string | null) => Promise<CodexModelOption[]>;
@@ -6554,7 +7073,28 @@ export interface CodexAppServerClientFacade {
   resetMemories?: () => Promise<void>;
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
-  forkThread?: (threadId: string) => Promise<CodexThreadSummary>;
+  forkThread?: (
+    threadId: string,
+    options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string },
+  ) => Promise<CodexThreadSummary>;
+  revertThread?: (
+    threadId: string,
+    beforeTurnId: string,
+  ) => Promise<CodexThreadRevertResult>;
+  listThreadAttachments?: (
+    threadId: string,
+  ) => Promise<CodexThreadAttachment[]>;
+  addThreadAttachment?: (
+    threadId: string,
+    input: CodexThreadAttachmentInput,
+  ) => Promise<{
+    outcome: "created" | "existing";
+    attachment: CodexThreadAttachment;
+  }>;
+  removeThreadAttachment?: (
+    threadId: string,
+    input: Omit<CodexThreadAttachmentInput, "payload">,
+  ) => Promise<void>;
   injectThreadItems?: (
     threadId: string,
     items: CodexRawResponseItem[],
@@ -6658,12 +7198,51 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     writeExperimentalFeatures: (id, updates) =>
       client!.writeExperimentalFeatures(id, updates),
     getRecap: (id) => client!.getRecap(id),
+    getRealtimeVoice: () => client!.getRealtimeVoice(),
     startRecap: (id, history) => client!.startRecap(id, history),
     readUsageDashboard: (id) => client!.readUsageDashboard(id),
     consumeResetCredit: (key, id) => client!.consumeResetCredit(key, id),
+    listWorktrees: (id, cwd) => client!.listWorktrees(id, cwd),
+    startWorktree: (id, mode, cwd) => client!.startWorktree(id, mode, cwd),
+    removeWorktree: (id, root, cwd) => client!.removeWorktree(id, root, cwd),
+    readGuardianReviews: (id) => client!.readGuardianReviews(id),
+    approveGuardianDenial: (id, reviewId) =>
+      client!.approveGuardianDenial(id, reviewId),
+    readPermissions: (id) => client!.readPermissions(id),
+    applyPermissions: (id, selection) =>
+      client!.applyPermissions(id, selection),
     listMcpServers: (id) => client!.listMcpServers(id),
+    listThreadQueue: (id) => client!.listThreadQueue(id),
+    addThreadQueueMessage: (id, input, clientId) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.addThreadQueueMessage(rpc, id, input, clientId),
+      ),
+    updateThreadQueueMessage: (id, itemId, text) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.updateThreadQueueMessage(rpc, id, itemId, text),
+      ),
+    deleteThreadQueueMessage: (id, itemId) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.deleteThreadQueueMessage(rpc, id, itemId),
+      ),
+    reorderThreadQueue: (id, ids) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.reorderThreadQueue(rpc, id, ids),
+      ),
+    moveThreadQueueMessage: (id, itemId, direction) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.moveThreadQueueMessage(rpc, id, itemId, direction),
+      ),
+    startThreadQueueMessage: (id, itemId) =>
+      client!.mutateThreadQueue(id, (rpc) =>
+        threadQueue.startThreadQueueMessage(rpc, id, itemId),
+      ),
+    readMcpAppResource: (input) => client!.readMcpAppResource(input),
+    callMcpServerTool: (input) => client!.callMcpServerTool(input),
     loginMcpServer: (name, id) => client!.loginMcpServer(name, id),
     reloadMcpServers: () => client!.reloadMcpServers(),
+    getExtensions: () => client!.getExtensions(),
+    organization: () => client!.organization,
     readMemorySettings: (cwd?: string | null) =>
       client!.readMemorySettings(cwd),
     writeMemorySettings: (settings: CodexMemoriesSettings) =>
@@ -6675,7 +7254,16 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.createThread(input),
     setThreadName: (threadId: string, name: string) =>
       client!.setThreadName(threadId, name),
-    forkThread: (threadId: string) => client!.forkThread(threadId),
+    forkThread: (threadId: string, options?: { cwd?: string; lastTurnId?: string; beforeTurnId?: string }) =>
+      client!.forkThread(threadId, options),
+    revertThread: (threadId: string, beforeTurnId: string) =>
+      client!.revertThread(threadId, beforeTurnId),
+    listThreadAttachments: (threadId) =>
+      client!.listThreadAttachments(threadId),
+    addThreadAttachment: (threadId, input) =>
+      client!.addThreadAttachment(threadId, input),
+    removeThreadAttachment: (threadId, input) =>
+      client!.removeThreadAttachment(threadId, input),
     injectThreadItems: (threadId: string, items: CodexRawResponseItem[]) =>
       client!.injectThreadItems(threadId, items),
     compactThread: (threadId: string) => client!.compactThread(threadId),

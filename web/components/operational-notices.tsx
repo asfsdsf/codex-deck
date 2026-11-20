@@ -72,6 +72,7 @@ export default function OperationalNotices({
   if (!notices.length && !error) return null;
   return (
     <details
+      data-conversation-chrome
       className="shrink-0 border-b border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300"
       aria-label="Codex operational notices"
     >

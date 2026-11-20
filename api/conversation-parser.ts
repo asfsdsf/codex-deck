@@ -1,3 +1,4 @@
+import { parseMcpAppToolCall } from "./codex-mcp-apps";
 import { isVisibleConversationMessage } from "./conversation-pagination";
 import {
   isGeneratedImageRunning,
@@ -27,6 +28,10 @@ import {
   getEditableResponseItem,
   getEditableEventRecord,
 } from "./conversation-edit-records";
+import {
+  CODEX_DECK_TOOL_NAMESPACE,
+  qualifyCodexDeckToolName,
+} from "./codex-dynamic-tool-names";
 
 interface LineWithOffset {
   line: string;
@@ -756,6 +761,8 @@ function extractContentBlocksFromPayloadContent(
       text?: unknown;
       image_url?: unknown;
       imageUrl?: unknown;
+      audio_url?: unknown;
+      audioUrl?: unknown;
     };
 
     if (
@@ -784,6 +791,21 @@ function extractContentBlocksFromPayloadContent(
         blocks.push({
           type: "image",
           image_url: imageUrl,
+        });
+      }
+    }
+
+    if (block.type === "input_audio") {
+      const audioUrl =
+        typeof block.audio_url === "string"
+          ? block.audio_url
+          : typeof block.audioUrl === "string"
+            ? block.audioUrl
+            : "";
+      if (audioUrl.trim().length > 0) {
+        blocks.push({
+          type: "audio",
+          audio_url: audioUrl,
         });
       }
     }
@@ -1453,12 +1475,19 @@ function parseToolUseFromPayload(
     input = toToolInput(payload.action);
   }
 
-  const name =
+  const baseName =
     payloadType === "web_search_call"
       ? "web_search"
       : typeof payload.name === "string"
         ? payload.name
         : "unknown_tool";
+  // Deck-hosted dynamic tools keep their namespace so the UI can render them
+  // distinctly (e.g. "codex_deck.read_thread"); other namespaces are unchanged.
+  const name =
+    payloadType === "function_call" &&
+    payload.namespace === CODEX_DECK_TOOL_NAMESPACE
+      ? qualifyCodexDeckToolName(baseName)
+      : baseName;
 
   const callId =
     typeof payload.call_id === "string" && payload.call_id
@@ -1572,6 +1601,20 @@ function parseCodexConversation(
     }
 
     if (record.type === "event_msg") {
+      const mcpApp = parseMcpAppToolCall(payload);
+      if (mcpApp) {
+        const turnId = asTrimmedString(payload.turn_id ?? payload.turnId);
+        pushConversationMessage(
+          messages,
+          createPersistedCollaborationMessage(
+            { type: "mcp_app", id: mcpApp.callId, mcpApp },
+            `${offset}:mcp-app:${messages.length}`,
+            timestamp,
+            turnId ?? undefined,
+          ),
+        );
+        continue;
+      }
       if (normalizedPayloadType === "itemcompleted") {
         const collaborationBlock = parsePersistedCollaborationItem(
           payload.item,

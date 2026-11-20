@@ -840,6 +840,7 @@ function SchedulerCard(props: {
       props.scheduler.controlMessages.length - 1
     ] ?? null;
   const stateLabel = schedulerStateLabel(props.scheduler);
+  const lastSchedulerSessionId = props.scheduler.lastSessionId;
   const latestControlMessageSummary =
     formatControlMessageSummary(latestControlMessage);
 
@@ -861,10 +862,10 @@ function SchedulerCard(props: {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {props.scheduler.lastSessionId ? (
+          {lastSchedulerSessionId ? (
             <button
               type="button"
-              onClick={() => props.onOpenSession(props.scheduler.lastSessionId)}
+              onClick={() => props.onOpenSession(lastSchedulerSessionId)}
               disabled={props.actionBusy}
               className="h-8 rounded border border-zinc-700 bg-zinc-800/70 px-3 text-xs text-zinc-200 transition-colors hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
             >

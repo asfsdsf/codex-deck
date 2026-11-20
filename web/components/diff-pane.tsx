@@ -790,7 +790,7 @@ function FileTreeListEntry(props: {
         <button
           type="button"
           onClick={() => onOpenDirectory(node.path)}
-          className="w-full text-left py-1 text-[11px] text-zinc-300 hover:bg-zinc-900/50"
+          className="w-full text-left py-1 text-[11px] text-zinc-300 hover:bg-zinc-800/50"
           style={{ paddingLeft: "10px", paddingRight: "10px" }}
         >
           <span className="inline-flex items-center gap-1.5">
@@ -815,8 +815,8 @@ function FileTreeListEntry(props: {
     <button
       type="button"
       onClick={() => onSelectFilePath(node.path)}
-      className={`w-full text-left py-1 text-[11px] hover:bg-zinc-900/50 ${
-        isSelected ? "bg-zinc-900/60 text-zinc-100" : "text-zinc-300"
+      className={`w-full text-left py-1 text-[11px] hover:bg-zinc-800/50 ${
+        isSelected ? "bg-zinc-800 text-zinc-100" : "text-zinc-300"
       }`}
       style={{ paddingLeft: "29px", paddingRight: "10px" }}
       title={node.path}
@@ -1094,8 +1094,8 @@ export default function DiffPane(props: DiffPaneProps) {
                           key={run.processId}
                           type="button"
                           onClick={() => onSelectTerminalRun(run.processId)}
-                          className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors ${
-                            active ? "bg-zinc-900/60" : ""
+                          className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-800/50 transition-colors ${
+                            active ? "bg-zinc-800" : ""
                           }`}
                           title={`${run.command} (${run.processId})`}
                         >
@@ -1191,8 +1191,8 @@ export default function DiffPane(props: DiffPaneProps) {
                         key={skill.path}
                         type="button"
                         onClick={() => onSelectSkillPath(skill.path)}
-                        className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors ${
-                          active ? "bg-zinc-900/60" : ""
+                        className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-800/50 transition-colors ${
+                          active ? "bg-zinc-800" : ""
                         }`}
                         title={`${skill.name} (${skill.scope})`}
                       >
@@ -1322,8 +1322,8 @@ export default function DiffPane(props: DiffPaneProps) {
                       type="button"
                       onClick={() => onSelectFilePath(file.path)}
                       title={`${file.status} ${file.path}`}
-                      className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors ${
-                        active ? "bg-zinc-900/60" : ""
+                      className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-800/50 transition-colors ${
+                        active ? "bg-zinc-800" : ""
                       }`}
                     >
                       <div className="grid grid-cols-[1fr_auto] items-end gap-x-2">

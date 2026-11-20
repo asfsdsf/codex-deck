@@ -1,9 +1,130 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyCodexDeckConfigFormChanges,
   parseCodexDeckConfigContent,
+  readCodexDeckConfigForm,
   updateCodexDeckConfigContent,
 } from "../../web/codex-deck-config";
+
+test("settings form shows effective file values, including overrides and explicit false", () => {
+  const form = readCodexDeckConfigForm({
+    path: "/home/codex-deck/config.toml",
+    content: 'port = 13000\nopen = true\n[remote]\nusername = "home-user"\n',
+    revision: "revision",
+    effectiveConfig: {
+      port: 14000,
+      dir: "/configured/home",
+      dev: false,
+      open: false,
+      translationCommand: "printf local",
+      remote: { username: "local-user", password: "inherited-password" },
+      conversationHover: { model: true, timestamp: false },
+      codexHomes: { work: { path: "/work", label: "Work" } },
+    },
+  });
+  assert.equal(form.port, "14000");
+  assert.equal(form.dir, "/configured/home");
+  assert.equal(form.dev, false);
+  assert.equal(form.open, false);
+  assert.equal(form.translationCommand, "printf local");
+  assert.equal(form.remote.username, "local-user");
+  assert.equal(form.remote.password, "inherited-password");
+  assert.deepEqual(form.conversationHover, { model: true, timestamp: false });
+  assert.deepEqual(form.codexHomes, [
+    { id: "work", label: "Work", path: "/work" },
+  ]);
+});
+
+test("structured edits save only changed fields without copying inherited settings", () => {
+  const content =
+    '# keep\nopen = true\n[remote]\nusername = "home-user"\n[conversation_hover]\nmodel = false\n';
+  const effective = parseCodexDeckConfigContent(
+    'port = 14000\nopen = false\ntranslation_command = "printf local"\n[remote]\nusername = "local-user"\npassword = "local-password"\n[conversation_hover]\nmodel = true\n[codex_homes.work]\npath = "/work"\nlabel = "Work"\n',
+  );
+  const next = {
+    ...effective,
+    dev: true,
+    remote: { ...effective.remote, machineId: "new-machine" },
+    conversationHover: { ...effective.conversationHover, timestamp: false },
+  };
+  const fileConfig = applyCodexDeckConfigFormChanges(
+    parseCodexDeckConfigContent(content),
+    effective,
+    next,
+  );
+  const updated = updateCodexDeckConfigContent(content, fileConfig);
+  assert.match(updated, /^# keep/m);
+  assert.match(updated, /dev = true/);
+  assert.match(updated, /open = true/);
+  assert.match(updated, /username = "home-user"/);
+  assert.match(updated, /machine_id = "new-machine"/);
+  assert.match(updated, /model = false/);
+  assert.match(updated, /timestamp = false/);
+  assert.doesNotMatch(
+    updated,
+    /port =|translation_command =|password =|codex_homes/,
+  );
+  assert.deepEqual(effective.conversationHover, { model: true });
+});
+
+test("TOML edits preserve inherited form values and clear removed fields", () => {
+  const content = 'dev = true\n[remote]\nmachine_id = "old-machine"\n';
+  const form = parseCodexDeckConfigContent(
+    'port = 14000\ndev = true\n[remote]\nusername = "inherited-user"\nmachine_id = "old-machine"\n',
+  );
+  const updated = applyCodexDeckConfigFormChanges(
+    form,
+    parseCodexDeckConfigContent(content),
+    parseCodexDeckConfigContent(
+      'open = false\n[remote]\nmachine_id = "new-machine"\n',
+    ),
+  );
+  assert.equal(updated.port, "14000");
+  assert.equal(updated.dev, null);
+  assert.equal(updated.open, false);
+  assert.equal(updated.remote.username, "inherited-user");
+  assert.equal(updated.remote.machineId, "new-machine");
+});
+
+test("home edits preserve inherited fields and support adding, renaming, and removing homes", () => {
+  const base = parseCodexDeckConfigContent(
+    '[codex_homes.work]\nlabel = "Old"\n',
+  );
+  const previous = parseCodexDeckConfigContent(
+    '[codex_homes.work]\npath = "/work"\nlabel = "Old"\n',
+  );
+  const next = {
+    ...previous,
+    codexHomes: [{ id: "work", path: "/work", label: "New" }],
+  };
+  const edited = applyCodexDeckConfigFormChanges(base, previous, next);
+  assert.deepEqual(edited.codexHomes, [{ id: "work", path: "", label: "New" }]);
+  const renamed = applyCodexDeckConfigFormChanges(edited, next, {
+    ...next,
+    codexHomes: [{ ...next.codexHomes[0]!, id: "renamed" }],
+  });
+  assert.deepEqual(renamed.codexHomes, [
+    { id: "renamed", path: "/work", label: "New" },
+  ]);
+  const removed = applyCodexDeckConfigFormChanges(renamed, renamed, {
+    ...renamed,
+    codexHomes: [],
+  });
+  assert.deepEqual(removed.codexHomes, []);
+});
+
+test("settings form falls back to file content when effective settings are unavailable", () => {
+  const content = "port = 13000\nopen = false\n";
+  assert.deepEqual(
+    readCodexDeckConfigForm({
+      path: "/config.toml",
+      content,
+      revision: "revision",
+    }),
+    parseCodexDeckConfigContent(content),
+  );
+});
 
 test("config editor parses every supported Codex Deck setting", () => {
   const parsed = parseCodexDeckConfigContent(

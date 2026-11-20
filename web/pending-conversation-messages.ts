@@ -1,6 +1,7 @@
 import type { ConversationMessage } from "@codex-deck/api";
 import { isLiveConversationMessage } from "./live-codex-deltas";
 import type { PendingUserMessage } from "./pending-user-messages";
+import { isAudioDataUrl } from "./voice/voice-support";
 
 export interface DisplayConversationMessage {
   message: ConversationMessage;
@@ -22,10 +23,11 @@ function toPendingConversationMessage(
           : []),
         ...pending.images
           .filter((imageUrl) => imageUrl.trim().length > 0)
-          .map((imageUrl) => ({
-            type: "image" as const,
-            image_url: imageUrl,
-          })),
+          .map((url) =>
+            isAudioDataUrl(url)
+              ? { type: "audio" as const, audio_url: url }
+              : { type: "image" as const, image_url: url },
+          ),
       ],
     },
   };

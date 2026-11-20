@@ -107,6 +107,7 @@ import type {
   CodexUserInputResponsePayload,
   CodexApprovalRequest,
   CodexApprovalResponsePayload,
+  SendCodexMessageInputItem,
   SendCodexMessageRequest,
   SendCodexMessageResponse,
 } from "@codex-deck/api";
@@ -1108,6 +1109,75 @@ export async function forkCodexThread(
   );
 }
 
+export async function forkCodexThreadAtTurn(
+  threadId: string,
+  boundary: { lastTurnId: string } | { beforeTurnId: string },
+): Promise<CodexThreadForkResponse> {
+  return requestJson<CodexThreadForkResponse>(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/fork-at`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(boundary),
+    },
+  );
+}
+
+/** Rewinds history before a turn; workspace files are not reverted. */
+export function revertCodexThread(
+  threadId: string,
+  beforeTurnId: string,
+): Promise<import("@codex-deck/api").CodexThreadRevertResult> {
+  return requestJsonAndNotifyConversation(
+    threadId,
+    `/api/codex/threads/${encodeURIComponent(threadId)}/revert`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ beforeTurnId }),
+    },
+  );
+}
+
+export function getCodexThreadAttachments(threadId: string): Promise<{
+  attachments: import("@codex-deck/api").CodexThreadAttachment[];
+}> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/attachments`,
+  );
+}
+
+export function addCodexThreadAttachment(
+  threadId: string,
+  input: { attachmentType: string; identityKey: string; payload: unknown },
+): Promise<{
+  outcome: "created" | "existing";
+  attachment: import("@codex-deck/api").CodexThreadAttachment;
+}> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/attachments`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function removeCodexThreadAttachment(
+  threadId: string,
+  input: { attachmentType: string; identityKey: string },
+): Promise<{ ok: boolean }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/attachments/remove`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export function startDiffGuide(
   input: DiffGuideStartRequest,
 ): Promise<DiffGuideStartResponse> {
@@ -2013,6 +2083,87 @@ export function terminateCodexBackgroundTerminal(
   );
 }
 
+type CodexQueuedMessage = import("@codex-deck/api").CodexQueuedMessage;
+function threadQueueUrl(threadId: string, suffix = ""): string {
+  return `/api/codex/threads/${encodeURIComponent(threadId.trim())}/queue${suffix}`;
+}
+export function getCodexThreadQueue(
+  threadId: string,
+): Promise<import("@codex-deck/api").CodexThreadQueueSnapshot> {
+  return requestJson(threadQueueUrl(threadId));
+}
+/** `supported: false` means the app-server has no shared queue. */
+export function addCodexThreadQueueMessage(
+  threadId: string,
+  input: SendCodexMessageInputItem[],
+  clientUserMessageId?: string,
+): Promise<{ supported: boolean; item?: CodexQueuedMessage }> {
+  return requestJson(threadQueueUrl(threadId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input, clientUserMessageId }),
+  });
+}
+export function updateCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+  text: string,
+): Promise<{ item: CodexQueuedMessage }> {
+  return requestJson(
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}`),
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    },
+  );
+}
+export function deleteCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+): Promise<{ deleted: boolean }> {
+  return requestJson(
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}`),
+    {
+      method: "DELETE",
+    },
+  );
+}
+export function reorderCodexThreadQueue(
+  threadId: string,
+  ids: string[],
+): Promise<{ ok: boolean }> {
+  return requestJson(threadQueueUrl(threadId, "/reorder"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+}
+export function moveCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+  direction: "up" | "down",
+): Promise<{ moved: boolean }> {
+  return requestJson(
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}/move`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction }),
+    },
+  );
+}
+export function startCodexThreadQueueMessage(
+  threadId: string,
+  itemId: string,
+): Promise<{ ok: boolean; turnId: string | null }> {
+  return requestJsonAndNotifyConversation(
+    threadId.trim(),
+    threadQueueUrl(threadId, `/${encodeURIComponent(itemId)}/start`),
+    { method: "POST" },
+  );
+}
+
 export function getCodexMcpInventory(
   threadId: string | null,
 ): Promise<import("@codex-deck/api").McpInventorySnapshot> {
@@ -2031,6 +2182,41 @@ export function loginCodexMcpServer(
 }
 export function reloadCodexMcpServers(): Promise<{ ok: boolean }> {
   return requestJson("/api/codex/mcp/reload", { method: "POST" });
+}
+
+export function readCodexMcpAppResource(input: {
+  threadId: string;
+  callId: string;
+}): Promise<import("@codex-deck/api").CodexMcpAppResourceResponse> {
+  return requestJson("/api/codex/mcp-apps/resource", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function callCodexMcpAppTool(input: {
+  threadId: string;
+  callId: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+}): Promise<import("@codex-deck/api").CodexMcpAppToolCallResponse> {
+  return requestJson("/api/codex/mcp-apps/tool-call", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function getCodexIdeContextStatus(input: {
+  threadId?: string | null;
+  cwd?: string | null;
+}): Promise<import("@codex-deck/api").CodexIdeContextStatus> {
+  const params = new URLSearchParams();
+  if (input.threadId) params.set("threadId", input.threadId);
+  if (input.cwd) params.set("cwd", input.cwd);
+  const query = params.toString();
+  return requestJson(`/api/codex/ide-context${query ? `?${query}` : ""}`);
 }
 
 export function getCodexUsageDashboard(
@@ -2114,5 +2300,79 @@ export function getCodexConfigDiagnostics(
 ): Promise<import("@codex-deck/api").ConfigDiagnostics> {
   return requestJson(
     `/api/codex/debug-config${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`,
+  );
+}
+
+export function changeCodexWorkingDirectory(
+  threadId: string,
+  path: string,
+  currentCwd: string | null,
+): Promise<import("@codex-deck/api").WorkingDirectoryChangeResult> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/working-directory`,
+    { method: "POST", body: JSON.stringify({ path, currentCwd }) },
+  );
+}
+
+export function getCodexPermissions(
+  threadId: string,
+): Promise<import("@codex-deck/api").CodexPermissionSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/permissions`,
+  );
+}
+export function setCodexPermissions(
+  threadId: string,
+  selection: import("@codex-deck/api").CodexPermissionSelection,
+): Promise<import("@codex-deck/api").CodexPermissionSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/permissions`,
+    { method: "POST", body: JSON.stringify(selection) },
+  );
+}
+
+export function getCodexAutoReview(
+  threadId: string,
+): Promise<import("@codex-deck/api").CodexGuardianSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/auto-review`,
+  );
+}
+export function approveCodexAutoReviewDenial(
+  threadId: string,
+  reviewId: string,
+): Promise<import("@codex-deck/api").CodexGuardianSnapshot> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/auto-review/${encodeURIComponent(reviewId)}/approve`,
+    { method: "POST" },
+  );
+}
+
+export function getCodexWorktrees(
+  threadId: string,
+  cwd: string | null,
+): Promise<import("@codex-deck/api").CodexWorktreeList> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/worktrees${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`,
+  );
+}
+export function startCodexWorktree(
+  threadId: string,
+  mode: import("@codex-deck/api").CodexWorktreeMode,
+  currentCwd: string | null,
+): Promise<import("@codex-deck/api").CodexWorktreeStartResult> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/worktrees`,
+    { method: "POST", body: JSON.stringify({ mode, currentCwd }) },
+  );
+}
+export function removeCodexWorktree(
+  threadId: string,
+  root: string,
+  currentCwd: string | null,
+): Promise<{ message: string }> {
+  return requestJson(
+    `/api/codex/threads/${encodeURIComponent(threadId)}/worktrees/remove`,
+    { method: "POST", body: JSON.stringify({ root, currentCwd }) },
   );
 }

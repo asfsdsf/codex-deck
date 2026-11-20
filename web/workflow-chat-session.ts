@@ -75,7 +75,9 @@ function extractConversationMessageText(message: ConversationMessage): string {
   }
   return content
     .flatMap((block) => {
-      const blockType = typeof block?.type === "string" ? block.type : "";
+      // Raw rollout blocks may use Responses API types not in the union.
+      const blockType: string =
+        typeof block?.type === "string" ? block.type : "";
       if (
         blockType !== "text" &&
         blockType !== "output_text" &&

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { execFileSync, spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -131,6 +133,42 @@ test("compressed discovery and fallback summaries never hydrate transcript bodie
     // A full reader would reach this invalid tail; listing must never do that.
     await assert.rejects(readRolloutText(path));
   } finally {
+    await cleanup();
+  }
+});
+
+test("discovery reuses compressed metadata until its source changes", async (t) => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "cached-rollout-metadata",
+  );
+  const path = join(sessionsDir, id(0) + ".jsonl.zst");
+  let restore = () => {};
+  try {
+    await writeFile(
+      path,
+      zstdFrame(sessionMetaLine(id(0), "/repo/original", 1700000000000)),
+    );
+    initStorage(rootDir);
+    await loadStorage();
+
+    const reads = t.mock.method(fs, "createReadStream");
+    syncBuiltinESMExports();
+    restore = () => {
+      reads.mock.restore();
+      syncBuiltinESMExports();
+    };
+    await loadStorage();
+    assert.equal(reads.mock.calls.length, 0);
+
+    await writeFile(
+      path,
+      zstdFrame(sessionMetaLine(id(0), "/repo/updated-project", 1700000000000)),
+    );
+    await loadStorage();
+    assert.equal(reads.mock.calls.length, 1);
+    assert.equal((await getSessions())[0].project, "/repo/updated-project");
+  } finally {
+    restore();
     await cleanup();
   }
 });

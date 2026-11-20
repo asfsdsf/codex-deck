@@ -9,6 +9,10 @@ export interface PendingUserMessage {
   images: string[];
   status: PendingUserMessageStatus;
   turnId?: string | null;
+  /** Delivered into a running turn with `turn/steer`. */
+  steered?: boolean;
+  /** Item id in the app-server's shared queue (display-only entries). */
+  sharedQueueId?: string;
 }
 
 export type PendingUserMessagesBySession = Record<string, PendingUserMessage[]>;
@@ -66,6 +70,26 @@ export function updatePendingUserMessageStatus(
     ...previous,
     [sessionId]: next,
   };
+}
+
+export function markPendingUserMessageSteered(
+  previous: PendingUserMessagesBySession,
+  sessionId: string,
+  pendingId: string,
+): PendingUserMessagesBySession {
+  const current = previous[sessionId];
+  if (!Array.isArray(current)) {
+    return previous;
+  }
+  let changed = false;
+  const next = current.map((entry) => {
+    if (entry.pendingId !== pendingId || entry.steered) {
+      return entry;
+    }
+    changed = true;
+    return { ...entry, steered: true };
+  });
+  return changed ? { ...previous, [sessionId]: next } : previous;
 }
 
 export function removePendingUserMessage(

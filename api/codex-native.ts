@@ -4,7 +4,20 @@ export type NativeScope =
   | "recap"
   | "experimental"
   | "daybreak"
-  | "diagnostics";
+  | "diagnostics"
+  | "queue"
+  | "presets"
+  | "account"
+  | "import"
+  | "apps"
+  | "plugins"
+  | "permissions"
+  | "guardian"
+  | "worktrees"
+  | "voice"
+  | import("./codex-organization").OrganizationScope
+  | "history"
+  | "attachments";
 export type NativeRpc = (
   method: string,
   params: Record<string, unknown>,
