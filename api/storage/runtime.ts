@@ -3609,7 +3609,8 @@ function runSqliteCommand(dbPath: string, sql: string): string {
       "-batch",
       "-noheader",
       "-cmd",
-      `PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS};`,
+      // PRAGMA busy_timeout writes the timeout to stdout alongside query results.
+      `.timeout ${SQLITE_BUSY_TIMEOUT_MS}`,
       dbPath,
       sql,
     ],

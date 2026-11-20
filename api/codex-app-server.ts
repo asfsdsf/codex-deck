@@ -2360,10 +2360,15 @@ class CodexAppServerClient {
     );
     return entries.flatMap((entry) => {
       const summary = extractThreadSummaryFromValue(entry);
-      return summary?.source === ATTACHED_SIDE_CHAT_SOURCE &&
-        summary.attachedToThreadId === threadId
-        ? [summary]
-        : [];
+      if (summary?.attachedToThreadId !== threadId) return [];
+
+      // thread/list can omit the specific thread source even for saved side chats.
+      const thread = asRecord(entry);
+      const threadSource = asTrimmedString(
+        thread?.threadSource ?? thread?.thread_source,
+      );
+      if (threadSource && threadSource !== ATTACHED_SIDE_CHAT_SOURCE) return [];
+      return [{ ...summary, source: ATTACHED_SIDE_CHAT_SOURCE }];
     });
   }
 

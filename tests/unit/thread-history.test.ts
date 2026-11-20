@@ -602,6 +602,12 @@ test("side chat discovery accepts exact attached children, with a legacy negotia
             threadSource: "tui_side_chat",
           },
           {
+            id: "child-without-thread-source",
+            attachedToThreadId: "parent",
+            source: "vscode",
+            threadSource: null,
+          },
+          {
             id: "other-feature",
             attachedToThreadId: "parent",
             threadSource: "other",
@@ -611,12 +617,24 @@ test("side chat discovery accepts exact attached children, with a legacy negotia
             attachedToThreadId: "other",
             threadSource: "tui_side_chat",
           },
+          { id: "unattached", source: "vscode", threadSource: null },
         ],
       };
     });
     assert.deepEqual(
-      (await client.listSideChats("parent")).map((thread) => thread.threadId),
-      supported ? ["child"] : [],
+      (await client.listSideChats("parent")).map(({ threadId, source }) => ({
+        threadId,
+        source,
+      })),
+      supported
+        ? [
+            { threadId: "child", source: "tui_side_chat" },
+            {
+              threadId: "child-without-thread-source",
+              source: "tui_side_chat",
+            },
+          ]
+        : [],
     );
   }
 });

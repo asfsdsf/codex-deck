@@ -286,39 +286,52 @@ test("side detection requires a fork's own boundary and excludes ordinary or inh
   );
 });
 
-test("an attached side chat protects its parent until the child is deleted", async (t) => {
-  const { rootDir, sessionsDir, cleanup } =
-    await createTempCodexDir("attached-side-chat");
-  t.after(cleanup);
-  await writeSessionFile(sessionsDir, "parent.jsonl", [
-    sessionMetaLine("parent", "/repo", Date.now()),
-    responseItemMessageLine("user", "Parent request"),
-  ]);
-  const child = JSON.parse(sessionMetaLine("child", "/repo", Date.now()));
-  Object.assign(child.payload, {
-    forked_from_id: "parent",
-    thread_source: "tui_side_chat",
-    attached_thread: true,
-  });
-  await writeSessionFile(sessionsDir, "child.jsonl", [
-    JSON.stringify(child),
-    responseItemMessageLine("user", SIDE_CONVERSATION_BOUNDARY_PROMPT),
-    responseItemMessageLine("user", "Child request"),
-  ]);
-  initStorage(rootDir);
-  await loadStorage();
-  const sessions = await getSessions();
-  assert.deepEqual(sessions.find((session) => session.id === "child")?.origin, {
-    kind: "side",
-    parentSessionId: "parent",
-    attached: true,
-  });
-  await assert.rejects(
-    deleteSession("parent"),
-    /Delete the attached side chats/,
+for (const indexed of [false, true]) {
+  test(
+    `an attached side chat protects its parent until the child is deleted (${indexed ? "SQLite" : "rollout"})`,
+    { skip: indexed && !hasSqlite },
+    async (t) => {
+      const { rootDir, sessionsDir, cleanup } =
+        await createTempCodexDir("attached-side-chat");
+      t.after(cleanup);
+      await writeSessionFile(sessionsDir, "parent.jsonl", [
+        sessionMetaLine("parent", "/repo", Date.now()),
+        responseItemMessageLine("user", "Parent request"),
+      ]);
+      const child = JSON.parse(sessionMetaLine("child", "/repo", Date.now()));
+      Object.assign(child.payload, {
+        forked_from_id: "parent",
+        thread_source: "tui_side_chat",
+        attached_thread: true,
+      });
+      await writeSessionFile(sessionsDir, "child.jsonl", [
+        JSON.stringify(child),
+        responseItemMessageLine("user", SIDE_CONVERSATION_BOUNDARY_PROMPT),
+        responseItemMessageLine("user", "Child request"),
+      ]);
+      if (indexed) {
+        execFileSync("sqlite3", [
+          join(rootDir, "state_5.sqlite"),
+          "CREATE TABLE threads (id TEXT PRIMARY KEY, attached_thread_parent_id TEXT);" +
+            "INSERT INTO threads VALUES ('parent', NULL), ('child', 'parent');",
+        ]);
+      }
+      initStorage(rootDir);
+      await loadStorage();
+      const sessions = await getSessions();
+      assert.deepEqual(
+        sessions.find((session) => session.id === "child")?.origin,
+        { kind: "side", parentSessionId: "parent", attached: true },
+      );
+      await assert.rejects(
+        deleteSession("parent"),
+        /Delete the attached side chats/,
+      );
+      const deletedChild = await deleteSession("child");
+      assert.equal(deletedChild.sqlite.threadsDeleted, indexed ? 1 : 0);
+      assert.equal((await getSessions())[0]?.id, "parent");
+      await deleteSession("parent");
+      assert.deepEqual(await getSessions(), []);
+    },
   );
-  await deleteSession("child");
-  assert.equal((await getSessions())[0]?.id, "parent");
-  await deleteSession("parent");
-  assert.deepEqual(await getSessions(), []);
-});
+}
