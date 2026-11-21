@@ -75,9 +75,15 @@ test("the sidebar and /plugins share a window that lists both plugin systems", a
   await page.setViewportSize({ width: 390, height: 844 });
   const ui = new CodexDeckPage(page);
   await ui.goto(app.baseURL);
+  await ui.selectSession("Review the launch checklist");
 
   await page.getByRole("button", { name: "plugins", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Plugins" });
+  await expect(
+    dialog.getByText(
+      "A plugin is a folder with plugin.json, its panel HTML, JavaScript, styles, and any local assets.",
+    ),
+  ).toBeVisible();
   await expect(dialog.getByText("Codex", { exact: true })).toBeVisible();
   await expect(
     dialog.getByText("Codex Deck", { exact: true }).first(),
@@ -107,27 +113,55 @@ test("the sidebar and /plugins share a window that lists both plugin systems", a
     dialog.getByText("Installed Example Codex plugin.", { exact: true }),
   ).toBeVisible();
 
-  await dialog.getByLabel("Plugin manifest").setInputFiles({
-    name: "release-notes.deck-plugin.json",
-    mimeType: "application/json",
-    buffer: Buffer.from(
-      JSON.stringify({
-        schemaVersion: 1,
-        id: "example.release-notes",
-        name: "Release Notes",
-        author: "Example team",
-        version: "1.0.0",
-        description: "Release notes plugin metadata.",
-      }),
-    ),
-  });
+  await dialog
+    .getByLabel("Plugin package folder")
+    .setInputFiles("examples/deck-plugins/release-notes");
   await expect(
-    dialog.getByText("Example team · v1.0.0 · Manifest file"),
+    dialog.getByText("Example team · v1.0.0 · Package"),
   ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Install plugin" }),
+  ).toBeDisabled();
+  await dialog
+    .getByLabel("I reviewed the package source and trust this plugin.")
+    .check();
   await dialog.getByRole("button", { name: "Install plugin" }).click();
   await expect(
     dialog.getByRole("button", { name: "Disable", exact: true }),
   ).toBeVisible();
+  await dialog
+    .getByRole("button", { name: "Review plugin code", exact: true })
+    .click();
+  await expect(
+    dialog.getByText(/const channel = "codex-deck-plugin"/),
+  ).toBeVisible();
+  await expect(dialog.locator('iframe[title="Release Notes"]')).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "Open plugin", exact: true })
+    .click();
+  const pluginFrame = page.frameLocator('iframe[title="Release Notes"]');
+  await expect(pluginFrame.locator("#status")).toContainText(
+    app.sessions.alpha,
+  );
+  await expect(pluginFrame.locator("#status")).toContainText(
+    app.projects.alpha,
+  );
+  await expect(pluginFrame.locator("#status")).toContainText(
+    "Saved plugin note",
+  );
+  await expect(pluginFrame.locator("body")).toHaveCSS(
+    "color",
+    "rgb(255, 0, 0)",
+  );
+  await expect(pluginFrame.locator("body")).toHaveCSS("padding", "16px");
+  await dialog.getByRole("button", { name: "Close plugin" }).click();
+  await dialog
+    .getByRole("button", { name: "Open plugin", exact: true })
+    .click();
+  await expect(pluginFrame.locator("#status")).toContainText(
+    "Saved plugin note",
+  );
+  await dialog.getByRole("button", { name: "Close plugin" }).click();
   await dialog.getByRole("button", { name: "Close" }).click();
 
   const disable = await request.post(

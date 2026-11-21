@@ -11,7 +11,10 @@ import { registerMemoryInsightRoutes } from "./memory-insight-routes";
 import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
 import { registerExtensionRoutes } from "./extension-routes";
-import { registerDeckPluginRoutes } from "./deck-plugin-routes";
+import {
+  registerDeckPluginRoutes,
+  serveDeckPluginFile,
+} from "./deck-plugin-routes";
 import { DeckPluginStore } from "../deck-plugin-store";
 import { registerThreadHistoryRoutes } from "./thread-history-routes";
 import { registerGitWorkspaceRoutes } from "./git-workspace-routes";
@@ -5248,17 +5251,69 @@ export function createServer(options: ServerOptions) {
   registerExtensionRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
-  registerDeckPluginRoutes(
-    app,
-    new DeckPluginStore(getCodexDir(), () =>
-      emitAppServerEvent({
-        type: "native_state_changed",
-        scope: "deck-plugins",
-        threadId: null,
-        revision: randomUUID(),
-      }),
-    ),
+  const deckPluginStore = new DeckPluginStore(getCodexDir(), () =>
+    emitAppServerEvent({
+      type: "native_state_changed",
+      scope: "deck-plugins",
+      threadId: null,
+      revision: randomUUID(),
+    }),
   );
+  registerDeckPluginRoutes(app, deckPluginStore);
+  app.get("/api/deck-plugin-resource/:homeId/:id/:file{.+}", (c) => {
+    const homeId = c.req.param("homeId");
+    const pluginId = c.req.param("id");
+    const filePath = c.req.param("file");
+    const home = allCodexHomes.find((candidate) => candidate.id === homeId);
+    if (!home) return c.json({ error: "Unknown Codex home" }, 404);
+    if (!home.available) {
+      return c.json(
+        { error: home.unavailableReason || "Codex home is unavailable" },
+        409,
+      );
+    }
+    if (!filePath) {
+      return c.json({ error: "Plugin package file was not found." }, 404);
+    }
+    const url = new URL(c.req.url);
+    let publicOrigin = url.origin;
+    try {
+      const referer = c.req.header("referer");
+      if (referer) publicOrigin = new URL(referer).origin;
+    } catch {
+      // Fall back to the request origin when a malformed Referer is supplied.
+    }
+    const publicFilesBase = `${publicOrigin}/api/deck-plugin-resource/${encodeURIComponent(homeId)}/${encodeURIComponent(pluginId)}/`;
+    if (home.isMain) {
+      return serveDeckPluginFile(
+        c,
+        deckPluginStore,
+        pluginId,
+        filePath,
+        publicFilesBase,
+      );
+    }
+    if (!homeRuntimeManager) {
+      return c.json({ error: "Additional Codex homes are unavailable" }, 503);
+    }
+    const internalUrl = new URL(
+      `/api/deck/plugins/${encodeURIComponent(pluginId)}/files/${filePath
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/")}`,
+      url,
+    );
+    const headers = new Headers(c.req.raw.headers);
+    headers.set("x-codex-deck-plugin-file-base", publicFilesBase);
+    return homeRuntimeManager.fetch(
+      homeId,
+      new Request(internalUrl, {
+        method: "GET",
+        headers,
+        signal: c.req.raw.signal,
+      }),
+    );
+  });
   registerIdeContextRoutes(app);
   registerMcpAppRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
