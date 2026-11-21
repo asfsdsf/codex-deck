@@ -23,7 +23,6 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import type {
-  CodexSkillMetadata,
   SessionDiffFile,
   SessionDiffResponse,
   SessionFileContentResponse,
@@ -35,6 +34,7 @@ import type {
   SessionTerminalRunSummary,
 } from "@codex-deck/api";
 import HooksPane from "./hooks-pane";
+import SkillsPane from "./skills-pane";
 import { PatchTextRenderer, SourceCodeRenderer } from "./patch-text-renderer";
 import { AnsiText } from "./tool-renderers/ansi-text";
 import { isMarkdownPath } from "../path-utils";
@@ -117,6 +117,7 @@ interface DiffPaneProps {
   onToggleCollapsed: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onChangeMode: (mode: RightPaneMode) => void;
+  onSecondaryModeChange?: (mode: RightPaneMode | null) => void;
   onSelectFilePath: (path: string) => void;
   onOpenFileTreeDirectory: (dirPath: string) => void;
   onLoadMoreFileTreeNodes: () => void;
@@ -179,19 +180,6 @@ function getTailTruncatedPath(path: string, maxChars = 84): string {
   return `...${path.slice(-(maxChars - 3))}`;
 }
 
-function getSkillDisplayName(skill: CodexSkillMetadata): string {
-  const displayName = skill.interface?.displayName?.trim();
-  return displayName || skill.name;
-}
-
-function getSkillDescription(skill: CodexSkillMetadata): string {
-  return (
-    skill.interface?.shortDescription?.trim() ||
-    skill.shortDescription?.trim() ||
-    skill.description
-  );
-}
-
 function DiffStatusIcon(props: { status: string }) {
   return <FileDiff className={`h-3.5 w-3.5 ${statusIconTone(props.status)}`} />;
 }
@@ -245,100 +233,6 @@ function renderTerminalOutput(
       <pre className="text-[11px] leading-5 text-zinc-200 whitespace-pre-wrap break-words font-mono">
         <AnsiText text={output} />
       </pre>
-    </div>
-  );
-}
-
-function renderSkillDetails(
-  skill: CodexSkillMetadata | null,
-  updatingSkillPath: string | null,
-  onToggleSkillEnabled: (path: string, enabled: boolean) => void,
-) {
-  if (!skill) {
-    return <EmptyState text="Select a skill to inspect its details." />;
-  }
-
-  const description = getSkillDescription(skill);
-  const isToggling = updatingSkillPath === skill.path;
-
-  return (
-    <div className="h-full overflow-auto p-4 sm:p-5">
-      <div className="mx-auto max-w-2xl space-y-4">
-        <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {getSkillDisplayName(skill)}
-            </h2>
-            <div className="mt-1 text-xs text-zinc-500">{skill.name}</div>
-            <p className="mt-3 whitespace-pre-wrap text-xs leading-5 text-zinc-700 dark:text-zinc-300">
-              {description}
-            </p>
-          </div>
-        </section>
-        <section className="grid gap-x-5 gap-y-3 rounded-2xl border border-zinc-200 bg-white p-4 text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-2">
-          <div>
-            <span className="text-zinc-500">Scope</span>
-            <div className="mt-1 capitalize">{skill.scope}</div>
-          </div>
-          <div>
-            <span className="text-zinc-500">Status</span>
-            <div className="mt-1">
-              <span
-                className={`rounded-full px-2 py-0.5 font-medium ${skill.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/10 text-rose-700 dark:text-rose-300"}`}
-              >
-                {skill.enabled ? "Enabled" : "Disabled"}
-              </span>
-            </div>
-          </div>
-          <div className="min-w-0 sm:col-span-2">
-            <span className="text-zinc-500">Path</span>
-            <div className="mt-1 break-all">{skill.path}</div>
-          </div>
-        </section>
-        {skill.interface?.defaultPrompt ? (
-          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h3 className="mb-2 text-[11px] font-medium text-zinc-500">
-              Default prompt
-            </h3>
-            <pre className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-[11px] leading-5 text-zinc-700 whitespace-pre-wrap break-words font-mono dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
-              {skill.interface.defaultPrompt}
-            </pre>
-          </section>
-        ) : null}
-        {skill.dependencies?.tools.length ? (
-          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h3 className="mb-2 text-[11px] font-medium text-zinc-500">
-              Dependencies
-            </h3>
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950">
-              {skill.dependencies.tools.map((tool) => (
-                <div
-                  key={`${tool.type}:${tool.value}`}
-                  className="text-[11px] text-zinc-300 leading-5 break-all"
-                >
-                  {tool.type}: {tool.value}
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => onToggleSkillEnabled(skill.path, !skill.enabled)}
-          disabled={isToggling}
-          className={`h-9 rounded-xl border px-3.5 text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-            skill.enabled
-              ? "border-rose-600/60 bg-rose-700/20 text-rose-200 hover:bg-rose-700/30"
-              : "border-emerald-600/60 bg-emerald-700/20 text-emerald-200 hover:bg-emerald-700/30"
-          }`}
-        >
-          {isToggling
-            ? "Saving..."
-            : skill.enabled
-              ? "Disable skill"
-              : "Enable skill"}
-        </button>
-      </div>
     </div>
   );
 }
@@ -654,12 +548,10 @@ function DiffPaneContent(props: PaneContentProps) {
     hooksData,
     hooksLoading,
     hooksError,
-    selectedHookKey,
     updatingHookKey,
     skillsData,
     skillsLoading,
     skillsError,
-    selectedSkillPath,
     updatingSkillPath,
     onToggleCollapsed,
     onChangeMode,
@@ -690,6 +582,7 @@ function DiffPaneContent(props: PaneContentProps) {
   const isTerminalRunMode = mode === "tasks";
   const isHooksMode = mode === "hooks";
   const isSkillsMode = mode === "skills";
+  const catalogTargetId = props.threadId ?? props.workflowKey ?? sessionId;
   const [isFileListVisible, setIsFileListVisible] = useState(true);
   const [isSelectedFilePreviewOpen, setIsSelectedFilePreviewOpen] = useState(
     () => selectedFilePath !== null,
@@ -1021,50 +914,6 @@ function DiffPaneContent(props: PaneContentProps) {
 
   const selectedTerminalRun =
     terminalRuns.find((run) => run.processId === selectedTerminalRunId) ?? null;
-  const skills = skillsData?.skills ?? [];
-  const selectedSkill =
-    skills.find((skill) => skill.path === selectedSkillPath) ?? null;
-  const selectedFileLabel = (() => {
-    if (isTerminalRunMode) {
-      if (!selectedTerminalRun) {
-        return "Task output";
-      }
-      return `${selectedTerminalRun.command} (${selectedTerminalRun.processId})`;
-    }
-
-    if (isSkillsMode) {
-      return selectedSkill
-        ? getSkillDisplayName(selectedSkill)
-        : "Skill details";
-    }
-
-    if (isHooksMode) {
-      return selectedHookKey ?? "Hook details";
-    }
-
-    if (!selectedFilePath) {
-      return isFileTreeMode
-        ? "Workspace files"
-        : isGitMode
-          ? "Working tree"
-          : "Diff";
-    }
-
-    if (
-      isFileTreeMode &&
-      fileContent &&
-      fileContent.path === selectedFilePath &&
-      fileContent.paginationMode === "lines" &&
-      typeof fileContent.lineStart === "number" &&
-      typeof fileContent.lineEnd === "number" &&
-      fileContent.lineStart > 0 &&
-      fileContent.lineEnd >= fileContent.lineStart
-    ) {
-      return `${selectedFilePath}:${fileContent.lineStart}:${fileContent.lineEnd}`;
-    }
-
-    return selectedFilePath;
-  })();
   const hasLoadedPaneData =
     isHomeMode ||
     (isFileTreeMode ? fileTreeNodesData !== null : diffData !== null);
@@ -2217,13 +2066,12 @@ function DiffPaneContent(props: PaneContentProps) {
           <HooksPane
             key={props.runtimeScopeKey + ":" + sessionId}
             threadId={props.threadId}
-            hooksData={hooksData}
+            hooksData={
+              hooksData?.sessionId === catalogTargetId ? hooksData : null
+            }
             hooksLoading={hooksLoading}
             hooksError={hooksError}
-            selectedHookKey={selectedHookKey}
             updatingHookKey={updatingHookKey}
-            isFileListVisible={isFileListVisible}
-            selectedFileLabel={selectedFileLabel}
             onRefreshHooks={onRefreshHooks}
             onSelectHookKey={onSelectHookKey}
             onToggleHookEnabled={onToggleHookEnabled}
@@ -2232,59 +2080,15 @@ function DiffPaneContent(props: PaneContentProps) {
           />
         </div>
       ) : isSkillsMode ? (
-        skillsLoading ? (
-          <EmptyState text="Loading skills…" />
-        ) : skillsError ? (
-          <EmptyState text={skillsError} />
-        ) : (
-          <div className="right-pane-inspector flex min-h-0 flex-1 flex-col">
-            <div className="right-pane__page-row">
-              <Sparkles aria-hidden="true" className="h-4 w-4 text-zinc-400" />
-              <strong>Skills</strong>
-              <span className="right-pane__fill" />
-              <span>{skills.length} skills</span>
-              <button
-                type="button"
-                className="right-pane__icon-button"
-                aria-label="Refresh skills"
-                onClick={onRefreshSkills}
-              >
-                <RightPaneIcon name="refresh" />
-              </button>
-            </div>
-            {skills.length ? (
-              <div className="right-pane__skill-list">
-                {skills.map((skill) => (
-                  <button
-                    key={skill.path}
-                    type="button"
-                    className="right-pane__skill-row"
-                    aria-current={skill.path === selectedSkillPath}
-                    onClick={() => onSelectSkillPath(skill.path)}
-                  >
-                    <Sparkles
-                      aria-hidden="true"
-                      className="h-4 w-4 text-violet-500"
-                    />
-                    <span className="right-pane__skill-name">
-                      {getSkillDisplayName(skill)}
-                    </span>
-                    <span className="right-pane__count">
-                      {skill.enabled ? "enabled" : "disabled"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <EmptyState text="No skills available." />
-            )}
-            {renderSkillDetails(
-              selectedSkill,
-              updatingSkillPath,
-              onToggleSkillEnabled,
-            )}
-          </div>
-        )
+        <SkillsPane
+          data={skillsData?.sessionId === catalogTargetId ? skillsData : null}
+          loading={skillsLoading}
+          error={skillsError}
+          updatingPath={updatingSkillPath}
+          onSelect={onSelectSkillPath}
+          onRefresh={onRefreshSkills}
+          onToggle={onToggleSkillEnabled}
+        />
       ) : (
         <EmptyState text="Select an item to view its details." />
       )}
@@ -2295,6 +2099,11 @@ function DiffPaneContent(props: PaneContentProps) {
 /** A split pane has its own file selection and page, rather than changing its neighbour. */
 function SecondaryPane(props: PaneContentProps) {
   const [mode, setMode] = useState<RightPaneMode>("home");
+  const onModeChange = props.onSecondaryModeChange;
+  useEffect(() => {
+    onModeChange?.(mode);
+    return () => onModeChange?.(null);
+  }, [mode, onModeChange]);
   const [path, setPath] = useState<string | null>(null);
   const [content, setContent] = useState<SessionFileContentResponse | null>(
     null,

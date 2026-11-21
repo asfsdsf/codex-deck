@@ -270,10 +270,20 @@ This document records the current button-to-command mapping for the Workflow pan
 - Behavior: expands or collapses the shared right pane for the selected workflow project
 - No `codex-deck-flow` script command is invoked
 
+The right pane's Start view offers Files, Git, Tasks, Skills, and Hooks. Skills and
+Hooks use the same compact dock styling in light and dark themes, with searchable
+lists, status filters, and full-width details. Back returns to the previous search
+and filter; Escape also returns from details. Skills can be enabled or disabled,
+and Hooks supports enable/disable, individual trust review, and Trust all. Managed
+hooks remain always on. Split panes load configuration independently and keep the
+other pane's configuration available when switching tabs. Workflow project targets
+use the selected project's configuration even without a bound session.
+
 Choosing Default speed in workflow chat explicitly restores the current configured
 or catalog default, including after a different tier was used for an earlier turn.
 
-The Hooks pane also shows recent execution status and output for session targets.
+The Hooks pane offers separate Configuration and Executions views for session
+targets. Executions shows recent execution status and output.
 These runs are retained by the current Deck process (up to 100 per thread), shared
 across browsers, and refreshed after reconnecting. Workflow project targets retain
 their hook configuration view; execution belongs to each task's session.
