@@ -1499,6 +1499,8 @@ export default function CodexDeckApp() {
   );
   const [selectedPaneMode, setSelectedPaneMode] =
     useState<RightPaneMode>("home");
+  const [secondaryPaneMode, setSecondaryPaneMode] =
+    useState<RightPaneMode | null>(null);
   const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(
     null,
   );
@@ -3637,7 +3639,8 @@ export default function CodexDeckApp() {
     resetHooksPane,
   } = useSessionHooksPane({
     rightPaneTarget,
-    selectedPaneMode,
+    selectedPaneMode:
+      secondaryPaneMode === "hooks" ? "hooks" : selectedPaneMode,
     diffPaneCollapsed,
   });
   const previousRightPaneDataKeyRef = useRef<string | null>(null);
@@ -3659,11 +3662,13 @@ export default function CodexDeckApp() {
         setSessionDiffError(null);
         setLoadingSessionDiff(false);
         setLoadingSessionFileContent(false);
-        setSessionSkills(null);
-        setLoadingSessionSkills(false);
-        setSessionSkillsError(null);
-        setSelectedSkillPath(null);
-        setUpdatingSkillPath(null);
+        if (secondaryPaneMode !== "skills") {
+          setSessionSkills(null);
+          setLoadingSessionSkills(false);
+          setSessionSkillsError(null);
+          setSelectedSkillPath(null);
+          setUpdatingSkillPath(null);
+        }
       } else if (mode === "skills") {
         setSessionDiff(null);
         setSessionFileTreeNodes(null);
@@ -3681,12 +3686,16 @@ export default function CodexDeckApp() {
         setTerminalRunOutputError(null);
         setTerminalRunOutputIsRunning(false);
       } else {
-        setSessionSkills(null);
-        setLoadingSessionSkills(false);
-        setSessionSkillsError(null);
-        setSelectedSkillPath(null);
-        setUpdatingSkillPath(null);
-        resetHooksPane();
+        if (secondaryPaneMode !== "skills") {
+          setSessionSkills(null);
+          setLoadingSessionSkills(false);
+          setSessionSkillsError(null);
+          setSelectedSkillPath(null);
+          setUpdatingSkillPath(null);
+        }
+        if (mode !== "hooks" && secondaryPaneMode !== "hooks") {
+          resetHooksPane();
+        }
 
         setTerminalRuns([]);
         setLoadingTerminalRuns(false);
@@ -3698,7 +3707,7 @@ export default function CodexDeckApp() {
         setTerminalRunOutputIsRunning(false);
       }
     },
-    [resetHooksPane],
+    [resetHooksPane, secondaryPaneMode],
   );
 
   const handleSelectDiffFilePath = useCallback((path: string) => {
@@ -4321,7 +4330,7 @@ export default function CodexDeckApp() {
     if (
       !rightPaneTarget ||
       diffPaneCollapsed ||
-      selectedPaneMode !== "skills"
+      (selectedPaneMode !== "skills" && secondaryPaneMode !== "skills")
     ) {
       setLoadingSessionSkills(false);
       return;
@@ -4377,6 +4386,7 @@ export default function CodexDeckApp() {
     selectedPaneMode,
     diffPaneCollapsed,
     skillsRefreshVersion,
+    secondaryPaneMode,
   ]);
 
   const syncSessionWaitState = useCallback(
@@ -4753,14 +4763,14 @@ export default function CodexDeckApp() {
         rightPaneTarget?.kind !== "session" ||
         rightPaneTarget.sessionId !== sessionId ||
         diffPaneCollapsed ||
-        selectedPaneMode !== "skills"
+        (selectedPaneMode !== "skills" && secondaryPaneMode !== "skills")
       ) {
         return;
       }
 
       setSkillsRefreshVersion((value) => value + 1);
     },
-    [rightPaneTarget, diffPaneCollapsed, selectedPaneMode],
+    [rightPaneTarget, diffPaneCollapsed, selectedPaneMode, secondaryPaneMode],
   );
 
   const handleCodexAppServerEvent = useCallback(
@@ -14416,6 +14426,7 @@ export default function CodexDeckApp() {
         selectedHookKey={selectedHookKey}
         updatingHookKey={updatingHookKey}
         skillsData={sessionSkills}
+        onSecondaryModeChange={setSecondaryPaneMode}
         skillsLoading={loadingSessionSkills}
         skillsError={sessionSkillsError}
         selectedSkillPath={selectedSkillPath}

@@ -61,23 +61,21 @@ export default function HookExecutionProgress({
   return (
     <section
       aria-label="Hook executions"
-      className="max-h-[45%] shrink-0 overflow-auto border-b border-zinc-800 p-3 text-xs text-zinc-300"
+      className="right-pane-catalog__executions"
     >
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium text-zinc-100">Recent hook executions</h3>
+      <div className="right-pane-catalog__execution-heading">
+        <h3>Recent hook executions</h3>
         <button
           type="button"
-          className="rounded border border-zinc-700 px-2 py-1"
+          className="right-pane-catalog__button"
           onClick={() => setVersion((v) => v + 1)}
         >
           Refresh executions
         </button>
       </div>
-      <p className="mt-1 text-[11px] text-zinc-500">
-        Received by this Deck process.
-      </p>
+      <p>Recent activity for this session.</p>
       {error && (
-        <p role="status" className="mt-2 text-amber-500">
+        <p role="status" className="right-pane-catalog__notice">
           {error}
         </p>
       )}
@@ -87,10 +85,7 @@ export default function HookExecutionProgress({
         </p>
       )}
       {runs.map(({ run, turnId }) => (
-        <details
-          key={run.id}
-          className="mt-2 rounded border border-zinc-700 p-2"
-        >
+        <details key={run.id} className="right-pane-catalog__execution">
           <summary className="cursor-pointer break-words">
             {run.eventName} · {run.status}
             {run.durationMs !== null ? ` · ${run.durationMs} ms` : ""}
