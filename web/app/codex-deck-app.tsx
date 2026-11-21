@@ -73,7 +73,6 @@ import type {
   CodexThreadSummary,
   ConversationMessage,
   Session,
-  SessionDiffMode,
   SessionDiffResponse,
   SessionFileContentResponse,
   SessionFileTreeNodesResponse,
@@ -1499,7 +1498,7 @@ export default function CodexDeckApp() {
     RIGHT_PANE_DEFAULT_WIDTH,
   );
   const [selectedPaneMode, setSelectedPaneMode] =
-    useState<RightPaneMode>("unstaged");
+    useState<RightPaneMode>("home");
   const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(
     null,
   );
@@ -1507,6 +1506,7 @@ export default function CodexDeckApp() {
     useState<SessionFileTreeNodesResponse | null>(null);
   const [sessionFileTreeLoadingMore, setSessionFileTreeLoadingMore] =
     useState(false);
+  const [fileTreeRefreshVersion, setFileTreeRefreshVersion] = useState(0);
   const [sessionFileContent, setSessionFileContent] =
     useState<SessionFileContentResponse | null>(null);
   const [selectedDiffFilePath, setSelectedDiffFilePath] = useState<
@@ -3652,7 +3652,7 @@ export default function CodexDeckApp() {
       setSessionFileContentError(null);
       setSelectedFileContentPage(1);
 
-      if (mode === "terminal-flow") {
+      if (mode === "tasks") {
         setSessionDiff(null);
         setSessionFileTreeNodes(null);
         setSessionFileTreeLoadingMore(false);
@@ -3797,6 +3797,10 @@ export default function CodexDeckApp() {
     }
   }, [rightPaneTarget, sessionFileTreeNodes, sessionFileTreeLoadingMore]);
 
+  const handleRefreshFiles = useCallback(() => {
+    setFileTreeRefreshVersion((value) => value + 1);
+  }, []);
+
   const handleChangeFileContentPage = useCallback((page: number) => {
     // A file:line jump should focus the line once, but manual paging must win.
     pendingFilePathLinkTargetRef.current = null;
@@ -3840,7 +3844,8 @@ export default function CodexDeckApp() {
     }
 
     if (
-      selectedPaneMode === "terminal-flow" ||
+      selectedPaneMode === "home" ||
+      selectedPaneMode === "tasks" ||
       selectedPaneMode === "skills" ||
       selectedPaneMode === "hooks"
     ) {
@@ -3864,12 +3869,12 @@ export default function CodexDeckApp() {
       setSessionFileContentError(null);
       setSelectedFileContentPage(1);
     }
-    if (isHardRightPaneReload && selectedPaneMode !== "file-tree") {
+    if (isHardRightPaneReload && selectedPaneMode !== "files") {
       setSelectedFileTargetLine(null);
     }
 
     const loadPromise =
-      selectedPaneMode === "file-tree"
+      selectedPaneMode === "files"
         ? (rightPaneTarget.kind === "session"
             ? getSessionFileTreeNodes(rightPaneTarget.sessionId, "", 0, 600)
             : getWorkflowProjectFileTreeNodes(
@@ -3884,37 +3889,13 @@ export default function CodexDeckApp() {
             }
             setSessionDiff(null);
             setSessionFileTreeNodes(response);
-            setSelectedDiffFilePath((current) => {
-              const pendingFilePathLinkTarget =
-                pendingFilePathLinkTargetRef.current;
-              if (
-                pendingFilePathLinkTarget &&
-                current === pendingFilePathLinkTarget
-              ) {
-                return current;
-              }
-              if (
-                current &&
-                response.nodes.some(
-                  (node) => !node.isDirectory && node.path === current,
-                )
-              ) {
-                return current;
-              }
-              const firstFile = response.nodes.find(
-                (node) => !node.isDirectory,
-              );
-              return firstFile?.path ?? null;
-            });
+            // A root listing omits files in expanded subfolders; retain the open document.
           })
         : (rightPaneTarget.kind === "session"
-            ? getSessionDiff(
-                rightPaneTarget.sessionId,
-                selectedPaneMode as Exclude<SessionDiffMode, "file-tree">,
-              )
+            ? getSessionDiff(rightPaneTarget.sessionId, "working-tree")
             : getWorkflowProjectDiff(
                 rightPaneTarget.workflowKey,
-                selectedPaneMode as Exclude<SessionDiffMode, "file-tree">,
+                "working-tree",
               )
           ).then((response) => {
             if (cancelled) {
@@ -3963,13 +3944,14 @@ export default function CodexDeckApp() {
     diffPaneCollapsed,
     rightPaneRefreshToken,
     rightPaneDataKey,
+    fileTreeRefreshVersion,
   ]);
 
   useEffect(() => {
     if (
       !rightPaneTarget ||
       diffPaneCollapsed ||
-      selectedPaneMode !== "file-tree" ||
+      selectedPaneMode !== "files" ||
       !selectedDiffFilePath
     ) {
       setSessionFileContent(null);
@@ -4001,7 +3983,7 @@ export default function CodexDeckApp() {
           return;
         }
         setSessionFileContent(response);
-        // Keep a linked file selected until navigation changes. The file-tree
+        // Keep a linked file selected until navigation changes. The Files page
         // snapshot may arrive after its content and omit this nested file.
         setSelectedFileContentPage(response.page);
 
@@ -4062,6 +4044,7 @@ export default function CodexDeckApp() {
     selectedFileTargetLine,
     diffPaneCollapsed,
     rightPaneRefreshToken,
+    fileTreeRefreshVersion,
   ]);
 
   const handleRefreshTerminalRuns = useCallback(() => {
@@ -4133,14 +4116,14 @@ export default function CodexDeckApp() {
   );
 
   useEffect(() => {
-    const requiresSessionMode = selectedPaneMode === "terminal-flow";
+    const requiresSessionMode = selectedPaneMode === "tasks";
     const hasSessionTarget = rightPaneTarget?.kind === "session";
 
     if (requiresSessionMode && rightPaneTarget && !hasSessionTarget) {
       setTerminalRuns([]);
       setSelectedTerminalRunId(null);
       setTerminalRunsError(
-        "Terminal runs are unavailable for workflow project view. Open a workflow session to inspect terminal runs.",
+        "Tasks are unavailable for workflow projects. Open a workflow session to inspect tasks.",
       );
       setLoadingTerminalRuns(false);
       return;
@@ -4150,7 +4133,7 @@ export default function CodexDeckApp() {
       !rightPaneTarget ||
       rightPaneTarget.kind !== "session" ||
       diffPaneCollapsed ||
-      selectedPaneMode !== "terminal-flow"
+      selectedPaneMode !== "tasks"
     ) {
       setLoadingTerminalRuns(false);
       return;
@@ -4210,7 +4193,7 @@ export default function CodexDeckApp() {
       !rightPaneTarget ||
       rightPaneTarget.kind !== "session" ||
       diffPaneCollapsed ||
-      selectedPaneMode !== "terminal-flow" ||
+      selectedPaneMode !== "tasks" ||
       !selectedTerminalRunId
     ) {
       setTerminalRunOutput("");
@@ -4272,7 +4255,7 @@ export default function CodexDeckApp() {
       !rightPaneTarget ||
       rightPaneTarget.kind !== "session" ||
       diffPaneCollapsed ||
-      selectedPaneMode !== "terminal-flow" ||
+      selectedPaneMode !== "tasks" ||
       !selectedTerminalRunId ||
       !terminalRunOutputIsRunning ||
       !isPageVisible
@@ -8569,6 +8552,44 @@ export default function CodexDeckApp() {
     [upsertSessionFromThreadSummary],
   );
 
+  const rightPaneAgentRootThreadId =
+    rightPaneTarget?.kind === "session" ? rightPaneTarget.sessionId : null;
+  const refreshRightPaneAgentThreads = useCallback(() => {
+    if (!rightPaneAgentRootThreadId || !isPageVisible) return;
+    void refreshAgentThreads(rightPaneAgentRootThreadId)
+      .then(() => setAgentThreadsError(null))
+      .catch((error: unknown) =>
+        setAgentThreadsError(
+          error instanceof Error ? error.message : String(error),
+        ),
+      )
+      .finally(() => setLoadingAgentThreads(false));
+  }, [isPageVisible, refreshAgentThreads, rightPaneAgentRootThreadId]);
+
+  useEffect(() => {
+    if (
+      !apiReady ||
+      !isPageVisible ||
+      diffPaneCollapsed ||
+      selectedPaneMode !== "tasks" ||
+      !rightPaneAgentRootThreadId
+    ) {
+      return;
+    }
+    setLoadingAgentThreads(true);
+    setAgentThreadsError(null);
+    refreshRightPaneAgentThreads();
+    const intervalId = window.setInterval(refreshRightPaneAgentThreads, 5_000);
+    return () => window.clearInterval(intervalId);
+  }, [
+    apiReady,
+    diffPaneCollapsed,
+    isPageVisible,
+    refreshRightPaneAgentThreads,
+    rightPaneAgentRootThreadId,
+    selectedPaneMode,
+  ]);
+
   const openAgentPickerFromCommand = useCallback(
     async (threadId: string): Promise<boolean> => {
       const normalizedThreadId = threadId.trim();
@@ -9864,7 +9885,7 @@ export default function CodexDeckApp() {
           setInteractionError("Select a session before using /diff.");
           return false;
         }
-        openPaneForCommand("unstaged");
+        openPaneForCommand("git");
         return true;
       }
 
@@ -9891,7 +9912,7 @@ export default function CodexDeckApp() {
           setInteractionError("Select a session before using /ps.");
           return false;
         }
-        openPaneForCommand("terminal-flow", handleRefreshTerminalRuns);
+        openPaneForCommand("tasks", handleRefreshTerminalRuns);
         return true;
       }
 
@@ -9903,7 +9924,7 @@ export default function CodexDeckApp() {
 
         try {
           await cleanSessionBackgroundTerminalRuns(commandSessionId);
-          openPaneForCommand("terminal-flow", handleRefreshTerminalRuns);
+          openPaneForCommand("tasks", handleRefreshTerminalRuns);
           showCommandNoticeForDuration("Stopping all background terminals.");
           return true;
         } catch (error) {
@@ -10167,7 +10188,7 @@ export default function CodexDeckApp() {
       pendingFilePathLinkTargetRef.current = target.path;
       setFilePathLinkRevealVersion((current) => current + 1);
       openRightPane();
-      setSelectedPaneMode("file-tree");
+      setSelectedPaneMode("files");
       setSelectedDiffFilePath(target.path);
       setSelectedFileTargetLine(target.line);
       setSelectedFileContentPage(1);
@@ -14405,6 +14426,7 @@ export default function CodexDeckApp() {
         onSelectFilePath={handleSelectDiffFilePath}
         onOpenFileTreeDirectory={handleOpenFileTreeDirectory}
         onLoadMoreFileTreeNodes={handleLoadMoreFileTreeNodes}
+        onRefreshFiles={handleRefreshFiles}
         onChangeFileContentPage={handleChangeFileContentPage}
         onSelectTerminalRun={setSelectedTerminalRunId}
         onRefreshTerminalRuns={handleRefreshTerminalRuns}
@@ -14416,6 +14438,23 @@ export default function CodexDeckApp() {
         onSelectSkillPath={setSelectedSkillPath}
         onToggleSkillEnabled={handleToggleSkillEnabled}
         onRefreshSkills={handleRefreshSkills}
+        agentThreads={agentThreads}
+        agentThreadsLoading={loadingAgentThreads}
+        agentThreadsError={agentThreadsError}
+        onRefreshAgentThreads={refreshRightPaneAgentThreads}
+        onOpenAgentThread={(threadId) => handleSelectSession(threadId)}
+        workspacePath={
+          rightPaneTarget?.kind === "session"
+            ? rightPaneSessionData?.project
+            : rightPaneTarget?.kind === "workflow-project"
+              ? rightPaneTarget.projectPath
+              : null
+        }
+        workflowKey={
+          rightPaneTarget?.kind === "workflow-project"
+            ? rightPaneTarget.workflowKey
+            : null
+        }
       />
       {isTouchResizeOverlayVisible && (
         <div

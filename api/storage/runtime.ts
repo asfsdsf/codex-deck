@@ -381,6 +381,12 @@ export interface CodexCollabAgentState {
 
 export type CodexAppServerEvent =
   | {
+      type: "workspace_files_changed";
+      projectPath: string;
+      threadId: string;
+      revision: string;
+    }
+  | {
       type: "native_state_changed";
       scope: import("../codex-native").NativeScope;
       threadId: string | null;
@@ -1000,7 +1006,12 @@ export interface SessionsRemovedEvent {
   timestampMs: number;
 }
 
-export type SessionDiffMode = "unstaged" | "staged" | "last-turn" | "file-tree";
+export type SessionDiffMode =
+  | "unstaged"
+  | "staged"
+  | "working-tree"
+  | "last-turn"
+  | "file-tree";
 
 export interface SessionDiffFile {
   path: string;
@@ -1015,6 +1026,31 @@ export interface SessionDiffResponse {
   turnId: string | null;
   files: SessionDiffFile[];
   unavailableReason: string | null;
+}
+
+export interface SessionGitChange {
+  path: string;
+  indexStatus: string;
+  worktreeStatus: string;
+  untracked: boolean;
+}
+
+export interface SessionGitStatusResponse {
+  sessionId: string;
+  projectPath: string | null;
+  branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  changes: SessionGitChange[];
+  graph: string[];
+  unavailableReason: string | null;
+}
+
+export interface SessionGitActionRequest {
+  action: "stage" | "unstage" | "commit";
+  paths?: string[];
+  message?: string;
 }
 
 export interface SessionTerminalRunSummary {
@@ -6150,6 +6186,7 @@ export async function ingestConversationLiveEvent(
   event: CodexAppServerEvent,
 ): Promise<void> {
   if (
+    event.type === "workspace_files_changed" ||
     event.type === "native_state_changed" ||
     event.type === "operational_notification" ||
     event.type === "hook_run" ||

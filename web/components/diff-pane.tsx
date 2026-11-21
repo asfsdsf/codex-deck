@@ -2,36 +2,35 @@ import BackgroundTerminals from "./background-terminals";
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
+  type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   ChevronRight,
-  File,
-  FileArchive,
-  FileAudio,
-  FileCode2,
+  ChevronDown,
+  Check,
   FileDiff,
-  FileImage,
-  FileText,
-  FileVideo,
-  FolderClosed,
-  FolderOpen,
   GripVertical,
-  List,
-  RefreshCw,
+  Files,
+  GitBranch,
   Sparkles,
   Terminal,
+  Zap,
+  X,
+  WrapText,
+  MoreHorizontal,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import type {
   CodexSkillMetadata,
   SessionDiffFile,
-  SessionDiffMode,
   SessionDiffResponse,
   SessionFileContentResponse,
   SessionHooksResponse,
   SessionFileTreeNodesResponse,
+  SessionGitActionRequest,
+  SessionGitStatusResponse,
   SessionSkillsResponse,
   SessionTerminalRunSummary,
 } from "@codex-deck/api";
@@ -39,10 +38,41 @@ import HooksPane from "./hooks-pane";
 import { PatchTextRenderer, SourceCodeRenderer } from "./patch-text-renderer";
 import { AnsiText } from "./tool-renderers/ansi-text";
 import { isMarkdownPath } from "../path-utils";
+import RightPaneGuide from "./right-pane-guide";
+import DocumentMarkdown from "./document-markdown";
+import RightPaneTab from "./right-pane-tab";
+import GitHistory from "./git-history";
+import { RightPaneIcon } from "./deepseek/right-pane-icons";
+import WorkspaceFileTree, {
+  type FileSort,
+  type FileTreeCache,
+} from "./workspace-file-tree";
+import { FileTypeIcon } from "./deepseek/FileTypeIcon";
+import type { CodexThreadSummary } from "@codex-deck/api";
+import {
+  applySessionGitAction,
+  applyWorkflowProjectGitAction,
+  getSessionDiff,
+  getSessionGitStatus,
+  getWorkflowProjectDiff,
+  getWorkflowProjectGitStatus,
+  searchSessionFiles,
+  searchWorkflowProjectFiles,
+  getSessionFileContent,
+  getWorkflowProjectFileContent,
+  saveWorkspaceFile,
+  uploadWorkspaceFile,
+} from "../api";
+import { subscribeCodexRuntimeEvents } from "../codex-runtime-events";
+
+const EMPTY_REFRESH = () => {};
 
 export type RightPaneMode =
-  | SessionDiffMode
-  | "terminal-flow"
+  | "home"
+  | "files"
+  | "file-preview"
+  | "git"
+  | "tasks"
   | "skills"
   | "hooks";
 
@@ -90,6 +120,7 @@ interface DiffPaneProps {
   onSelectFilePath: (path: string) => void;
   onOpenFileTreeDirectory: (dirPath: string) => void;
   onLoadMoreFileTreeNodes: () => void;
+  onRefreshFiles: () => void;
   onChangeFileContentPage: (page: number) => void;
   onSelectTerminalRun: (processId: string) => void;
   onRefreshTerminalRuns: () => void;
@@ -104,6 +135,22 @@ interface DiffPaneProps {
   onSelectSkillPath: (path: string) => void;
   onToggleSkillEnabled: (path: string, enabled: boolean) => void;
   onRefreshSkills: () => void;
+  agentThreads?: CodexThreadSummary[];
+  agentThreadsLoading?: boolean;
+  agentThreadsError?: string | null;
+  onRefreshAgentThreads?: () => void;
+  onOpenAgentThread?: (threadId: string) => void;
+  workspacePath?: string | null;
+  workflowKey?: string | null;
+}
+
+function EmptyState(props: { text: string; children?: ReactNode }) {
+  return (
+    <div className="right-pane__empty">
+      <span>{props.text}</span>
+      {props.children}
+    </div>
+  );
 }
 
 function statusIconTone(status: string): string {
@@ -132,233 +179,6 @@ function getTailTruncatedPath(path: string, maxChars = 84): string {
   return `...${path.slice(-(maxChars - 3))}`;
 }
 
-function getTreeFileBadge(
-  path: string,
-): { label: string; className: string } | null {
-  if (isMarkdownPath(path)) {
-    return {
-      label: "MD",
-      className:
-        "bg-emerald-500/16 text-emerald-200 border border-emerald-400/30",
-    };
-  }
-
-  if (PDF_EXTENSIONS.has(getFileExtension(path))) {
-    return {
-      label: "PDF",
-      className: "bg-rose-500/16 text-rose-200 border border-rose-400/30",
-    };
-  }
-
-  return null;
-}
-
-type TreeFileIconStyle = {
-  Icon: LucideIcon;
-  iconClassName: string;
-  containerClassName: string;
-};
-
-const CODE_EXTENSIONS = new Set([
-  "c",
-  "cc",
-  "cpp",
-  "cs",
-  "css",
-  "go",
-  "h",
-  "hpp",
-  "html",
-  "java",
-  "js",
-  "jsx",
-  "kt",
-  "mjs",
-  "mts",
-  "php",
-  "ps1",
-  "py",
-  "rb",
-  "rs",
-  "sass",
-  "scala",
-  "scss",
-  "sh",
-  "sql",
-  "swift",
-  "ts",
-  "tsx",
-  "vue",
-  "xml",
-  "yaml",
-  "yml",
-  "zsh",
-]);
-
-const CONFIG_EXTENSIONS = new Set([
-  "conf",
-  "env",
-  "gitignore",
-  "ini",
-  "json",
-  "jsonc",
-  "lock",
-  "toml",
-]);
-
-const IMAGE_EXTENSIONS = new Set([
-  "avif",
-  "bmp",
-  "gif",
-  "ico",
-  "jpeg",
-  "jpg",
-  "png",
-  "svg",
-  "webp",
-]);
-
-const PDF_EXTENSIONS = new Set(["pdf"]);
-
-const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "ogg", "wav"]);
-
-const VIDEO_EXTENSIONS = new Set(["mkv", "mov", "mp4", "webm"]);
-
-const ARCHIVE_EXTENSIONS = new Set([
-  "7z",
-  "bz2",
-  "gz",
-  "rar",
-  "tar",
-  "tgz",
-  "xz",
-  "zip",
-]);
-
-const CODE_FILENAMES = new Set([
-  "dockerfile",
-  "makefile",
-  "justfile",
-  "gemfile",
-  "rakefile",
-]);
-
-const CONFIG_FILENAMES = new Set([
-  ".editorconfig",
-  ".env",
-  ".env.example",
-  ".eslintrc",
-  ".eslintrc.js",
-  ".eslintrc.json",
-  ".npmrc",
-  ".nvmrc",
-  ".prettierrc",
-  "package-lock.json",
-  "package.json",
-  "pnpm-lock.yaml",
-  "tsconfig.json",
-  "vite.config.ts",
-]);
-
-function getFileExtension(path: string): string {
-  const fileName = path.split("/").pop()?.toLowerCase() ?? "";
-  const dotIndex = fileName.lastIndexOf(".");
-  if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
-    return "";
-  }
-  return fileName.slice(dotIndex + 1);
-}
-
-function getTreeFileIconStyle(path: string): TreeFileIconStyle {
-  if (isMarkdownPath(path)) {
-    return {
-      Icon: FileText,
-      iconClassName: "text-emerald-200",
-      containerClassName: "border-emerald-400/30 bg-emerald-500/12",
-    };
-  }
-
-  const fileName = path.split("/").pop()?.toLowerCase() ?? "";
-  const extension = getFileExtension(path);
-
-  if (IMAGE_EXTENSIONS.has(extension)) {
-    return {
-      Icon: FileImage,
-      iconClassName: "text-fuchsia-200",
-      containerClassName: "border-fuchsia-400/30 bg-fuchsia-500/12",
-    };
-  }
-
-  if (PDF_EXTENSIONS.has(extension)) {
-    return {
-      Icon: FileText,
-      iconClassName: "text-rose-200",
-      containerClassName: "border-rose-400/30 bg-rose-500/12",
-    };
-  }
-
-  if (AUDIO_EXTENSIONS.has(extension)) {
-    return {
-      Icon: FileAudio,
-      iconClassName: "text-violet-200",
-      containerClassName: "border-violet-400/30 bg-violet-500/12",
-    };
-  }
-
-  if (VIDEO_EXTENSIONS.has(extension)) {
-    return {
-      Icon: FileVideo,
-      iconClassName: "text-violet-200",
-      containerClassName: "border-violet-400/30 bg-violet-500/12",
-    };
-  }
-
-  if (ARCHIVE_EXTENSIONS.has(extension)) {
-    return {
-      Icon: FileArchive,
-      iconClassName: "text-orange-200",
-      containerClassName: "border-orange-400/30 bg-orange-500/12",
-    };
-  }
-
-  if (CONFIG_EXTENSIONS.has(extension) || CONFIG_FILENAMES.has(fileName)) {
-    return {
-      Icon: FileText,
-      iconClassName: "text-cyan-200",
-      containerClassName: "border-cyan-400/30 bg-cyan-500/12",
-    };
-  }
-
-  if (CODE_EXTENSIONS.has(extension) || CODE_FILENAMES.has(fileName)) {
-    return {
-      Icon: FileCode2,
-      iconClassName: "text-sky-200",
-      containerClassName: "border-sky-400/30 bg-sky-500/12",
-    };
-  }
-
-  return {
-    Icon: File,
-    iconClassName: "text-zinc-300",
-    containerClassName: "border-zinc-500/30 bg-zinc-500/10",
-  };
-}
-
-function getDirectoryIconStyle(isExpanded: boolean): TreeFileIconStyle {
-  if (isExpanded) {
-    return {
-      Icon: FolderOpen,
-      iconClassName: "text-amber-100",
-      containerClassName: "border-amber-300/40 bg-amber-400/16",
-    };
-  }
-  return {
-    Icon: FolderClosed,
-    iconClassName: "text-amber-200",
-    containerClassName: "border-amber-400/30 bg-amber-500/10",
-  };
-}
-
 function getSkillDisplayName(skill: CodexSkillMetadata): string {
   const displayName = skill.interface?.displayName?.trim();
   return displayName || skill.name;
@@ -374,14 +194,6 @@ function getSkillDescription(skill: CodexSkillMetadata): string {
 
 function DiffStatusIcon(props: { status: string }) {
   return <FileDiff className={`h-3.5 w-3.5 ${statusIconTone(props.status)}`} />;
-}
-
-function EmptyState(props: { text: string }) {
-  return (
-    <div className="h-full flex items-center justify-center px-4 text-center text-xs text-zinc-500">
-      {props.text}
-    </div>
-  );
 }
 
 function renderDiffContent(file: SessionDiffFile | null) {
@@ -413,11 +225,11 @@ function renderTerminalOutput(
   error: string | null,
 ) {
   if (!selectedTerminalRunId) {
-    return <EmptyState text="Select a terminal run to inspect its output." />;
+    return <EmptyState text="Select a task to inspect its output." />;
   }
 
   if (loading) {
-    return <EmptyState text="Loading terminal output..." />;
+    return <EmptyState text="Loading task output..." />;
   }
 
   if (error) {
@@ -425,7 +237,7 @@ function renderTerminalOutput(
   }
 
   if (!output.trim()) {
-    return <EmptyState text="No terminal output captured yet." />;
+    return <EmptyState text="No task output captured yet." />;
   }
 
   return (
@@ -450,41 +262,55 @@ function renderSkillDetails(
   const isToggling = updatingSkillPath === skill.path;
 
   return (
-    <div className="h-full overflow-auto p-3">
-      <div className="space-y-3">
-        <div>
-          <div className="text-sm text-zinc-100">
-            {getSkillDisplayName(skill)}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">{skill.name}</div>
-        </div>
-        <div className="text-xs leading-5 text-zinc-300 whitespace-pre-wrap">
-          {description}
-        </div>
-        <div className="text-[11px] text-zinc-400 space-y-1">
+    <div className="h-full overflow-auto p-4 sm:p-5">
+      <div className="mx-auto max-w-2xl space-y-4">
+        <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <div>
-            <span className="text-zinc-500">Path:</span> {skill.path}
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {getSkillDisplayName(skill)}
+            </h2>
+            <div className="mt-1 text-xs text-zinc-500">{skill.name}</div>
+            <p className="mt-3 whitespace-pre-wrap text-xs leading-5 text-zinc-700 dark:text-zinc-300">
+              {description}
+            </p>
+          </div>
+        </section>
+        <section className="grid gap-x-5 gap-y-3 rounded-2xl border border-zinc-200 bg-white p-4 text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-2">
+          <div>
+            <span className="text-zinc-500">Scope</span>
+            <div className="mt-1 capitalize">{skill.scope}</div>
           </div>
           <div>
-            <span className="text-zinc-500">Scope:</span> {skill.scope}
+            <span className="text-zinc-500">Status</span>
+            <div className="mt-1">
+              <span
+                className={`rounded-full px-2 py-0.5 font-medium ${skill.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/10 text-rose-700 dark:text-rose-300"}`}
+              >
+                {skill.enabled ? "Enabled" : "Disabled"}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-zinc-500">Status:</span>{" "}
-            {skill.enabled ? "enabled" : "disabled"}
+          <div className="min-w-0 sm:col-span-2">
+            <span className="text-zinc-500">Path</span>
+            <div className="mt-1 break-all">{skill.path}</div>
           </div>
-        </div>
+        </section>
         {skill.interface?.defaultPrompt ? (
-          <div>
-            <div className="text-[11px] text-zinc-500 mb-1">Default prompt</div>
-            <pre className="rounded border border-zinc-800 bg-zinc-900/60 p-2 text-[11px] leading-5 text-zinc-300 whitespace-pre-wrap break-words font-mono">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <h3 className="mb-2 text-[11px] font-medium text-zinc-500">
+              Default prompt
+            </h3>
+            <pre className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-[11px] leading-5 text-zinc-700 whitespace-pre-wrap break-words font-mono dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
               {skill.interface.defaultPrompt}
             </pre>
-          </div>
+          </section>
         ) : null}
         {skill.dependencies?.tools.length ? (
-          <div>
-            <div className="text-[11px] text-zinc-500 mb-1">Dependencies</div>
-            <div className="rounded border border-zinc-800 bg-zinc-900/40 p-2">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <h3 className="mb-2 text-[11px] font-medium text-zinc-500">
+              Dependencies
+            </h3>
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950">
               {skill.dependencies.tools.map((tool) => (
                 <div
                   key={`${tool.type}:${tool.value}`}
@@ -494,13 +320,13 @@ function renderSkillDetails(
                 </div>
               ))}
             </div>
-          </div>
+          </section>
         ) : null}
         <button
           type="button"
           onClick={() => onToggleSkillEnabled(skill.path, !skill.enabled)}
           disabled={isToggling}
-          className={`h-8 rounded border px-3 text-xs transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+          className={`h-9 rounded-xl border px-3.5 text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
             skill.enabled
               ? "border-rose-600/60 bg-rose-700/20 text-rose-200 hover:bg-rose-700/30"
               : "border-emerald-600/60 bg-emerald-700/20 text-emerald-200 hover:bg-emerald-700/30"
@@ -525,6 +351,9 @@ function renderFileContent(
   fileContentPage: number,
   targetLineNumber: number | null,
   onChangePage: (page: number) => void,
+  showSource = false,
+  onOpenPath?: (href: string) => boolean,
+  resolveImage?: (href: string) => Promise<string | null>,
 ) {
   if (!selectedFilePath) {
     return <EmptyState text="Select a file to preview its content." />;
@@ -616,6 +445,27 @@ function renderFileContent(
 
   if (fileContent.isBinary) {
     return <EmptyState text="Binary files are not previewed." />;
+  }
+
+  if (isMarkdownPath(selectedFilePath) && !showSource) {
+    return (
+      <div className="right-pane__document-scroll">
+        <DocumentMarkdown
+          content={fileContent.content}
+          onOpenPath={onOpenPath}
+          resolveImage={resolveImage}
+        />
+        {fileContent.totalPages > 1 ? (
+          <FileContentPager
+            page={fileContent.page}
+            totalPages={fileContent.totalPages}
+            canGoPrev={fileContent.page > 1}
+            canGoNext={fileContent.page < fileContent.totalPages}
+            onChangePage={onChangePage}
+          />
+        ) : null}
+      </div>
+    );
   }
 
   const page = fileContent.page || fileContentPage;
@@ -766,92 +616,23 @@ function FileContentPager(props: {
   );
 }
 
-function FileTreeListEntry(props: {
-  node: { name: string; path: string; isDirectory: boolean };
-  selectedFilePath: string | null;
-  onOpenDirectory: (path: string) => void;
-  onSelectFilePath: (path: string) => void;
-}) {
-  const { node, selectedFilePath, onOpenDirectory, onSelectFilePath } = props;
-  const isSelected = !node.isDirectory && selectedFilePath === node.path;
-  const fileBadge = !node.isDirectory ? getTreeFileBadge(node.path) : null;
-  const fileIconStyle = !node.isDirectory
-    ? getTreeFileIconStyle(node.path)
-    : null;
-  const directoryIconStyle = node.isDirectory
-    ? getDirectoryIconStyle(false)
-    : null;
-  const FileIcon = fileIconStyle?.Icon;
-  const DirectoryIcon = directoryIconStyle?.Icon;
+type PaneTabKey = RightPaneMode | `file:${string}`;
 
-  if (node.isDirectory) {
-    return (
-      <>
-        <button
-          type="button"
-          onClick={() => onOpenDirectory(node.path)}
-          className="w-full text-left py-1 text-[11px] text-zinc-300 hover:bg-zinc-800/50"
-          style={{ paddingLeft: "10px", paddingRight: "10px" }}
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
-            {DirectoryIcon ? (
-              <span
-                className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${directoryIconStyle?.containerClassName ?? ""}`}
-              >
-                <DirectoryIcon
-                  className={`h-3.5 w-3.5 ${directoryIconStyle?.iconClassName ?? "text-zinc-400"}`}
-                />
-              </span>
-            ) : null}
-            <span>{node.name}</span>
-          </span>
-        </button>
-      </>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => onSelectFilePath(node.path)}
-      className={`w-full text-left py-1 text-[11px] hover:bg-zinc-800/50 ${
-        isSelected ? "bg-zinc-800 text-zinc-100" : "text-zinc-300"
-      }`}
-      style={{ paddingLeft: "29px", paddingRight: "10px" }}
-      title={node.path}
-    >
-      <span className="inline-flex min-w-0 items-center gap-1.5">
-        {FileIcon ? (
-          <span
-            className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${fileIconStyle?.containerClassName ?? ""}`}
-          >
-            <FileIcon
-              className={`h-3.5 w-3.5 ${fileIconStyle?.iconClassName ?? "text-zinc-400"}`}
-            />
-          </span>
-        ) : null}
-        <span className="truncate">{node.name}</span>
-        {fileBadge ? (
-          <span
-            className={`ml-1 inline-flex shrink-0 items-center rounded px-1 py-0 text-[9px] font-semibold tracking-wide ${fileBadge.className}`}
-          >
-            {fileBadge.label}
-          </span>
-        ) : null}
-      </span>
-    </button>
-  );
+interface PaneContentProps extends DiffPaneProps {
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
+  onSplitPane?: () => void;
+  onEmptyPane?: () => void;
+  hideChrome?: boolean;
+  canSplit?: boolean;
 }
 
-export default function DiffPane(props: DiffPaneProps) {
+function DiffPaneContent(props: PaneContentProps) {
   const {
     collapsed,
     revealFileListVersion,
-    isMobilePhone,
     mode,
     sessionId,
-    width,
     loading,
     error,
     diffData,
@@ -881,11 +662,10 @@ export default function DiffPane(props: DiffPaneProps) {
     selectedSkillPath,
     updatingSkillPath,
     onToggleCollapsed,
-    onResizeStart,
     onChangeMode,
     onSelectFilePath,
-    onOpenFileTreeDirectory,
     onLoadMoreFileTreeNodes,
+    onRefreshFiles,
     onChangeFileContentPage,
     onSelectTerminalRun,
     onRefreshTerminalRuns,
@@ -897,55 +677,357 @@ export default function DiffPane(props: DiffPaneProps) {
     onSelectSkillPath,
     onToggleSkillEnabled,
     onRefreshSkills,
+    agentThreads = [],
+    agentThreadsLoading = false,
+    agentThreadsError = null,
+    onRefreshAgentThreads = EMPTY_REFRESH,
+    onOpenAgentThread = EMPTY_REFRESH,
   } = props;
 
-  const isFileTreeMode = mode === "file-tree";
-  const isTerminalRunMode = mode === "terminal-flow";
+  const isHomeMode = mode === "home";
+  const isFileTreeMode = mode === "files";
+  const isGitMode = mode === "git";
+  const isTerminalRunMode = mode === "tasks";
   const isHooksMode = mode === "hooks";
   const isSkillsMode = mode === "skills";
   const [isFileListVisible, setIsFileListVisible] = useState(true);
+  const [isSelectedFilePreviewOpen, setIsSelectedFilePreviewOpen] = useState(
+    () => selectedFilePath !== null,
+  );
+  const [fileFilter, setFileFilter] = useState("");
+  const [openTabs, setOpenTabs] = useState<PaneTabKey[]>(() => [mode]);
+  const [isGitSessionView, setIsGitSessionView] = useState(false);
+  const [isGitChangesExpanded, setIsGitChangesExpanded] = useState(true);
+  const [isGitSectionExpanded, setIsGitSectionExpanded] = useState(true);
+  const [isGraphExpanded, setIsGraphExpanded] = useState(true);
+  const [gitBranchFilter, setGitBranchFilter] = useState("all");
+  const [gitActionsOpen, setGitActionsOpen] = useState(false);
+  const gitMenuRef = useRef<HTMLDivElement>(null);
+  const [fileSort, setFileSort] = useState<FileSort>("name");
+  const [foldersFirst, setFoldersFirst] = useState(true);
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const [showFileSource, setShowFileSource] = useState(false);
+  const [wrapFileSource, setWrapFileSource] = useState(false);
+  const [filePathInput, setFilePathInput] = useState(selectedFilePath ?? "");
+  const [editingFile, setEditingFile] = useState(false);
+  const [fileDrafts, setFileDrafts] = useState<
+    Record<string, { base: string; content: string }>
+  >({});
+  const [fileSaveErrors, setFileSaveErrors] = useState<Record<string, string>>(
+    {},
+  );
+  const [savingFile, setSavingFile] = useState<string | null>(null);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+  const fileTreeCache = useRef<FileTreeCache | null>(null);
+  const uploadFilesRef = useRef<HTMLInputElement>(null);
+  const uploadFolderRef = useRef<HTMLInputElement>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const isFullscreen = props.fullscreen ?? false;
+  const [isBackgroundCommandsOpen, setIsBackgroundCommandsOpen] =
+    useState(false);
+  const [fileSearchResults, setFileSearchResults] = useState<string[] | null>(
+    null,
+  );
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [gitSessionDiff, setGitSessionDiff] =
+    useState<SessionDiffResponse | null>(null);
+  const [gitSessionDiffError, setGitSessionDiffError] = useState<string | null>(
+    null,
+  );
+  const [gitSessionDiffLoading, setGitSessionDiffLoading] = useState(false);
+  const [gitStatus, setGitStatus] = useState<SessionGitStatusResponse | null>(
+    null,
+  );
+  const [gitWorkingDiff, setGitWorkingDiff] =
+    useState<SessionDiffResponse | null>(null);
+  const [gitStatusLoading, setGitStatusLoading] = useState(false);
+  const [gitStatusError, setGitStatusError] = useState<string | null>(null);
+  const [gitActionLoading, setGitActionLoading] = useState(false);
+  const [gitActionError, setGitActionError] = useState<string | null>(null);
+  const [gitCommitMessage, setGitCommitMessage] = useState("");
+  const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
+
+  useEffect(() => {
+    setFilePathInput(selectedFilePath ?? "");
+    setShowFileSource(targetLineNumber !== null);
+    setEditingFile(false);
+  }, [selectedFilePath, targetLineNumber]);
+
+  useEffect(() => {
+    if (!fileContent || fileContent.totalPages !== 1) return;
+    setFileDrafts((current) => {
+      const draft = current[fileContent.path];
+      if (
+        !draft ||
+        draft.base !== draft.content ||
+        draft.base === fileContent.content
+      )
+        return current;
+      return {
+        ...current,
+        [fileContent.path]: {
+          base: fileContent.content,
+          content: fileContent.content,
+        },
+      };
+    });
+  }, [fileContent]);
+
+  useEffect(
+    () =>
+      subscribeCodexRuntimeEvents((event) => {
+        if (
+          !event ||
+          (event.type === "workspace_files_changed" &&
+            event.projectPath ===
+              (fileTreeNodesData?.projectPath ?? props.workspacePath))
+        ) {
+          onRefreshFiles();
+          setGitRefreshVersion((value) => value + 1);
+        }
+      }),
+    [fileTreeNodesData?.projectPath, props.workspacePath, onRefreshFiles],
+  );
+
+  useEffect(() => {
+    function dismiss(event: PointerEvent | KeyboardEvent) {
+      if (event instanceof KeyboardEvent) {
+        if (event.key === "Escape") {
+          setIsSortMenuOpen(false);
+          setGitActionsOpen(false);
+        }
+      } else {
+        if (!sortMenuRef.current?.contains(event.target as Node))
+          setIsSortMenuOpen(false);
+        if (!gitMenuRef.current?.contains(event.target as Node))
+          setGitActionsOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", dismiss);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismiss);
+    };
+  }, []);
+
+  useEffect(() => {
+    setOpenTabs((current) =>
+      current.includes(mode) ? current : [...current, mode],
+    );
+  }, [mode]);
 
   useEffect(() => {
     setIsFileListVisible(true);
   }, [revealFileListVersion]);
 
+  useEffect(() => {
+    if (mode !== "files" || !selectedFilePath) return;
+    setIsSelectedFilePreviewOpen(true);
+    const key: PaneTabKey = `file:${selectedFilePath}`;
+    setOpenTabs((current) => [
+      ...new Set([
+        ...current.filter((tab) => tab !== "home"),
+        "files" as const,
+        key,
+      ]),
+    ]);
+  }, [selectedFilePath]);
+
+  useEffect(() => {
+    const query = fileFilter.trim();
+    if (!query || !sessionId || !isFileTreeMode) {
+      setFileSearchResults(null);
+      return;
+    }
+    if (!props.threadId && !props.workflowKey) {
+      setFileSearchResults([]);
+      return;
+    }
+    setFileSearchResults(null);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (
+        props.threadId
+          ? searchSessionFiles(props.threadId, query, 80)
+          : searchWorkflowProjectFiles(props.workflowKey as string, query, 80)
+      )
+        .then((result) => {
+          if (!cancelled) setFileSearchResults(result.files);
+        })
+        .catch(() => {
+          if (!cancelled) setFileSearchResults([]);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    fileFilter,
+    isFileTreeMode,
+    props.threadId,
+    props.workflowKey,
+    sessionId,
+  ]);
+
+  useEffect(() => {
+    if (!isTerminalRunMode || !props.threadId || props.threadId !== sessionId) {
+      return;
+    }
+    onRefreshAgentThreads();
+  }, [isTerminalRunMode, onRefreshAgentThreads, props.threadId, sessionId]);
+
+  useEffect(() => {
+    if (!isGitMode || !isGitSessionView) return;
+    if (!props.threadId || props.threadId !== sessionId) {
+      setGitSessionDiff({
+        sessionId: sessionId ?? "",
+        mode: "last-turn",
+        projectPath: diffData?.projectPath ?? null,
+        turnId: null,
+        files: [],
+        unavailableReason:
+          "Session changes are available when this pane is linked to a Codex thread.",
+      });
+      setGitSessionDiffError(null);
+      setGitSessionDiffLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setGitSessionDiffLoading(true);
+    setGitSessionDiffError(null);
+    void getSessionDiff(props.threadId, "last-turn")
+      .then((result) => {
+        if (!cancelled) setGitSessionDiff(result);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setGitSessionDiff(null);
+          setGitSessionDiffError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setGitSessionDiffLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    diffData?.projectPath,
+    isGitMode,
+    isGitSessionView,
+    props.threadId,
+    sessionId,
+  ]);
+
+  useEffect(() => {
+    if (!isGitMode && !isFileTreeMode) return;
+    if (!props.threadId && !props.workflowKey) {
+      setGitStatus(null);
+      setGitStatusError("Select a project to inspect its Git status.");
+      setGitStatusLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setGitStatusLoading(true);
+    setGitStatusError(null);
+    const statusRequest = props.threadId
+      ? getSessionGitStatus(
+          props.threadId,
+          gitBranchFilter === "current",
+          isGitMode,
+        )
+      : getWorkflowProjectGitStatus(
+          props.workflowKey as string,
+          gitBranchFilter === "current",
+          isGitMode,
+        );
+    const diffRequest = !isGitMode
+      ? Promise.resolve(null)
+      : props.threadId
+        ? getSessionDiff(props.threadId, "working-tree")
+        : getWorkflowProjectDiff(props.workflowKey as string, "working-tree");
+    void Promise.all([statusRequest, diffRequest])
+      .then(([status, gitDiff]) => {
+        if (cancelled) return;
+        setGitStatus(status);
+        setGitWorkingDiff(gitDiff);
+        setGitStatusError(status.unavailableReason);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setGitStatus(null);
+          setGitWorkingDiff(null);
+          setGitStatusError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setGitStatusLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    gitRefreshVersion,
+    gitBranchFilter,
+    isGitMode,
+    isFileTreeMode,
+    fileTreeNodesData,
+    props.threadId,
+    props.workflowKey,
+  ]);
+
+  const runGitAction = useCallback(
+    async (request: SessionGitActionRequest) => {
+      setGitActionLoading(true);
+      setGitActionError(null);
+      try {
+        const result = props.threadId
+          ? await applySessionGitAction(props.threadId, request)
+          : props.workflowKey
+            ? await applyWorkflowProjectGitAction(props.workflowKey, request)
+            : null;
+        if (!result) return;
+        setGitStatus(result.status);
+        const diff = props.threadId
+          ? await getSessionDiff(props.threadId, "working-tree")
+          : await getWorkflowProjectDiff(
+              props.workflowKey as string,
+              "working-tree",
+            );
+        setGitWorkingDiff(diff);
+        if (request.action === "commit") setGitCommitMessage("");
+        setGitRefreshVersion((value) => value + 1);
+      } catch (error) {
+        setGitActionError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setGitActionLoading(false);
+      }
+    },
+    [props.threadId, props.workflowKey],
+  );
+
   if (collapsed) {
     return null;
   }
 
-  const diffFiles = diffData?.files ?? [];
-  const selectedDiffFile =
-    diffFiles.find((file) => file.path === selectedFilePath) ?? null;
   const selectedTerminalRun =
     terminalRuns.find((run) => run.processId === selectedTerminalRunId) ?? null;
   const skills = skillsData?.skills ?? [];
   const selectedSkill =
     skills.find((skill) => skill.path === selectedSkillPath) ?? null;
-  const hooks = hooksData?.hooks ?? [];
-  const topStatusText = isTerminalRunMode
-    ? `${terminalRuns.length} runs`
-    : isHooksMode
-      ? `${hooks.length} hooks`
-      : isSkillsMode
-        ? `${skills.length} skills`
-        : isFileTreeMode
-          ? `${fileTreeNodesData?.nodes.length ?? 0}${
-              fileTreeNodesData?.nextCursor !== null ? "+" : ""
-            } entries`
-          : diffData?.mode === "last-turn" && diffData.turnId
-            ? `Turn ${diffData.turnId}`
-            : `${diffFiles.length} files`;
-  const fileTreeDirLabel = (() => {
-    if (!isFileTreeMode) {
-      return "";
-    }
-    const dir = fileTreeNodesData?.dir?.trim() ?? "";
-    return dir ? `/${dir}` : "/";
-  })();
   const selectedFileLabel = (() => {
     if (isTerminalRunMode) {
       if (!selectedTerminalRun) {
-        return "Terminal output";
+        return "Task output";
       }
       return `${selectedTerminalRun.command} (${selectedTerminalRun.processId})`;
     }
@@ -961,7 +1043,11 @@ export default function DiffPane(props: DiffPaneProps) {
     }
 
     if (!selectedFilePath) {
-      return isFileTreeMode ? "File" : "Diff";
+      return isFileTreeMode
+        ? "Workspace files"
+        : isGitMode
+          ? "Working tree"
+          : "Diff";
     }
 
     if (
@@ -979,378 +1065,572 @@ export default function DiffPane(props: DiffPaneProps) {
 
     return selectedFilePath;
   })();
-  const hasLoadedPaneData = isFileTreeMode
-    ? fileTreeNodesData !== null
-    : diffData !== null;
+  const hasLoadedPaneData =
+    isHomeMode ||
+    (isFileTreeMode ? fileTreeNodesData !== null : diffData !== null);
   const showBlockingPaneLoading = loading && !hasLoadedPaneData;
   const showBlockingPaneError = error !== null && !hasLoadedPaneData;
+  const activeTabKey: PaneTabKey =
+    isFileTreeMode && isSelectedFilePreviewOpen && selectedFilePath
+      ? `file:${selectedFilePath}`
+      : mode;
+  const currentTabs = [...new Set([...openTabs, activeTabKey])];
+  function activateTab(key: PaneTabKey) {
+    if (key.startsWith("file:")) {
+      onSelectFilePath(key.slice(5));
+      setIsSelectedFilePreviewOpen(true);
+      onChangeMode("files");
+    } else {
+      setIsSelectedFilePreviewOpen(false);
+      onChangeMode(key as RightPaneMode);
+    }
+  }
+  const displayDiffData = isGitMode
+    ? isGitSessionView
+      ? gitSessionDiff
+      : (gitWorkingDiff ?? diffData)
+    : diffData;
+  const displayDiffFiles = displayDiffData?.files ?? [];
+  const directAgentThreads = agentThreads
+    .filter((thread) => thread.parentThreadId === sessionId)
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const selectedTask =
+    directAgentThreads.find((thread) => thread.threadId === selectedTaskId) ??
+    null;
+  const workspaceLabel =
+    fileTreeNodesData?.projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ??
+    props.workspacePath?.split(/[\\/]/).filter(Boolean).at(-1) ??
+    "Workspace";
+  async function uploadFiles(files: FileList | null) {
+    if (!files?.length || uploadBusy) return;
+    setUploadBusy(true);
+    setUploadError(null);
+    try {
+      for (const file of Array.from(files)) {
+        if (file.size > 8 * 1024 * 1024)
+          throw new Error(`${file.name} is larger than 8 MB.`);
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 32768)
+          binary += String.fromCharCode(
+            ...bytes.subarray(offset, offset + 32768),
+          );
+        await uploadWorkspaceFile(
+          props,
+          file.webkitRelativePath || file.name,
+          btoa(binary),
+        );
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUploadBusy(false);
+      onRefreshFiles();
+    }
+  }
+  const draft = selectedFilePath ? fileDrafts[selectedFilePath] : undefined;
+  const canEditFile =
+    fileContent?.path === selectedFilePath &&
+    !fileContent?.isBinary &&
+    fileContent?.totalPages === 1 &&
+    !fileContent?.unavailableReason;
+  const dirtyFile = Boolean(draft && draft.base !== draft.content);
+  async function saveFile() {
+    if (!selectedFilePath || !draft || !dirtyFile || savingFile) return;
+    const path = selectedFilePath;
+    const saved = draft.content;
+    setSavingFile(path);
+    setFileSaveErrors((current) => ({ ...current, [path]: "" }));
+    try {
+      await saveWorkspaceFile(props, path, saved, draft.base);
+      setFileDrafts((current) => ({
+        ...current,
+        [path]: { base: saved, content: current[path]?.content ?? saved },
+      }));
+      onRefreshFiles();
+    } catch (error) {
+      setFileSaveErrors((current) => ({
+        ...current,
+        [path]: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      setSavingFile(null);
+    }
+  }
+
+  const resolveWorkspacePath = (href: string) => {
+    if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(href)) return null;
+    let path: string;
+    try {
+      path = decodeURIComponent(href.split(/[?#]/)[0]);
+    } catch {
+      return null;
+    }
+    const parts = path.startsWith("/")
+      ? []
+      : (selectedFilePath ?? "").split("/").slice(0, -1);
+    for (const part of path.split("/")) {
+      if (!part || part === ".") continue;
+      if (part === "..") {
+        if (!parts.length) return null;
+        parts.pop();
+      } else parts.push(part);
+    }
+    return parts.join("/") || null;
+  };
+  const openLinkedFile = (href: string) => {
+    const path = resolveWorkspacePath(href);
+    if (!path) return false;
+    onSelectFilePath(path);
+    setIsSelectedFilePreviewOpen(true);
+    return true;
+  };
+  const fileTree = (
+    <WorkspaceFileTree
+      data={fileTreeNodesData}
+      scopeKey={props.runtimeScopeKey ?? sessionId ?? ""}
+      threadId={props.threadId}
+      workflowKey={props.workflowKey}
+      selectedPath={selectedFilePath}
+      changes={gitStatus?.changes}
+      cache={fileTreeCache}
+      searchResults={fileFilter.trim() ? fileSearchResults : null}
+      sort={fileSort}
+      foldersFirst={foldersFirst}
+      onSelectFile={(path) => {
+        onSelectFilePath(path);
+        setIsSelectedFilePreviewOpen(true);
+        setIsFileListVisible(false);
+      }}
+      onLoadMore={onLoadMoreFileTreeNodes}
+      loadingMore={fileTreeLoadingMore}
+    />
+  );
 
   return (
-    <aside
-      className="pane-right relative shrink-0 border-l border-zinc-800/60 bg-zinc-950 flex flex-col"
-      style={{ width: `${width}px` }}
-    >
+    <section className="right-pane__dock">
       <div
-        role="separator"
-        aria-label="Resize right pane"
-        aria-orientation="vertical"
-        onPointerDown={onResizeStart}
-        className={
-          isMobilePhone
-            ? "absolute top-1/2 left-0 z-20 -translate-x-1/2 -translate-y-1/2 cursor-col-resize touch-none"
-            : "absolute top-0 left-0 z-20 h-full w-2 -translate-x-1/2 cursor-col-resize touch-none"
-        }
+        className="right-pane__header"
+        role="tablist"
+        aria-label="Right sidebar tabs"
+        data-mode={mode}
       >
-        {isMobilePhone && (
-          <div className="flex h-10 w-6 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900/95 text-zinc-400 shadow-lg">
-            <GripVertical className="h-4 w-4" />
-          </div>
-        )}
-      </div>
-      <div className="pane-header-right h-[50px] border-b border-zinc-800/60 px-3 flex items-center gap-2 overflow-hidden">
-        <div className="min-w-0 flex flex-1 items-center gap-2">
+        <div className="right-pane__tab-scroll">
+          {currentTabs.map((key) => {
+            const filePath = key.startsWith("file:") ? key.slice(5) : null;
+            const tab = filePath ? "file-preview" : (key as RightPaneMode);
+            const active = key === activeTabKey;
+            const label = filePath
+              ? (filePath.split("/").at(-1) ?? filePath)
+              : tab === "home"
+                ? "Start"
+                : tab[0].toUpperCase() + tab.slice(1);
+            const icon =
+              tab === "files" ? (
+                <FileTypeIcon kind="folder" size={16} />
+              ) : filePath ? (
+                <FileTypeIcon path={filePath} size={16} />
+              ) : tab === "home" || tab === "git" || tab === "tasks" ? (
+                <RightPaneIcon
+                  name={tab === "home" ? "start" : tab}
+                  className={`right-pane__tab-icon right-pane__tab-icon--${tab}`}
+                />
+              ) : tab === "skills" ? (
+                <Sparkles className="right-pane__tab-icon" />
+              ) : (
+                <Zap className="right-pane__tab-icon" />
+              );
+            return (
+              <RightPaneTab
+                key={key}
+                label={label}
+                kind={key}
+                active={active}
+                quiet={tab === "home" && currentTabs.length === 1}
+                icon={icon}
+                onSelect={() => activateTab(key)}
+                onClose={
+                  tab === "home" && currentTabs.length === 1
+                    ? undefined
+                    : () => {
+                        const next = currentTabs.filter(
+                          (entry) => entry !== key,
+                        );
+                        setOpenTabs(next);
+                        if (active) {
+                          const fallback =
+                            next[
+                              Math.min(
+                                currentTabs.indexOf(key),
+                                next.length - 1,
+                              )
+                            ];
+                          if (fallback) activateTab(fallback);
+                          else {
+                            setIsSelectedFilePreviewOpen(false);
+                            props.onEmptyPane?.();
+                            onChangeMode("home");
+                          }
+                        }
+                      }
+                }
+              />
+            );
+          })}
+        </div>
+        {mode !== "home" ? (
           <button
             type="button"
-            onClick={() => setIsFileListVisible((current) => !current)}
-            className={`h-8 w-8 shrink-0 rounded-lg transition-colors ${
-              isFileListVisible
-                ? "bg-zinc-800 text-zinc-100 hover:bg-zinc-700/80"
-                : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
-            }`}
-            aria-label={
-              isFileListVisible ? "Hide list panel" : "Show list panel"
-            }
-            title={isFileListVisible ? "Hide list panel" : "Show list panel"}
+            className="right-pane__icon-button"
+            aria-label="New tab"
+            title="New tab"
+            onClick={() => {
+              setIsSelectedFilePreviewOpen(false);
+              onChangeMode("home");
+            }}
           >
-            <List className="h-4 w-4 mx-auto" />
+            <RightPaneIcon name="new-tab" />
           </button>
-          <select
-            value={mode}
-            onChange={(event) =>
-              onChangeMode(event.target.value as RightPaneMode)
+        ) : null}
+        <div className="right-pane__fill" />
+        <div className="right-pane__chrome">
+          <button
+            type="button"
+            className="right-pane__icon-button"
+            aria-label="Split"
+            disabled={!props.canSplit}
+            title={
+              props.canSplit ? "Split" : "Not enough room for another pane"
             }
-            className="h-8 min-w-0 flex-1 cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] font-medium text-zinc-200 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
+            onClick={props.onSplitPane}
           >
-            <option value="unstaged">Unstaged</option>
-            <option value="staged">Staged</option>
-            <option value="last-turn">Last turn</option>
-            <option value="file-tree">File tree</option>
-            <option value="terminal-flow">Terminal run</option>
-            <option value="hooks">Hooks</option>
-            <option value="skills">Skills</option>
-          </select>
+            <RightPaneIcon name="split" />
+          </button>
+          <button
+            type="button"
+            className="right-pane__icon-button"
+            hidden={props.hideChrome}
+            aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            aria-pressed={isFullscreen}
+            title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            onClick={props.onToggleFullscreen}
+          >
+            <RightPaneIcon name="fullscreen" />
+          </button>
+          <button
+            type="button"
+            className="right-pane__icon-button"
+            onClick={onToggleCollapsed}
+            hidden={props.hideChrome}
+            aria-label="Collapse right sidebar"
+            title="Collapse right sidebar"
+          >
+            <RightPaneIcon name="collapse-right-sidebar" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onToggleCollapsed}
-          className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-          aria-label="Collapse diff pane"
-          title="Collapse diff pane"
-        >
-          <ChevronRight className="h-4 w-4 mx-auto" />
-        </button>
       </div>
 
-      {!sessionId ? (
-        <EmptyState text="Select a session to view this pane." />
-      ) : isTerminalRunMode ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          {props.threadId && (
-            <BackgroundTerminals
-              key={`${props.runtimeScopeKey}:${props.threadId}`}
-              threadId={props.threadId}
-              onChange={onRefreshTerminalRuns}
-            />
-          )}
-          {terminalRunsLoading ? (
-            <EmptyState text="Loading terminal runs..." />
-          ) : terminalRunsError ? (
-            <EmptyState text={terminalRunsError} />
-          ) : (
-            <div className="flex-1 min-h-0 flex">
-              {isFileListVisible ? (
-                <div className="w-52 border-r border-zinc-800/60 overflow-y-auto">
-                  <div className="px-3 py-2 border-b border-zinc-800/60 text-[11px] text-zinc-500 flex items-center justify-between gap-2">
-                    <span>{topStatusText}</span>
-                    <button
-                      type="button"
-                      onClick={onRefreshTerminalRuns}
-                      className="h-6 w-6 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                      aria-label="Refresh terminal runs"
-                      title="Refresh terminal runs"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5 mx-auto" />
-                    </button>
-                  </div>
-                  {terminalRuns.length === 0 ? (
-                    <div className="px-3 py-3 text-xs text-zinc-500">
-                      No terminal runs.
-                    </div>
-                  ) : (
-                    terminalRuns.map((run) => {
-                      const active = run.processId === selectedTerminalRunId;
-                      return (
-                        <button
-                          key={run.processId}
-                          type="button"
-                          onClick={() => onSelectTerminalRun(run.processId)}
-                          className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-800/50 transition-colors ${
-                            active ? "bg-zinc-800" : ""
-                          }`}
-                          title={`${run.command} (${run.processId})`}
-                        >
-                          <div className="text-[11px] leading-4 text-zinc-200 break-all overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                            {getTailTruncatedPath(run.command)}
-                          </div>
-                          <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
-                            <span>{run.processId}</span>
-                            <span>•</span>
-                            <span>
-                              {run.isRunning ? "running" : "completed"}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              ) : null}
-
-              <div className="flex-1 min-w-0 flex flex-col">
-                <div className="h-9 px-3 border-b border-zinc-800/60 flex items-center gap-2">
-                  <Terminal className="h-3.5 w-3.5 text-zinc-400" />
-                  <span className="text-xs text-zinc-300 truncate">
-                    {selectedFileLabel}
-                  </span>
-                </div>
-                <div className="flex-1 min-h-0">
-                  {renderTerminalOutput(
-                    selectedTerminalRunId,
-                    terminalRunOutput,
-                    terminalRunOutputLoading,
-                    terminalRunOutputError,
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : isHooksMode ? (
-        <HooksPane
-          key={`${props.runtimeScopeKey}:${sessionId}`}
-          threadId={props.threadId}
-          hooksData={hooksData}
-          hooksLoading={hooksLoading}
-          hooksError={hooksError}
-          selectedHookKey={selectedHookKey}
-          updatingHookKey={updatingHookKey}
-          isFileListVisible={isFileListVisible}
-          selectedFileLabel={selectedFileLabel}
-          onRefreshHooks={onRefreshHooks}
-          onSelectHookKey={onSelectHookKey}
-          onToggleHookEnabled={onToggleHookEnabled}
-          onTrustHook={onTrustHook}
-          onTrustAllHooks={onTrustAllHooks}
+      {isHomeMode ? (
+        <RightPaneGuide
+          onOpen={(nextMode) => {
+            setOpenTabs((current) => [
+              ...current.filter((tab) => tab !== "home"),
+              ...(current.includes(nextMode) ? [] : [nextMode]),
+            ]);
+            setIsSelectedFilePreviewOpen(false);
+            onChangeMode(nextMode);
+          }}
         />
-      ) : isSkillsMode ? (
-        skillsLoading ? (
-          <EmptyState text="Loading skills..." />
-        ) : skillsError ? (
-          <EmptyState text={skillsError} />
-        ) : (
-          <div className="flex-1 min-h-0 flex">
-            {isFileListVisible ? (
-              <div className="w-52 border-r border-zinc-800/60 overflow-y-auto">
-                <div className="px-3 py-2 border-b border-zinc-800/60 text-[11px] text-zinc-500 flex items-center justify-between gap-2">
-                  <span>{topStatusText}</span>
+      ) : !sessionId ? (
+        <EmptyState text="Select a session to view this pane." />
+      ) : isFileTreeMode ? (
+        <>
+          <input
+            ref={uploadFilesRef}
+            type="file"
+            multiple
+            hidden
+            aria-label="Upload file selection"
+            onChange={(event) => {
+              void uploadFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          <input
+            ref={uploadFolderRef}
+            type="file"
+            multiple
+            hidden
+            {...{ webkitdirectory: "" }}
+            aria-label="Upload folder selection"
+            onChange={(event) => {
+              void uploadFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          {isSelectedFilePreviewOpen ? (
+            <div className="right-pane__preview-toolbar">
+              <form
+                className="right-pane__path-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const input = filePathInput.trim().replaceAll("\\", "/");
+                  const root = (
+                    fileTreeNodesData?.projectPath ??
+                    props.workspacePath ??
+                    ""
+                  )
+                    .replaceAll("\\", "/")
+                    .replace(/\/$/, "");
+                  if (input)
+                    onSelectFilePath(
+                      root && input.startsWith(root + "/")
+                        ? input.slice(root.length + 1)
+                        : input,
+                    );
+                }}
+              >
+                <input
+                  value={filePathInput}
+                  onChange={(event) => setFilePathInput(event.target.value)}
+                  aria-label={
+                    selectedFilePath
+                      ? `${fileTreeNodesData?.projectPath ?? props.workspacePath ?? ""}/${selectedFilePath}`
+                      : "File path"
+                  }
+                  title={selectedFilePath ?? "File path"}
+                  placeholder="File path (relative to the session directory or absolute), Enter to open"
+                />
+              </form>
+              {selectedFilePath && !fileContent?.isBinary ? (
+                <div className="right-pane__preview-modes">
                   <button
                     type="button"
-                    onClick={onRefreshSkills}
-                    className="h-6 w-6 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                    aria-label="Refresh skills"
-                    title="Refresh skills"
+                    aria-pressed={!showFileSource}
+                    onClick={() => setShowFileSource(false)}
                   >
-                    <RefreshCw className="h-3.5 w-3.5 mx-auto" />
+                    {isMarkdownPath(selectedFilePath) ? "Preview" : "Code"}
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={showFileSource}
+                    onClick={() => {
+                      setShowFileSource(true);
+                      setEditingFile(true);
+                    }}
+                    disabled={!canEditFile}
+                  >
+                    Edit
                   </button>
                 </div>
-                {skillsData?.errors.length ? (
-                  <div className="px-3 py-2 border-b border-zinc-900 text-[10px] text-amber-300">
-                    {skillsData.errors.length} invalid skill
-                    {skillsData.errors.length === 1 ? "" : "s"} skipped
-                  </div>
-                ) : null}
-                {skills.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-zinc-500">
-                    No skills available.
-                  </div>
-                ) : (
-                  skills.map((skill) => {
-                    const active = skill.path === selectedSkillPath;
-                    return (
-                      <button
-                        key={skill.path}
-                        type="button"
-                        onClick={() => onSelectSkillPath(skill.path)}
-                        className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-800/50 transition-colors ${
-                          active ? "bg-zinc-800" : ""
-                        }`}
-                        title={`${skill.name} (${skill.scope})`}
-                      >
-                        <div className="text-[11px] leading-4 text-zinc-200 truncate">
-                          {getSkillDisplayName(skill)}
-                        </div>
-                        <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
-                          <span
-                            className={
-                              skill.enabled
-                                ? "text-emerald-300"
-                                : "text-rose-300"
-                            }
-                          >
-                            {skill.enabled ? "enabled" : "disabled"}
-                          </span>
-                          <span>•</span>
-                          <span>{skill.scope}</span>
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            ) : null}
-
-            <div className="flex-1 min-w-0 flex flex-col">
-              <div className="h-9 px-3 border-b border-zinc-800/60 flex items-center gap-2">
-                <Sparkles className="h-3.5 w-3.5 text-zinc-400" />
-                <span className="text-xs text-zinc-300 truncate">
-                  {selectedFileLabel}
-                </span>
-              </div>
-              <div className="flex-1 min-h-0">
-                {renderSkillDetails(
-                  selectedSkill,
-                  updatingSkillPath,
-                  onToggleSkillEnabled,
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      ) : showBlockingPaneLoading ? (
-        <EmptyState
-          text={isFileTreeMode ? "Loading file tree..." : "Loading diffs..."}
-        />
-      ) : showBlockingPaneError ? (
-        <EmptyState text={error} />
-      ) : isFileTreeMode && fileTreeNodesData?.unavailableReason ? (
-        <EmptyState text={fileTreeNodesData.unavailableReason} />
-      ) : !isFileTreeMode && diffData?.unavailableReason ? (
-        <EmptyState text={diffData.unavailableReason} />
-      ) : (
-        <div className="flex-1 min-h-0 flex">
-          {isFileListVisible ? (
-            <div className="w-52 border-r border-zinc-800/60 overflow-y-auto">
-              <div className="px-3 py-2 border-b border-zinc-800/60 text-[11px] text-zinc-500 space-y-2">
-                <div>{topStatusText}</div>
-                {isFileTreeMode ? (
-                  <div className="space-y-1">
-                    <div
-                      className="text-[10px] text-zinc-400 truncate"
-                      title={fileTreeDirLabel}
-                    >
-                      {fileTreeDirLabel}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const currentDir = fileTreeNodesData?.dir?.trim() ?? "";
-                        if (!currentDir) {
-                          return;
-                        }
-                        const parentDir =
-                          currentDir.split("/").slice(0, -1).join("/") || "";
-                        onOpenFileTreeDirectory(parentDir);
-                      }}
-                      disabled={!fileTreeNodesData?.dir}
-                      className="h-6 rounded-md border border-zinc-800 bg-zinc-800/50 px-2 text-[10px] text-zinc-300 hover:bg-zinc-800/80 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Up
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              {isFileTreeMode ? (
-                !fileTreeNodesData || fileTreeNodesData.nodes.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-zinc-500">
-                    No files found.
-                  </div>
-                ) : (
-                  <>
-                    {fileTreeNodesData.nodes.map((node) => (
-                      <FileTreeListEntry
-                        key={node.path}
-                        node={node}
-                        selectedFilePath={selectedFilePath}
-                        onOpenDirectory={onOpenFileTreeDirectory}
-                        onSelectFilePath={onSelectFilePath}
-                      />
-                    ))}
-                    {fileTreeNodesData.nextCursor !== null ? (
-                      <div className="px-3 py-2 border-t border-zinc-900">
-                        <button
-                          type="button"
-                          onClick={onLoadMoreFileTreeNodes}
-                          disabled={fileTreeLoadingMore}
-                          className="w-full h-7 rounded-md border border-zinc-800 bg-zinc-800/50 text-[11px] text-zinc-300 hover:bg-zinc-800/80 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {fileTreeLoadingMore ? "Loading..." : "Load more"}
-                        </button>
-                      </div>
-                    ) : null}
-                  </>
-                )
-              ) : diffFiles.length === 0 ? (
-                <div className="px-3 py-3 text-xs text-zinc-500">
-                  No file changes.
-                </div>
               ) : (
-                diffFiles.map((file) => {
-                  const active = file.path === selectedFilePath;
-                  return (
-                    <button
-                      key={file.path}
-                      type="button"
-                      onClick={() => onSelectFilePath(file.path)}
-                      title={`${file.status} ${file.path}`}
-                      className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-800/50 transition-colors ${
-                        active ? "bg-zinc-800" : ""
-                      }`}
-                    >
-                      <div className="grid grid-cols-[1fr_auto] items-end gap-x-2">
-                        <span className="text-[11px] leading-4 text-zinc-200 break-all overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                          {getTailTruncatedPath(file.path)}
-                        </span>
-                        <span className="mb-0.5 shrink-0" aria-hidden="true">
-                          <DiffStatusIcon status={file.status} />
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })
+                <button
+                  type="button"
+                  className="right-pane__icon-button"
+                  aria-label="Wrap lines"
+                  aria-pressed={wrapFileSource}
+                  title="Wrap lines"
+                  onClick={() => setWrapFileSource(!wrapFileSource)}
+                >
+                  <WrapText />
+                </button>
               )}
+              <button
+                type="button"
+                className="right-pane__icon-button"
+                aria-label="Save"
+                title={
+                  !canEditFile
+                    ? "Only complete text files can be edited"
+                    : dirtyFile
+                      ? "Save (Cmd/Ctrl+S)"
+                      : "Saved"
+                }
+                disabled={!dirtyFile || savingFile !== null || !canEditFile}
+                onClick={() => void saveFile()}
+              >
+                <Check />
+              </button>
+              <button
+                type="button"
+                className="right-pane__icon-button"
+                aria-label="Refresh"
+                title="Refresh"
+                onClick={() => {
+                  if (
+                    dirtyFile &&
+                    !window.confirm(
+                      "Discard unsaved changes and reload this file?",
+                    )
+                  )
+                    return;
+                  if (selectedFilePath) {
+                    setFileDrafts((current) => {
+                      const next = { ...current };
+                      delete next[selectedFilePath];
+                      return next;
+                    });
+                    setFileSaveErrors((current) => ({
+                      ...current,
+                      [selectedFilePath]: "",
+                    }));
+                  }
+                  onRefreshFiles();
+                }}
+              >
+                <RightPaneIcon name="refresh" />
+              </button>
+              <button
+                type="button"
+                className="right-pane__icon-button"
+                aria-label="File tree panel"
+                title="File tree panel"
+                aria-pressed={isFileListVisible}
+                onClick={() => setIsFileListVisible(!isFileListVisible)}
+              >
+                <RightPaneIcon name="upload-folder" />
+              </button>
+            </div>
+          ) : (
+            <div className="right-pane__page-toolbar">
+              <label className="right-pane__search">
+                <input
+                  type="search"
+                  value={fileFilter}
+                  onChange={(event) => setFileFilter(event.target.value)}
+                  placeholder="Search files by name…"
+                  aria-label="Search files by name…"
+                />
+              </label>
+              <button
+                type="button"
+                className="right-pane__icon-button"
+                onClick={onRefreshFiles}
+                aria-label="Refresh"
+                title="Refresh"
+              >
+                <RightPaneIcon name="refresh" />
+              </button>
+              <div className="right-pane__menu-anchor" ref={sortMenuRef}>
+                <button
+                  type="button"
+                  className="right-pane__icon-button"
+                  aria-label="Sort"
+                  title="Sort"
+                  aria-haspopup="menu"
+                  aria-expanded={isSortMenuOpen}
+                  onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
+                >
+                  <RightPaneIcon name="sort" />
+                </button>
+                {isSortMenuOpen ? (
+                  <div className="right-pane__menu" role="menu">
+                    {(
+                      [
+                        ["name", "Sort by name"],
+                        ["type", "Sort by type"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={fileSort === value}
+                        key={value}
+                        onClick={() => {
+                          setFileSort(value);
+                          setIsSortMenuOpen(false);
+                        }}
+                      >
+                        <span>{label}</span>
+                        {fileSort === value ? <Check /> : null}
+                      </button>
+                    ))}
+                    <hr />
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={foldersFirst}
+                      onClick={() => {
+                        setFoldersFirst(!foldersFirst);
+                        setIsSortMenuOpen(false);
+                      }}
+                    >
+                      <span>Folders first</span>
+                      {foldersFirst ? <Check /> : null}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="right-pane__icon-button"
+                disabled={uploadBusy}
+                onClick={() => uploadFilesRef.current?.click()}
+                title="Upload files"
+                aria-label="Upload files"
+              >
+                <RightPaneIcon name="upload-files" />
+              </button>
+              <button
+                type="button"
+                className="right-pane__icon-button"
+                disabled={uploadBusy}
+                onClick={() => uploadFolderRef.current?.click()}
+                title="Upload folder"
+                aria-label="Upload folder"
+              >
+                <RightPaneIcon name="upload-folder" />
+              </button>
+            </div>
+          )}
+          {uploadError ? (
+            <div role="alert" className="right-pane__file-error">
+              {uploadError}
             </div>
           ) : null}
-
-          <div className="flex-1 min-w-0 flex flex-col">
-            <div className="h-9 px-3 border-b border-zinc-800/60 flex items-center gap-2">
-              <FileDiff className="h-3.5 w-3.5 text-zinc-400" />
-              <span className="text-xs text-zinc-300 truncate">
-                {selectedFileLabel}
-              </span>
-            </div>
-            <div className="flex-1 min-h-0">
-              {isFileTreeMode
-                ? renderFileContent(
+          {isSelectedFilePreviewOpen ? (
+            <div
+              className="right-pane__preview-content"
+              data-wrap-source={wrapFileSource}
+            >
+              <div className="right-pane__preview-body">
+                {selectedFilePath && fileSaveErrors[selectedFilePath] ? (
+                  <div role="alert" className="right-pane__file-error">
+                    {fileSaveErrors[selectedFilePath]}
+                  </div>
+                ) : null}
+                {showFileSource && editingFile && canEditFile ? (
+                  <textarea
+                    className="right-pane__file-editor"
+                    aria-label="Edit file"
+                    spellCheck={false}
+                    value={draft?.content ?? fileContent?.content ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (selectedFilePath)
+                        setFileDrafts((current) => ({
+                          ...current,
+                          [selectedFilePath]: {
+                            base:
+                              current[selectedFilePath]?.base ??
+                              fileContent?.content ??
+                              "",
+                            content: value,
+                          },
+                        }));
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        (event.metaKey || event.ctrlKey) &&
+                        event.key.toLowerCase() === "s"
+                      ) {
+                        event.preventDefault();
+                        void saveFile();
+                      }
+                    }}
+                  />
+                ) : (
+                  renderFileContent(
                     selectedFilePath,
                     fileContent,
                     fileContentLoading,
@@ -1358,12 +1638,835 @@ export default function DiffPane(props: DiffPaneProps) {
                     fileContentPage,
                     targetLineNumber,
                     onChangeFileContentPage,
+                    showFileSource,
+                    openLinkedFile,
+                    async (href) => {
+                      const path = resolveWorkspacePath(href);
+                      if (!path) return null;
+                      const result = props.threadId
+                        ? await getSessionFileContent(props.threadId, path)
+                        : props.workflowKey
+                          ? await getWorkflowProjectFileContent(
+                              props.workflowKey,
+                              path,
+                            )
+                          : null;
+                      return result?.previewDataUrl ?? null;
+                    },
                   )
-                : renderDiffContent(selectedDiffFile)}
+                )}
+              </div>
+              {isFileListVisible ? (
+                <div className="right-pane__preview-navigator">{fileTree}</div>
+              ) : null}
             </div>
+          ) : showBlockingPaneLoading && !fileTreeNodesData ? (
+            <EmptyState text="Loading files…" />
+          ) : showBlockingPaneError && !fileTreeNodesData ? (
+            <EmptyState text={error ?? "Could not load workspace files."} />
+          ) : fileTreeNodesData?.unavailableReason ? (
+            <EmptyState text={fileTreeNodesData.unavailableReason} />
+          ) : fileFilter.trim() && fileSearchResults === null ? (
+            <EmptyState text="Searching files…" />
+          ) : fileFilter.trim() && fileSearchResults?.length === 0 ? (
+            <EmptyState text="No files match your search." />
+          ) : (
+            fileTree
+          )}
+        </>
+      ) : isGitMode ? (
+        <>
+          <div
+            className="right-pane__subtabs"
+            role="tablist"
+            aria-label="Git view"
+          >
+            <button
+              type="button"
+              role="tab"
+              className="right-pane__subtab"
+              aria-selected={!isGitSessionView}
+              onClick={() => setIsGitSessionView(false)}
+            >
+              Git
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className="right-pane__subtab"
+              aria-selected={isGitSessionView}
+              onClick={() => setIsGitSessionView(true)}
+            >
+              Session
+            </button>
           </div>
+          {isGitSessionView ? (
+            gitSessionDiffLoading ? (
+              <EmptyState text="Loading session changes…" />
+            ) : gitSessionDiffError ? (
+              <EmptyState text={gitSessionDiffError} />
+            ) : gitSessionDiff?.unavailableReason ? (
+              <EmptyState text={gitSessionDiff.unavailableReason} />
+            ) : (gitSessionDiff?.files.length ?? 0) === 0 ? (
+              <EmptyState text="No session changes." />
+            ) : (
+              <div className="right-pane__diff-list">
+                {gitSessionDiff?.files.map((file) => (
+                  <button
+                    key={file.path}
+                    type="button"
+                    className="right-pane__diff-row"
+                    aria-current={file.path === selectedFilePath}
+                    onClick={() => onSelectFilePath(file.path)}
+                  >
+                    <DiffStatusIcon status={file.status} />
+                    <span className="right-pane__tree-name">{file.path}</span>
+                  </button>
+                ))}
+              </div>
+            )
+          ) : gitStatusLoading && !gitStatus ? (
+            <EmptyState text="Loading Git changes…" />
+          ) : gitStatusError ? (
+            <EmptyState text={gitStatusError} />
+          ) : (
+            <div
+              className="right-pane-inspector right-pane-inspector--git"
+              data-changes-open={isGitSectionExpanded}
+            >
+              <div className="right-pane__git-toolbar">
+                <button
+                  type="button"
+                  className="right-pane__disclosure"
+                  aria-label="Changes"
+                  aria-expanded={isGitSectionExpanded}
+                  onClick={() => setIsGitSectionExpanded(!isGitSectionExpanded)}
+                >
+                  {isGitSectionExpanded ? <ChevronDown /> : <ChevronRight />}
+                  <span>Changes</span>
+                </button>
+                <button
+                  type="button"
+                  className="right-pane__icon-button right-pane__commit-action"
+                  disabled={
+                    gitActionLoading ||
+                    !gitCommitMessage.trim() ||
+                    !gitStatus?.changes.some(
+                      (change) =>
+                        change.indexStatus !== " " &&
+                        change.indexStatus !== "?",
+                    )
+                  }
+                  onClick={() =>
+                    void runGitAction({
+                      action: "commit",
+                      message: gitCommitMessage,
+                    })
+                  }
+                  aria-label="Commit"
+                  title="Commit staged changes"
+                >
+                  <Check aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="right-pane__icon-button"
+                  disabled={gitStatusLoading || gitActionLoading}
+                  onClick={() => setGitRefreshVersion((version) => version + 1)}
+                  aria-label="Refresh"
+                  title="Refresh Git changes"
+                >
+                  <RightPaneIcon name="refresh" />
+                </button>
+                <div className="right-pane__menu-anchor" ref={gitMenuRef}>
+                  <button
+                    type="button"
+                    className="right-pane__icon-button"
+                    aria-label="More Actions"
+                    title="More Actions"
+                    aria-haspopup="menu"
+                    aria-expanded={gitActionsOpen}
+                    onClick={() => setGitActionsOpen(!gitActionsOpen)}
+                  >
+                    <MoreHorizontal />
+                  </button>
+                  {gitActionsOpen ? (
+                    <div className="right-pane__menu" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={
+                          gitActionLoading || !gitStatus?.changes.length
+                        }
+                        onClick={() => {
+                          setGitActionsOpen(false);
+                          void runGitAction({
+                            action: "stage",
+                            paths:
+                              gitStatus?.changes.map((change) => change.path) ??
+                              [],
+                          });
+                        }}
+                      >
+                        Stage all changes
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={
+                          gitActionLoading ||
+                          !gitStatus?.changes.some(
+                            (change) =>
+                              change.indexStatus.trim() && !change.untracked,
+                          )
+                        }
+                        onClick={() => {
+                          setGitActionsOpen(false);
+                          void runGitAction({
+                            action: "unstage",
+                            paths:
+                              gitStatus?.changes
+                                .filter(
+                                  (change) =>
+                                    change.indexStatus.trim() &&
+                                    !change.untracked,
+                                )
+                                .map((change) => change.path) ?? [],
+                          });
+                        }}
+                      >
+                        Unstage all changes
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <form
+                className="right-pane__commit-form"
+                onKeyDown={(event) => {
+                  if (
+                    (event.metaKey || event.ctrlKey) &&
+                    event.key === "Enter"
+                  ) {
+                    event.preventDefault();
+                    if (gitCommitMessage.trim() && !gitActionLoading)
+                      void runGitAction({
+                        action: "commit",
+                        message: gitCommitMessage,
+                      });
+                  }
+                }}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void runGitAction({
+                    action: "commit",
+                    message: gitCommitMessage,
+                  });
+                }}
+              >
+                <input
+                  value={gitCommitMessage}
+                  onChange={(event) => setGitCommitMessage(event.target.value)}
+                  placeholder={
+                    'Message (Cmd+Enter to commit on "' +
+                    (gitStatus?.branch || "current branch") +
+                    '")'
+                  }
+                  aria-label="Commit message"
+                />
+                <button
+                  type="button"
+                  className="right-pane__icon-button"
+                  aria-label="Generate commit message"
+                  title="Generate commit message"
+                  disabled
+                >
+                  <Sparkles aria-hidden="true" />
+                </button>
+              </form>
+              {gitActionError ? (
+                <div className="right-pane__git-error" role="alert">
+                  {gitActionError}
+                </div>
+              ) : null}
+              <div className="right-pane__section-heading">
+                <button
+                  type="button"
+                  className="right-pane__icon-button"
+                  aria-label="Collapse changed files"
+                  aria-expanded={isGitChangesExpanded}
+                  onClick={() =>
+                    setIsGitChangesExpanded((expanded) => !expanded)
+                  }
+                >
+                  {isGitChangesExpanded ? (
+                    <ChevronDown aria-hidden="true" />
+                  ) : (
+                    <ChevronRight aria-hidden="true" />
+                  )}
+                </button>
+                <span>Changes</span>
+                <span className="right-pane__count">
+                  {gitStatus?.changes.length ?? 0}
+                </span>
+                <button
+                  type="button"
+                  className="right-pane__count ml-auto"
+                  disabled={gitActionLoading || !gitStatus?.changes.length}
+                  onClick={() =>
+                    void runGitAction({
+                      action: "stage",
+                      paths:
+                        gitStatus?.changes.map((change) => change.path) ?? [],
+                    })
+                  }
+                >
+                  Stage all
+                </button>
+              </div>
+              {isGitChangesExpanded ? (
+                <div className="right-pane__git-changes">
+                  {gitStatus?.changes.length ? (
+                    gitStatus.changes.map((change) => {
+                      const path = change.path;
+                      const staged =
+                        change.indexStatus !== " " &&
+                        change.indexStatus !== "?";
+                      const selected = path === selectedFilePath;
+                      const file = displayDiffFiles.find(
+                        (entry) => entry.path === path,
+                      );
+                      return (
+                        <div className="right-pane__git-change" key={path}>
+                          <div className="right-pane__git-file-row">
+                            <button
+                              type="button"
+                              className="right-pane__git-file"
+                              aria-current={selected}
+                              title={path}
+                              onClick={() => onSelectFilePath(path)}
+                            >
+                              <FileDiff
+                                aria-hidden="true"
+                                className={statusIconTone(
+                                  change.untracked
+                                    ? "A"
+                                    : staged
+                                      ? change.indexStatus
+                                      : change.worktreeStatus,
+                                )}
+                              />
+                              <span className="right-pane__tree-name">
+                                {path}
+                              </span>
+                              <span className="right-pane__git-status">
+                                {change.untracked
+                                  ? "U"
+                                  : change.indexStatus.trim() +
+                                    change.worktreeStatus.trim()}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              className="right-pane__git-stage"
+                              disabled={gitActionLoading}
+                              aria-label={
+                                staged ? "Unstage " + path : "Stage " + path
+                              }
+                              title={staged ? "Unstage" : "Stage"}
+                              onClick={() =>
+                                void runGitAction({
+                                  action: staged ? "unstage" : "stage",
+                                  paths: [path],
+                                })
+                              }
+                            >
+                              {staged ? (
+                                <X aria-hidden="true" />
+                              ) : (
+                                <RightPaneIcon name="new-tab" />
+                              )}
+                            </button>
+                          </div>
+                          {selected && file ? (
+                            <div className="right-pane__git-file-preview">
+                              {renderDiffContent(file)}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="right-pane__git-empty">No changes</div>
+                  )}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="right-pane__section-heading right-pane__graph-heading"
+                aria-expanded={isGraphExpanded}
+                onClick={() => setIsGraphExpanded(!isGraphExpanded)}
+              >
+                {isGraphExpanded ? <ChevronDown /> : <ChevronRight />}
+                <span>Graph</span>
+              </button>
+              {isGraphExpanded ? (
+                <div
+                  className="right-pane__graph-area"
+                  role="region"
+                  aria-label="Graph"
+                >
+                  <div className="right-pane__graph-filter">
+                    <select
+                      aria-label="Branch filter"
+                      value={gitBranchFilter}
+                      onChange={(event) =>
+                        setGitBranchFilter(event.target.value)
+                      }
+                    >
+                      <option value="all">All branches</option>
+                      <option value="current">Current branch</option>
+                    </select>
+                  </div>
+                  {gitStatus?.graph.length ? (
+                    <GitHistory lines={gitStatus.graph} />
+                  ) : (
+                    <div className="right-pane__git-empty">No commits yet.</div>
+                  )}
+                </div>
+              ) : null}
+              <div className="right-pane__branch-footer">
+                <GitBranch aria-hidden="true" />
+                <span>{gitStatus?.branch || "No branch"}</span>
+                <span className="right-pane__count">
+                  {gitStatus?.upstream
+                    ? gitStatus.ahead +
+                      " ahead · " +
+                      gitStatus.behind +
+                      " behind"
+                    : "No upstream"}
+                </span>
+              </div>
+            </div>
+          )}
+        </>
+      ) : isTerminalRunMode ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="right-pane__page-row">
+            <strong>Tasks</strong>
+            <span>·</span>
+            <span>{workspaceLabel}</span>
+            <span className="right-pane__fill" />
+            <button
+              type="button"
+              className="right-pane__icon-button"
+              aria-label="Refresh"
+              title="Refresh"
+              onClick={onRefreshAgentThreads}
+            >
+              <RightPaneIcon name="refresh" />
+            </button>
+          </div>
+          {agentThreadsError ? (
+            <div className="right-pane__task-empty">
+              <span>{agentThreadsError}</span>
+            </div>
+          ) : !props.threadId && terminalRunsError ? (
+            <div className="right-pane__task-empty">
+              <span>{terminalRunsError}</span>
+            </div>
+          ) : agentThreadsLoading ? (
+            <div className="right-pane__task-empty">
+              <span>Loading subagents…</span>
+            </div>
+          ) : directAgentThreads.length === 0 ? (
+            <div className="right-pane__task-empty">
+              <span>No subagents</span>
+              <span>
+                Subagents spawned under the main agent will appear here
+              </span>
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1">
+              <div className="right-pane__task-list" role="list">
+                {directAgentThreads.map((thread) => (
+                  <button
+                    key={thread.threadId}
+                    type="button"
+                    className="right-pane__task-row"
+                    role="listitem"
+                    aria-current={selectedTaskId === thread.threadId}
+                    onClick={() => setSelectedTaskId(thread.threadId)}
+                  >
+                    <span
+                      className="right-pane__task-status"
+                      data-running={thread.status === "active"}
+                      aria-hidden="true"
+                    />
+                    <span className="right-pane__task-name">
+                      {thread.name ||
+                        thread.agentNickname ||
+                        thread.agentRole ||
+                        thread.preview ||
+                        "Subagent"}
+                    </span>
+                    <span className="right-pane__count">
+                      {thread.status === "active" ? "running" : thread.status}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="right-pane__task-list">
+                {selectedTask ? (
+                  <article className="space-y-3 p-4">
+                    <div className="flex items-start gap-3">
+                      <span
+                        className="right-pane__task-status mt-1.5"
+                        data-running={selectedTask.status === "active"}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-sm font-medium">
+                          {selectedTask.name ||
+                            selectedTask.agentNickname ||
+                            selectedTask.agentRole ||
+                            "Subagent"}
+                        </h2>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {selectedTask.agentRole || "Subagent"} ·{" "}
+                          {selectedTask.status}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="right-pane__icon-button"
+                        onClick={() => onOpenAgentThread(selectedTask.threadId)}
+                        aria-label="Open subagent conversation"
+                        title="Open conversation"
+                      >
+                        <Files aria-hidden="true" />
+                      </button>
+                    </div>
+                    <p className="whitespace-pre-wrap break-words text-xs leading-5 text-zinc-500">
+                      {selectedTask.preview ||
+                        "This subagent has not sent a message yet."}
+                    </p>
+                  </article>
+                ) : (
+                  <EmptyState text="Select a subagent to view its details." />
+                )}
+              </div>
+            </div>
+          )}
+          {props.threadId ? (
+            <details
+              hidden={!isBackgroundCommandsOpen}
+              className="right-pane__background-commands"
+              open={isBackgroundCommandsOpen}
+              onToggle={(event) =>
+                setIsBackgroundCommandsOpen(event.currentTarget.open)
+              }
+            >
+              <summary>Background commands ({terminalRuns.length})</summary>
+              <BackgroundTerminals
+                key={props.runtimeScopeKey + ":" + props.threadId}
+                threadId={props.threadId}
+                onChange={onRefreshTerminalRuns}
+              />
+              <button
+                type="button"
+                onClick={() => setIsBackgroundCommandsOpen(false)}
+              >
+                Back to tasks
+              </button>
+              {terminalRunsLoading ? (
+                <EmptyState text="Loading commands…" />
+              ) : terminalRunsError ? (
+                <EmptyState text={terminalRunsError} />
+              ) : (
+                terminalRuns.map((run) => (
+                  <button
+                    key={run.processId}
+                    type="button"
+                    className="right-pane__task-row"
+                    onClick={() => onSelectTerminalRun(run.processId)}
+                  >
+                    <Terminal aria-hidden="true" />
+                    <span className="right-pane__task-name">
+                      {getTailTruncatedPath(run.command)}
+                    </span>
+                    <span className="right-pane__count">
+                      {run.isRunning ? "running" : "done"}
+                    </span>
+                  </button>
+                ))
+              )}
+              {selectedTerminalRun
+                ? renderTerminalOutput(
+                    selectedTerminalRunId,
+                    terminalRunOutput,
+                    terminalRunOutputLoading,
+                    terminalRunOutputError,
+                  )
+                : null}
+            </details>
+          ) : null}
         </div>
+      ) : isHooksMode ? (
+        <div className="right-pane-inspector">
+          <HooksPane
+            key={props.runtimeScopeKey + ":" + sessionId}
+            threadId={props.threadId}
+            hooksData={hooksData}
+            hooksLoading={hooksLoading}
+            hooksError={hooksError}
+            selectedHookKey={selectedHookKey}
+            updatingHookKey={updatingHookKey}
+            isFileListVisible={isFileListVisible}
+            selectedFileLabel={selectedFileLabel}
+            onRefreshHooks={onRefreshHooks}
+            onSelectHookKey={onSelectHookKey}
+            onToggleHookEnabled={onToggleHookEnabled}
+            onTrustHook={onTrustHook}
+            onTrustAllHooks={onTrustAllHooks}
+          />
+        </div>
+      ) : isSkillsMode ? (
+        skillsLoading ? (
+          <EmptyState text="Loading skills…" />
+        ) : skillsError ? (
+          <EmptyState text={skillsError} />
+        ) : (
+          <div className="right-pane-inspector flex min-h-0 flex-1 flex-col">
+            <div className="right-pane__page-row">
+              <Sparkles aria-hidden="true" className="h-4 w-4 text-zinc-400" />
+              <strong>Skills</strong>
+              <span className="right-pane__fill" />
+              <span>{skills.length} skills</span>
+              <button
+                type="button"
+                className="right-pane__icon-button"
+                aria-label="Refresh skills"
+                onClick={onRefreshSkills}
+              >
+                <RightPaneIcon name="refresh" />
+              </button>
+            </div>
+            {skills.length ? (
+              <div className="right-pane__skill-list">
+                {skills.map((skill) => (
+                  <button
+                    key={skill.path}
+                    type="button"
+                    className="right-pane__skill-row"
+                    aria-current={skill.path === selectedSkillPath}
+                    onClick={() => onSelectSkillPath(skill.path)}
+                  >
+                    <Sparkles
+                      aria-hidden="true"
+                      className="h-4 w-4 text-violet-500"
+                    />
+                    <span className="right-pane__skill-name">
+                      {getSkillDisplayName(skill)}
+                    </span>
+                    <span className="right-pane__count">
+                      {skill.enabled ? "enabled" : "disabled"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <EmptyState text="No skills available." />
+            )}
+            {renderSkillDetails(
+              selectedSkill,
+              updatingSkillPath,
+              onToggleSkillEnabled,
+            )}
+          </div>
+        )
+      ) : (
+        <EmptyState text="Select an item to view its details." />
       )}
+    </section>
+  );
+}
+
+/** A split pane has its own file selection and page, rather than changing its neighbour. */
+function SecondaryPane(props: PaneContentProps) {
+  const [mode, setMode] = useState<RightPaneMode>("home");
+  const [path, setPath] = useState<string | null>(null);
+  const [content, setContent] = useState<SessionFileContentResponse | null>(
+    null,
+  );
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!path) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const request = props.threadId
+      ? getSessionFileContent(props.threadId, path, page)
+      : props.workflowKey
+        ? getWorkflowProjectFileContent(props.workflowKey, path, page)
+        : Promise.resolve(null);
+    void request
+      .then((result) => {
+        if (!cancelled) setContent(result);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, page, props.threadId, props.workflowKey, props.fileTreeNodesData]);
+  return (
+    <DiffPaneContent
+      {...props}
+      mode={mode}
+      onChangeMode={setMode}
+      selectedFilePath={path}
+      onSelectFilePath={(next) => {
+        setPath(next);
+        setPage(1);
+      }}
+      fileContent={content}
+      fileContentLoading={loading}
+      fileContentError={error}
+      fileContentPage={page}
+      onChangeFileContentPage={setPage}
+      targetLineNumber={null}
+    />
+  );
+}
+
+export default function DiffPane(props: DiffPaneProps) {
+  const [split, setSplit] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fraction, setFraction] = useState(0.5);
+  const container = useRef<HTMLDivElement>(null);
+  const [measuredWidth, setMeasuredWidth] = useState(props.width);
+  useEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setMeasuredWidth(entry.contentRect.width),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [props.collapsed]);
+  useEffect(() => {
+    setSplit(false);
+  }, [props.runtimeScopeKey, props.sessionId]);
+  if (props.collapsed) return null;
+  const contentProps: PaneContentProps = {
+    ...props,
+    fullscreen,
+    onToggleFullscreen: () => setFullscreen((value) => !value),
+    canSplit: !split && (fullscreen || measuredWidth >= 560),
+    onSplitPane: () => setSplit(true),
+    onEmptyPane: () => setSplit(false),
+  };
+  return (
+    <aside
+      className="pane-right relative shrink-0 flex flex-col"
+      style={{ width: `${props.width}px` }}
+      data-fullscreen={fullscreen}
+    >
+      <div
+        role="separator"
+        aria-label="Resize right pane"
+        aria-orientation="vertical"
+        onPointerDown={props.onResizeStart}
+        className={
+          props.isMobilePhone
+            ? "absolute top-1/2 left-0 z-20 -translate-x-1/2 -translate-y-1/2 cursor-col-resize touch-none"
+            : "absolute top-0 left-0 z-20 h-full w-2 -translate-x-1/2 cursor-col-resize touch-none"
+        }
+      >
+        {props.isMobilePhone ? (
+          <div className="right-pane__mobile-grip">
+            <GripVertical />
+          </div>
+        ) : null}
+      </div>
+      <div
+        ref={container}
+        className="right-pane__dock-layout"
+        data-split={split}
+        style={{
+          gridTemplateColumns: split
+            ? `minmax(0, ${fraction}fr) 0px minmax(0, ${1 - fraction}fr)`
+            : "minmax(0, 1fr)",
+        }}
+      >
+        <DiffPaneContent
+          {...contentProps}
+          key={props.runtimeScopeKey ?? props.sessionId}
+          hideChrome={split}
+        />
+        {split ? (
+          <>
+            <div
+              role="separator"
+              aria-label="Resize sidebar split"
+              aria-orientation="vertical"
+              tabIndex={0}
+              className="right-pane__split-divider"
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                  event.preventDefault();
+                  setFraction((value) =>
+                    Math.max(
+                      0.2,
+                      Math.min(
+                        0.8,
+                        value + (event.key === "ArrowLeft" ? -0.05 : 0.05),
+                      ),
+                    ),
+                  );
+                }
+              }}
+              onPointerDown={(event) => {
+                const target = event.currentTarget;
+                target.setPointerCapture(event.pointerId);
+                const move = (pointer: PointerEvent) => {
+                  const rect = container.current?.getBoundingClientRect();
+                  if (rect)
+                    setFraction(
+                      Math.max(
+                        0.2,
+                        Math.min(
+                          0.8,
+                          (pointer.clientX - rect.left) / rect.width,
+                        ),
+                      ),
+                    );
+                };
+                const end = () => {
+                  target.removeEventListener("pointermove", move);
+                  target.removeEventListener("pointerup", end);
+                  target.removeEventListener("pointercancel", end);
+                };
+                target.addEventListener("pointermove", move);
+                target.addEventListener("pointerup", end);
+                target.addEventListener("pointercancel", end);
+              }}
+            />
+            <SecondaryPane
+              {...contentProps}
+              key={props.runtimeScopeKey ?? props.sessionId}
+              canSplit={false}
+            />
+          </>
+        ) : null}
+      </div>
     </aside>
   );
 }

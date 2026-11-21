@@ -1,0 +1,66 @@
+import type { RightPaneMode } from "./diff-pane";
+import { FileTypeIcon } from "./deepseek/FileTypeIcon";
+import { RightPaneIcon } from "./deepseek/right-pane-icons";
+
+const entries: Array<{
+  mode: Extract<RightPaneMode, "files" | "git" | "tasks">;
+  title: string;
+  description: string;
+}> = [
+  {
+    mode: "files",
+    title: "Files",
+    description: "Browse workspace files",
+  },
+  {
+    mode: "git",
+    title: "Git",
+    description: "Changes in the working tree",
+  },
+  {
+    mode: "tasks",
+    title: "Tasks",
+    description: "Subagents spawned by this session",
+  },
+];
+
+export default function RightPaneGuide(props: {
+  onOpen: (mode: RightPaneMode) => void;
+}) {
+  return (
+    <div className="right-pane-start">
+      <div className="right-pane-start__entries">
+        <RightPaneIcon
+          name="hero"
+          className="right-pane-start__compass"
+          size={56}
+        />
+        {entries.map(({ mode, title, description }) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => props.onOpen(mode)}
+            className="right-pane-start__entry"
+            data-right-pane-guide-entry={mode}
+          >
+            <span
+              className={`right-pane-start__icon right-pane-start__icon--${mode}`}
+            >
+              {mode === "files" ? (
+                <FileTypeIcon kind="folder" size={22} />
+              ) : (
+                <RightPaneIcon name={mode} size={22} />
+              )}
+            </span>
+            <span className="right-pane-start__entry-copy">
+              <span className="right-pane-start__entry-title">{title}</span>
+              <span className="right-pane-start__entry-description">
+                {description}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,3884 @@
+[
+  {
+    "app": "reference",
+    "theme": "light",
+    "surface": "start",
+    "file": "reference-light-start.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Start",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Files",
+        "x": 926.5,
+        "y": 363.90625,
+        "width": 380,
+        "height": 56,
+        "font": "16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Git",
+        "x": 926.5,
+        "y": 433.90625,
+        "width": 380,
+        "height": 56,
+        "font": "16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Tasks",
+        "x": 926.5,
+        "y": 503.90625,
+        "width": 380,
+        "height": 56,
+        "font": "16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "light",
+    "surface": "start",
+    "file": "codex-light-start.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Start",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "FilesBrowse workspace files",
+        "x": 926.5,
+        "y": 363.90625,
+        "width": 380,
+        "height": 56,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "GitChanges in the working tree",
+        "x": 926.5,
+        "y": 433.90625,
+        "width": 380,
+        "height": 56,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "TasksSubagents spawned by this session",
+        "x": 926.5,
+        "y": 503.90625,
+        "width": 380,
+        "height": 56,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "light",
+    "surface": "files",
+    "file": "reference-light-files.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Search files by name…",
+        "x": 801,
+        "y": 44,
+        "width": 495,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1302,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Sort",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Upload files",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Upload folder",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "light",
+    "surface": "files",
+    "file": "codex-light-files.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Search files by name…",
+        "x": 801,
+        "y": 44,
+        "width": 495,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1302,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Sort",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Upload files",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Upload folder",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "operator_deploy",
+        "x": 801,
+        "y": 83,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".claude",
+        "x": 801,
+        "y": 111,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".coca",
+        "x": 801,
+        "y": 139,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".codex",
+        "x": 801,
+        "y": 167,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".codex-deck",
+        "x": 801,
+        "y": 195,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".git",
+        "x": 801,
+        "y": 223,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".idea",
+        "x": 801,
+        "y": 251,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".pytest_cache",
+        "x": 801,
+        "y": 279,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "ascend",
+        "x": 801,
+        "y": 307,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "common",
+        "x": 801,
+        "y": 335,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "custom_doc",
+        "x": 801,
+        "y": 363,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "deploy_scripts",
+        "x": 801,
+        "y": 391,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "log",
+        "x": 801,
+        "y": 419,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "moore",
+        "x": 801,
+        "y": 447,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "nvidia",
+        "x": 801,
+        "y": 475,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "outputs",
+        "x": 801,
+        "y": 503,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "references",
+        "x": 801,
+        "y": 531,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "scripts",
+        "x": 801,
+        "y": 559,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "tests",
+        "x": 801,
+        "y": 587,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "third_party",
+        "x": 801,
+        "y": 615,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "view_path",
+        "x": 801,
+        "y": 643,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "x",
+        "x": 801,
+        "y": 671,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".ENV.env",
+        "x": 801,
+        "y": 699,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": ".gitignore",
+        "x": 801,
+        "y": 727,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "AGENTS.custom.md",
+        "x": 801,
+        "y": 755,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "AGENTS.md",
+        "x": 801,
+        "y": 783,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "ASCEND_C_TODO.md",
+        "x": 801,
+        "y": 811,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "CODEX_CONVERSATION.log",
+        "x": 801,
+        "y": 839,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "config.toml",
+        "x": 801,
+        "y": 867,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "H200_USAGE.md",
+        "x": 801,
+        "y": 895,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "README.md",
+        "x": 801,
+        "y": 923,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "todo.md",
+        "x": 801,
+        "y": 951,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "light",
+    "surface": "git",
+    "file": "reference-light-git.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Git",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Git",
+        "x": 803,
+        "y": 38,
+        "width": 37.859375,
+        "height": 35,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(65, 118, 230)"
+      },
+      {
+        "label": "Session",
+        "x": 844.859375,
+        "y": 38,
+        "width": 68.296875,
+        "height": 35,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Changes",
+        "x": 799,
+        "y": 81,
+        "width": 559,
+        "height": 28,
+        "font": "500 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Commit",
+        "x": 1358,
+        "y": 83,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1384,
+        "y": 83,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "More Actions",
+        "x": 1410,
+        "y": 83,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Generate commit message (using zhanlu/moma/deepseek-latest-flash)",
+        "x": 1403,
+        "y": 117,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Changes (1)",
+        "x": 799,
+        "y": 153,
+        "width": 587,
+        "height": 28,
+        "font": "500 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Stage all",
+        "x": 1390,
+        "y": 157,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "H200_USAGE.md/U",
+        "x": 801,
+        "y": 186,
+        "width": 607,
+        "height": 18,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(0, 0, 0)"
+      },
+      {
+        "label": "Stage",
+        "x": 1414,
+        "y": 185,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Graph",
+        "x": 799,
+        "y": 211,
+        "width": 635,
+        "height": 28,
+        "font": "500 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "nvidia_1016*",
+        "x": 793,
+        "y": 872,
+        "width": 547.734375,
+        "height": 28,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "No upstream",
+        "x": 1340.734375,
+        "y": 872,
+        "width": 99.265625,
+        "height": 28,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "light",
+    "surface": "git",
+    "file": "codex-light-git.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Git",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Git",
+        "x": 806,
+        "y": 39,
+        "width": 37.859375,
+        "height": 33,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(65, 118, 230)"
+      },
+      {
+        "label": "Session",
+        "x": 843.859375,
+        "y": 39,
+        "width": 68.296875,
+        "height": 33,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Changes",
+        "x": 799,
+        "y": 79,
+        "width": 545,
+        "height": 28,
+        "font": "600 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Commit",
+        "x": 1346,
+        "y": 79,
+        "width": 28,
+        "height": 28,
+        "font": "11px / 16.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1376,
+        "y": 79,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "More Actions",
+        "x": 1406,
+        "y": 79,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Commit message",
+        "x": 810,
+        "y": 116,
+        "width": 585,
+        "height": 22,
+        "font": "14px / 22px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Generate commit message",
+        "x": 1399,
+        "y": 113,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse changed files",
+        "x": 799,
+        "y": 151,
+        "width": 14,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Stage all",
+        "x": 1356.625,
+        "y": 156.75,
+        "width": 53.375,
+        "height": 16.5,
+        "font": "11px / 16.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Graph",
+        "x": 793,
+        "y": 219,
+        "width": 647,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "light",
+    "surface": "tasks",
+    "file": "reference-light-tasks.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Tasks",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1396,
+        "y": 42,
+        "width": 36,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "light",
+    "surface": "tasks",
+    "file": "codex-light-tasks.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Tasks",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1392,
+        "y": 41.5,
+        "width": 36,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "dark",
+    "surface": "start",
+    "file": "reference-dark-start.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Start",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Files",
+        "x": 926.5,
+        "y": 363.90625,
+        "width": 380,
+        "height": 56,
+        "font": "16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Git",
+        "x": 926.5,
+        "y": 433.90625,
+        "width": 380,
+        "height": 56,
+        "font": "16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Tasks",
+        "x": 926.5,
+        "y": 503.90625,
+        "width": 380,
+        "height": 56,
+        "font": "16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "dark",
+    "surface": "start",
+    "file": "codex-dark-start.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Start",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "FilesBrowse workspace files",
+        "x": 926.5,
+        "y": 363.90625,
+        "width": 380,
+        "height": 56,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "GitChanges in the working tree",
+        "x": 926.5,
+        "y": 433.90625,
+        "width": 380,
+        "height": 56,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "TasksSubagents spawned by this session",
+        "x": 926.5,
+        "y": 503.90625,
+        "width": 380,
+        "height": 56,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "dark",
+    "surface": "files",
+    "file": "reference-dark-files.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Search files by name…",
+        "x": 801,
+        "y": 44,
+        "width": 495,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1302,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Sort",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Upload files",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Upload folder",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "dark",
+    "surface": "files",
+    "file": "codex-dark-files.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Search files by name…",
+        "x": 801,
+        "y": 44,
+        "width": 495,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1302,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Sort",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Upload files",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Upload folder",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "operator_deploy",
+        "x": 801,
+        "y": 83,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".claude",
+        "x": 801,
+        "y": 111,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".coca",
+        "x": 801,
+        "y": 139,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".codex",
+        "x": 801,
+        "y": 167,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".codex-deck",
+        "x": 801,
+        "y": 195,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".git",
+        "x": 801,
+        "y": 223,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".idea",
+        "x": 801,
+        "y": 251,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".pytest_cache",
+        "x": 801,
+        "y": 279,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "ascend",
+        "x": 801,
+        "y": 307,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "common",
+        "x": 801,
+        "y": 335,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "custom_doc",
+        "x": 801,
+        "y": 363,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "deploy_scripts",
+        "x": 801,
+        "y": 391,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "log",
+        "x": 801,
+        "y": 419,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "moore",
+        "x": 801,
+        "y": 447,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "nvidia",
+        "x": 801,
+        "y": 475,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "outputs",
+        "x": 801,
+        "y": 503,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "references",
+        "x": 801,
+        "y": 531,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "scripts",
+        "x": 801,
+        "y": 559,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "tests",
+        "x": 801,
+        "y": 587,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "third_party",
+        "x": 801,
+        "y": 615,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "view_path",
+        "x": 801,
+        "y": 643,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "x",
+        "x": 801,
+        "y": 671,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".ENV.env",
+        "x": 801,
+        "y": 699,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": ".gitignore",
+        "x": 801,
+        "y": 727,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "AGENTS.custom.md",
+        "x": 801,
+        "y": 755,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "AGENTS.md",
+        "x": 801,
+        "y": 783,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "ASCEND_C_TODO.md",
+        "x": 801,
+        "y": 811,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "CODEX_CONVERSATION.log",
+        "x": 801,
+        "y": 839,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "config.toml",
+        "x": 801,
+        "y": 867,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "H200_USAGE.md",
+        "x": 801,
+        "y": 895,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "README.md",
+        "x": 801,
+        "y": 923,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "todo.md",
+        "x": 801,
+        "y": 951,
+        "width": 626,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "dark",
+    "surface": "git",
+    "file": "reference-dark-git.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Git",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Git",
+        "x": 803,
+        "y": 38,
+        "width": 37.859375,
+        "height": 35,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(122, 170, 255)"
+      },
+      {
+        "label": "Session",
+        "x": 844.859375,
+        "y": 38,
+        "width": 68.296875,
+        "height": 35,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Changes",
+        "x": 799,
+        "y": 81,
+        "width": 559,
+        "height": 28,
+        "font": "500 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Commit",
+        "x": 1358,
+        "y": 83,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1384,
+        "y": 83,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "More Actions",
+        "x": 1410,
+        "y": 83,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Generate commit message (using zhanlu/moma/deepseek-latest-flash)",
+        "x": 1403,
+        "y": 117,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Changes (1)",
+        "x": 799,
+        "y": 153,
+        "width": 587,
+        "height": 28,
+        "font": "500 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Stage all",
+        "x": 1390,
+        "y": 157,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "H200_USAGE.md/U",
+        "x": 801,
+        "y": 186,
+        "width": 607,
+        "height": 18,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(255, 255, 255)"
+      },
+      {
+        "label": "Stage",
+        "x": 1414,
+        "y": 185,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Graph",
+        "x": 799,
+        "y": 211,
+        "width": 635,
+        "height": 28,
+        "font": "500 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "nvidia_1016*",
+        "x": 793,
+        "y": 872,
+        "width": 547.734375,
+        "height": 28,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "No upstream",
+        "x": 1340.734375,
+        "y": 872,
+        "width": 99.265625,
+        "height": 28,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "dark",
+    "surface": "git",
+    "file": "codex-dark-git.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Git",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Git",
+        "x": 806,
+        "y": 39,
+        "width": 37.859375,
+        "height": 33,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(109, 157, 242)"
+      },
+      {
+        "label": "Session",
+        "x": 843.859375,
+        "y": 39,
+        "width": 68.296875,
+        "height": 33,
+        "font": "500 13px / 16px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Changes",
+        "x": 799,
+        "y": 79,
+        "width": 545,
+        "height": 28,
+        "font": "600 12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Commit",
+        "x": 1346,
+        "y": 79,
+        "width": 28,
+        "height": 28,
+        "font": "11px / 16.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1376,
+        "y": 79,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "More Actions",
+        "x": 1406,
+        "y": 79,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Commit message",
+        "x": 810,
+        "y": 116,
+        "width": 585,
+        "height": 22,
+        "font": "14px / 22px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Generate commit message",
+        "x": 1399,
+        "y": 113,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse changed files",
+        "x": 799,
+        "y": 151,
+        "width": 14,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Stage all",
+        "x": 1356.625,
+        "y": 156.75,
+        "width": 53.375,
+        "height": 16.5,
+        "font": "11px / 16.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Graph",
+        "x": 793,
+        "y": 219,
+        "width": 647,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "dark",
+    "surface": "tasks",
+    "file": "reference-dark-tasks.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Tasks",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1396,
+        "y": 42,
+        "width": 36,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "dark",
+    "surface": "tasks",
+    "file": "codex-dark-tasks.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Tasks",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 907,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1392,
+        "y": 41.5,
+        "width": 36,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "light",
+    "surface": "preview",
+    "file": "reference-light-preview.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "README.md",
+        "x": 913,
+        "y": 10,
+        "width": 131.40625,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 1020.40625,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 1048.40625,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "File path (relative to the session directory or absolute), Enter to open",
+        "x": 801,
+        "y": 44,
+        "width": 421.578125,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Preview",
+        "x": 1231.578125,
+        "y": 49,
+        "width": 57.140625,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Edit",
+        "x": 1290.71875,
+        "y": 49,
+        "width": 36.28125,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Save",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "File tree panel",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Table of contents",
+        "x": 1396,
+        "y": 95,
+        "width": 26,
+        "height": 26,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 1493,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 1493,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "CUDA C++ 文档",
+        "x": 1133.359375,
+        "y": 2643,
+        "width": 151.96875,
+        "height": 31,
+        "font": "500 17px / 27px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(65, 118, 230)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3067,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3067,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3778,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3778,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4218,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4218,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4666,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4666,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5044,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5044,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5563,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5563,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6132,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6132,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6825,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6825,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 7273,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 7273,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Adding a chip ecosystem and an operator language",
+        "x": 806,
+        "y": 8121,
+        "width": 427.765625,
+        "height": 31,
+        "font": "500 17px / 27px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(65, 118, 230)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 8365,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 8365,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "light",
+    "surface": "preview",
+    "file": "codex-light-preview.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "README.md",
+        "x": 913,
+        "y": 10,
+        "width": 131.40625,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Close",
+        "x": 1020.40625,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "New tab",
+        "x": 1048.40625,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "/Users/zky/Programming/shell/Workspace/operator_deploy/README.md",
+        "x": 801,
+        "y": 44,
+        "width": 421.578125,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Preview",
+        "x": 1231.578125,
+        "y": 49,
+        "width": 57.140625,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(15, 17, 21)"
+      },
+      {
+        "label": "Edit",
+        "x": 1290.71875,
+        "y": 49,
+        "width": 36.28125,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Save",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "File tree panel",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Table of contents",
+        "x": 1398,
+        "y": 95,
+        "width": 26,
+        "height": 26,
+        "font": "17px / 27px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(97, 102, 107)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 1502,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 1502,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3024,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3024,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3742,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3742,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4185,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4185,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4638,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4638,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5018,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5018,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5537,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5537,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6106,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6106,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6803,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6803,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 7255,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 7255,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 8354,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 8354,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(129, 133, 140)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "reference",
+    "theme": "dark",
+    "surface": "preview",
+    "file": "reference-dark-preview.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "README.md",
+        "x": 913,
+        "y": 10,
+        "width": 131.40625,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 1020.40625,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 1048.40625,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px / 13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "File path (relative to the session directory or absolute), Enter to open",
+        "x": 801,
+        "y": 44,
+        "width": 421.578125,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Preview",
+        "x": 1231.578125,
+        "y": 49,
+        "width": 57.140625,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Edit",
+        "x": 1290.71875,
+        "y": 49,
+        "width": 36.28125,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Save",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "File tree panel",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Table of contents",
+        "x": 1396,
+        "y": 95,
+        "width": 26,
+        "height": 26,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 1493,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 1493,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "CUDA C++ 文档",
+        "x": 1133.359375,
+        "y": 2643,
+        "width": 151.96875,
+        "height": 31,
+        "font": "500 17px / 27px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(122, 170, 255)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3067,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3067,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3778,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3778,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4218,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4218,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4666,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4666,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5044,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5044,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5563,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5563,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6132,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6132,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6825,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6825,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 7273,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 7273,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Adding a chip ecosystem and an operator language",
+        "x": 806,
+        "y": 8121,
+        "width": 427.765625,
+        "height": 31,
+        "font": "500 17px / 27px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(122, 170, 255)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 8365,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 8365,
+        "width": 24,
+        "height": 24,
+        "font": "13.3333px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "codex",
+    "theme": "dark",
+    "surface": "preview",
+    "file": "codex-dark-preview.png",
+    "bounds": {
+      "x": 792,
+      "y": 0,
+      "width": 648,
+      "height": 900
+    },
+    "controls": [
+      {
+        "label": "Files",
+        "x": 803,
+        "y": 10,
+        "width": 100,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Close",
+        "x": 879,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "README.md",
+        "x": 913,
+        "y": 10,
+        "width": 131.40625,
+        "height": 28,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Close",
+        "x": 1020.40625,
+        "y": 14,
+        "width": 20,
+        "height": 20,
+        "font": "15px / 15px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "New tab",
+        "x": 1048.40625,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Split",
+        "x": 1334,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Fullscreen",
+        "x": 1370,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Collapse right sidebar",
+        "x": 1406,
+        "y": 10,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "/Users/zky/Programming/shell/Workspace/operator_deploy/README.md",
+        "x": 801,
+        "y": 44,
+        "width": 421.578125,
+        "height": 28,
+        "font": "12px / 18px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Preview",
+        "x": 1231.578125,
+        "y": 49,
+        "width": 57.140625,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(249, 250, 251)"
+      },
+      {
+        "label": "Edit",
+        "x": 1290.71875,
+        "y": 49,
+        "width": 36.28125,
+        "height": 18,
+        "font": "11px / 14px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Save",
+        "x": 1336,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Refresh",
+        "x": 1370,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "File tree panel",
+        "x": 1404,
+        "y": 44,
+        "width": 28,
+        "height": 28,
+        "font": "13px / 19.5px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Table of contents",
+        "x": 1398,
+        "y": 95,
+        "width": 26,
+        "height": 26,
+        "font": "17px / 27px -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "color": "rgb(207, 211, 214)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 364,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 1502,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 1502,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3024,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3024,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 3742,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 3742,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4185,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4185,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 4638,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 4638,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5018,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5018,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 5537,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 5537,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6106,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6106,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 6803,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 6803,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 7255,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 7255,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Wrap lines",
+        "x": 1354,
+        "y": 8354,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      },
+      {
+        "label": "Copy",
+        "x": 1382,
+        "y": 8354,
+        "width": 24,
+        "height": 24,
+        "font": "10px / 20px \"SF Mono\", Menlo, monospace",
+        "color": "rgb(173, 178, 184)"
+      }
+    ],
+    "errors": []
+  }
+]

@@ -5557,6 +5557,11 @@ test("session diff route returns git unstaged and staged file changes", async ()
     );
     await writeFile(join(repoDir, "staged.txt"), "new file\n", "utf-8");
     runGit(repoDir, ["add", "staged.txt"]);
+    await writeFile(
+      join(repoDir, "untracked.txt"),
+      "untracked line\n",
+      "utf-8",
+    );
 
     await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
       sessionMetaLine(SESSION_ID, repoDir, Date.now()),
@@ -5587,6 +5592,137 @@ test("session diff route returns git unstaged and staged file changes", async ()
         (file) => file.path === "staged.txt",
       ),
       true,
+    );
+
+    const workingTree = await requestJson(
+      server,
+      `/api/sessions/${SESSION_ID}/diff?mode=working-tree`,
+    );
+    assert.equal(workingTree.status, 200);
+    const workingTreeFiles =
+      (
+        workingTree.body as {
+          files?: Array<{ path: string; status: string; diff: string }>;
+        }
+      ).files ?? [];
+    assert.deepEqual(
+      workingTreeFiles.map((file) => file.path),
+      ["staged.txt", "tracked.txt", "untracked.txt"],
+    );
+    assert.equal(
+      workingTreeFiles.find((file) => file.path === "untracked.txt")?.status,
+      "A",
+    );
+    assert.match(
+      workingTreeFiles.find((file) => file.path === "untracked.txt")?.diff ??
+        "",
+      /untracked line/,
+    );
+  } finally {
+    server.stop();
+    await rm(repoDir, { recursive: true, force: true });
+    await cleanup();
+  }
+});
+
+test("workspace Git routes report branch and staging state and validate Git actions", async () => {
+  const { rootDir, sessionsDir, cleanup } = await createTempCodexDir(
+    "server-git-workspace",
+  );
+  const server = createServer({ port: 13011, codexDir: rootDir, open: false });
+  const repoDir = await mkdtemp(join(tmpdir(), "server-git-workspace-repo-"));
+
+  try {
+    runGit(repoDir, ["init"]);
+    runGit(repoDir, ["config", "user.email", "test@example.com"]);
+    runGit(repoDir, ["config", "user.name", "Test User"]);
+    await writeFile(join(repoDir, "tracked.txt"), "base\n", "utf-8");
+    runGit(repoDir, ["add", "tracked.txt"]);
+    runGit(repoDir, ["commit", "-m", "initial commit"]);
+    await writeFile(join(repoDir, "tracked.txt"), "base\nchange\n", "utf-8");
+    await writeFile(join(repoDir, "staged.txt"), "staged\n", "utf-8");
+    runGit(repoDir, ["add", "staged.txt"]);
+    await writeFile(join(repoDir, "untracked.txt"), "untracked\n", "utf-8");
+    await writeSessionFile(sessionsDir, `${SESSION_ID}.jsonl`, [
+      sessionMetaLine(SESSION_ID, repoDir, Date.now()),
+      responseItemMessageLine("user", "show status"),
+    ]);
+    await loadStorage();
+
+    const status = await requestJson(
+      server,
+      `/api/sessions/${SESSION_ID}/git/status`,
+    );
+    assert.equal(status.status, 200);
+    const statusBody = status.body as {
+      branch: string;
+      upstream: string | null;
+      changes: Array<{
+        path: string;
+        indexStatus: string;
+        worktreeStatus: string;
+        untracked: boolean;
+      }>;
+      graph: string[];
+    };
+    assert.ok(statusBody.branch);
+    assert.equal(statusBody.upstream, null);
+    assert.ok(statusBody.graph.some((line) => line.includes("initial commit")));
+    assert.deepEqual(
+      statusBody.changes.map((change) => change.path),
+      ["staged.txt", "tracked.txt", "untracked.txt"],
+    );
+    assert.equal(statusBody.changes[0]?.indexStatus, "A");
+    assert.equal(statusBody.changes[2]?.untracked, true);
+
+    const unsafeStage = await requestJson(
+      server,
+      `/api/sessions/${SESSION_ID}/git/action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stage", paths: ["outside.txt"] }),
+      },
+    );
+    assert.equal(unsafeStage.status, 409);
+
+    const stage = await requestJson(
+      server,
+      `/api/sessions/${SESSION_ID}/git/action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stage", paths: ["untracked.txt"] }),
+      },
+    );
+    assert.equal(stage.status, 200);
+    assert.equal(
+      (
+        stage.body as { status: { changes: Array<{ indexStatus: string }> } }
+      ).status.changes.find((change) => change.indexStatus === "A")
+        ?.indexStatus,
+      "A",
+    );
+
+    const commit = await requestJson(
+      server,
+      `/api/sessions/${SESSION_ID}/git/action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "commit",
+          message: "commit staged workspace change",
+        }),
+      },
+    );
+    assert.equal(commit.status, 200);
+    assert.match(
+      execFileSync("git", ["log", "-1", "--pretty=%s"], {
+        cwd: repoDir,
+        encoding: "utf-8",
+      }),
+      /commit staged workspace change/,
     );
   } finally {
     server.stop();
