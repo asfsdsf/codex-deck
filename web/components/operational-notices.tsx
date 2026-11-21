@@ -1,8 +1,9 @@
 import { useEffect, useId, useState } from "react";
-import { ChevronUp, CircleAlert } from "lucide-react";
+import { ChevronRight, CircleAlert } from "lucide-react";
 import type { CodexOperationalNotification } from "@codex-deck/api";
 import { getCodexOperationalNotifications } from "../api";
 import { subscribeCodexRuntimeEvents } from "../codex-runtime-events";
+import "./operational-notices.css";
 
 function merge(
   current: CodexOperationalNotification[],
@@ -76,11 +77,8 @@ export default function OperationalNotices({
   return (
     <div
       data-conversation-chrome
-      className={
-        collapsed
-          ? "relative shrink-0"
-          : "relative min-h-11 shrink-0 border-b border-zinc-800 bg-zinc-900/60 py-2 pl-3 pr-12 text-xs text-zinc-300"
-      }
+      data-collapsed={collapsed}
+      className="operational-notices"
     >
       <button
         type="button"
@@ -97,59 +95,64 @@ export default function OperationalNotices({
         aria-controls={noticesId}
         aria-expanded={!collapsed}
         onClick={() => setCollapsed((value) => !value)}
-        className={`absolute flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
-          collapsed
-            ? "right-3 top-16 z-30 size-11 rounded-full border border-red-400/40 bg-zinc-900 text-red-400 shadow-lg hover:bg-zinc-800"
-            : "right-2 top-1.5 size-8 rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-        }`}
+        className="operational-notices-toggle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
       >
-        {collapsed ? (
-          <CircleAlert className="size-6" aria-hidden="true" />
-        ) : (
-          <ChevronUp className="size-4" aria-hidden="true" />
-        )}
+        <ChevronRight
+          className="operational-notices-arrow size-4"
+          aria-hidden="true"
+        />
+        <CircleAlert
+          className="operational-notices-alert size-6"
+          aria-hidden="true"
+        />
       </button>
-      <details
-        id={noticesId}
-        hidden={collapsed}
-        aria-label="Codex operational notices"
+      <div
+        className="operational-notices-content"
+        inert={collapsed}
+        aria-hidden={collapsed}
       >
-        <summary className="cursor-pointer break-words line-clamp-2">
-          Codex notices ({notices.length})
-          {notices.length ? ` · ${notices.at(-1)?.summary}` : ""}
-        </summary>
-        <div className="mt-2 max-h-60 space-y-2 overflow-auto">
-          {error && <p role="status">Could not refresh notices: {error}</p>}
-          <button
-            type="button"
-            className="rounded border border-zinc-700 px-2 py-1"
-            onClick={() => setVersion((v) => v + 1)}
-          >
-            Refresh notices
-          </button>
-          {[...notices].reverse().map((notice) => (
-            <details
-              key={notice.id}
-              className="rounded border border-zinc-700 p-2"
+        <details
+          id={noticesId}
+          aria-label="Codex operational notices"
+          className="min-h-11 border-b border-zinc-800 py-2 pl-3 pr-12 text-xs text-zinc-300"
+        >
+          <summary className="cursor-pointer break-words line-clamp-2">
+            Codex notices ({notices.length})
+            {notices.length ? ` · ${notices.at(-1)?.summary}` : ""}
+          </summary>
+          <div className="mt-2 max-h-60 space-y-2 overflow-auto">
+            {error && <p role="status">Could not refresh notices: {error}</p>}
+            <button
+              type="button"
+              className="rounded border border-zinc-700 px-2 py-1"
+              onClick={() => setVersion((v) => v + 1)}
             >
-              <summary className="cursor-pointer whitespace-pre-wrap break-words">
-                {notice.summary}
-              </summary>
-              <p className="mt-1 break-all text-zinc-500">
-                {notice.method} ·{" "}
-                {notice.threadId ? "Current thread" : "All threads"} ·{" "}
-                {new Date(notice.timestamp).toLocaleTimeString()}
-              </p>
-              <pre className="mt-2 whitespace-pre-wrap break-words">
-                {JSON.stringify(notice.details, null, 2)}
-              </pre>
-            </details>
-          ))}
-          <p className="text-zinc-500">
-            Recent notices received by this Deck process.
-          </p>
-        </div>
-      </details>
+              Refresh notices
+            </button>
+            {[...notices].reverse().map((notice) => (
+              <details
+                key={notice.id}
+                className="rounded border border-zinc-700 p-2"
+              >
+                <summary className="cursor-pointer whitespace-pre-wrap break-words">
+                  {notice.summary}
+                </summary>
+                <p className="mt-1 break-all text-zinc-500">
+                  {notice.method} ·{" "}
+                  {notice.threadId ? "Current thread" : "All threads"} ·{" "}
+                  {new Date(notice.timestamp).toLocaleTimeString()}
+                </p>
+                <pre className="mt-2 whitespace-pre-wrap break-words">
+                  {JSON.stringify(notice.details, null, 2)}
+                </pre>
+              </details>
+            ))}
+            <p className="text-zinc-500">
+              Recent notices received by this Deck process.
+            </p>
+          </div>
+        </details>
+      </div>
     </div>
   );
 }
