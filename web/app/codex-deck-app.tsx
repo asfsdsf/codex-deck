@@ -96,6 +96,10 @@ import {
   Circle,
   CircleDot,
   Search,
+  Terminal,
+  Code2,
+  Workflow,
+  Plus,
   X,
   ChevronUp,
   ChevronDown,
@@ -602,6 +606,7 @@ const MESSAGE_BOX_DEFAULT_HEIGHT = 48;
 const LEFT_PANE_MIN_WIDTH = 120;
 const LEFT_PANE_MAX_WIDTH = 1200;
 const LEFT_PANE_DEFAULT_WIDTH = 320;
+const LEFT_PANE_COLLAPSED_WIDTH = 48;
 const RIGHT_PANE_MIN_WIDTH = 120;
 const RIGHT_PANE_MAX_WIDTH = 1400;
 const RIGHT_PANE_DEFAULT_WIDTH = 520;
@@ -2871,7 +2876,7 @@ export default function CodexDeckApp() {
     }
 
     const reservedLeft = sidebarCollapsedRef.current
-      ? 0
+      ? LEFT_PANE_COLLAPSED_WIDTH
       : leftPaneWidthRef.current;
     const maxByViewport = window.innerWidth - reservedLeft;
     return Math.min(
@@ -11874,7 +11879,137 @@ export default function CodexDeckApp() {
       className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100"
       data-conversation-view-mode={conversationViewMode || undefined}
     >
-      {!sidebarCollapsed && (
+      {sidebarCollapsed ? (
+        <aside
+          aria-label="Collapsed left pane"
+          className="pane-left relative flex shrink-0 flex-col border-r border-zinc-800/60 bg-zinc-950"
+          style={{ width: `${LEFT_PANE_COLLAPSED_WIDTH}px` }}
+        >
+          <div className="pane-header-left flex h-[50px] shrink-0 items-center justify-center border-b border-zinc-800/60 px-1.5 py-2">
+            <button
+              type="button"
+              onClick={openLeftPane}
+              className="flex h-8 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+              aria-label="Expand left pane"
+              title="Expand left pane"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1.5 pb-2">
+              <div
+                role="group"
+                aria-label="Primary views"
+                className="flex flex-col gap-1"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleSelectTerminal()}
+                  aria-label="Terminal"
+                  aria-pressed={centerView === "terminal"}
+                  title="Terminal"
+                  className={`flex h-9 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
+                    centerView === "terminal"
+                      ? "bg-zinc-800/80 text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
+                  }`}
+                >
+                  <Terminal className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSelectCodex}
+                  aria-label="Codex"
+                  aria-pressed={centerView === "session"}
+                  title="Codex"
+                  className={`flex h-9 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
+                    centerView === "session"
+                      ? "bg-zinc-800/80 text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
+                  }`}
+                >
+                  <Code2 className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectWorkflow()}
+                  aria-label="Workflow"
+                  aria-pressed={centerView === "workflow"}
+                  title="Workflow"
+                  className={`flex h-9 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
+                    centerView === "workflow"
+                      ? "bg-zinc-800/80 text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
+                  }`}
+                >
+                  <Workflow className="h-4 w-4" />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  creatingSession ||
+                  (centerView === "workflow" && workflowActionBusy)
+                }
+                onClick={() => {
+                  if (centerView === "workflow") {
+                    setInteractionError(null);
+                    setWorkflowIdPromptDraft("");
+                    setShowWorkflowIdPromptModal(true);
+                  } else {
+                    void (centerView === "terminal"
+                      ? handleCreateTerminal()
+                      : handleCreateSession());
+                  }
+                }}
+                className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={`New ${centerView === "terminal" ? "terminal" : centerView === "workflow" ? "workflow" : "session"}`}
+                title={`New ${centerView === "terminal" ? "terminal" : centerView === "workflow" ? "workflow" : "session"}`}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  openLeftPane();
+                  focusSessionSearchInput();
+                }}
+                className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+                aria-label="Search sessions"
+                title="Search sessions"
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="shrink-0 space-y-1 p-1.5">
+            <button
+              type="button"
+              onClick={openDeckPlugins}
+              aria-haspopup="dialog"
+              className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+              aria-label="plugins"
+              title="plugins"
+            >
+              <Puzzle className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfigModalAction("settings")}
+              className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+              title="Codex Deck settings"
+              aria-label="Codex Deck settings"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          </div>
+        </aside>
+      ) : (
         <aside
           className="pane-left relative shrink-0 border-r border-zinc-800/60 flex flex-col bg-zinc-950"
           style={{ width: `${leftPaneWidth}px` }}
@@ -12253,17 +12388,6 @@ export default function CodexDeckApp() {
         )}
         <div className="pane-header-center border-b border-zinc-800/60 px-4 py-2">
           <div className="flex min-h-[34px] items-center gap-3">
-            {sidebarCollapsed && (
-              <button
-                type="button"
-                onClick={openLeftPane}
-                className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                aria-label="Expand left pane"
-                title="Expand left pane"
-              >
-                <ChevronRight className="mx-auto h-4 w-4" />
-              </button>
-            )}
             {centerView === "terminal" ? (
               <>
                 <div className="min-w-0 flex-1 text-sm text-zinc-300">
