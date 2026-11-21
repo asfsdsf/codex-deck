@@ -40,7 +40,13 @@ const target = (plugin: CodexPluginView) => ({
   marketplaceName: plugin.marketplaceName,
 });
 
-export default function PluginsAdmin({ cwd }: { cwd: string | null }) {
+export default function PluginsAdmin({
+  cwd,
+  threadId,
+}: {
+  cwd: string | null;
+  threadId: string | null;
+}) {
   const [forceRefetch, setForceRefetch] = useState(false);
   const load = useCallback(
     () => getCodexPlugins(cwd, forceRefetch),
@@ -172,7 +178,7 @@ export default function PluginsAdmin({ cwd }: { cwd: string | null }) {
 
   return (
     <div className="space-y-3 text-sm">
-      <DeckPluginsDirectory />
+      <DeckPluginsDirectory cwd={cwd} threadId={threadId} />
       {data?.enabled && (
         <p className="text-zinc-400">
           Browse plugins from available marketplaces. Installed {installedCount}{" "}

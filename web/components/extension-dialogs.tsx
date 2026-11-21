@@ -75,7 +75,9 @@ export default function ExtensionDialogs({
       {dialog.kind === "apps" && (
         <AppsAdmin key={key} threadId={dialog.threadId} />
       )}
-      {dialog.kind === "plugins" && <PluginsAdmin key={key} cwd={dialog.cwd} />}
+      {dialog.kind === "plugins" && (
+        <PluginsAdmin key={key} cwd={dialog.cwd} threadId={dialog.threadId} />
+      )}
     </NativeDialog>
   );
 }

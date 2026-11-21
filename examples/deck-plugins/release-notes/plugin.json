@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "apiVersion": 1,
+  "id": "example.release-notes",
+  "name": "Release Notes",
+  "author": "Example team",
+  "version": "1.0.0",
+  "description": "Release notes plugin with saved project notes.",
+  "capabilities": ["context.read", "state.read", "state.write"],
+  "entrypoints": { "panel": "index.html" }
+}
