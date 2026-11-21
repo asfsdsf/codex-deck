@@ -35,7 +35,7 @@ export default function OperationalNotices({
   const [notices, setNotices] = useState<CodexOperationalNotification[]>([]);
   const [version, setVersion] = useState(0);
   const [error, setError] = useState("");
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const noticesId = useId();
   useEffect(() => {
     let active = true;
