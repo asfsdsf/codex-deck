@@ -1,0 +1,135 @@
+.operational-notices {
+  --notices-transition-duration: 320ms;
+  --notices-transition-easing: cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  z-index: 30;
+  display: grid;
+  grid-template-rows: 1fr;
+  flex-shrink: 0;
+  transition: grid-template-rows var(--notices-transition-duration)
+    var(--notices-transition-easing);
+}
+
+/* The bar's surface shrinks and moves into the floating button. */
+.operational-notices::before {
+  position: absolute;
+  inset: 0;
+  min-height: 44px;
+  background: color-mix(in srgb, var(--color-zinc-900) 60%, transparent);
+  clip-path: inset(0 round 0);
+  content: "";
+  pointer-events: none;
+  transition:
+    clip-path var(--notices-transition-duration)
+      var(--notices-transition-easing),
+    transform var(--notices-transition-duration)
+      var(--notices-transition-easing),
+    background-color var(--notices-transition-duration);
+}
+
+.operational-notices-content {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  transform-origin: top right;
+  transition:
+    opacity var(--notices-transition-duration),
+    transform var(--notices-transition-duration)
+      var(--notices-transition-easing),
+    visibility 0s;
+}
+
+.operational-notices-toggle {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-zinc-400);
+  cursor: pointer;
+  transition:
+    top var(--notices-transition-duration) var(--notices-transition-easing),
+    right var(--notices-transition-duration) var(--notices-transition-easing),
+    width var(--notices-transition-duration) var(--notices-transition-easing),
+    height var(--notices-transition-duration) var(--notices-transition-easing),
+    border-radius var(--notices-transition-duration),
+    border-color var(--notices-transition-duration),
+    background-color var(--notices-transition-duration),
+    color var(--notices-transition-duration),
+    box-shadow var(--notices-transition-duration);
+}
+
+.operational-notices-toggle:hover {
+  background: var(--color-zinc-800);
+}
+
+.operational-notices-arrow,
+.operational-notices-alert {
+  position: absolute;
+  transition:
+    opacity var(--notices-transition-duration),
+    transform var(--notices-transition-duration)
+      var(--notices-transition-easing);
+}
+
+.operational-notices-alert {
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.operational-notices[data-collapsed="true"] {
+  grid-template-rows: 0fr;
+}
+
+.operational-notices[data-collapsed="true"]::before {
+  background: var(--color-zinc-900);
+  clip-path: inset(0 12px calc(100% - 44px) calc(100% - 56px) round 22px);
+  transform: translateY(64px);
+}
+
+.operational-notices[data-collapsed="true"] .operational-notices-content {
+  opacity: 0;
+  transform: translate(24px, 32px) scale(0.96);
+  visibility: hidden;
+  transition-delay: 0s, 0s, var(--notices-transition-duration);
+}
+
+.operational-notices[data-collapsed="true"] .operational-notices-toggle {
+  top: 64px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  border-color: color-mix(in srgb, var(--color-red-400) 40%, transparent);
+  border-radius: 50%;
+  background: var(--color-zinc-900);
+  color: var(--color-red-400);
+  box-shadow:
+    0 10px 15px -3px #0000001a,
+    0 4px 6px -4px #0000001a;
+}
+
+.operational-notices[data-collapsed="true"] .operational-notices-toggle:hover {
+  background: var(--color-zinc-800);
+}
+
+.operational-notices[data-collapsed="true"] .operational-notices-arrow {
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.operational-notices[data-collapsed="true"] .operational-notices-alert {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operational-notices {
+    --notices-transition-duration: 0ms;
+  }
+}
