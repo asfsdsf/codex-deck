@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CodexPluginDetailView,
   CodexPluginView,
@@ -16,6 +16,7 @@ import {
 } from "../extensions-api";
 import { useNativeSnapshot } from "../hooks/use-native-snapshot";
 import { AppLink } from "./apps-admin";
+import DeckPluginsDirectory from "./deck-plugins-directory";
 
 const button =
   "min-h-9 rounded border border-zinc-700 px-3 py-1.5 disabled:opacity-50";
@@ -63,6 +64,18 @@ export default function PluginsAdmin({ cwd }: { cwd: string | null }) {
   const [notice, setNotice] = useState("");
   const [marketplaceSource, setMarketplaceSource] = useState("");
   const [marketplaceRef, setMarketplaceRef] = useState("");
+  const pendingChangeRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!pending) return;
+    const frame = requestAnimationFrame(() =>
+      pendingChangeRef.current?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [pending]);
 
   const act = async (label: string, work: () => Promise<void>) => {
     setBusy(label);
@@ -159,6 +172,7 @@ export default function PluginsAdmin({ cwd }: { cwd: string | null }) {
 
   return (
     <div className="space-y-3 text-sm">
+      <DeckPluginsDirectory />
       {data?.enabled && (
         <p className="text-zinc-400">
           Browse plugins from available marketplaces. Installed {installedCount}{" "}
@@ -233,6 +247,7 @@ export default function PluginsAdmin({ cwd }: { cwd: string | null }) {
 
       {pending && (
         <div
+          ref={pendingChangeRef}
           role="alertdialog"
           aria-label="Confirm plugin change"
           className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
@@ -484,6 +499,9 @@ export default function PluginsAdmin({ cwd }: { cwd: string | null }) {
                     <div className="min-w-0">
                       <p className="break-words font-semibold">
                         {plugin.displayName}
+                        <span className="ml-2 inline-flex rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-300">
+                          Codex
+                        </span>
                         {plugin.featured && (
                           <span className="ml-2 text-xs text-cyan-300">
                             Featured

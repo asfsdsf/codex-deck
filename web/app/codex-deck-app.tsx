@@ -108,6 +108,7 @@ import {
   OctagonX,
   Activity,
   ExternalLink,
+  Puzzle,
   Settings,
 } from "lucide-react";
 import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
@@ -3117,6 +3118,15 @@ export default function CodexDeckApp() {
       sessionsWithThreadNames.find((s) => s.id === selectedSession) || null
     );
   }, [sessionsWithThreadNames, selectedSession]);
+  const openDeckPlugins = useCallback(
+    () =>
+      setExtensionDialog({
+        kind: "plugins",
+        threadId: selectedSession,
+        cwd: selectedSessionData?.project ?? null,
+      }),
+    [selectedSession, selectedSessionData?.project],
+  );
   const sideChatParentId = selectedSession
     ? (sideThreadsById[selectedSession]?.parentThreadId ?? selectedSession)
     : null;
@@ -12194,6 +12204,15 @@ export default function CodexDeckApp() {
             />
           </div>
           <div className="shrink-0 p-2">
+            <button
+              type="button"
+              onClick={openDeckPlugins}
+              aria-haspopup="dialog"
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+            >
+              <Puzzle className="size-4 shrink-0" />
+              <span>plugins</span>
+            </button>
             <button
               type="button"
               onClick={() => setConfigModalAction("settings")}

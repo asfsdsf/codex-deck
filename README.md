@@ -37,6 +37,7 @@ Codex capabilities:
 - **Plan actions** - Use Plan mode and apply plan proposals.
 - **Async questions** - Answer multiple pending questions while Codex keeps working, with choice and free-text replies.
 - **`/`, `@`, and `$` support** - Use slash commands, file mentions, and skill mentions in the composer (similar to Codex CLI).
+- **Unified plugins** - The /plugins floating window lists Codex CLI marketplace plugins and Codex Deck plugin manifests, labeled by system. Codex Deck manifests are managed in the selected Codex home's data directory. [Plugin guide](docs/DECK_PLUGINS.md)
 - **Live session list** - Real-time session updates with project filtering and session search.
 - **Environment variables** - Pass environment variables into codex sessions.
 

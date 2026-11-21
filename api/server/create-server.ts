@@ -11,6 +11,8 @@ import { registerMemoryInsightRoutes } from "./memory-insight-routes";
 import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
 import { registerExtensionRoutes } from "./extension-routes";
+import { registerDeckPluginRoutes } from "./deck-plugin-routes";
+import { DeckPluginStore } from "../deck-plugin-store";
 import { registerThreadHistoryRoutes } from "./thread-history-routes";
 import { sideConversationItems } from "../session-origins";
 import { getAnswerRestriction } from "../conversation-item-metadata";
@@ -5066,6 +5068,17 @@ export function createServer(options: ServerOptions) {
   registerExtensionRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
+  registerDeckPluginRoutes(
+    app,
+    new DeckPluginStore(getCodexDir(), () =>
+      emitAppServerEvent({
+        type: "native_state_changed",
+        scope: "deck-plugins",
+        threadId: null,
+        revision: randomUUID(),
+      }),
+    ),
+  );
   registerIdeContextRoutes(app);
   registerMcpAppRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
