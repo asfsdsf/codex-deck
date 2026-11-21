@@ -102,75 +102,84 @@ function HookDetails(props: {
   const canTrust = !hook.isManaged && needsReview;
 
   return (
-    <div className="h-full overflow-auto p-3">
-      <div className="space-y-3">
-        <div>
-          <div className="text-sm text-zinc-100">
-            {formatHookEventName(hook.eventName)}
+    <div className="h-full overflow-auto p-4 sm:p-5">
+      <div className="mx-auto max-w-2xl space-y-4">
+        <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                {formatHookEventName(hook.eventName)}
+              </h2>
+              <p className="mt-1 break-all text-xs text-zinc-500">{hook.key}</p>
+            </div>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${
+                hookIsRunnable(hook)
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+              }`}
+            >
+              {hookIsRunnable(hook) ? "Active" : "Inactive"}
+            </span>
           </div>
-          <div className="mt-1 text-xs text-zinc-500 break-all">{hook.key}</div>
-        </div>
-        <div className="flex flex-wrap gap-2 text-[10px]">
-          <span
-            className={`rounded-full border px-2 py-1 ${
-              hookIsRunnable(hook)
-                ? "border-emerald-500/40 bg-emerald-500/12 text-emerald-200"
-                : "border-amber-500/40 bg-amber-500/12 text-amber-200"
-            }`}
-          >
-            {hookIsRunnable(hook) ? "active" : "inactive"}
-          </span>
-          <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-2 py-1 text-zinc-300">
-            {hook.handlerType}
-          </span>
-          <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-2 py-1 text-zinc-300">
-            {hookTrustLabel(hook.trustStatus)}
-          </span>
-        </div>
-        <div className="text-[11px] text-zinc-400 space-y-1">
-          <div>
-            <span className="text-zinc-500">Source:</span>{" "}
-            {formatHookSource(hook.source)}
+          <div className="mt-4 flex flex-wrap gap-2 text-[10px]">
+            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800/70 dark:text-zinc-300">
+              {hook.handlerType}
+            </span>
+            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800/70 dark:text-zinc-300">
+              {hookTrustLabel(hook.trustStatus)}
+            </span>
           </div>
+        </section>
+        <section className="grid gap-x-5 gap-y-3 rounded-2xl border border-zinc-200 bg-white p-4 text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-2">
           <div>
-            <span className="text-zinc-500">Source path:</span>{" "}
-            <span className="break-all">{hook.sourcePath}</span>
-          </div>
-          <div>
-            <span className="text-zinc-500">Timeout:</span> {hook.timeoutSec}s
+            <span className="text-zinc-500">Source</span>
+            <div className="mt-1">{formatHookSource(hook.source)}</div>
           </div>
           <div>
-            <span className="text-zinc-500">Enabled:</span>{" "}
-            {hook.enabled ? "true" : "false"}
+            <span className="text-zinc-500">Timeout</span>
+            <div className="mt-1">{hook.timeoutSec}s</div>
           </div>
           <div>
-            <span className="text-zinc-500">Managed:</span>{" "}
-            {hook.isManaged ? "true" : "false"}
+            <span className="text-zinc-500">Enabled</span>
+            <div className="mt-1">{hook.enabled ? "Yes" : "No"}</div>
+          </div>
+          <div>
+            <span className="text-zinc-500">Managed</span>
+            <div className="mt-1">{hook.isManaged ? "Yes" : "No"}</div>
+          </div>
+          <div className="min-w-0 sm:col-span-2">
+            <span className="text-zinc-500">Source path</span>
+            <div className="mt-1 break-all">{hook.sourcePath}</div>
           </div>
           {hook.matcher ? (
-            <div>
-              <span className="text-zinc-500">Matcher:</span> {hook.matcher}
+            <div className="min-w-0">
+              <span className="text-zinc-500">Matcher</span>
+              <div className="mt-1 break-all">{hook.matcher}</div>
             </div>
           ) : null}
           {hook.pluginId ? (
-            <div>
-              <span className="text-zinc-500">Plugin:</span> {hook.pluginId}
+            <div className="min-w-0">
+              <span className="text-zinc-500">Plugin</span>
+              <div className="mt-1 break-all">{hook.pluginId}</div>
             </div>
           ) : null}
           {hook.statusMessage ? (
-            <div>
-              <span className="text-zinc-500">Status:</span>{" "}
-              {hook.statusMessage}
+            <div className="min-w-0 sm:col-span-2">
+              <span className="text-zinc-500">Status</span>
+              <div className="mt-1 break-words">{hook.statusMessage}</div>
             </div>
           ) : null}
-        </div>
+        </section>
         {hook.command ? (
-          <div>
-            <div className="text-[11px] text-zinc-500 mb-1">Command</div>
-            <pre className="rounded border border-zinc-800 bg-zinc-900/60 p-2 text-[11px] leading-5 text-zinc-300 whitespace-pre-wrap break-words font-mono">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <h3 className="mb-2 text-[11px] font-medium text-zinc-500">
+              Command
+            </h3>
+            <pre className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-[11px] leading-5 text-zinc-700 whitespace-pre-wrap break-words font-mono dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
               {hook.command}
             </pre>
-          </div>
+          </section>
         ) : null}
         <div className="flex flex-wrap gap-2">
           {canTrust ? (
@@ -178,7 +187,7 @@ function HookDetails(props: {
               type="button"
               onClick={() => onTrustHook(hook)}
               disabled={isUpdating}
-              className="h-8 rounded border border-sky-600/60 bg-sky-700/20 px-3 text-xs text-sky-200 transition-colors hover:bg-sky-700/30 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="h-9 rounded-xl border border-sky-600/35 bg-sky-500/10 px-3.5 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-500/15 disabled:opacity-60 disabled:cursor-not-allowed dark:text-sky-200"
             >
               {isUpdating ? "Saving..." : "Trust hook"}
             </button>
@@ -187,7 +196,7 @@ function HookDetails(props: {
             type="button"
             onClick={() => onToggleHookEnabled(hook, !hook.enabled)}
             disabled={isUpdating || !canToggle}
-            className={`h-8 rounded border px-3 text-xs transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+            className={`h-9 rounded-xl border px-3.5 text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
               canToggle
                 ? hook.enabled
                   ? "border-rose-600/60 bg-rose-700/20 text-rose-200 hover:bg-rose-700/30"
@@ -255,15 +264,15 @@ function HooksConfigurationPane(props: HooksPaneProps) {
   }
 
   return (
-    <div className="flex-1 min-h-0 flex">
+    <div className="flex min-h-0 flex-1">
       {isFileListVisible ? (
-        <div className="w-56 border-r border-zinc-800/60 overflow-y-auto">
-          <div className="px-3 py-2 border-b border-zinc-800/60 text-[11px] text-zinc-500 flex items-center justify-between gap-2">
-            <span>{`${hooks.length} hooks`}</span>
+        <div className="w-56 shrink-0 overflow-y-auto border-r border-zinc-800/60 bg-zinc-50/70 py-2 dark:bg-zinc-950/50">
+          <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-2 text-[11px] text-zinc-500">
+            <span>{`${hooks.length} ${hooks.length === 1 ? "hook" : "hooks"}`}</span>
             <button
               type="button"
               onClick={onRefreshHooks}
-              className="h-6 w-6 shrink-0 rounded border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800/80 transition-colors"
+              className="h-7 w-7 shrink-0 rounded-lg text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
               aria-label="Refresh hooks"
               title="Refresh hooks"
             >
@@ -271,31 +280,31 @@ function HooksConfigurationPane(props: HooksPaneProps) {
             </button>
           </div>
           {hooksData?.warnings.length ? (
-            <div className="px-3 py-2 border-b border-zinc-900 text-[10px] text-amber-300">
+            <div className="mx-2 mb-2 rounded-lg bg-amber-500/10 px-2.5 py-2 text-[10px] text-amber-800 dark:text-amber-200">
               {hooksData.warnings.join(" ")}
             </div>
           ) : null}
           {hooksData?.errors.length ? (
-            <div className="px-3 py-2 border-b border-zinc-900 text-[10px] text-rose-300">
+            <div className="mx-2 mb-2 rounded-lg bg-rose-500/10 px-2.5 py-2 text-[10px] text-rose-800 dark:text-rose-200">
               {hooksData.errors.length} hook config error
               {hooksData.errors.length === 1 ? "" : "s"}
             </div>
           ) : null}
           {reviewNeededCount > 0 ? (
-            <div className="px-3 py-2 border-b border-zinc-900 text-[10px] text-amber-300 flex items-center justify-between gap-2">
+            <div className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg bg-amber-500/10 px-2.5 py-2 text-[10px] text-amber-800 dark:text-amber-200">
               <span>{reviewNeededCount} need review</span>
               <button
                 type="button"
                 onClick={onTrustAllHooks}
                 disabled={updatingHookKey === "__all__"}
-                className="rounded border border-sky-600/60 bg-sky-700/20 px-2 py-1 text-[10px] text-sky-200 transition-colors hover:bg-sky-700/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="rounded-lg border border-sky-600/30 bg-sky-500/10 px-2.5 py-1.5 text-[10px] font-medium text-sky-700 transition-colors hover:bg-sky-500/15 disabled:opacity-60 disabled:cursor-not-allowed dark:text-sky-200"
               >
                 {updatingHookKey === "__all__" ? "Saving..." : "Trust all"}
               </button>
             </div>
           ) : null}
           {hooks.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-zinc-500">
+            <div className="px-4 py-3 text-xs text-zinc-500">
               No hooks available.
             </div>
           ) : (
@@ -307,20 +316,20 @@ function HooksConfigurationPane(props: HooksPaneProps) {
                   key={hook.key}
                   type="button"
                   onClick={() => onSelectHookKey(hook.key)}
-                  className={`w-full text-left px-3 py-2 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors ${
-                    active ? "bg-zinc-900/60" : ""
+                  className={`mx-2 mb-0.5 w-[calc(100%-1rem)] rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-zinc-200/70 dark:hover:bg-zinc-800/70 ${
+                    active ? "bg-zinc-200/80 dark:bg-zinc-800" : ""
                   }`}
                   title={hook.key}
                 >
-                  <div className="text-[11px] leading-4 text-zinc-200 truncate">
+                  <div className="truncate text-[11px] font-medium leading-4 text-zinc-800 dark:text-zinc-200">
                     {formatHookEventName(hook.eventName)}
                   </div>
                   <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
                     <span
                       className={
                         hookIsRunnable(hook)
-                          ? "text-emerald-300"
-                          : "text-amber-300"
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-amber-700 dark:text-amber-300"
                       }
                     >
                       {hookIsRunnable(hook) ? "active" : "inactive"}
@@ -342,7 +351,7 @@ function HooksConfigurationPane(props: HooksPaneProps) {
       ) : null}
 
       <div className="flex-1 min-w-0 flex flex-col">
-        <div className="h-9 px-3 border-b border-zinc-800/60 flex items-center gap-2">
+        <div className="flex h-10 items-center gap-2 border-b border-zinc-800/60 px-4">
           <span className="text-xs text-zinc-300 truncate">
             {selectedFileLabel}
           </span>

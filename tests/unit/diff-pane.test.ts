@@ -13,7 +13,7 @@ function renderDiffPane(overrides: Partial<DiffPaneProps> = {}): string {
     collapsed: false,
     revealFileListVersion: 0,
     isMobilePhone: false,
-    mode: "file-tree",
+    mode: "files",
     sessionId: "session-1",
     threadId: "session-1",
     width: 420,
@@ -81,6 +81,7 @@ function renderDiffPane(overrides: Partial<DiffPaneProps> = {}): string {
     onOpenFileTreeDirectory: () => {},
     onLoadMoreFileTreeNodes: () => {},
     onChangeFileContentPage: () => {},
+    onRefreshFiles: () => {},
     onSelectTerminalRun: () => {},
     onRefreshTerminalRuns: () => {},
     onSelectHookKey: () => {},
@@ -123,20 +124,30 @@ test("DiffPane still shows a blocking loading state before the first file tree p
     selectedFilePath: null,
   });
 
-  assert.match(html, /Loading file tree/);
+  assert.match(html, /Loading files/);
+});
+
+test("right sidebar start page offers only Files, Git, and Tasks", () => {
+  const html = renderDiffPane({ mode: "home" });
+
+  assert.match(html, /data-right-pane-guide-entry="files"/);
+  assert.match(html, /data-right-pane-guide-entry="git"/);
+  assert.match(html, /data-right-pane-guide-entry="tasks"/);
+  assert.doesNotMatch(
+    html,
+    /data-right-pane-guide-entry="(?:hooks|skills|staged|last-turn)/,
+  );
+  assert.doesNotMatch(html, /Terminal run|Last turn|Staged/);
 });
 
 test("workflow project panes keep configuration and unavailable states without thread runtime panels", () => {
   const project = { sessionId: "/repo/project", threadId: null };
   const terminalHtml = renderDiffPane({
     ...project,
-    mode: "terminal-flow",
-    terminalRunsError: "Terminal flow is unavailable for workflow projects.",
+    mode: "tasks",
+    terminalRunsError: "Tasks are unavailable for workflow projects.",
   });
-  assert.match(
-    terminalHtml,
-    /Terminal flow is unavailable for workflow projects/,
-  );
+  assert.match(terminalHtml, /Tasks are unavailable for workflow projects/);
   assert.doesNotMatch(
     terminalHtml,
     /Codex background commands|Loading active commands/,
@@ -150,10 +161,7 @@ test("workflow project panes keep configuration and unavailable states without t
 });
 
 test("session panes still mount background commands and hook execution progress", () => {
-  assert.match(
-    renderDiffPane({ mode: "terminal-flow" }),
-    /Codex background commands/,
-  );
+  assert.match(renderDiffPane({ mode: "tasks" }), /Codex background commands/);
   assert.match(renderDiffPane({ mode: "hooks" }), /Recent hook executions/);
   assert.doesNotMatch(
     renderDiffPane({ mode: "hooks", collapsed: true }),

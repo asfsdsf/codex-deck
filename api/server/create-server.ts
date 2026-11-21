@@ -14,6 +14,8 @@ import { registerExtensionRoutes } from "./extension-routes";
 import { registerDeckPluginRoutes } from "./deck-plugin-routes";
 import { DeckPluginStore } from "../deck-plugin-store";
 import { registerThreadHistoryRoutes } from "./thread-history-routes";
+import { registerGitWorkspaceRoutes } from "./git-workspace-routes";
+import { registerWorkspaceFileRoutes } from "./workspace-file-routes";
 import { sideConversationItems } from "../session-origins";
 import { getAnswerRestriction } from "../conversation-item-metadata";
 import { Hono } from "hono";
@@ -680,6 +682,7 @@ interface GitCommandResult {
 const SESSION_DIFF_MODES: SessionDiffMode[] = [
   "unstaged",
   "staged",
+  "working-tree",
   "last-turn",
 ];
 
@@ -707,7 +710,12 @@ const FILE_IMAGE_PREVIEW_MEDIA_TYPES = new Map<string, string>([
 function parseSessionDiffMode(
   value: string | undefined,
 ): SessionDiffMode | null {
-  if (value === "unstaged" || value === "staged" || value === "last-turn") {
+  if (
+    value === "unstaged" ||
+    value === "staged" ||
+    value === "working-tree" ||
+    value === "last-turn"
+  ) {
     return value;
   }
   return null;
@@ -1458,7 +1466,7 @@ async function runGitCommand(
 
 async function buildGitDiffResponse(
   sessionId: string,
-  mode: "unstaged" | "staged",
+  mode: "unstaged" | "staged" | "working-tree",
   projectPath: string | null,
 ): Promise<SessionDiffResponse> {
   if (!projectPath) {
@@ -1473,19 +1481,58 @@ async function buildGitDiffResponse(
   }
 
   const sharedArgs = ["--no-color", "--find-renames"];
-  const nameStatusArgs =
+  const comparisonArgs =
     mode === "staged"
-      ? ["diff", "--cached", "--name-status", ...sharedArgs]
-      : ["diff", "--name-status", ...sharedArgs];
-  const patchArgs =
-    mode === "staged"
-      ? ["diff", "--cached", "--patch", ...sharedArgs]
-      : ["diff", "--patch", ...sharedArgs];
+      ? ["diff", "--cached"]
+      : mode === "working-tree"
+        ? ["diff", "HEAD"]
+        : ["diff"];
+  const nameStatusArgs = [...comparisonArgs, "--name-status", ...sharedArgs];
+  const patchArgs = [...comparisonArgs, "--patch", ...sharedArgs];
 
-  const [nameStatusResult, patchResult] = await Promise.all([
+  let [nameStatusResult, patchResult] = await Promise.all([
     runGitCommand(projectPath, nameStatusArgs),
     runGitCommand(projectPath, patchArgs),
   ]);
+
+  // A repository without a commit has no HEAD to compare against yet. Combine
+  // its index and worktree diffs instead so the Git page still opens usefully.
+  if (
+    mode === "working-tree" &&
+    (nameStatusResult.exitCode !== 0 || patchResult.exitCode !== 0)
+  ) {
+    const [stagedNames, unstagedNames, stagedPatch, unstagedPatch] =
+      await Promise.all([
+        runGitCommand(projectPath, [
+          "diff",
+          "--cached",
+          "--name-status",
+          ...sharedArgs,
+        ]),
+        runGitCommand(projectPath, ["diff", "--name-status", ...sharedArgs]),
+        runGitCommand(projectPath, [
+          "diff",
+          "--cached",
+          "--patch",
+          ...sharedArgs,
+        ]),
+        runGitCommand(projectPath, ["diff", "--patch", ...sharedArgs]),
+      ]);
+    nameStatusResult = {
+      exitCode:
+        stagedNames.exitCode === 0 && unstagedNames.exitCode === 0 ? 0 : 1,
+      stdout: `${stagedNames.stdout}${unstagedNames.stdout}`,
+      stderr: `${stagedNames.stderr}\n${unstagedNames.stderr}`,
+      timedOut: stagedNames.timedOut || unstagedNames.timedOut,
+    };
+    patchResult = {
+      exitCode:
+        stagedPatch.exitCode === 0 && unstagedPatch.exitCode === 0 ? 0 : 1,
+      stdout: `${stagedPatch.stdout}${unstagedPatch.stdout}`,
+      stderr: `${stagedPatch.stderr}\n${unstagedPatch.stderr}`,
+      timedOut: stagedPatch.timedOut || unstagedPatch.timedOut,
+    };
+  }
 
   if (nameStatusResult.timedOut || patchResult.timedOut) {
     return {
@@ -1516,6 +1563,70 @@ async function buildGitDiffResponse(
 
   const statusByPath = parseGitNameStatus(nameStatusResult.stdout);
   const diffByPath = splitGitDiffByFile(patchResult.stdout);
+
+  if (mode === "working-tree") {
+    const untracked = await runGitCommand(projectPath, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+    ]);
+    if (untracked.timedOut || untracked.exitCode !== 0) {
+      return {
+        sessionId,
+        mode,
+        projectPath,
+        turnId: null,
+        files: [],
+        unavailableReason: firstLineOrFallback(
+          untracked.stderr,
+          "Could not read untracked Git files.",
+        ),
+      };
+    }
+
+    const paths = untracked.stdout.split("\0").filter(Boolean);
+    let nextPathIndex = 0;
+    let untrackedTimedOut = false;
+    const readUntrackedBatch = async () => {
+      while (nextPathIndex < paths.length) {
+        const path = paths[nextPathIndex++];
+        if (!path) continue;
+        const result = await runGitCommand(projectPath, [
+          "diff",
+          "--no-index",
+          "--no-color",
+          "--",
+          "/dev/null",
+          path,
+        ]);
+        if (result.timedOut) {
+          untrackedTimedOut = true;
+          continue;
+        }
+        // git diff --no-index returns 1 when the files differ, which is the
+        // normal result for an untracked file.
+        if (result.exitCode === 0 || result.exitCode === 1) {
+          statusByPath.set(path, "A");
+          diffByPath.set(path, result.stdout.trimEnd());
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(paths.length, 8) }, readUntrackedBatch),
+    );
+    if (untrackedTimedOut) {
+      return {
+        sessionId,
+        mode,
+        projectPath,
+        turnId: null,
+        files: [],
+        unavailableReason: "Timed out while reading untracked Git files.",
+      };
+    }
+  }
   const paths = new Set<string>([...statusByPath.keys(), ...diffByPath.keys()]);
 
   const files = [...paths]
@@ -2352,6 +2463,7 @@ export function createServer(options: ServerOptions) {
   const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
     if (
+      event.type === "workspace_files_changed" ||
       event.type === "native_state_changed" ||
       event.type === "background_terminals_changed" ||
       event.type === "hook_run" ||
@@ -2556,6 +2668,30 @@ export function createServer(options: ServerOptions) {
     return c.json(projects);
   });
   registerWorkflowRoutes(app, { workflowRouteUnavailable });
+  registerGitWorkspaceRoutes(app, {
+    resolveSessionProjectPath,
+    resolveWorkflowProjectPath,
+    workflowRouteUnavailable,
+    onChanged: (projectPath, threadId) =>
+      emitAppServerEvent({
+        type: "workspace_files_changed",
+        projectPath,
+        threadId,
+        revision: randomUUID(),
+      }),
+  });
+  registerWorkspaceFileRoutes(app, {
+    resolveSessionProjectPath,
+    resolveWorkflowProjectPath,
+    workflowRouteUnavailable,
+    onChanged: (projectPath, threadId) =>
+      emitAppServerEvent({
+        type: "workspace_files_changed",
+        projectPath,
+        threadId,
+        revision: randomUUID(),
+      }),
+  });
   registerSystemRoutes(app);
   const hoverSettingsRoutes = registerConversationHoverSettingsRoutes(
     app,
@@ -2983,7 +3119,11 @@ export function createServer(options: ServerOptions) {
         ? await buildLastTurnDiffResponse(sessionId, projectPath)
         : await buildGitDiffResponse(
             sessionId,
-            mode === "staged" ? "staged" : "unstaged",
+            mode === "staged"
+              ? "staged"
+              : mode === "working-tree"
+                ? "working-tree"
+                : "unstaged",
             projectPath,
           );
 
@@ -3031,7 +3171,11 @@ export function createServer(options: ServerOptions) {
 
     const response = await buildGitDiffResponse(
       workflowKey,
-      mode === "staged" ? "staged" : "unstaged",
+      mode === "staged"
+        ? "staged"
+        : mode === "working-tree"
+          ? "working-tree"
+          : "unstaged",
       projectPath,
     );
     return c.json(response);
@@ -3461,6 +3605,42 @@ export function createServer(options: ServerOptions) {
         unavailableReason: "Failed to search project files.",
       };
       return c.json(response);
+    }
+  });
+
+  app.get("/api/workflow-project/:key/file-search", async (c) => {
+    if (workflowRouteUnavailable(c.req.raw.headers))
+      return c.json(
+        { error: "Workflow pane is unavailable in remote mode." },
+        409,
+      );
+    const sessionId = c.req.param("key");
+    const projectPath = await resolveWorkflowProjectPath(sessionId);
+    if (!projectPath) return c.json({ error: "Project not found." }, 404);
+    const query = c.req.query("query") ?? "";
+    try {
+      const files = normalizeFileSearchQuery(query)
+        ? searchProjectFiles(
+            await collectProjectFiles(projectPath),
+            query,
+            parseFileSearchLimit(c.req.query("limit")),
+          )
+        : [];
+      return c.json({
+        sessionId,
+        projectPath,
+        query,
+        files,
+        unavailableReason: null,
+      } satisfies SessionFileSearchResponse);
+    } catch {
+      return c.json({
+        sessionId,
+        projectPath,
+        query,
+        files: [],
+        unavailableReason: "Failed to search project files.",
+      } satisfies SessionFileSearchResponse);
     }
   });
 

@@ -57,6 +57,8 @@ import type {
   SessionContentSearchResponse,
   SessionFileContentResponse,
   SessionFileSearchResponse,
+  SessionGitActionRequest,
+  SessionGitStatusResponse,
   SessionFileTreeResponse,
   SessionFileTreeNodesResponse,
   SessionHooksConfigWriteRequest,
@@ -1625,6 +1627,31 @@ export async function getSessionDiff(
   );
 }
 
+export async function getSessionGitStatus(
+  sessionId: string,
+  currentBranchOnly = false,
+  includeGraph = true,
+): Promise<SessionGitStatusResponse> {
+  return requestJson<SessionGitStatusResponse>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/git/status${!includeGraph ? "?graph=none" : currentBranchOnly ? "?graph=current" : ""}`,
+  );
+}
+
+export async function applySessionGitAction(
+  sessionId: string,
+  action: SessionGitActionRequest,
+): Promise<{ ok: boolean; status: SessionGitStatusResponse }> {
+  return requestJsonAndNotifyConversation(
+    sessionId,
+    `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action),
+    },
+  );
+}
+
 export async function getWorkflowProjectDiff(
   workflowKey: string,
   mode: Exclude<SessionDiffMode, "file-tree">,
@@ -1634,6 +1661,31 @@ export async function getWorkflowProjectDiff(
   });
   return requestJson<SessionDiffResponse>(
     `/api/workflow-project/${encodeURIComponent(workflowKey)}/diff?${params.toString()}`,
+  );
+}
+
+export async function getWorkflowProjectGitStatus(
+  workflowKey: string,
+  currentBranchOnly = false,
+  includeGraph = true,
+): Promise<SessionGitStatusResponse> {
+  return requestJson<SessionGitStatusResponse>(
+    `/api/workflow-project/${encodeURIComponent(workflowKey)}/git/status${!includeGraph ? "?graph=none" : currentBranchOnly ? "?graph=current" : ""}`,
+  );
+}
+
+export async function applyWorkflowProjectGitAction(
+  workflowKey: string,
+  action: SessionGitActionRequest,
+): Promise<{ ok: boolean; status: SessionGitStatusResponse }> {
+  return requestJsonAndNotifyWorkflow(
+    workflowKey,
+    `/api/workflow-project/${encodeURIComponent(workflowKey)}/git/action`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action),
+    },
   );
 }
 
@@ -1964,6 +2016,17 @@ export async function searchSessionFiles(
   );
 }
 
+export async function searchWorkflowProjectFiles(
+  workflowKey: string,
+  query: string,
+  limit = 40,
+): Promise<SessionFileSearchResponse> {
+  const params = new URLSearchParams({ query, limit: String(limit) });
+  return requestJson(
+    `/api/workflow-project/${encodeURIComponent(workflowKey)}/file-search?${params}`,
+  );
+}
+
 export async function getSessionFileContent(
   sessionId: string,
   path: string,
@@ -1972,6 +2035,41 @@ export async function getSessionFileContent(
   const params = new URLSearchParams({ path, page: String(page) });
   return requestJson<SessionFileContentResponse>(
     `/api/sessions/${encodeURIComponent(sessionId)}/file-content?${params.toString()}`,
+  );
+}
+
+export async function saveWorkspaceFile(
+  scope: { threadId?: string | null; workflowKey?: string | null },
+  path: string,
+  content: string,
+  expectedContent: string,
+): Promise<{ saved: boolean }> {
+  const key = scope.threadId ?? scope.workflowKey;
+  if (!key) throw new Error("No workspace selected.");
+  return requestJson(
+    `/api/${scope.threadId ? "sessions" : "workflow-project"}/${encodeURIComponent(key)}/file-content`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, content, expectedContent }),
+    },
+  );
+}
+
+export async function uploadWorkspaceFile(
+  scope: { threadId?: string | null; workflowKey?: string | null },
+  path: string,
+  data: string,
+) {
+  const key = scope.threadId ?? scope.workflowKey;
+  if (!key) throw new Error("No workspace selected.");
+  return requestJson<{ saved: boolean }>(
+    `/api/${scope.threadId ? "sessions" : "workflow-project"}/${encodeURIComponent(key)}/file-upload`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, data }),
+    },
   );
 }
 

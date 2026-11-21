@@ -5,6 +5,9 @@ import { resolve } from "path";
 import { precompressAssets } from "./build-compression";
 import { minifyWebChunks, webVendorChunk } from "./build-chunks";
 
+const apiTarget =
+  process.env.CODEX_DECK_API_TARGET?.trim() || "http://localhost:12001";
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), minifyWebChunks(), precompressAssets()],
   root: resolve(__dirname),
@@ -19,7 +22,7 @@ export default defineConfig({
     port: 12000,
     proxy: {
       "/api/": {
-        target: "http://localhost:12001",
+        target: apiTarget,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on("proxyReq", (proxyReq, req) => {
