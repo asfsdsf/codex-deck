@@ -18,6 +18,11 @@ test("settings form shows effective file values, including overrides and explici
       dev: false,
       open: false,
       translationCommand: "printf local",
+      proxy: {
+        httpProxy: "http://127.0.0.1:7890",
+        httpsProxy: "http://127.0.0.1:7890",
+        noProxy: "localhost,127.0.0.1,::1",
+      },
       remote: { username: "local-user", password: "inherited-password" },
       conversationHover: { model: true, timestamp: false },
       codexHomes: { work: { path: "/work", label: "Work" } },
@@ -28,6 +33,11 @@ test("settings form shows effective file values, including overrides and explici
   assert.equal(form.dev, false);
   assert.equal(form.open, false);
   assert.equal(form.translationCommand, "printf local");
+  assert.deepEqual(form.proxy, {
+    httpProxy: "http://127.0.0.1:7890",
+    httpsProxy: "http://127.0.0.1:7890",
+    noProxy: "localhost,127.0.0.1,::1",
+  });
   assert.equal(form.remote.username, "local-user");
   assert.equal(form.remote.password, "inherited-password");
   assert.deepEqual(form.conversationHover, { model: true, timestamp: false });
@@ -135,6 +145,11 @@ test("config editor parses every supported Codex Deck setting", () => {
       "open = false",
       'translation_command = "translate $PROMPT"',
       "",
+      "[proxy]",
+      'http_proxy = "http://127.0.0.1:7890"',
+      'https_proxy = "http://127.0.0.1:7890"',
+      'no_proxy = "localhost,127.0.0.1,::1"',
+      "",
       "[codex_homes.work]",
       'path = "/data/work"',
       'label = "Work"',
@@ -156,6 +171,11 @@ test("config editor parses every supported Codex Deck setting", () => {
     dev: true,
     open: false,
     translationCommand: "translate $PROMPT",
+    proxy: {
+      httpProxy: "http://127.0.0.1:7890",
+      httpsProxy: "http://127.0.0.1:7890",
+      noProxy: "localhost,127.0.0.1,::1",
+    },
     conversationHover: {},
     codexHomes: [{ id: "work", path: "/data/work", label: "Work" }],
     remote: {
@@ -195,6 +215,10 @@ test("structured config edits preserve comments and unrelated tables", () => {
     "port = 12001",
     'translation_command = "old command"',
     "",
+    "[proxy]",
+    'http_proxy = "http://old-proxy:7890"',
+    'no_proxy = "localhost"',
+    "",
     "[unrelated]",
     'custom = "keep me"',
     "",
@@ -208,6 +232,11 @@ test("structured config edits preserve comments and unrelated tables", () => {
   const config = parseCodexDeckConfigContent(original);
   config.port = "14000";
   config.translationCommand = "new \\ command\nnext";
+  config.proxy = {
+    httpProxy: "http://new-proxy:7890",
+    httpsProxy: "http://new-proxy:7890",
+    noProxy: "localhost,127.0.0.1,::1",
+  };
   config.remote.username = "new-user";
   config.remote.password = "";
 
@@ -216,6 +245,9 @@ test("structured config edits preserve comments and unrelated tables", () => {
   assert.match(updated, /^# keep this comment/m);
   assert.match(updated, /port = 14000/);
   assert.match(updated, /translation_command = "new \\\\ command\\nnext"/);
+  assert.match(updated, /\[proxy\]\nhttp_proxy = "http:\/\/new-proxy:7890"/);
+  assert.match(updated, /https_proxy = "http:\/\/new-proxy:7890"/);
+  assert.match(updated, /no_proxy = "localhost,127.0.0.1,::1"/);
   assert.match(updated, /\[unrelated\]\ncustom = "keep me"/);
   assert.match(
     updated,

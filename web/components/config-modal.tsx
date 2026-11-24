@@ -62,6 +62,7 @@ type ConfigSection =
   | "general"
   | "hover"
   | "translation"
+  | "proxy"
   | "homes"
   | "remote"
   | "updates"
@@ -84,6 +85,7 @@ const SECTIONS: Array<{
   { id: "general", label: "General", icon: ServerCog },
   { id: "hover", label: "Floating tip", icon: Eye },
   { id: "translation", label: "Translation", icon: Languages },
+  { id: "proxy", label: "Proxy", icon: Network },
   { id: "homes", label: "Codex homes", icon: FolderCog },
   { id: "remote", label: "Remote", icon: Network },
   { id: "updates", label: "Updates", icon: Download },
@@ -308,9 +310,16 @@ export default function ConfigModal(props: ConfigModalProps) {
   const [config, setConfig] = useState<EditableCodexDeckConfig>(() =>
     createEmptyCodexDeckConfig(),
   );
+  const configRef = useRef(config);
+  configRef.current = config;
   const [homeToFocus, setHomeToFocus] = useState<number | null>(null);
   const newHomeIdInputRef = useRef<HTMLInputElement>(null);
   const configLoadRequestIdRef = useRef(0);
+  const hasLoadedConfigRef = useRef(false);
+  const contentRef = useRef(content);
+  const loadedContentRef = useRef(loadedContent);
+  contentRef.current = content;
+  loadedContentRef.current = loadedContent;
   const [loading, setLoading] = useState(false);
   const [effectiveHoverSettings, setEffectiveHoverSettings] = useState(
     DEFAULT_CONVERSATION_HOVER_SETTINGS,
@@ -420,19 +429,25 @@ export default function ConfigModal(props: ConfigModalProps) {
     }
   }, [applyingUpdate]);
 
-  const loadConfig = async (addHome = false) => {
+  const loadConfig = async (
+    addHome = false,
+    refresh = false,
+    showLoading = true,
+  ) => {
     const requestId = ++configLoadRequestIdRef.current;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     setHomeToFocus(null);
     setError(null);
     setResult(null);
     try {
-      const response = await getCodexDeckConfig();
+      const response = await getCodexDeckConfig({ refresh });
       if (configLoadRequestIdRef.current !== requestId) {
         return;
       }
       setPath(response.path);
       setConfigPaths(response.configPaths ?? []);
+      contentRef.current = response.content;
+      loadedContentRef.current = response.content;
       setContent(response.content);
       setLoadedContent(response.content);
       setRevision(response.revision);
@@ -442,6 +457,7 @@ export default function ConfigModal(props: ConfigModalProps) {
         loadedConfig.codexHomes.push({ id: "", label: "", path: "" });
       }
       setConfig(loadedConfig);
+      hasLoadedConfigRef.current = true;
       setEffectiveHoverSettings(
         response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
       );
@@ -453,7 +469,7 @@ export default function ConfigModal(props: ConfigModalProps) {
         loadError instanceof Error ? loadError.message : String(loadError),
       );
     } finally {
-      if (configLoadRequestIdRef.current === requestId) {
+      if (showLoading && configLoadRequestIdRef.current === requestId) {
         setLoading(false);
       }
     }
@@ -467,7 +483,18 @@ export default function ConfigModal(props: ConfigModalProps) {
     setUpdateStatus(null);
     setUpdateError(null);
     setUpdateResult(null);
-    void loadConfig(addHomeOnOpen);
+    const firstLoad = !hasLoadedConfigRef.current;
+    const hasUnsavedChanges = contentRef.current !== loadedContentRef.current;
+    if (firstLoad || !hasUnsavedChanges) {
+      void loadConfig(addHomeOnOpen, false, firstLoad);
+    } else if (addHomeOnOpen) {
+      const homeIndex = configRef.current.codexHomes.length;
+      setHomeToFocus(homeIndex);
+      setConfig((current) => ({
+        ...current,
+        codexHomes: [...current.codexHomes, { id: "", label: "", path: "" }],
+      }));
+    }
     return () => {
       configLoadRequestIdRef.current += 1;
     };
@@ -522,13 +549,16 @@ export default function ConfigModal(props: ConfigModalProps) {
   }, [applyingUpdate, onClose, open, saving]);
 
   const updateStructuredConfig = (nextConfig: EditableCodexDeckConfig) => {
+    configLoadRequestIdRef.current += 1;
     setConfig(nextConfig);
     const fileConfig = applyCodexDeckConfigFormChanges(
       parseCodexDeckConfigContent(content),
       config,
       nextConfig,
     );
-    setContent(updateCodexDeckConfigContent(content, fileConfig));
+    const nextContent = updateCodexDeckConfigContent(content, fileConfig);
+    contentRef.current = nextContent;
+    setContent(nextContent);
     setResult(null);
     setError(null);
   };
@@ -554,10 +584,13 @@ export default function ConfigModal(props: ConfigModalProps) {
       const response = await applyCodexDeckConfig({ content, revision });
       setPath(response.path);
       setConfigPaths(response.configPaths ?? []);
+      contentRef.current = response.content;
+      loadedContentRef.current = response.content;
       setContent(response.content);
       setLoadedContent(response.content);
       setRevision(response.revision);
       setConfig(readCodexDeckConfigForm(response));
+      hasLoadedConfigRef.current = true;
       setEffectiveHoverSettings(
         response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
       );
@@ -707,7 +740,7 @@ export default function ConfigModal(props: ConfigModalProps) {
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               type="button"
-              onClick={() => void loadConfig()}
+              onClick={() => void loadConfig(false, true)}
               disabled={disabled}
               className="h-8 w-8 rounded border border-zinc-700 bg-zinc-900 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
               title="Reload settings"
@@ -1011,6 +1044,53 @@ export default function ConfigModal(props: ConfigModalProps) {
                           ),
                         )}
                       </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeSection === "proxy" ? (
+                  <div>
+                    <SectionHeader
+                      title="Proxy"
+                      badge={<StatusBadge tone="restart">Restart</StatusBadge>}
+                    />
+                    <p className="py-4 text-xs leading-5 text-zinc-500">
+                      These values are passed to the Codex app-server as
+                      environment variables. Restart codex-deck to apply
+                      changes.
+                    </p>
+                    <div className="grid gap-4 pb-5">
+                      {[
+                        ["HTTP_PROXY", "httpProxy", "http://127.0.0.1:7890"],
+                        ["HTTPS_PROXY", "httpsProxy", "http://127.0.0.1:7890"],
+                        ["NO_PROXY", "noProxy", "localhost,127.0.0.1,::1"],
+                      ].map(([label, property, placeholder]) => (
+                        <Field key={label} label={label}>
+                          <input
+                            type="text"
+                            value={
+                              config.proxy[
+                                property as keyof typeof config.proxy
+                              ]
+                            }
+                            onChange={(event) =>
+                              updateStructuredConfig({
+                                ...config,
+                                proxy: {
+                                  ...config.proxy,
+                                  [property]: event.target.value,
+                                },
+                              })
+                            }
+                            disabled={disabled}
+                            placeholder={placeholder}
+                            spellCheck={false}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            className={`${INPUT_CLASS} font-mono text-xs`}
+                          />
+                        </Field>
+                      ))}
                     </div>
                   </div>
                 ) : null}
@@ -1518,6 +1598,8 @@ export default function ConfigModal(props: ConfigModalProps) {
                           value={content}
                           onChange={(event) => {
                             const nextContent = event.target.value;
+                            configLoadRequestIdRef.current += 1;
+                            contentRef.current = nextContent;
                             setConfig(
                               applyCodexDeckConfigFormChanges(
                                 config,

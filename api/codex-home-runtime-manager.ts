@@ -99,7 +99,8 @@ export class CodexHomeRuntimeManager {
         !next ||
         current.path !== next.path ||
         current.available !== next.available ||
-        current.translationCommand !== next.translationCommand
+        current.translationCommand !== next.translationCommand ||
+        JSON.stringify(current.proxy ?? {}) !== JSON.stringify(next.proxy ?? {})
       ) {
         changedHomeIds.add(homeId);
       }

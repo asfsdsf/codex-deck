@@ -18,9 +18,9 @@ test("config routes return merged settings while preserving the editable home fi
   const homePath = join(codexHome, "codex-deck", "config.toml");
   const localPath = join(root, "config.toml");
   const homeContent =
-    'port = 13000\nopen = true\n[remote]\nusername = "home-user"\npassword = "home-password"\n';
+    'port = 13000\nopen = true\n[remote]\nusername = "home-user"\npassword = "home-password"\n[proxy]\nhttp_proxy = "http://home-proxy:7890"\n';
   const localContent =
-    'port = 14000\nopen = false\ntranslation_command = "printf local"\n[remote]\nusername = "local-user"\n[conversation_hover]\nmodel = true\n';
+    'port = 14000\nopen = false\ntranslation_command = "printf local"\n[remote]\nusername = "local-user"\n[conversation_hover]\nmodel = true\n[proxy]\nhttps_proxy = "http://local-proxy:7890"\n';
   try {
     await mkdir(join(codexHome, "codex-deck"), { recursive: true });
     await writeFile(homePath, homeContent);
@@ -50,6 +50,10 @@ test("config routes return merged settings while preserving the editable home fi
       port: 14000,
       open: false,
       translationCommand: "printf local",
+      proxy: {
+        httpProxy: "http://home-proxy:7890",
+        httpsProxy: "http://local-proxy:7890",
+      },
       remote: { username: "local-user", password: "home-password" },
       conversationHover: { model: true },
     });
@@ -106,6 +110,11 @@ test("config routes save the main home file and apply runtime settings", async (
       "# config edited from the web UI",
       'translation_command = "printf applied"',
       "",
+      "[proxy]",
+      'http_proxy = "http://127.0.0.1:7890"',
+      'https_proxy = "http://127.0.0.1:7890"',
+      'no_proxy = "localhost,127.0.0.1,::1"',
+      "",
       "[codex_homes.work]",
       `path = ${JSON.stringify(workHome)}`,
       'label = "Work"',
@@ -130,7 +139,7 @@ test("config routes save the main home file and apply runtime settings", async (
       "translation_command",
       "codex_homes",
     ]);
-    assert.deepEqual(applied.restartRequiredKeys, []);
+    assert.deepEqual(applied.restartRequiredKeys, ["proxy"]);
     assert.deepEqual(
       applied.homes.map((home) => [home.id, home.label]),
       [

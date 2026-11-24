@@ -34,6 +34,11 @@ test("parseConfigToml parses top-level values and the remote table", () => {
       "dev = true",
       "open = false",
       "",
+      "[proxy]",
+      'http_proxy = "http://127.0.0.1:7890"',
+      'https_proxy = "http://127.0.0.1:7890"',
+      'no_proxy = "localhost,127.0.0.1,::1"',
+      "",
       "[remote]",
       'server_url = "https://deck.example.com"',
       'username = "alice"',
@@ -49,6 +54,11 @@ test("parseConfigToml parses top-level values and the remote table", () => {
   assert.equal(config.dir, "/data/codex home");
   assert.equal(config.dev, true);
   assert.equal(config.open, false);
+  assert.deepEqual(config.proxy, {
+    httpProxy: "http://127.0.0.1:7890",
+    httpsProxy: "http://127.0.0.1:7890",
+    noProxy: "localhost,127.0.0.1,::1",
+  });
   assert.deepEqual(config.remote, {
     serverUrl: "https://deck.example.com",
     username: "alice",
@@ -258,6 +268,21 @@ test("mergeCodexDeckConfigs merges translationCommand per key", () => {
   );
 });
 
+test("mergeCodexDeckConfigs merges proxy values per key", () => {
+  const high = parseConfigToml(
+    '[proxy]\nhttps_proxy = "http://local-proxy:7890"',
+  );
+  const low = parseConfigToml(
+    '[proxy]\nhttp_proxy = "http://home-proxy:7890"\nno_proxy = "localhost"',
+  );
+
+  assert.deepEqual(mergeCodexDeckConfigs(high, low).proxy, {
+    httpProxy: "http://home-proxy:7890",
+    httpsProxy: "http://local-proxy:7890",
+    noProxy: "localhost",
+  });
+});
+
 test("mergeCodexDeckConfigs merges Codex home definitions per field", () => {
   const high = parseConfigToml(
     [
@@ -284,17 +309,39 @@ test("home runtime config overrides selected values and falls back to main", () 
   mkdirSync(join(selectedHome, "codex-deck"), { recursive: true });
   writeFileSync(
     join(selectedHome, "codex-deck", "config.toml"),
-    'translation_command = "selected $PROMPT"\n',
+    [
+      'translation_command = "selected $PROMPT"',
+      "",
+      "[proxy]",
+      'https_proxy = "http://selected-proxy:7890"',
+    ].join("\n"),
   );
 
-  const mainConfig = parseConfigToml('translation_command = "main $PROMPT"');
+  const mainConfig = parseConfigToml(
+    [
+      'translation_command = "main $PROMPT"',
+      "",
+      "[proxy]",
+      'http_proxy = "http://main-proxy:7890"',
+      'no_proxy = "localhost"',
+    ].join("\n"),
+  );
   const selectedConfig = loadCodexDeckHomeConfig(selectedHome);
 
   assert.deepEqual(resolveCodexDeckRuntimeConfig(mainConfig, selectedConfig), {
     translationCommand: "selected $PROMPT",
+    proxy: {
+      httpProxy: "http://main-proxy:7890",
+      httpsProxy: "http://selected-proxy:7890",
+      noProxy: "localhost",
+    },
   });
   assert.deepEqual(resolveCodexDeckRuntimeConfig(mainConfig, {}), {
     translationCommand: "main $PROMPT",
+    proxy: {
+      httpProxy: "http://main-proxy:7890",
+      noProxy: "localhost",
+    },
   });
 });
 

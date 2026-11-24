@@ -216,8 +216,51 @@ export async function listCodexHomes(): Promise<CodexHomesResponse> {
   };
 }
 
-export async function getCodexDeckConfig(): Promise<CodexDeckConfigFileResponse> {
-  return requestJson<CodexDeckConfigFileResponse>("/api/codex-deck/config");
+const CODEX_DECK_CONFIG_PREFETCH_TTL_MS = 30_000;
+let preloadedCodexDeckConfig: {
+  expiresAt: number;
+  promise: Promise<CodexDeckConfigFileResponse>;
+} | null = null;
+
+export function preloadCodexDeckConfig(): void {
+  if (
+    preloadedCodexDeckConfig &&
+    preloadedCodexDeckConfig.expiresAt > Date.now()
+  ) {
+    return;
+  }
+
+  const entry = {
+    expiresAt: Date.now() + CODEX_DECK_CONFIG_PREFETCH_TTL_MS,
+    promise: requestJson<CodexDeckConfigFileResponse>("/api/codex-deck/config"),
+  };
+  preloadedCodexDeckConfig = entry;
+  void entry.promise.catch(() => {
+    if (preloadedCodexDeckConfig === entry) {
+      preloadedCodexDeckConfig = null;
+    }
+  });
+}
+
+export async function getCodexDeckConfig(options?: {
+  refresh?: boolean;
+}): Promise<CodexDeckConfigFileResponse> {
+  if (options?.refresh) {
+    preloadedCodexDeckConfig = null;
+  }
+  preloadCodexDeckConfig();
+  const entry = preloadedCodexDeckConfig;
+  if (!entry) {
+    throw new Error("Codex Deck config request was not started");
+  }
+
+  try {
+    return await entry.promise;
+  } finally {
+    if (preloadedCodexDeckConfig === entry) {
+      preloadedCodexDeckConfig = null;
+    }
+  }
 }
 
 export async function applyCodexDeckConfig(

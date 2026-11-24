@@ -23,12 +23,19 @@ export interface CodexDeckHomeConfig {
   label?: string;
 }
 
+export interface CodexDeckProxyConfig {
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+}
+
 export interface CodexDeckConfig {
   port?: number;
   dir?: string;
   dev?: boolean;
   open?: boolean;
   translationCommand?: string;
+  proxy?: CodexDeckProxyConfig;
   conversationHover?: ConversationHoverConfig;
   codexHomes?: Record<string, CodexDeckHomeConfig>;
   remote?: CodexDeckRemoteConfig;
@@ -68,6 +75,7 @@ export interface ResolvedCodexDeckOptions {
   remotePinnedRealmId?: string;
   remotePinnedOpaqueServerKey?: string;
   translationCommand?: string;
+  proxy?: CodexDeckProxyConfig;
 }
 
 const DEFAULT_PORT = 12001;
@@ -83,9 +91,15 @@ const REMOTE_KEY_MAP: Record<string, keyof CodexDeckRemoteConfig> = {
   pinned_opaque_server_key: "pinnedOpaqueServerKey",
 };
 
+const PROXY_KEY_MAP: Record<string, keyof CodexDeckProxyConfig> = {
+  http_proxy: "httpProxy",
+  https_proxy: "httpsProxy",
+  no_proxy: "noProxy",
+};
+
 /**
  * Parses the small TOML subset supported by codex-deck config files:
- * comments, `[remote]`, `[conversation_hover]` and `[codex_homes.<id>]` tables, double-quoted strings,
+ * comments, `[remote]`, `[proxy]`, `[conversation_hover]` and `[codex_homes.<id>]` tables, double-quoted strings,
  * integers, booleans.
  * Unknown keys, unknown tables, and malformed lines are ignored.
  */
@@ -124,6 +138,15 @@ export function parseConfigToml(content: string): CodexDeckConfig {
       const value = parseTomlString(rawValue);
       if (value !== undefined) {
         (config.remote ??= {})[mapped] = value;
+      }
+    } else if (table === "proxy") {
+      const mapped = PROXY_KEY_MAP[key];
+      if (!mapped) {
+        continue;
+      }
+      const value = parseTomlString(rawValue);
+      if (value?.trim()) {
+        (config.proxy ??= {})[mapped] = value;
       }
     } else if (table.startsWith("codex_homes.")) {
       const homeId = table.slice("codex_homes.".length).trim();
@@ -282,6 +305,16 @@ export function mergeCodexDeckConfigs(
   if (translationCommand !== undefined) {
     merged.translationCommand = translationCommand;
   }
+  if (high.proxy || low.proxy) {
+    const proxy: CodexDeckProxyConfig = {};
+    for (const key of Object.values(PROXY_KEY_MAP)) {
+      const value = high.proxy?.[key] ?? low.proxy?.[key];
+      if (value !== undefined) {
+        proxy[key] = value;
+      }
+    }
+    merged.proxy = proxy;
+  }
   if (high.conversationHover || low.conversationHover) {
     merged.conversationHover = {
       ...low.conversationHover,
@@ -425,10 +458,18 @@ export async function writeCodexDeckHomeConfigFile(
 export function resolveCodexDeckRuntimeConfig(
   mainConfig: CodexDeckConfig,
   homeConfig: CodexDeckConfig,
-): Pick<ResolvedCodexDeckOptions, "translationCommand"> {
+): Pick<ResolvedCodexDeckOptions, "translationCommand" | "proxy"> {
+  const proxy: CodexDeckProxyConfig = {};
+  for (const key of Object.values(PROXY_KEY_MAP)) {
+    const value = homeConfig.proxy?.[key] ?? mainConfig.proxy?.[key];
+    if (value !== undefined) {
+      proxy[key] = value;
+    }
+  }
   return {
     translationCommand:
       homeConfig.translationCommand ?? mainConfig.translationCommand,
+    ...(Object.keys(proxy).length > 0 ? { proxy } : {}),
   };
 }
 
@@ -483,5 +524,6 @@ export function resolveCodexDeckOptions(
       env.CODEXDECK_REMOTE_PINNED_OPAQUE_SERVER_KEY ??
       config.remote?.pinnedOpaqueServerKey,
     translationCommand: config.translationCommand,
+    ...(config.proxy ? { proxy: config.proxy } : {}),
   };
 }

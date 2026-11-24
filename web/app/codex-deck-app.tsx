@@ -269,6 +269,7 @@ import {
   type RemoteMachineDescription,
   getConversation,
   getCodexConfigDefaults,
+  preloadCodexDeckConfig,
   getCodexAgentWaitConfig,
   getSessionFileContent,
   getWorkflowProjectFileContent,
@@ -1676,6 +1677,11 @@ export default function CodexDeckApp() {
   const resolvedRemoteServerUrl = remoteLoginTarget.serverUrl;
   const remoteTrustPins = remoteLoginTarget.pins;
   const apiReady = connectionMode === "local" || remoteConnected;
+  useEffect(() => {
+    if (apiReady) {
+      preloadCodexDeckConfig();
+    }
+  }, [apiReady]);
   const threadReadStates = useThreadReadStates(
     apiReady,
     selectedCodexHomeId,

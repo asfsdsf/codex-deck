@@ -203,6 +203,7 @@ const server = createServer({
   translationCommand: isRuntimeChild
     ? process.env[CODEX_HOME_RUNTIME_TRANSLATION_ENV]?.trim() || undefined
     : config.translationCommand,
+  proxy: opts.proxy,
 });
 
 process.on("SIGINT", () => {

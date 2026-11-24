@@ -29,6 +29,13 @@
 # Linux it is required for translation to work.
 # translation_command = "translate_cmd $PROMPT $INPUT_LANG $OUTPUT_LANG"
 
+# Proxy environment for the Codex app-server. These values override matching
+# proxy variables inherited from the shell and require restarting codex-deck.
+# [proxy]
+# http_proxy = "http://127.0.0.1:7890"
+# https_proxy = "http://127.0.0.1:7890"
+# no_proxy = "localhost,127.0.0.1,::1"
+
 # Floating message tip. Each switch is independent; unavailable values are
 # omitted. These settings apply live to all tabs/devices, including direct
 # file edits (within 5 seconds). Only model fields are off by default.

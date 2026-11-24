@@ -281,6 +281,7 @@ codex-deck also reads optional TOML config files:
 The main Codex home is the directory selected when the server starts, using `--dir`, the configured `dir`, `CODEX_HOME`, or `~/.codex`. Both files are read when present and merged per key: a key set in `./config.toml` wins, and keys only set in the main Codex home's config still apply.
 
 When the same option is set in multiple places, the priority is: command-line arguments > environment variables > config file > built-in defaults.
+Proxy values in the `[proxy]` table explicitly override matching proxy environment variables passed to the Codex app-server.
 
 ```toml
 port = 12001
@@ -288,6 +289,11 @@ dir = "/path/to/codex-home"
 dev = false
 open = true
 translation_command = "translate-command $PROMPT"
+
+[proxy]
+http_proxy = "http://127.0.0.1:7890"
+https_proxy = "http://127.0.0.1:7890"
+no_proxy = "localhost,127.0.0.1,::1"
 
 [codex_homes.work]
 path = "/path/to/work-codex-home"
@@ -311,7 +317,7 @@ All keys are optional. The `[remote]` keys mirror the `--remote-*` flags and `CO
 
 Additional Codex homes are declared only by the main config with named `[codex_homes.<id>]` tables. Each available home appears in the selector at the top of the left pane. Missing directories, duplicate paths, reserved IDs, and other invalid entries remain visible but disabled.
 
-The web app's Settings button at the bottom of the left pane opens a structured editor for server startup, the floating message tip, translation, additional Codex homes, remote connection settings, and daemon updates. Structured controls initially show the merged config file values, including higher-priority `./config.toml` overrides. Only edited fields are written to the main home's file; inherited values are not copied into it. Values set in `./config.toml` continue to take priority, and Settings identifies that file when present. The Updates tab can check npm for a newer release or rebuild a selected source checkout, then activate the result and restart the daemon. An Advanced section remains available for direct TOML editing of the main home's file. Applying changes writes `<main-codex-home>/codex-deck/config.toml`, updates `[conversation_hover]`, `translation_command` and the additional Codex home catalog immediately, and preserves unrelated TOML when structured controls are used. Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) are saved but require restarting codex-deck; the UI lists the affected keys after applying.
+The web app's Settings button at the bottom of the left pane opens a structured editor for server startup, the floating message tip, translation, proxy, additional Codex homes, remote connection settings, and daemon updates. Structured controls initially show the merged config file values, including higher-priority `./config.toml` overrides. Only edited fields are written to the main home's file; inherited values are not copied into it. Values set in `./config.toml` continue to take priority, and Settings identifies that file when present. The Updates tab can check npm for a newer release or rebuild a selected source checkout, then activate the result and restart the daemon. An Advanced section remains available for direct TOML editing of the main home's file. Applying changes writes `<main-codex-home>/codex-deck/config.toml`, updates `[conversation_hover]`, `translation_command` and the additional Codex home catalog immediately, and preserves unrelated TOML when structured controls are used. Startup, remote, and proxy settings (`port`, `dir`, `dev`, `open`, `[remote]`, and `[proxy]`) are saved but require restarting codex-deck; the UI lists the affected keys after applying. Proxy entries are passed to the Codex app-server as `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`, overriding matching variables inherited from the shell. A configured proxy starts a dedicated app-server so the settings reach the Codex process.
 
 **Settings → Floating tip** controls each hover field independently and can disable the tip entirely. Available details include numbering, local time, token counts, cache reuse percentage, context usage, model, reasoning effort, service tier, tool duration, command exit code, original tool output tokens, output truncation, and goal usage. Model, reasoning effort, and service tier are off by default; other fields are on. Missing values stay hidden, and collapsed text-mode rows do not show the tip. Context usage uses that call's recorded token count and context capacity; model settings come from the historical turn rather than the current composer selection. Tool measurements come from recorded tool envelopes, with timestamps used as a fallback for duration.
 
@@ -333,7 +339,7 @@ See [config.toml.example](config.toml.example) for every field name. These displ
 
 Each home runs in an isolated runtime with its own sessions, Codex app-server process, terminals, workflows, skills, pets, memories, live updates, and browser state. Only the main codex-deck process opens a network port; additional homes communicate with it over internal process IPC. Switching homes resets model, reasoning effort, and collaboration mode controls to the target home's Codex defaults.
 
-Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) always come from the main config. Runtime settings may be overridden by the selected home's own `codex-deck/config.toml`; currently this applies to `translation_command`. If the selected home does not set it, the main config value is used.
+Startup and remote settings (`port`, `dir`, `dev`, `open`, and `[remote]`) always come from the main config. Runtime settings may be overridden by the selected home's own `codex-deck/config.toml`; this applies to `translation_command` and `[proxy]`. If the selected home does not set a value, the main config value is used.
 
 ## Installation (Remote mode)
 

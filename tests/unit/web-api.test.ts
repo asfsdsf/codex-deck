@@ -33,6 +33,7 @@ import {
   forkCodexThread,
   getCodexConfigDefaults,
   getCodexDeckConfig,
+  preloadCodexDeckConfig,
   getCodexDeckUpdateOutput,
   getCodexDeckUpdateStatus,
   getCodexAgentWaitConfig,
@@ -747,6 +748,31 @@ test("Codex Deck config endpoints load and apply the main home file", async () =
     content: 'translation_command = "cmd"\n',
     revision: "revision-2",
   });
+});
+
+test("preloaded Codex Deck config is reused once and can be refreshed", async () => {
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    return jsonResponse({
+      path: "/codex/codex-deck/config.toml",
+      content: `# load ${requests}\n`,
+      revision: `revision-${requests}`,
+    });
+  };
+
+  preloadCodexDeckConfig();
+  const preloaded = await getCodexDeckConfig();
+  assert.equal(preloaded.revision, "revision-1");
+  assert.equal(requests, 1);
+
+  await getCodexDeckConfig();
+  assert.equal(requests, 2);
+
+  preloadCodexDeckConfig();
+  const refreshed = await getCodexDeckConfig({ refresh: true });
+  assert.equal(refreshed.revision, "revision-4");
+  assert.equal(requests, 4);
 });
 
 test("Codex Deck daemon update helpers use the management endpoints", async () => {

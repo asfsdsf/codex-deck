@@ -21,12 +21,19 @@ export interface EditableRemoteConfig {
   pinnedOpaqueServerKey: string;
 }
 
+export interface EditableProxyConfig {
+  httpProxy: string;
+  httpsProxy: string;
+  noProxy: string;
+}
+
 export interface EditableCodexDeckConfig {
   port: string;
   dir: string;
   dev: boolean | null;
   open: boolean | null;
   translationCommand: string;
+  proxy: EditableProxyConfig;
   conversationHover: ConversationHoverConfig;
   codexHomes: EditableCodexHome[];
   remote: EditableRemoteConfig;
@@ -47,6 +54,12 @@ const REMOTE_KEYS = {
   pinned_opaque_server_key: "pinnedOpaqueServerKey",
 } as const satisfies Record<string, keyof EditableRemoteConfig>;
 
+const PROXY_KEYS = {
+  http_proxy: "httpProxy",
+  https_proxy: "httpsProxy",
+  no_proxy: "noProxy",
+} as const satisfies Record<string, keyof EditableProxyConfig>;
+
 function emptyRemoteConfig(): EditableRemoteConfig {
   return {
     serverUrl: "",
@@ -59,6 +72,10 @@ function emptyRemoteConfig(): EditableRemoteConfig {
   };
 }
 
+function emptyProxyConfig(): EditableProxyConfig {
+  return { httpProxy: "", httpsProxy: "", noProxy: "" };
+}
+
 export function createEmptyCodexDeckConfig(): EditableCodexDeckConfig {
   return {
     port: "",
@@ -66,6 +83,7 @@ export function createEmptyCodexDeckConfig(): EditableCodexDeckConfig {
     dev: null,
     open: null,
     translationCommand: "",
+    proxy: emptyProxyConfig(),
     conversationHover: {},
     codexHomes: [],
     remote: emptyRemoteConfig(),
@@ -83,6 +101,7 @@ export function readCodexDeckConfigForm(
     dev: config.dev ?? null,
     open: config.open ?? null,
     translationCommand: config.translationCommand ?? "",
+    proxy: { ...emptyProxyConfig(), ...config.proxy },
     conversationHover: { ...config.conversationHover },
     codexHomes: Object.entries(config.codexHomes ?? {}).map(([id, home]) => ({
       id,
@@ -144,6 +163,7 @@ export function applyCodexDeckConfigFormChanges(
   return {
     ...applyChangedProperties(base, previous, next),
     remote: applyChangedProperties(base.remote, previous.remote, next.remote),
+    proxy: applyChangedProperties(base.proxy, previous.proxy, next.proxy),
     conversationHover: applyChangedProperties(
       base.conversationHover,
       previous.conversationHover,
@@ -252,6 +272,15 @@ export function parseCodexDeckConfigContent(
       const value = parseTomlString(rawValue);
       if (property && value !== undefined) {
         config.remote[property] = value;
+      }
+      continue;
+    }
+
+    if (tableName === "proxy") {
+      const property = PROXY_KEYS[key as keyof typeof PROXY_KEYS];
+      const value = parseTomlString(rawValue);
+      if (property && value !== undefined) {
+        config.proxy[property] = value;
       }
       continue;
     }
@@ -374,6 +403,29 @@ export function updateCodexDeckConfigContent(
     open: config.open === null ? undefined : String(config.open),
     translation_command: optionalString(config.translationCommand),
   });
+
+  const proxyValues: Record<string, string | undefined> = {};
+  for (const [key, property] of Object.entries(PROXY_KEYS)) {
+    proxyValues[key] = optionalString(config.proxy[property]);
+  }
+  let proxySection = sections.find((section) => section.tableName === "proxy");
+  if (!proxySection && Object.values(proxyValues).some(Boolean)) {
+    proxySection = { tableName: "proxy", lines: ["[proxy]"] };
+    sections.push(proxySection);
+  }
+  if (proxySection) {
+    updateSectionKeys(proxySection, proxyValues);
+    for (const section of sections) {
+      if (section !== proxySection && section.tableName === "proxy") {
+        updateSectionKeys(
+          section,
+          Object.fromEntries(
+            Object.keys(proxyValues).map((key) => [key, undefined]),
+          ),
+        );
+      }
+    }
+  }
 
   const hoverValues: Record<string, string | undefined> = {};
   for (const key of [

@@ -22,6 +22,11 @@ test("settings display effective config values without saving inherited fields",
           dev: false,
           open: false,
           translationCommand: "printf inherited",
+          proxy: {
+            httpProxy: "http://127.0.0.1:7890",
+            httpsProxy: "http://127.0.0.1:7890",
+            noProxy: "localhost,127.0.0.1,::1",
+          },
           remote: { username: "inherited-user" },
           conversationHover: { model: true, timestamp: false },
         },
@@ -62,6 +67,16 @@ test("settings display effective config values without saving inherited fields",
   await expect(
     settings.getByLabel("Translation command", { exact: false }),
   ).toHaveValue("printf inherited");
+  await settings.getByRole("button", { name: "Proxy", exact: true }).click();
+  await expect(settings.getByLabel("HTTP_PROXY", { exact: true })).toHaveValue(
+    "http://127.0.0.1:7890",
+  );
+  await expect(settings.getByLabel("HTTPS_PROXY", { exact: true })).toHaveValue(
+    "http://127.0.0.1:7890",
+  );
+  await expect(settings.getByLabel("NO_PROXY", { exact: true })).toHaveValue(
+    "localhost,127.0.0.1,::1",
+  );
   await settings.getByRole("button", { name: "Remote", exact: true }).click();
   await expect(settings.getByLabel("Username", { exact: true })).toHaveValue(
     "inherited-user",
@@ -90,9 +105,21 @@ test("settings display effective config values without saving inherited fields",
   );
   expect(saved).toContain("input_tokens = false");
   expect(saved).not.toMatch(
-    /port =|open =|dev =|translation_command =|username =|model =|timestamp =/,
+    /port =|open =|dev =|translation_command =|http_proxy =|https_proxy =|no_proxy =|username =|model =|timestamp =/,
   );
   await settings.getByRole("button", { name: "General", exact: true }).click();
+  await expect(settings.getByLabel("Port", { exact: false })).toHaveValue(
+    "14000",
+  );
+  await settings.getByRole("button", { name: "Close settings" }).click();
+  await expect(settings).not.toBeVisible();
+  await page
+    .getByRole("button", { name: "Codex Deck settings", exact: true })
+    .click();
+  await expect(settings).toBeVisible();
+  await expect(
+    settings.getByText("Loading settings", { exact: true }),
+  ).not.toBeVisible();
   await expect(settings.getByLabel("Port", { exact: false })).toHaveValue(
     "14000",
   );

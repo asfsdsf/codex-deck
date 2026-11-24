@@ -198,6 +198,40 @@ for (const [description, options] of [
   });
 }
 
+test("configured proxy uses a dedicated Codex app-server", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient({
+    sharedSocketPath: "/tmp/codex-deck-shared-app-server.sock",
+    env: {
+      CODEX_HOME: "/tmp/codex-deck-proxy-home",
+      HTTP_PROXY: "http://127.0.0.1:7890",
+    },
+  });
+  let sharedConnections = 0;
+  let starts = 0;
+  const internals = client as unknown as {
+    connectSharedAppServer: () => Promise<void>;
+    ensureStarted: () => void;
+    ensureInitialized: () => Promise<void>;
+    requestRaw: () => Promise<unknown>;
+  };
+  internals.connectSharedAppServer = async () => {
+    sharedConnections += 1;
+  };
+  internals.ensureStarted = () => {
+    starts += 1;
+  };
+  internals.ensureInitialized = async () => {};
+  internals.requestRaw = async () => ({ thread: { id: "thread-1" } });
+
+  try {
+    await client.getThreadSummary("thread-1");
+    assert.equal(sharedConnections, 0);
+    assert.equal(starts, 1);
+  } finally {
+    await client.close();
+  }
+});
+
 test(
   "inline review on a paginated thread broadcasts shared events before and after reconnect",
   { skip: process.platform === "win32", timeout: 10000 },

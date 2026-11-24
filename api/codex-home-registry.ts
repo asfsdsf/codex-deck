@@ -12,6 +12,7 @@ export const MAIN_CODEX_HOME_ID = "main";
 export interface ResolvedCodexHome extends CodexHomeDescriptor {
   path: string;
   translationCommand?: string;
+  proxy?: CodexDeckConfig["proxy"];
 }
 
 function canonicalPath(path: string): string {
@@ -64,6 +65,7 @@ export function buildCodexHomeRegistry(input: {
       available: true,
       unavailableReason: null,
       translationCommand: input.mainConfig.translationCommand,
+      proxy: input.mainConfig.proxy,
     },
   ];
   const claimedPaths = new Set([mainPath]);
@@ -112,6 +114,7 @@ export function buildCodexHomeRegistry(input: {
       available: availability.available,
       unavailableReason: availability.unavailableReason,
       translationCommand: runtimeConfig.translationCommand,
+      proxy: runtimeConfig.proxy,
     });
   }
 

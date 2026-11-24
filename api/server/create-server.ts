@@ -2032,6 +2032,7 @@ export interface ServerOptions {
   remotePinnedOpaqueServerPublicKey?: string;
   remoteProxyAccessToken?: string;
   translationCommand?: string;
+  proxy?: CodexDeckConfig["proxy"];
   daemonUpdater?: DaemonUpdater;
 }
 
@@ -2077,6 +2078,11 @@ function getChangedConfigKeys(
     changed.push("translation_command");
   }
   if (
+    JSON.stringify(previous.proxy ?? {}) !== JSON.stringify(next.proxy ?? {})
+  ) {
+    changed.push("proxy");
+  }
+  if (
     JSON.stringify(previous.conversationHover ?? {}) !==
     JSON.stringify(next.conversationHover ?? {})
   ) {
@@ -2115,11 +2121,12 @@ export function createServer(options: ServerOptions) {
     remotePinnedOpaqueServerPublicKey,
     remoteProxyAccessToken,
     translationCommand,
+    proxy,
     daemonUpdater: configuredDaemonUpdater,
   } = options;
 
   initStorage(codexDir);
-  configureCodexAppServerClient({ codexHome: getCodexDir() });
+  configureCodexAppServerClient({ codexHome: getCodexDir(), proxy });
   initWatcher(getCodexDir());
 
   const allCodexHomes: ResolvedCodexHome[] = [
@@ -2716,9 +2723,17 @@ export function createServer(options: ServerOptions) {
         appliedKeys.push("translation_command");
       }
 
+      if (changedKeys.includes("proxy")) {
+        configureCodexAppServerClient({
+          codexHome: getCodexDir(),
+          proxy: nextConfig.proxy,
+        });
+      }
+
       if (
         changedKeys.includes("codex_homes") ||
-        changedKeys.includes("translation_command")
+        changedKeys.includes("translation_command") ||
+        changedKeys.includes("proxy")
       ) {
         const registry = buildCodexHomeRegistry({
           mainCodexHome: getCodexDir(),
@@ -5929,6 +5944,17 @@ export function createServer(options: ServerOptions) {
   const initialize = (): Promise<void> => {
     if (!initializationPromise) {
       initializationPromise = loadStorage();
+      if (runtimeEntryPath) {
+        // The initial page requests these immediately. Start the app-server
+        // work while storage builds its session index so neither path waits
+        // for the other before the browser connects.
+        const appServer = getCodexAppServerClient();
+        void Promise.allSettled([
+          appServer.listModels(),
+          appServer.listCollaborationModes(),
+        ]);
+        void initializationPromise.then(() => getSessions()).catch(() => {});
+      }
     }
     return initializationPromise;
   };
