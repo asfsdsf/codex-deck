@@ -11,7 +11,7 @@ type DiffPaneProps = ComponentProps<typeof DiffPane>;
 function renderDiffPane(overrides: Partial<DiffPaneProps> = {}): string {
   const props: DiffPaneProps = {
     collapsed: false,
-    revealFileListVersion: 0,
+    fileLinkOpenVersion: 0,
     isMobilePhone: false,
     mode: "files",
     sessionId: "session-1",

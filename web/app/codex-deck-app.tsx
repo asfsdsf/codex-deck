@@ -1558,7 +1558,7 @@ export default function CodexDeckApp() {
   const [selectedFileTargetLine, setSelectedFileTargetLine] = useState<
     number | null
   >(null);
-  const [filePathLinkRevealVersion, setFilePathLinkRevealVersion] = useState(0);
+  const [fileLinkOpenVersion, setFileLinkOpenVersion] = useState(0);
   const [copied, setCopied] = useState(false);
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [conversationSearchQuery, setConversationSearchQuery] = useState("");
@@ -10196,7 +10196,7 @@ export default function CodexDeckApp() {
       }
 
       pendingFilePathLinkTargetRef.current = target.path;
-      setFilePathLinkRevealVersion((current) => current + 1);
+      setFileLinkOpenVersion((current) => current + 1);
       openRightPane();
       setSelectedPaneMode("files");
       setSelectedDiffFilePath(target.path);
@@ -14394,7 +14394,7 @@ export default function CodexDeckApp() {
       <DiffPane
         runtimeScopeKey={selectedCodexHomeId}
         collapsed={diffPaneCollapsed}
-        revealFileListVersion={filePathLinkRevealVersion}
+        fileLinkOpenVersion={fileLinkOpenVersion}
         isMobilePhone={isMobilePhone}
         mode={selectedPaneMode}
         sessionId={rightPaneSessionId}

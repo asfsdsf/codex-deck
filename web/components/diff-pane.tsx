@@ -79,7 +79,7 @@ export type RightPaneMode =
 interface DiffPaneProps {
   runtimeScopeKey?: string;
   collapsed: boolean;
-  revealFileListVersion: number;
+  fileLinkOpenVersion: number;
   isMobilePhone: boolean;
   mode: RightPaneMode;
   sessionId: string | null;
@@ -524,7 +524,7 @@ interface PaneContentProps extends DiffPaneProps {
 function DiffPaneContent(props: PaneContentProps) {
   const {
     collapsed,
-    revealFileListVersion,
+    fileLinkOpenVersion,
     mode,
     sessionId,
     loading,
@@ -583,7 +583,7 @@ function DiffPaneContent(props: PaneContentProps) {
   const isHooksMode = mode === "hooks";
   const isSkillsMode = mode === "skills";
   const catalogTargetId = props.threadId ?? props.workflowKey ?? sessionId;
-  const [isFileListVisible, setIsFileListVisible] = useState(true);
+  const [isFileListVisible, setIsFileListVisible] = useState(false);
   const [isSelectedFilePreviewOpen, setIsSelectedFilePreviewOpen] = useState(
     () => selectedFilePath !== null,
   );
@@ -712,8 +712,8 @@ function DiffPaneContent(props: PaneContentProps) {
   }, [mode]);
 
   useEffect(() => {
-    setIsFileListVisible(true);
-  }, [revealFileListVersion]);
+    setIsFileListVisible(false);
+  }, [fileLinkOpenVersion]);
 
   useEffect(() => {
     if (mode !== "files" || !selectedFilePath) return;
@@ -726,7 +726,7 @@ function DiffPaneContent(props: PaneContentProps) {
         key,
       ]),
     ]);
-  }, [selectedFilePath]);
+  }, [selectedFilePath, fileLinkOpenVersion]);
 
   useEffect(() => {
     const query = fileFilter.trim();
@@ -1032,6 +1032,7 @@ function DiffPaneContent(props: PaneContentProps) {
     if (!path) return false;
     onSelectFilePath(path);
     setIsSelectedFilePreviewOpen(true);
+    setIsFileListVisible(false);
     return true;
   };
   const fileTree = (
@@ -2138,6 +2139,7 @@ function SecondaryPane(props: PaneContentProps) {
   return (
     <DiffPaneContent
       {...props}
+      fileLinkOpenVersion={0}
       mode={mode}
       onChangeMode={setMode}
       selectedFilePath={path}

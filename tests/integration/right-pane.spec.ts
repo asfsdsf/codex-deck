@@ -5,6 +5,43 @@ import { CodexDeckPage } from "./pages/codex-deck-page";
 
 test.use({ channel: process.env.PLAYWRIGHT_CHANNEL });
 
+test("conversation file links open the preview with the file tree closed", async ({
+  page,
+  app,
+}) => {
+  await app.appendSessionMessage(
+    "alpha",
+    "assistant",
+    "[Open the launch checklist source](src/main.ts#L2)",
+  );
+
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  await ui.selectSession("Review the launch checklist");
+
+  const link = page.getByRole("link", {
+    name: "Open the launch checklist source",
+  });
+  await link.click();
+
+  const pane = page.locator(".pane-right");
+  const tree = pane.getByRole("tree", { name: "Workspace files" });
+  const toggle = pane.getByRole("button", { name: "File tree panel" });
+  await expect(
+    pane.getByRole("tab", { name: "main.ts Close" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    pane.getByText("review launch notes", { exact: false }),
+  ).toBeVisible();
+  await expect(tree).toBeHidden();
+
+  await toggle.click();
+  await expect(tree).toBeVisible();
+
+  await link.click();
+  await expect(tree).toBeHidden();
+});
+
 for (const theme of ["light", "dark"] as const) {
   test(`right pane renders documents and keeps native tab controls usable in ${theme} mode`, async ({
     page,
