@@ -127,7 +127,7 @@ test("DiffPane still shows a blocking loading state before the first file tree p
   assert.match(html, /Loading files/);
 });
 
-test("right sidebar start page offers Files, Git, Tasks, Skills, and Hooks", () => {
+test("right sidebar start page offers Files, Git, Tasks, Skills, Hooks, and Process", () => {
   const html = renderDiffPane({ mode: "home" });
 
   assert.match(html, /data-right-pane-guide-entry="files"/);
@@ -135,11 +135,27 @@ test("right sidebar start page offers Files, Git, Tasks, Skills, and Hooks", () 
   assert.match(html, /data-right-pane-guide-entry="tasks"/);
   assert.match(html, /data-right-pane-guide-entry="skills"/);
   assert.match(html, /data-right-pane-guide-entry="hooks"/);
+  assert.match(html, /data-right-pane-guide-entry="process"/);
   assert.doesNotMatch(
     html,
     /data-right-pane-guide-entry="(?:staged|last-turn)/,
   );
   assert.doesNotMatch(html, /Terminal run|Last turn|Staged/);
+});
+
+test("Process pane uses mode-specific refresh rates and handles workflow projects", () => {
+  assert.match(
+    renderDiffPane({ mode: "process" }),
+    /Local.*Refresh every.*0\.5/,
+  );
+  assert.match(
+    renderDiffPane({ mode: "process", connectionMode: "remote" }),
+    /Remote.*Refresh every.*2/,
+  );
+  assert.match(
+    renderDiffPane({ mode: "process", threadId: null }),
+    /Open a session to inspect its background processes and output/,
+  );
 });
 
 test("workflow project panes keep configuration and unavailable states without thread runtime panels", () => {

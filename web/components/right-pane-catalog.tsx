@@ -26,6 +26,7 @@ export default function RightPaneCatalog(props: {
   notices?: ReactNode;
   onRefresh: () => void;
   onSelect: (key: string) => void;
+  onBack?: () => void;
   renderDetails: (key: string) => ReactNode;
 }) {
   const [query, setQuery] = useState("");
@@ -47,6 +48,7 @@ export default function RightPaneCatalog(props: {
   function backToList() {
     const key = detailKey;
     setDetailKey(null);
+    props.onBack?.();
     requestAnimationFrame(() => {
       if (!list.current) return;
       list.current.scrollTop = listScroll.current;

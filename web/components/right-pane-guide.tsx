@@ -1,10 +1,13 @@
 import type { RightPaneMode } from "./diff-pane";
 import { FileTypeIcon } from "./deepseek/FileTypeIcon";
 import { RightPaneIcon } from "./deepseek/right-pane-icons";
-import { Sparkles, Zap } from "lucide-react";
+import { Sparkles, Terminal, Zap } from "lucide-react";
 
 const entries: Array<{
-  mode: Extract<RightPaneMode, "files" | "git" | "tasks" | "skills" | "hooks">;
+  mode: Extract<
+    RightPaneMode,
+    "files" | "git" | "tasks" | "process" | "skills" | "hooks"
+  >;
   title: string;
   description: string;
 }> = [
@@ -32,6 +35,11 @@ const entries: Array<{
     mode: "hooks",
     title: "Hooks",
     description: "Manage automation and view executions",
+  },
+  {
+    mode: "process",
+    title: "Process",
+    description: "Background processes and live output",
   },
 ];
 
@@ -63,6 +71,8 @@ export default function RightPaneGuide(props: {
                 <Sparkles size={22} aria-hidden="true" />
               ) : mode === "hooks" ? (
                 <Zap size={22} aria-hidden="true" />
+              ) : mode === "process" ? (
+                <Terminal size={22} aria-hidden="true" />
               ) : (
                 <RightPaneIcon name={mode} size={22} />
               )}

@@ -1,3 +1,4 @@
+import ProcessRefreshSettings from "./process-refresh-settings";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   CodexDeckConfigWriteResponse,
@@ -777,6 +778,10 @@ export default function ConfigModal(props: ConfigModalProps) {
                       </div>
                     </div>
                   </div>
+                ) : null}
+
+                {activeSection === "general" ? (
+                  <ProcessRefreshSettings inputClassName={INPUT_CLASS} />
                 ) : null}
 
                 {activeSection === "hover" ? (
