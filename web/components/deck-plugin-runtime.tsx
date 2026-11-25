@@ -1,8 +1,12 @@
+import { getActiveCodexHomeId } from "../codex-home-scope";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getDeckPluginRuntime,
   getDeckPluginFileUrl,
   saveDeckPluginState,
+  requestDeckPluginWorker,
+  getDeckPluginSecretStatus,
+  setDeckPluginSecrets,
 } from "../deck-plugins-api";
 
 const CHANNEL = "codex-deck-plugin";
@@ -24,6 +28,7 @@ interface PluginRequest {
 
 interface PluginRuntimeProps {
   pluginId: string;
+  surface?: "panel" | "settings";
   context: PluginContext;
   onClose: () => void;
 }
@@ -42,9 +47,11 @@ function getMessageSize(value: unknown): number {
 
 export default function DeckPluginRuntime({
   pluginId,
+  surface = "panel",
   context,
   onClose,
 }: PluginRuntimeProps) {
+  const homeId = useRef(getActiveCodexHomeId()).current;
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const contextRef = useRef(context);
   const stateRef = useRef<Record<string, unknown>>({});
@@ -65,7 +72,7 @@ export default function DeckPluginRuntime({
     setRuntime(null);
     setPluginState({});
     setError("");
-    void getDeckPluginRuntime(pluginId).then(
+    void getDeckPluginRuntime(pluginId, homeId).then(
       (result) => {
         if (!current) return;
         setRuntime(result);
@@ -80,7 +87,7 @@ export default function DeckPluginRuntime({
     return () => {
       current = false;
     };
-  }, [pluginId]);
+  }, [pluginId, homeId]);
 
   const send = useCallback((message: Record<string, unknown>) => {
     frameRef.current?.contentWindow?.postMessage(
@@ -88,6 +95,21 @@ export default function DeckPluginRuntime({
       "*",
     );
   }, []);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() =>
+      send({
+        type: "theme",
+        theme:
+          document.documentElement.dataset.theme === "light" ? "light" : "dark",
+      }),
+    );
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, [send]);
 
   const respond = useCallback(
     (requestId: string, result?: unknown, errorMessage?: string) => {
@@ -129,6 +151,50 @@ export default function DeckPluginRuntime({
       }
       requestTimesRef.current.push(now);
 
+      if (
+        ["workerRequest", "getSecrets", "setSecrets"].includes(request.method)
+      ) {
+        const permission =
+          request.method === "workerRequest"
+            ? "worker.request"
+            : request.method === "setSecrets"
+              ? "secrets.write"
+              : "secrets.read";
+        if (!runtime?.manifest.capabilities.includes(permission)) {
+          respond(
+            request.requestId,
+            undefined,
+            `${permission} is not granted.`,
+          );
+          return;
+        }
+        try {
+          const params = isObject(request.params) ? request.params : {};
+          const result =
+            request.method === "workerRequest"
+              ? await requestDeckPluginWorker(
+                  pluginId,
+                  String(params.method ?? ""),
+                  params.params ?? {},
+                  homeId,
+                )
+              : request.method === "getSecrets"
+                ? await getDeckPluginSecretStatus(pluginId, homeId)
+                : await setDeckPluginSecrets(
+                    pluginId,
+                    params as Record<string, string | null>,
+                    homeId,
+                  );
+          respond(request.requestId, result);
+        } catch (reason) {
+          respond(
+            request.requestId,
+            undefined,
+            reason instanceof Error ? reason.message : "Plugin request failed.",
+          );
+        }
+        return;
+      }
       if (request.method === "getContext") {
         if (!runtime?.manifest.capabilities.includes("context.read")) {
           respond(request.requestId, undefined, "context.read is not granted.");
@@ -163,7 +229,7 @@ export default function DeckPluginRuntime({
       const nextState = request.params.state;
       setSaving(true);
       const write = writeQueueRef.current.then(async () => {
-        await saveDeckPluginState(pluginId, nextState);
+        await saveDeckPluginState(pluginId, nextState, homeId);
         stateRef.current = nextState;
         setPluginState(nextState);
       });
@@ -181,7 +247,7 @@ export default function DeckPluginRuntime({
         setSaving(false);
       }
     },
-    [pluginId, respond, runtime],
+    [pluginId, respond, runtime, homeId],
   );
 
   useEffect(() => {
@@ -202,7 +268,7 @@ export default function DeckPluginRuntime({
   }, [handleRequest]);
 
   return (
-    <section className="space-y-3 rounded-lg border border-zinc-700 bg-zinc-950/70 p-3">
+    <section className="space-y-3 rounded-lg border border-zinc-700 bg-zinc-950/70 text-zinc-100 p-3">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h4 className="font-medium">{runtime?.plugin.name ?? "Plugin"}</h4>
@@ -244,13 +310,20 @@ export default function DeckPluginRuntime({
           referrerPolicy="same-origin"
           src={getDeckPluginFileUrl(
             pluginId,
-            runtime.manifest.entrypoints.panel,
+            runtime.manifest.entrypoints[surface] ??
+              runtime.manifest.entrypoints.panel ??
+              runtime.manifest.entrypoints.settings ??
+              "",
+            homeId,
           )}
           onLoad={() =>
             send({
               type: "initialize",
+              theme:
+                document.documentElement.dataset.theme === "light"
+                  ? "light"
+                  : "dark",
               plugin: runtime.plugin,
-              apiVersion: runtime.manifest.apiVersion,
               capabilities: runtime.manifest.capabilities,
               context: runtime.manifest.capabilities.includes("context.read")
                 ? contextRef.current

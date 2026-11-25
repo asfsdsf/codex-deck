@@ -1,3 +1,4 @@
+import { DeckPluginStore } from "./deck-plugin-store";
 import { fork, type ChildProcess } from "node:child_process";
 import type { ResolvedCodexHome } from "./codex-home-registry";
 import { equalCodexProxyConfig } from "./codex-proxy";
@@ -79,6 +80,8 @@ export class CodexHomeRuntimeManager {
   private readonly homesById: Map<string, ResolvedCodexHome>;
   private readonly runtimes = new Map<string, Promise<RuntimeHandle>>();
   private nextRequestId = 0;
+  private backgroundTimer: ReturnType<typeof setInterval> | undefined;
+  private backgroundActive = false;
 
   public constructor(
     homes: ResolvedCodexHome[],
@@ -116,6 +119,45 @@ export class CodexHomeRuntimeManager {
     for (const [homeId, home] of nextHomesById) {
       this.homesById.set(homeId, home);
     }
+  }
+
+  /** Enabled backend plugins must run even if no browser has opened this home. */
+  public async startBackgroundHomes(): Promise<void> {
+    this.backgroundActive = true;
+    if (!this.backgroundTimer) {
+      this.backgroundTimer = setInterval(() => {
+        void this.reconcileBackgroundHomes();
+      }, 5000);
+      this.backgroundTimer.unref();
+    }
+    await this.reconcileBackgroundHomes();
+  }
+
+  private async reconcileBackgroundHomes(): Promise<void> {
+    await Promise.all(
+      [...this.homesById.values()]
+        .filter((home) => home.available)
+        .map(async (home) => {
+          try {
+            const snapshot = await new DeckPluginStore(
+              home.path,
+              () => {},
+            ).list();
+            if (
+              this.backgroundActive &&
+              snapshot.plugins.some(
+                (plugin) => plugin.enabled && plugin.entrypoints.backend,
+              )
+            )
+              await this.getOrStartRuntime(home);
+          } catch (error) {
+            console.error(
+              `Background plugins for Codex home ${home.id} could not start:`,
+              toErrorMessage(error),
+            );
+          }
+        }),
+    );
   }
 
   public async fetch(homeId: string, request: Request): Promise<Response> {
@@ -200,6 +242,9 @@ export class CodexHomeRuntimeManager {
   }
 
   public stop(): void {
+    this.backgroundActive = false;
+    clearInterval(this.backgroundTimer);
+    this.backgroundTimer = undefined;
     for (const runtimePromise of this.runtimes.values()) {
       void runtimePromise
         .then((runtime) => {

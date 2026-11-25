@@ -1,3 +1,4 @@
+import type { DeckPluginSession } from "./deck-plugin-manifest";
 import { CodexInputError } from "./codex-input-error";
 import {
   getAnswerRestriction,
@@ -333,6 +334,7 @@ export interface CreateCodexThreadInput {
   cwd: string;
   model?: string | null;
   effort?: CodexReasoningEffort | null;
+  readOnly?: boolean;
 }
 
 export interface SendCodexMessageInput {
@@ -350,6 +352,9 @@ export interface SendCodexMessageInput {
   expectedTurnId?: string | null;
   /** JSON Schema constraining this turn's final answer (turn/start only). */
   outputSchema?: Record<string, unknown> | null;
+  /** Recheck host preconditions immediately before submitting to Codex. */
+  beforeSubmit?: () => void;
+  readOnly?: boolean;
 }
 
 export type CodexRawResponseItem = Record<string, unknown>;
@@ -949,15 +954,17 @@ interface CodexAppServerClientOptions {
   userAgent?: string;
   /** null disables discovery; a path overrides the selected home's socket. */
   sharedSocketPath?: string | null;
+  readOnly?: boolean;
 }
 
-class CodexAppServerClient {
+export class CodexAppServerClient {
   private readonly executablePath: string;
   private readonly cwd: string | undefined;
   private readonly env: NodeJS.ProcessEnv | undefined;
   private readonly requestTimeoutMs: number;
   private readonly userAgent: string;
   private readonly sharedSocketPath: string | null | undefined;
+  private readonly readOnly: boolean;
 
   private process: ChildProcessWithoutNullStreams | null = null;
   private sharedSocket: WebSocket | null = null;
@@ -1024,6 +1031,7 @@ class CodexAppServerClient {
   });
 
   public constructor(options: CodexAppServerClientOptions = {}) {
+    this.readOnly = options.readOnly === true;
     this.executablePath =
       options.executablePath?.trim() || resolveCodexExecutablePath();
     this.cwd = options.cwd;
@@ -1163,7 +1171,7 @@ class CodexAppServerClient {
   }
 
   private worktrees = new WorktreeService({
-    codexHome: () => configuredCodexHome || getCodexDir(),
+    codexHome: () => this.env?.CODEX_HOME || getCodexDir(),
     readDesktopConfig: async (cwd) => {
       const result = asRecord(
         await this.request("config/read", { includeLayers: false, cwd }),
@@ -2070,6 +2078,7 @@ class CodexAppServerClient {
   }
 
   public async createThread(input: CreateCodexThreadInput): Promise<string> {
+    const readOnly = input.readOnly || this.readOnly;
     const cwd = input.cwd.trim();
     if (!cwd) {
       throw new Error("cwd is required");
@@ -2100,12 +2109,15 @@ class CodexAppServerClient {
         model_reasoning_effort: effort,
       };
     }
+    if (readOnly) this.applyReadOnlyThreadParams(params, activeConfig);
 
-    const result = await this.dynamicTools.requestThreadStart(
-      params,
-      { cwd, mcpServerNames: activeConfig.mcpServerNames },
-      (startParams) => this.request("thread/start", startParams),
-    );
+    const result = readOnly
+      ? await this.request("thread/start", params)
+      : await this.dynamicTools.requestThreadStart(
+          params,
+          { cwd, mcpServerNames: activeConfig.mcpServerNames },
+          (startParams) => this.request("thread/start", startParams),
+        );
     if (!result || typeof result !== "object") {
       throw new CodexAppServerTransportError(
         "Invalid thread/start response from codex app-server",
@@ -2903,6 +2915,10 @@ class CodexAppServerClient {
 
     await this.applyDaybreakToTurn(threadId, params, activeConfig);
     this.organization.environments.applyPendingSelection(threadId, params);
+    if (input.readOnly || this.readOnly) {
+      params.approvalPolicy = "never";
+      params.sandboxPolicy = { type: "readOnly" };
+    }
 
     // Provider-switching tools commonly write config.toml before auth.json.
     // Re-check after reading the new provider config so a credential update
@@ -2934,6 +2950,7 @@ class CodexAppServerClient {
     try {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
+      input.beforeSubmit?.();
       const result = await this.startTurn(threadId, params);
       this.organization.environments.confirmSelection(threadId, params);
       this.newlyStartedThreadIds.delete(threadId);
@@ -2949,6 +2966,7 @@ class CodexAppServerClient {
       this.newlyStartedThreadIds.delete(threadId);
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
+      input.beforeSubmit?.();
       const result = await this.startTurn(threadId, params);
       this.organization.environments.confirmSelection(threadId, params);
       return {
@@ -3055,7 +3073,10 @@ class CodexAppServerClient {
     return null;
   }
 
-  public async interruptThread(threadId: string): Promise<void> {
+  public async interruptThread(
+    threadId: string,
+    expectedTurnId?: string,
+  ): Promise<void> {
     const normalizedThreadId = threadId.trim();
     if (!normalizedThreadId) {
       throw new Error("threadId is required");
@@ -3064,7 +3085,7 @@ class CodexAppServerClient {
     this.clearThreadStateCache(normalizedThreadId);
     const threadState = await this.getThreadState(normalizedThreadId);
     const activeTurnId = threadState.activeTurnId;
-    if (!activeTurnId) {
+    if (!activeTurnId || (expectedTurnId && activeTurnId !== expectedTurnId)) {
       return;
     }
 
@@ -3083,7 +3104,10 @@ class CodexAppServerClient {
       this.clearThreadStateCache(normalizedThreadId);
       const refreshedThreadState =
         await this.getThreadState(normalizedThreadId);
-      if (!refreshedThreadState.activeTurnId) {
+      if (
+        !refreshedThreadState.activeTurnId ||
+        (expectedTurnId && refreshedThreadState.activeTurnId !== expectedTurnId)
+      ) {
         return;
       }
 
@@ -3264,6 +3288,87 @@ class CodexAppServerClient {
       threadId: normalizedThreadId,
       changeId: ++this.backgroundTerminalChangeId,
     });
+  }
+
+  public async watchPluginSession(threadId: string): Promise<void> {
+    await this.resumeThread(threadId);
+  }
+
+  public async readPluginSession(threadId: string): Promise<DeckPluginSession> {
+    const result = await this.readThreadWithTurns(threadId);
+    const thread = asRecord(asRecord(result)?.thread);
+    const queue = await this.listThreadQueue(threadId);
+    const turns = extractTurnsFromThreadReadResult(result).map((value) => {
+      const turn = asRecord(value) ?? {};
+      const items = Array.isArray(turn.items) ? turn.items : [];
+      const userText = items
+        .flatMap((item) => {
+          const record = asRecord(item);
+          if (record?.type !== "userMessage") return [];
+          return (Array.isArray(record.content) ? record.content : []).flatMap(
+            (part) => {
+              const entry = asRecord(part);
+              return entry?.type === "text" && typeof entry.text === "string"
+                ? [entry.text]
+                : [];
+            },
+          );
+        })
+        .join("\n");
+      const rawTime = turn.completedAt ?? turn.completed_at;
+      const answers = items
+        .map(asRecord)
+        .filter((item) => item?.type === "agentMessage");
+      const finalAnswers = answers.filter(
+        (item) => item?.phase === "final_answer",
+      );
+      const timestamp =
+        typeof rawTime === "number"
+          ? rawTime < 1e12
+            ? rawTime * 1000
+            : rawTime
+          : typeof rawTime === "string"
+            ? Date.parse(rawTime)
+            : NaN;
+      return {
+        id: asTrimmedString(turn.id) ?? "",
+        status: toTurnStatus(turn.status),
+        error: parseTurnError(turn.error),
+        userText,
+        assistantText: (finalAnswers.length
+          ? finalAnswers
+          : answers.filter((item) => !item?.phase)
+        )
+          .map((item) => (typeof item?.text === "string" ? item.text : ""))
+          .join("\n"),
+        completedAt: Number.isFinite(timestamp) ? timestamp : null,
+      };
+    });
+    const live = this.liveActiveTurnIdsByThread.get(threadId);
+    return {
+      threadId,
+      cwd: asTrimmedString(thread?.cwd),
+      path: asTrimmedString(thread?.path),
+      codexHome: this.env?.CODEX_HOME || getCodexDir(),
+      interactive:
+        !!thread &&
+        thread.canAcceptDirectInput !== false &&
+        thread.archived !== true,
+      activeTurnId:
+        live ??
+        [...turns].reverse().find((turn) => turn.status === "inProgress")?.id ??
+        (extractThreadStatusFromReadResult(result) === "active"
+          ? "unknown"
+          : null),
+      pendingInteraction:
+        this.listPendingUserInputRequests(threadId).length > 0 ||
+        this.listPendingApprovalRequests(threadId).length > 0 ||
+        this.listPendingElicitations(threadId).length > 0,
+      // If queue state cannot be verified, automatic submissions remain blocked.
+      queuedMessages: !queue.supported || queue.items.length > 0,
+      revision: "",
+      turns,
+    };
   }
 
   public async getThreadState(
@@ -3681,6 +3786,7 @@ class CodexAppServerClient {
     };
     const config = activeConfig ?? (await this.readActiveConfig());
     this.applyActiveConfigToResumeParams(params, config);
+    if (this.readOnly) this.applyReadOnlyThreadParams(params, config);
     await this.request("thread/resume", params);
     this.clearThreadStateCache(threadId);
   }
@@ -3752,6 +3858,22 @@ class CodexAppServerClient {
         model_reasoning_effort: activeConfig.reasoningEffort,
       };
     }
+  }
+
+  private applyReadOnlyThreadParams(
+    params: Record<string, unknown>,
+    config: ActiveCodexConfig,
+  ): void {
+    params.sandbox = "read-only";
+    params.approvalPolicy = "never";
+    params.dynamicTools = [];
+    params.config = {
+      ...asRecord(params.config),
+      default_permissions: ":read-only",
+      mcp_servers: Object.fromEntries(
+        (config.mcpServerNames ?? []).map((name) => [name, { enabled: false }]),
+      ),
+    };
   }
 
   private getThreadStateCacheKey(
@@ -4714,6 +4836,13 @@ class CodexAppServerClient {
       threadId,
       status: method === "turn/started" ? "active" : "idle",
       turnId,
+      ...(method === "turn/completed"
+        ? {
+            terminalStatus: toTurnStatus(turn?.status),
+            error: parseTurnError(turn?.error),
+            timestamp: Date.now(),
+          }
+        : {}),
     });
   }
 
@@ -7432,6 +7561,8 @@ export interface CodexAppServerClientFacade {
   sendMessage: (
     input: SendCodexMessageInput,
   ) => Promise<SendCodexMessageResult>;
+  readPluginSession?: (threadId: string) => Promise<DeckPluginSession>;
+  watchPluginSession?: (threadId: string) => Promise<void>;
   getThreadState: (
     threadId: string,
     requestedTurnId?: string | null,
@@ -7603,6 +7734,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
     listAgentThreads: (ancestorThreadId: string) =>
       client!.listAgentThreads(ancestorThreadId),
     sendMessage: (input: SendCodexMessageInput) => client!.sendMessage(input),
+    readPluginSession: (threadId) => client!.readPluginSession(threadId),
+    watchPluginSession: (threadId) => client!.watchPluginSession(threadId),
     getThreadState: (threadId: string, requestedTurnId?: string | null) =>
       client!.getThreadState(threadId, requestedTurnId),
     getLastTurnDiff: (threadId: string) => client!.getLastTurnDiff(threadId),

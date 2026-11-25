@@ -1,3 +1,5 @@
+import DeckPluginRuntime from "./deck-plugin-runtime";
+import type { DeckPluginContributionsSnapshot } from "../../api/deck-plugin-manifest";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   CodexDeckConfigWriteResponse,
@@ -47,6 +49,8 @@ import {
 
 interface ConfigModalProps {
   open: boolean;
+  pluginContributions?: DeckPluginContributionsSnapshot["plugins"];
+  pluginScope?: string;
   addHomeOnOpen?: boolean;
   onClose: () => void;
   onApplied: (response: CodexDeckConfigWriteResponse) => void;
@@ -60,7 +64,8 @@ type ConfigSection =
   | "homes"
   | "remote"
   | "updates"
-  | "advanced";
+  | "advanced"
+  | `plugin:${string}`;
 
 interface ConfigValidation {
   port: string | null;
@@ -294,7 +299,14 @@ function validateConfig(config: EditableCodexDeckConfig): ConfigValidation {
 }
 
 export default function ConfigModal(props: ConfigModalProps) {
-  const { open, addHomeOnOpen = false, onClose, onApplied } = props;
+  const {
+    open,
+    addHomeOnOpen = false,
+    onClose,
+    onApplied,
+    pluginContributions = [],
+    pluginScope = "main",
+  } = props;
   const [activeSection, setActiveSection] = useState<ConfigSection>("general");
   const editor = useCodexDeckConfigEditor({ open, addHomeOnOpen, onApplied });
   const {
@@ -647,7 +659,16 @@ export default function ConfigModal(props: ConfigModalProps) {
             className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-900/40 p-2 sm:w-48 sm:flex-col sm:overflow-y-auto sm:border-b-0 sm:border-r sm:p-3"
             aria-label="Settings sections"
           >
-            {SECTIONS.map((section) => {
+            {[
+              ...SECTIONS,
+              ...pluginContributions
+                .filter((p) => p.contributions.settings)
+                .map((p) => ({
+                  id: `plugin:${p.id}` as ConfigSection,
+                  label: p.contributions.settings!.title,
+                  icon: Package,
+                })),
+            ].map((section) => {
               const Icon = section.icon;
               const selected = activeSection === section.id;
               const sectionHasError =
@@ -693,6 +714,17 @@ export default function ConfigModal(props: ConfigModalProps) {
                     take priority over this file.
                   </p>
                 ) : null}
+                {pluginContributions
+                  .filter((p) => activeSection === `plugin:${p.id}`)
+                  .map((p) => (
+                    <DeckPluginRuntime
+                      key={`${pluginScope}:${p.id}`}
+                      pluginId={p.id}
+                      surface="settings"
+                      context={{ threadId: null, cwd: null }}
+                      onClose={() => setActiveSection("general")}
+                    />
+                  ))}
                 {activeSection === "general" ? (
                   <div>
                     <SectionHeader

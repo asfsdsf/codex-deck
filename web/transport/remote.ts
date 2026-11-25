@@ -106,6 +106,9 @@ function getCodexAppServerEventKey(event: CodexAppServerEvent): string {
         event.threadId,
         event.status,
         event.turnId ?? "",
+        event.terminalStatus ?? "",
+        event.error?.message ?? "",
+        event.error?.additionalDetails ?? "",
       ].join("|");
     case "subagent_activity":
       return [

@@ -210,15 +210,19 @@ const server = createServer({
     : opts.proxy,
 });
 
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await server.stop();
+  process.exit(0);
+};
 process.on("SIGINT", () => {
   console.log("\nShutting down...");
-  server.stop();
-  process.exit(0);
+  void shutdown();
 });
-
 process.on("SIGTERM", () => {
-  server.stop();
-  process.exit(0);
+  void shutdown();
 });
 
 const startup = isRuntimeChild

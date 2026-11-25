@@ -458,6 +458,9 @@ export type CodexAppServerEvent =
       threadId: string;
       status: CodexThreadRuntimeStatus;
       turnId: string | null;
+      terminalStatus?: CodexTurnStatus | null;
+      error?: CodexTurnError | null;
+      timestamp?: number;
     }
   | {
       type: "subagent_activity";

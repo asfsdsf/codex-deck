@@ -57,7 +57,7 @@ function previewText(value: string): string {
 }
 
 function isTextPackageFile(path: string): boolean {
-  return /\.(?:html?|css|m?js|json|md|txt|svg)$/i.test(path);
+  return /\.(?:html?|css|[cm]?js|json|md|txt|svg)$/i.test(path);
 }
 
 async function readPluginPackage(
@@ -110,10 +110,11 @@ async function readPluginPackage(
   const manifest = parseDeckPluginManifest(
     JSON.parse(decodeBase64Text(manifestUpload.contentBase64)),
   );
-  if (!uploads.some((file) => file.path === manifest.entrypoints.panel)) {
-    throw new Error(
-      `The panel entrypoint "${manifest.entrypoints.panel}" is missing from the selected folder.`,
-    );
+  for (const [kind, path] of Object.entries(manifest.entrypoints)) {
+    if (!uploads.some((file) => file.path === path))
+      throw new Error(
+        `The ${kind} entrypoint "${path}" is missing from the selected folder.`,
+      );
   }
   return { manifest, files: uploads, totalBytes };
 }
@@ -280,7 +281,12 @@ export default function DeckPluginsDirectory({
           {imported && (
             <div className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-400">
               <p>
-                Panel entrypoint: <code>{selected.entrypoints.panel}</code>
+                Entrypoints:{" "}
+                <code>
+                  {Object.entries(selected.entrypoints)
+                    .map(([key, value]) => `${key}: ${value}`)
+                    .join(", ")}
+                </code>
               </p>
               <p>
                 Requested capabilities:{" "}
@@ -293,6 +299,14 @@ export default function DeckPluginsDirectory({
                 {Math.ceil(imported.totalBytes / 1024)} KiB
               </p>
             </div>
+          )}
+          {selected.entrypoints.backend && (
+            <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-amber-700 dark:text-amber-200">
+              Executable backend permission: this plugin runs trusted local
+              Node.js code with your daemon’s filesystem and network access,
+              independently of browser connections. Review all worker files
+              before installing or updating.
+            </p>
           )}
           {imported && (
             <details
@@ -465,8 +479,7 @@ export default function DeckPluginsDirectory({
           )}
           {selected.installed && !selected.hasExecutableUi && (
             <p className="text-xs text-zinc-400">
-              This older entry contains metadata only. Import a manifest with an
-              executable UI entry to run plugin code.
+              This plugin runs a backend worker without a browser panel.
             </p>
           )}
           {openedPluginId === selected.id && selected.enabled && (

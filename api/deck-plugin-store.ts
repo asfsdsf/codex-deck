@@ -40,6 +40,7 @@ const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
   ".htm": "text/html",
   ".js": "text/javascript",
+  ".cjs": "text/javascript",
   ".json": "application/json",
   ".mjs": "text/javascript",
   ".svg": "image/svg+xml",
@@ -80,7 +81,6 @@ function getMimeType(path: string): string {
 function legacyManifest(id: string): DeckPluginManifest {
   return {
     schemaVersion: 1,
-    apiVersion: 1,
     id,
     name: id.slice(LEGACY_BUNDLE_PREFIX.length),
     version: "1.0.0",
@@ -104,6 +104,8 @@ export class DeckPluginStore {
   private readonly registryPath: string;
   private readonly packageRoot: string;
   private readonly dataRoot: string;
+  readonly backendRoot: string;
+  beforePackageChange: (id: string) => Promise<void> = async () => {};
   private pending: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -114,6 +116,7 @@ export class DeckPluginStore {
     this.registryPath = join(root, "plugins.json");
     this.packageRoot = join(root, "plugins");
     this.dataRoot = join(root, "plugin-data");
+    this.backendRoot = join(root, "plugin-backend");
   }
 
   private async read(): Promise<Map<string, InstalledPlugin>> {
@@ -258,7 +261,9 @@ export class DeckPluginStore {
         );
         return {
           ...summary,
-          hasExecutableUi: entry.source === "package",
+          hasExecutableUi:
+            entry.source === "package" &&
+            !!(manifest.entrypoints.panel || manifest.entrypoints.settings),
         };
       }),
     );
@@ -362,11 +367,11 @@ export class DeckPluginStore {
   }
 
   private change(
-    update: (installed: Map<string, InstalledPlugin>) => void,
+    update: (installed: Map<string, InstalledPlugin>) => void | Promise<void>,
   ): Promise<DeckPluginsSnapshot> {
     const next = this.pending.then(async () => {
       const installed = await this.read();
-      update(installed);
+      await update(installed);
       await this.writeRegistry(installed);
       this.onChange();
       return this.snapshot(installed);
@@ -413,6 +418,7 @@ export class DeckPluginStore {
         );
       }
 
+      await this.beforePackageChange(manifest.id);
       const packageRoot = resolve(this.packageRoot);
       await mkdir(packageRoot, { recursive: true });
       const packageRootStat = await lstat(packageRoot);
@@ -473,9 +479,10 @@ export class DeckPluginStore {
   }
 
   setEnabled(id: string, enabled: boolean): Promise<DeckPluginsSnapshot> {
-    return this.change((installed) => {
+    return this.change(async (installed) => {
       const existing = installed.get(id);
       if (!existing) throw new DeckPluginError("Plugin is not installed.", 404);
+      await this.beforePackageChange(id);
       installed.set(id, { ...existing, enabled });
     });
   }
@@ -485,6 +492,7 @@ export class DeckPluginStore {
       const installed = await this.read();
       const existing = installed.get(id);
       if (!existing) throw new DeckPluginError("Plugin is not installed.", 404);
+      await this.beforePackageChange(id);
       installed.delete(id);
       await this.writeRegistry(installed);
       if (existing.source === "package") {
@@ -494,6 +502,7 @@ export class DeckPluginStore {
         }
         await rm(target, { recursive: true, force: true });
         await this.removeState(id);
+        await this.removeBackendData(id);
       }
       this.onChange();
       return this.snapshot(installed);
@@ -502,17 +511,33 @@ export class DeckPluginStore {
     return next;
   }
 
+  private async removeBackendData(id: string): Promise<void> {
+    await rm(join(this.backendRoot, id), { recursive: true, force: true });
+  }
+
+  async workerPath(id: string): Promise<string> {
+    const runtime = await this.getRuntime(id);
+    const path = runtime.manifest.entrypoints.backend;
+    if (!path) throw new DeckPluginError("No backend entrypoint.", 400);
+    // Validate the whole tree before Node can resolve relative imports.
+    await this.readPackageFiles(id);
+    return resolve(this.packageRoot, id, path);
+  }
+
   async getRuntime(id: string): Promise<DeckPluginRuntimeResponse> {
     const entry = (await this.read()).get(id);
     if (!entry || entry.source !== "package" || !entry.enabled) {
       throw new DeckPluginError("Plugin is not enabled.", 404);
     }
     const manifest = await this.readManifest(id);
-    await this.readPackageFile(id, manifest.entrypoints.panel);
+    for (const path of Object.values(manifest.entrypoints))
+      await this.readPackageFile(id, path);
     return {
       plugin: { id, name: manifest.name, version: manifest.version },
       manifest,
-      state: await this.readState(id),
+      state: manifest.capabilities.includes("state.read")
+        ? await this.readState(id)
+        : {},
     };
   }
 
@@ -619,6 +644,9 @@ export class DeckPluginStore {
       if (!entry || entry.source !== "package" || !entry.enabled) {
         throw new DeckPluginError("Plugin is not enabled.", 404);
       }
+      const manifest = await this.readManifest(id);
+      if (!manifest.capabilities.includes("state.write"))
+        throw new DeckPluginError("state.write is not granted.", 400);
       await this.writeState(id, state);
       this.onChange();
       return this.snapshot(installed);

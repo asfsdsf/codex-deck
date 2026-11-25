@@ -1,3 +1,4 @@
+import type { DeckPluginWorkers } from "../deck-plugin-workers";
 import type { Context, Hono } from "hono";
 import { DeckPluginError, DeckPluginStore } from "../deck-plugin-store";
 import {
@@ -132,8 +133,60 @@ async function respond<T>(c: Context, read: () => Promise<T>) {
   }
 }
 
-export function registerDeckPluginRoutes(app: Hono, store: DeckPluginStore) {
+export function registerDeckPluginRoutes(
+  app: Hono,
+  store: DeckPluginStore,
+  workers?: DeckPluginWorkers,
+) {
   app.get(base, (c) => respond(c, () => store.list()));
+  if (workers) {
+    app.get(`${base}/:id/worker/:requestId`, (c) =>
+      respond(c, () =>
+        workers.readRequest(c.req.param("id"), c.req.param("requestId")),
+      ),
+    );
+    app.get(`${base}/contributions`, (c) =>
+      respond(c, () => workers.snapshot()),
+    );
+    app.post(`${base}/:id/session`, (c) =>
+      respond(c, async () => {
+        const input = await body(c, 2048, "Session request too large.");
+        if (
+          typeof input.threadId !== "string" ||
+          !input.threadId.trim() ||
+          typeof input.enabled !== "boolean"
+        )
+          throw new DeckPluginError("threadId and enabled are required.", 400);
+        return workers.setSessionEnabled(
+          c.req.param("id"),
+          input.threadId,
+          input.enabled,
+        );
+      }),
+    );
+    app.get(`${base}/:id/secrets`, (c) =>
+      respond(c, () => workers.secretStatus(c.req.param("id"))),
+    );
+    app.put(`${base}/:id/secrets`, (c) =>
+      respond(c, async () => {
+        const input = await body(c, 32 * 1024, "Secret request too large.");
+        return workers.setSecrets(c.req.param("id"), input);
+      }),
+    );
+    app.post(`${base}/:id/worker`, (c) =>
+      respond(c, async () => {
+        const input = await body(c, 64 * 1024, "Worker request too large.");
+        if (typeof input.method !== "string" || input.method.length > 80)
+          throw new DeckPluginError("method is required.", 400);
+        return workers.beginRequest(
+          c.req.param("id"),
+          input.method,
+          input.params ?? {},
+        );
+      }),
+    );
+  }
+
   app.get(`${base}/:id/runtime`, (c) =>
     respond(c, () => store.getRuntime(c.req.param("id"))),
   );

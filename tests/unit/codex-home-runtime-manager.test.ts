@@ -258,3 +258,50 @@ test("additional Codex home runtime reports unknown and unavailable homes", asyn
     error: "Directory does not exist",
   });
 });
+
+test("enabled backend plugins start their Codex home without a browser request", async (t) => {
+  const { DeckPluginStore } = await import("../../api/deck-plugin-store");
+  const { readFile } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-background-home-"));
+  const entryPath = join(root, "runtime.mjs");
+  const marker = join(root, "started.txt");
+  await writeFile(
+    entryPath,
+    `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)},process.env.CODEX_HOME);\nprocess.on('message',()=>{});\nprocess.send({type:'codex-home-runtime-ready'});\nprocess.on('disconnect',()=>process.exit(0));`,
+  );
+  const home: ResolvedCodexHome = {
+    id: "background",
+    label: "Background",
+    path: join(root, "home"),
+    isMain: false,
+    available: true,
+    unavailableReason: null,
+  };
+  const store = new DeckPluginStore(home.path, () => {});
+  const source = {
+    "plugin.json": JSON.stringify({
+      schemaVersion: 1,
+      id: "example.background",
+      name: "Background",
+      version: "1.0.0",
+      description: "Background fixture",
+      capabilities: ["backend.execute"],
+      entrypoints: { backend: "worker.mjs" },
+    }),
+    "worker.mjs": "process.on('message',()=>{});",
+  };
+  await store.installPackage(
+    Object.entries(source).map(([path, content]) => ({
+      path,
+      contentBase64: Buffer.from(content).toString("base64"),
+    })),
+    undefined,
+  );
+  const manager = new CodexHomeRuntimeManager([home], entryPath);
+  t.after(async () => {
+    manager.stop();
+    await rm(root, { recursive: true, force: true });
+  });
+  await manager.startBackgroundHomes();
+  assert.equal(await readFile(marker, "utf8"), home.path);
+});

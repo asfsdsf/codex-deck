@@ -1,3 +1,4 @@
+import type { CodexAppServerEvent } from "../../api/storage";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -29,6 +30,153 @@ test("isCodexReasoningEffort accepts known and custom values", () => {
   assert.equal(isCodexReasoningEffort("  "), false);
   assert.equal(isCodexReasoningEffort(null), false);
   assert.equal(isCodexReasoningEffort(undefined), false);
+});
+
+test("plugin session reads expose home and paths and only final assistant answers", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient({
+    env: { CODEX_HOME: "/target-home" },
+  });
+  const internals = client as unknown as {
+    readThreadWithTurns: () => Promise<unknown>;
+    listThreadQueue: () => Promise<unknown>;
+  };
+  internals.readThreadWithTurns = async () => ({
+    thread: {
+      id: "target",
+      cwd: "/workspace",
+      path: "/target-home/sessions/target.jsonl",
+      turns: [
+        {
+          id: "turn",
+          status: "completed",
+          completedAt: 1_800_000_000,
+          items: [
+            {
+              type: "userMessage",
+              content: [{ type: "text", text: "diagnose" }],
+            },
+            {
+              type: "agentMessage",
+              phase: "commentary",
+              text: "Inspecting files",
+            },
+            {
+              type: "agentMessage",
+              phase: "final_answer",
+              text: '{"decision":"wait","reason":"Outage"}',
+            },
+          ],
+        },
+      ],
+    },
+  });
+  internals.listThreadQueue = async () => ({ supported: true, items: [] });
+  try {
+    const state = await client.readPluginSession("target");
+    assert.equal(state.codexHome, "/target-home");
+    assert.equal(state.path, "/target-home/sessions/target.jsonl");
+    assert.equal(state.cwd, "/workspace");
+    assert.equal(
+      state.turns[0].assistantText,
+      '{"decision":"wait","reason":"Outage"}',
+    );
+    assert.equal(state.turns[0].completedAt, 1_800_000_000_000);
+  } finally {
+    await client.close();
+  }
+});
+
+test("read-only plugin threads use the selected home's defaults and disable external tools", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const internals = client as unknown as {
+    reloadAuthIfChanged: () => Promise<void>;
+    reloadProviderIfChanged: () => Promise<void>;
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+  };
+  const starts: Record<string, unknown>[] = [];
+  internals.reloadAuthIfChanged = internals.reloadProviderIfChanged =
+    async () => {};
+  internals.request = async (method, params) => {
+    if (method === "config/read")
+      return {
+        config: {
+          model: "home-model",
+          model_reasoning_effort: "high",
+          mcp_servers: { remote: { enabled: true } },
+        },
+      };
+    assert.equal(method, "thread/start");
+    starts.push(params);
+    return { thread: { id: "diagnostic" } };
+  };
+  try {
+    assert.equal(
+      await client.createThread({ cwd: "/workspace", readOnly: true }),
+      "diagnostic",
+    );
+    assert.equal(starts[0].model, "home-model");
+    assert.equal(starts[0].sandbox, "read-only");
+    assert.equal(starts[0].approvalPolicy, "never");
+    assert.deepEqual(starts[0].dynamicTools, []);
+    assert.deepEqual(starts[0].config, {
+      model_reasoning_effort: "high",
+      default_permissions: ":read-only",
+      mcp_servers: { remote: { enabled: false } },
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("dedicated read-only clients reapply restrictions when resuming a diagnostic thread", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient({ readOnly: true });
+  const internals = client as unknown as {
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    resumeThread: (id: string) => Promise<void>;
+  };
+  let resumed: Record<string, unknown> | undefined;
+  internals.request = async (method, params) => {
+    if (method === "config/read")
+      return { config: { mcp_servers: { remote: {} } } };
+    assert.equal(method, "thread/resume");
+    resumed = params;
+    return { thread: { id: "diagnosis" } };
+  };
+  try {
+    await internals.resumeThread("diagnosis");
+    assert.equal(resumed?.sandbox, "read-only");
+    assert.equal(resumed?.approvalPolicy, "never");
+    assert.deepEqual(resumed?.dynamicTools, []);
+    assert.deepEqual(resumed?.config, {
+      default_permissions: ":read-only",
+      mcp_servers: { remote: { enabled: false } },
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("an expected-turn interrupt cannot stop a newer manual turn", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const internals = client as unknown as {
+    getThreadState: () => Promise<unknown>;
+    request: () => Promise<unknown>;
+  };
+  internals.getThreadState = async () => ({ activeTurnId: "manual" });
+  internals.request = async () => {
+    assert.fail("A newer turn must not be interrupted");
+  };
+  try {
+    await client.interruptThread("diagnosis", "older-diagnostic-turn");
+  } finally {
+    await client.close();
+  }
 });
 
 test("model listing preserves max, ultra, and model-defined reasoning efforts", async () => {
@@ -1934,8 +2082,17 @@ test("app-server notifications are emitted as live codex events", async () => {
   });
   handleNotification("turn/completed", {
     threadId: "thread-2",
-    turn: { id: "turn-3" },
+    turn: {
+      id: "turn-3",
+      status: "failed",
+      error: { message: "Provider unavailable", additionalDetails: "HTTP 503" },
+    },
   });
+  const terminalEvent = events[6] as Extract<
+    CodexAppServerEvent,
+    { type: "thread_status" }
+  >;
+  assert.equal(typeof terminalEvent.timestamp, "number");
   assert.deepEqual(events.slice(5), [
     {
       type: "thread_status",
@@ -1948,6 +2105,9 @@ test("app-server notifications are emitted as live codex events", async () => {
       threadId: "thread-2",
       status: "idle",
       turnId: "turn-3",
+      terminalStatus: "failed",
+      error: { message: "Provider unavailable", additionalDetails: "HTTP 503" },
+      timestamp: terminalEvent.timestamp,
     },
   ]);
 

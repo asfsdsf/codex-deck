@@ -15,6 +15,7 @@ import {
   registerDeckPluginRoutes,
   serveDeckPluginFile,
 } from "./deck-plugin-routes";
+import { DeckPluginWorkers } from "../deck-plugin-workers";
 import { DeckPluginStore } from "../deck-plugin-store";
 import { registerThreadHistoryRoutes } from "./thread-history-routes";
 import { registerGitWorkspaceRoutes } from "./git-workspace-routes";
@@ -217,7 +218,7 @@ import {
   toCodexHomeDescriptor,
   type ResolvedCodexHome,
 } from "../codex-home-registry";
-import type { CodexDeckConfig } from "../config";
+import { loadCodexDeckConfig, type CodexDeckConfig } from "../config";
 import { equalCodexProxyConfig } from "../codex-proxy";
 import { registerConfigRoutes } from "./config-routes";
 import { registerConversationHoverSettingsRoutes } from "./conversation-hover-settings-routes";
@@ -2216,6 +2217,22 @@ export function createServer(options: ServerOptions) {
     }
     return homeRuntimeManager.fetch(homeId, c.req.raw);
   });
+  // Invalidate before awaiting any manual mutation. The same lock serializes it
+  // with automatic submissions, including requests arriving from other browsers.
+  app.use("/api/*", async (c, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
+    const match =
+      /^\/api\/codex\/threads\/([^/]+)\/(messages|interrupt|archive|compact|revert|queue(?:\/.*)?|review|items)$/.exec(
+        c.req.path,
+      ) ??
+      (c.req.method === "DELETE"
+        ? /^\/api\/sessions\/([^/]+)$/.exec(c.req.path)
+        : null);
+    if (!match || !deckPluginWorkers) return next();
+    const id = decodeURIComponent(match[1]);
+    await deckPluginWorkers.manualAction(id, match[2] ?? "delete");
+    return deckPluginWorkers.withSessionLock(id, next);
+  });
   const sessionsRemovedListeners = new Set<
     (event: SessionsRemovedEvent) => void
   >();
@@ -2471,8 +2488,13 @@ export function createServer(options: ServerOptions) {
     }
   };
 
+  let deckPluginWorkers: DeckPluginWorkers | undefined;
   const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
+    if (
+      !(event.type === "native_state_changed" && event.scope === "deck-plugins")
+    )
+      deckPluginWorkers?.event(event);
     if (
       event.type === "workspace_files_changed" ||
       event.type === "native_state_changed" ||
@@ -5267,15 +5289,50 @@ export function createServer(options: ServerOptions) {
   registerExtensionRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
-  const deckPluginStore = new DeckPluginStore(getCodexDir(), () =>
+  const pluginChanged = () =>
     emitAppServerEvent({
       type: "native_state_changed",
       scope: "deck-plugins",
       threadId: null,
       revision: randomUUID(),
-    }),
-  );
-  registerDeckPluginRoutes(app, deckPluginStore);
+    });
+  const deckPluginStore = new DeckPluginStore(getCodexDir(), () => {
+    pluginChanged();
+    void deckPluginWorkers
+      ?.reconcile()
+      .catch((error) => console.error("Plugin reconciliation failed:", error));
+  });
+  deckPluginWorkers = new DeckPluginWorkers(deckPluginStore, {
+    readSession: async (id) => {
+      const client = getCodexAppServerClient();
+      if (!client.readPluginSession)
+        throw new Error("Plugin session state is unavailable.");
+      return client.readPluginSession(id);
+    },
+    watchSession: async (id) => {
+      ensureAppServerEventSourceSubscribed();
+      await getCodexAppServerClient().watchPluginSession?.(id);
+    },
+    sendMessage: (id, text, beforeSubmit) =>
+      getCodexAppServerClient().sendMessage({
+        threadId: id,
+        text,
+        beforeSubmit,
+      }),
+    changed: pluginChanged,
+    proxy,
+    codexHomes: () =>
+      options.conversationHoverCodexHome
+        ? buildCodexHomeRegistry({
+            mainCodexHome: options.conversationHoverCodexHome,
+            mainConfig: loadCodexDeckConfig(
+              process.cwd(),
+              options.conversationHoverCodexHome,
+            ).config,
+          })
+        : allCodexHomes,
+  });
+  registerDeckPluginRoutes(app, deckPluginStore, deckPluginWorkers);
   app.get("/api/deck-plugin-resource/:homeId/:id/:file{.+}", (c) => {
     const homeId = c.req.param("homeId");
     const pluginId = c.req.param("id");
@@ -5944,7 +6001,10 @@ export function createServer(options: ServerOptions) {
   let initializationPromise: Promise<void> | null = null;
   const initialize = (): Promise<void> => {
     if (!initializationPromise) {
-      initializationPromise = loadStorage();
+      initializationPromise = loadStorage().then(async () => {
+        await deckPluginWorkers?.start();
+        await homeRuntimeManager?.startBackgroundHomes();
+      });
       if (options.warmAppServer) {
         // The initial page requests these immediately. Start the app-server
         // work while storage builds its session index so neither path waits
@@ -6027,6 +6087,7 @@ export function createServer(options: ServerOptions) {
       return httpServer;
     },
     stop: () => {
+      const pluginsStopped = deckPluginWorkers?.stop();
       hoverSettingsRoutes.stop();
       offHistoryChange(handleHistoryChange);
       offSessionChange(handleSessionChange);
@@ -6042,6 +6103,7 @@ export function createServer(options: ServerOptions) {
         httpServer.close();
       }
       homeRuntimeManager?.stop();
+      return pluginsStopped;
     },
   };
 }

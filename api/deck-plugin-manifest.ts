@@ -7,6 +7,19 @@ export const DECK_PLUGIN_CAPABILITIES = [
   "context.read",
   "state.read",
   "state.write",
+  "backend.execute",
+  "sessions.read",
+  "sessions.events",
+  "sessions.submit",
+  "codex.homes.read",
+  "codex.sessions.manage",
+  "data.read",
+  "data.write",
+  "secrets.read",
+  "secrets.write",
+  "status.write",
+  "worker.request",
+  "http.request",
 ] as const;
 
 export type DeckPluginCapability = (typeof DECK_PLUGIN_CAPABILITIES)[number];
@@ -14,14 +27,18 @@ export type DeckPluginState = Record<string, unknown>;
 
 export interface DeckPluginManifest {
   schemaVersion: 1;
-  apiVersion: 1;
   id: string;
   name: string;
   version: string;
   description: string;
   author?: string;
   capabilities: DeckPluginCapability[];
-  entrypoints: { panel: string };
+  entrypoints: { panel?: string; settings?: string; backend?: string };
+  contributions?: {
+    settings?: { title: string };
+    sessionToggle?: { label: string };
+    sessionTip?: boolean;
+  };
 }
 
 export interface DeckPluginRuntimeResponse {
@@ -49,14 +66,18 @@ export interface DeckPluginFileUpload {
 
 export interface DeckPluginSummary {
   schemaVersion: 1;
-  apiVersion: 1;
   id: string;
   name: string;
   version: string;
   description: string;
   author?: string;
   capabilities: DeckPluginCapability[];
-  entrypoints: { panel: string };
+  entrypoints: { panel?: string; settings?: string; backend?: string };
+  contributions?: {
+    settings?: { title: string };
+    sessionToggle?: { label: string };
+    sessionTip?: boolean;
+  };
   source: "package" | "legacy";
   installed: boolean;
   enabled: boolean;
@@ -126,11 +147,6 @@ export function parseDeckPluginManifest(value: unknown): DeckPluginManifest {
   if (source.schemaVersion !== 1) {
     throw new DeckPluginManifestError("This plugin requires schemaVersion 1.");
   }
-  if (source.apiVersion !== 1) {
-    throw new DeckPluginManifestError(
-      "This plugin requires an unsupported Codex Deck plugin API version.",
-    );
-  }
   const version = readText(source.version, "version", 40);
   if (!/^\d+\.\d+\.\d+(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?$/i.test(version)) {
     throw new DeckPluginManifestError(
@@ -154,16 +170,60 @@ export function parseDeckPluginManifest(value: unknown): DeckPluginManifest {
   }
 
   const entrypoints = readObject(source.entrypoints, "entrypoints");
-  const panel = parseDeckPluginPath(entrypoints.panel, "entrypoints.panel");
-  if (!/\.html?$/i.test(panel)) {
+  const entries: DeckPluginManifest["entrypoints"] = {};
+  for (const key of ["panel", "settings", "backend"] as const) {
+    if (entrypoints[key] === undefined) continue;
+    const path = parseDeckPluginPath(entrypoints[key], `entrypoints.${key}`);
+    if (
+      key === "backend"
+        ? !/\.(mjs|cjs|js)$/i.test(path)
+        : !/\.html?$/i.test(path)
+    ) {
+      throw new DeckPluginManifestError(`Invalid ${key} entrypoint extension.`);
+    }
+    entries[key] = path;
+  }
+  if (!Object.keys(entries).length)
+    throw new DeckPluginManifestError("Declare at least one entrypoint.");
+  if (entries.backend && !capabilitiesValue.includes("backend.execute")) {
     throw new DeckPluginManifestError(
-      "entrypoints.panel must point to an HTML file.",
+      "Backend workers require backend.execute permission.",
     );
+  }
+  const contributions: NonNullable<DeckPluginManifest["contributions"]> = {};
+  if (source.contributions !== undefined) {
+    const input = readObject(source.contributions, "contributions");
+    if (input.settings !== undefined) {
+      contributions.settings = {
+        title: readText(
+          readObject(input.settings, "settings").title,
+          "settings.title",
+          80,
+        ),
+      };
+      if (!entries.settings)
+        throw new DeckPluginManifestError(
+          "Settings contribution requires a settings entrypoint.",
+        );
+    }
+    if (input.sessionToggle !== undefined) {
+      contributions.sessionToggle = {
+        label: readText(
+          readObject(input.sessionToggle, "sessionToggle").label,
+          "sessionToggle.label",
+          80,
+        ),
+      };
+    }
+    if (input.sessionTip !== undefined) {
+      if (typeof input.sessionTip !== "boolean")
+        throw new DeckPluginManifestError("sessionTip must be a boolean.");
+      contributions.sessionTip = input.sessionTip;
+    }
   }
 
   return {
     schemaVersion: 1,
-    apiVersion: 1,
     id: readId(source.id, "id"),
     name: readText(source.name, "name", 80),
     version,
@@ -172,7 +232,8 @@ export function parseDeckPluginManifest(value: unknown): DeckPluginManifest {
       ? {}
       : { author: readText(source.author, "author", 80) }),
     capabilities: capabilitiesValue as DeckPluginCapability[],
-    entrypoints: { panel },
+    entrypoints: entries,
+    ...(Object.keys(contributions).length ? { contributions } : {}),
   };
 }
 
@@ -186,6 +247,49 @@ export function summarizeDeckPlugin(
     source,
     installed: true,
     enabled,
-    hasExecutableUi: true,
+    hasExecutableUi: !!(
+      manifest.entrypoints.panel || manifest.entrypoints.settings
+    ),
   };
+}
+
+export interface DeckPluginSession {
+  threadId: string;
+  cwd?: string | null;
+  path?: string | null;
+  codexHome?: string;
+  interactive: boolean;
+  activeTurnId: string | null;
+  pendingInteraction: boolean;
+  queuedMessages: boolean;
+  revision: string;
+  manualActionAt?: number;
+  turns: Array<{
+    id: string;
+    status: "inProgress" | "completed" | "failed" | "interrupted" | null;
+    error: { message: string; additionalDetails: string | null } | null;
+    userText: string;
+    assistantText?: string;
+    completedAt: number | null;
+  }>;
+}
+
+export interface DeckPluginStatus {
+  phase: string;
+  reason: string;
+  nextAt?: number | null;
+  deadline?: number | null;
+  updatedAt: number;
+}
+
+export interface DeckPluginContributionsSnapshot {
+  serverTime: number;
+  plugins: Array<{
+    id: string;
+    name: string;
+    contributions: NonNullable<DeckPluginManifest["contributions"]>;
+    sessions: Record<string, boolean>;
+    statuses: Record<string, DeckPluginStatus>;
+    workerError?: string;
+  }>;
 }

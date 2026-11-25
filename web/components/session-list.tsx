@@ -128,6 +128,7 @@ interface SessionListProps {
   countLabel?: string;
   deleteButtonLabel?: string;
   searchControls?: ReactNode;
+  renderSessionControls?: (sessionId: string) => ReactNode;
   searchPlaceholder?: string;
   onDeepSearch?: (
     query: string,
@@ -150,6 +151,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     countLabel = "session",
     deleteButtonLabel = "Delete session",
     searchControls,
+    renderSessionControls,
     searchPlaceholder = "Search...",
     onDeepSearch,
   } = props;
@@ -506,6 +508,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                         </span>
                       </div>
                     </button>
+                    {renderSessionControls?.(session.id)}
                     {readToggle && onToggleReadReceipt ? (
                       <button
                         type="button"

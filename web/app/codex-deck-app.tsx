@@ -1,3 +1,8 @@
+import { useDeckPluginContributions } from "../hooks/use-deck-plugin-contributions";
+import {
+  DeckPluginSessionTips,
+  DeckPluginSessionToggles,
+} from "../components/deck-plugin-contributions";
 import type { PlanProposalAction } from "../components/message-block";
 import PermissionsPanel from "../components/permissions-panel";
 import WorktreePanel from "../components/worktree-panel";
@@ -4932,6 +4937,11 @@ export default function CodexDeckApp() {
       );
     },
     [],
+  );
+
+  const pluginContributions = useDeckPluginContributions(
+    selectedCodexHomeId,
+    apiReady && isPageVisible,
   );
 
   const handleSessionsError = useCallback(() => {
@@ -11922,6 +11932,12 @@ export default function CodexDeckApp() {
       className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100"
       data-conversation-view-mode={conversationViewMode || undefined}
     >
+      <DeckPluginSessionTips
+        plugins={pluginContributions.snapshot?.plugins ?? []}
+        threadId={centerView === "session" ? selectedSession : null}
+        serverOffset={pluginContributions.serverOffset}
+        error={pluginContributions.error}
+      />
       {sidebarCollapsed ? (
         <aside
           aria-label="Collapsed left pane"
@@ -12331,6 +12347,20 @@ export default function CodexDeckApp() {
               }
               onSelectSession={handleSelectLeftPaneItem}
               onRequestDeleteSession={handleRequestDeleteLeftPaneItem}
+              renderSessionControls={
+                centerView === "session" &&
+                pluginContributions.snapshot?.plugins.some(
+                  (p) => p.contributions.sessionToggle,
+                )
+                  ? (id) => (
+                      <DeckPluginSessionToggles
+                        plugins={pluginContributions.snapshot!.plugins}
+                        threadId={id}
+                        onToggle={pluginContributions.toggle}
+                      />
+                    )
+                  : undefined
+              }
               onToggleReadReceipt={
                 centerView === "session" ? handleToggleReadReceipt : undefined
               }
@@ -12914,6 +12944,8 @@ export default function CodexDeckApp() {
           {(showConfigModal || hasOpenedConfigModal) && (
             <ConfigModal
               key={configScopeKey}
+              pluginContributions={pluginContributions.snapshot?.plugins ?? []}
+              pluginScope={selectedCodexHomeId}
               open={showConfigModal}
               addHomeOnOpen={configModalAction === "add-home"}
               onClose={() => setConfigModalAction(null)}

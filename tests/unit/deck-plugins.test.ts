@@ -15,7 +15,6 @@ import { registerDeckPluginRoutes } from "../../api/server/deck-plugin-routes";
 const base = "/api/deck/plugins";
 const manifest: DeckPluginManifest = {
   schemaVersion: 1,
-  apiVersion: 1,
   id: "example.notes",
   name: "Notes",
   version: "1.0.0",
@@ -41,7 +40,7 @@ function packageFiles(
   return [
     upload("plugin.json", JSON.stringify(currentManifest)),
     upload(
-      currentManifest.entrypoints.panel,
+      currentManifest.entrypoints.panel!,
       `<!doctype html><html><head><link rel="stylesheet" href="assets/panel.css"></head><body><h1>${currentManifest.name}</h1><script type="module" src="panel.js"></script></body></html>`,
     ),
     upload("panel.js", "window.ready = true;"),
@@ -276,7 +275,7 @@ test("invalid plugin package manifests, files, and replacements are rejected", a
   const { install, list } = register(home);
   const invalidManifests = [
     { ...manifest, schemaVersion: 2 },
-    { ...manifest, apiVersion: 2 },
+    { ...manifest, entrypoints: {} },
     { ...manifest, id: "../../notes" },
     { ...manifest, capabilities: ["shell.exec"] },
     { ...manifest, entrypoints: { panel: "../outside.html" } },

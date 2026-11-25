@@ -27,6 +27,7 @@ export function addCodexHomeToApiUrl(
     return url;
   }
   const parsed = new URL(url, "http://codex-deck.local");
-  parsed.searchParams.set("codexHome", normalizedHomeId);
+  if (!parsed.searchParams.has("codexHome"))
+    parsed.searchParams.set("codexHome", normalizedHomeId);
   return `${parsed.pathname}${parsed.search}`;
 }
