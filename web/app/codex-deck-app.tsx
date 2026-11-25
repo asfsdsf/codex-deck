@@ -1677,11 +1677,17 @@ export default function CodexDeckApp() {
   const resolvedRemoteServerUrl = remoteLoginTarget.serverUrl;
   const remoteTrustPins = remoteLoginTarget.pins;
   const apiReady = connectionMode === "local" || remoteConnected;
+  const configScopeKey = JSON.stringify([
+    connectionMode,
+    remoteConnected,
+    resolvedRemoteServerUrl,
+    selectedRemoteMachine,
+  ]);
   useEffect(() => {
     if (apiReady) {
       preloadCodexDeckConfig();
     }
-  }, [apiReady]);
+  }, [apiReady, configScopeKey]);
   const threadReadStates = useThreadReadStates(
     apiReady,
     selectedCodexHomeId,
@@ -12907,6 +12913,7 @@ export default function CodexDeckApp() {
 
           {(showConfigModal || hasOpenedConfigModal) && (
             <ConfigModal
+              key={configScopeKey}
               open={showConfigModal}
               addHomeOnOpen={configModalAction === "add-home"}
               onClose={() => setConfigModalAction(null)}

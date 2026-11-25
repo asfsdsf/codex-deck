@@ -30,7 +30,8 @@
 # translation_command = "translate_cmd $PROMPT $INPUT_LANG $OUTPUT_LANG"
 
 # Proxy environment for the Codex app-server. These values override matching
-# proxy variables inherited from the shell and require restarting codex-deck.
+# uppercase and lowercase proxy variables inherited from the shell and require
+# restarting codex-deck.
 # [proxy]
 # http_proxy = "http://127.0.0.1:7890"
 # https_proxy = "http://127.0.0.1:7890"

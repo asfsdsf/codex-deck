@@ -281,7 +281,7 @@ codex-deck also reads optional TOML config files:
 The main Codex home is the directory selected when the server starts, using `--dir`, the configured `dir`, `CODEX_HOME`, or `~/.codex`. Both files are read when present and merged per key: a key set in `./config.toml` wins, and keys only set in the main Codex home's config still apply.
 
 When the same option is set in multiple places, the priority is: command-line arguments > environment variables > config file > built-in defaults.
-Proxy values in the `[proxy]` table explicitly override matching proxy environment variables passed to the Codex app-server.
+Proxy values in the `[proxy]` table explicitly override matching proxy environment variables passed to the Codex app-server, including their lowercase spellings.
 
 ```toml
 port = 12001

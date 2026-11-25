@@ -3,6 +3,7 @@ export const CODEX_HOME_RUNTIME_MAIN_HOME_ENV =
   "CODEXDECK_RUNTIME_MAIN_CODEX_HOME";
 export const CODEX_HOME_RUNTIME_TRANSLATION_ENV =
   "CODEXDECK_RUNTIME_TRANSLATION_COMMAND";
+export const CODEX_HOME_RUNTIME_PROXY_ENV = "CODEXDECK_RUNTIME_PROXY_CONFIG";
 
 export interface CodexHomeRuntimeReadyMessage {
   type: "codex-home-runtime-ready";

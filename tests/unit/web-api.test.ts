@@ -103,6 +103,7 @@ import {
   validateWorkflow,
 } from "../../web/api";
 import { RemoteClient } from "../../web/remote-client";
+import { remoteClient } from "../../web/transport";
 import { responseItemMessageLine } from "./test-utils";
 
 test.afterEach(() => {
@@ -773,6 +774,53 @@ test("preloaded Codex Deck config is reused once and can be refreshed", async ()
   const refreshed = await getCodexDeckConfig({ refresh: true });
   assert.equal(refreshed.revision, "revision-4");
   assert.equal(requests, 4);
+});
+
+test("settings prefetch is invalidated by a remote machine change", async (t) => {
+  const selectedMachine = remoteClient.getSelectedMachineId();
+  t.after(() => remoteClient.setSelectedMachineId(selectedMachine));
+  let requests = 0;
+  globalThis.fetch = async () =>
+    jsonResponse({ revision: `revision-${++requests}` });
+
+  preloadCodexDeckConfig();
+  remoteClient.setSelectedMachineId("another-machine");
+  assert.equal((await getCodexDeckConfig()).revision, "revision-2");
+});
+
+test("saving settings discards a stale in-flight prefetch", async () => {
+  let resolveStale!: (response: Response) => void;
+  let reads = 0;
+  globalThis.fetch = async (_input, init) => {
+    if (init?.method === "POST") return jsonResponse({ revision: "saved" });
+    if (++reads === 1)
+      return new Promise<Response>((resolve) => {
+        resolveStale = resolve;
+      });
+    return jsonResponse({ revision: "fresh" });
+  };
+
+  preloadCodexDeckConfig();
+  await applyCodexDeckConfig({ content: "# updated", revision: "initial" });
+  resolveStale(jsonResponse({ revision: "stale" }));
+  assert.equal((await getCodexDeckConfig()).revision, "fresh");
+});
+
+test("failed settings prefetches can be retried and simultaneous readers share a request", async () => {
+  let reads = 0;
+  globalThis.fetch = async () => {
+    if (++reads === 1) throw new Error("temporarily unavailable");
+    return jsonResponse({ revision: "recovered" });
+  };
+  preloadCodexDeckConfig();
+  await flushAsyncWork();
+  const [first, second] = await Promise.all([
+    getCodexDeckConfig(),
+    getCodexDeckConfig(),
+  ]);
+  assert.equal(reads, 2);
+  assert.equal(first.revision, "recovered");
+  assert.deepEqual(first, second);
 });
 
 test("Codex Deck daemon update helpers use the management endpoints", async () => {

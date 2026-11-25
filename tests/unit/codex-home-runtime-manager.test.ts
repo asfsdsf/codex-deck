@@ -80,6 +80,8 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
       "      codexHome: process.env.CODEX_HOME,",
       "      mainCodexHome: process.env.CODEXDECK_RUNTIME_MAIN_CODEX_HOME,",
       "      translationCommand: process.env.CODEXDECK_RUNTIME_TRANSLATION_COMMAND,",
+      '      proxy: JSON.parse(process.env.CODEXDECK_RUNTIME_PROXY_CONFIG || "{}"),',
+      "      pid: process.pid,",
       '      transport: "ipc",',
       "  });",
       "  process.send?.({",
@@ -113,6 +115,10 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
     available: true,
     unavailableReason: null,
     translationCommand: "translate-work",
+    proxy: {
+      httpProxy: "http://main-proxy:7890",
+      httpsProxy: "http://work-proxy:7890",
+    },
   };
   const mainCodexHome = join(root, "main-home");
   const manager = new CodexHomeRuntimeManager([home], entryPath, mainCodexHome);
@@ -126,13 +132,16 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
       }),
     );
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
+    const initial = await response.json();
+    assert.deepEqual(initial, {
       url: "/api/echo?foo=1",
       method: "POST",
       body: "payload",
       codexHome: home.path,
       mainCodexHome,
       translationCommand: "translate-work",
+      proxy: home.proxy,
+      pid: initial.pid,
       transport: "ipc",
     });
 
@@ -147,15 +156,54 @@ test("additional Codex home runtime proxies requests to an isolated child", asyn
       new Request("http://codex-deck.test/api/echo?codexHome=work"),
     );
     assert.equal(updatedResponse.status, 200);
-    assert.deepEqual(await updatedResponse.json(), {
+    const updated = await updatedResponse.json();
+    assert.notEqual(updated.pid, initial.pid);
+    assert.deepEqual(updated, {
       url: "/api/echo",
       method: "GET",
       body: "",
       codexHome: home.path,
       mainCodexHome,
       translationCommand: "translate-updated",
+      proxy: home.proxy,
+      pid: updated.pid,
       transport: "ipc",
     });
+
+    // Table ordering does not change the effective proxy or restart a home.
+    await manager.updateHomes([
+      {
+        ...home,
+        translationCommand: "translate-updated",
+        proxy: {
+          httpsProxy: home.proxy!.httpsProxy,
+          httpProxy: home.proxy!.httpProxy,
+        },
+      },
+    ]);
+    const reordered = await (
+      await manager.fetch(
+        "work",
+        new Request("http://codex-deck.test/api/echo"),
+      )
+    ).json();
+    assert.equal(reordered.pid, updated.pid);
+
+    await manager.updateHomes([
+      {
+        ...home,
+        translationCommand: "translate-updated",
+        proxy: { httpsProxy: "http://new-proxy:7890" },
+      },
+    ]);
+    const changed = await (
+      await manager.fetch(
+        "work",
+        new Request("http://codex-deck.test/api/echo"),
+      )
+    ).json();
+    assert.notEqual(changed.pid, updated.pid);
+    assert.deepEqual(changed.proxy, { httpsProxy: "http://new-proxy:7890" });
 
     const streamResponse = await manager.fetch(
       "work",

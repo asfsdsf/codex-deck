@@ -1,8 +1,10 @@
 import { fork, type ChildProcess } from "node:child_process";
 import type { ResolvedCodexHome } from "./codex-home-registry";
+import { equalCodexProxyConfig } from "./codex-proxy";
 import {
   CODEX_HOME_RUNTIME_CHILD_ENV,
   CODEX_HOME_RUNTIME_MAIN_HOME_ENV,
+  CODEX_HOME_RUNTIME_PROXY_ENV,
   CODEX_HOME_RUNTIME_TRANSLATION_ENV,
   isCodexHomeRuntimeChildMessage,
   type CodexHomeRuntimeAbortMessage,
@@ -16,6 +18,7 @@ import {
 export {
   CODEX_HOME_RUNTIME_CHILD_ENV,
   CODEX_HOME_RUNTIME_MAIN_HOME_ENV,
+  CODEX_HOME_RUNTIME_PROXY_ENV,
   CODEX_HOME_RUNTIME_TRANSLATION_ENV,
 } from "./codex-home-runtime-ipc";
 
@@ -100,7 +103,7 @@ export class CodexHomeRuntimeManager {
         current.path !== next.path ||
         current.available !== next.available ||
         current.translationCommand !== next.translationCommand ||
-        JSON.stringify(current.proxy ?? {}) !== JSON.stringify(next.proxy ?? {})
+        !equalCodexProxyConfig(current.proxy, next.proxy)
       ) {
         changedHomeIds.add(homeId);
       }
@@ -402,6 +405,7 @@ export class CodexHomeRuntimeManager {
         ...process.env,
         CODEX_HOME: home.path,
         [CODEX_HOME_RUNTIME_CHILD_ENV]: "1",
+        [CODEX_HOME_RUNTIME_PROXY_ENV]: JSON.stringify(home.proxy ?? {}),
       };
       if (this.mainCodexHome) {
         env[CODEX_HOME_RUNTIME_MAIN_HOME_ENV] = this.mainCodexHome;

@@ -28,23 +28,17 @@ import {
   X,
 } from "lucide-react";
 import {
-  applyCodexDeckConfig,
   checkCodexDeckNpmUpdate,
-  getCodexDeckConfig,
   getCodexDeckUpdateOutput,
   getCodexDeckUpdateStatus,
   subscribeCodexDeckUpdateOutput,
   updateCodexDeckDaemon,
 } from "../api";
 import {
-  applyCodexDeckConfigFormChanges,
-  createEmptyCodexDeckConfig,
-  parseCodexDeckConfigContent,
-  readCodexDeckConfigForm,
-  updateCodexDeckConfigContent,
   type EditableCodexDeckConfig,
   type EditableRemoteConfig,
 } from "../codex-deck-config";
+import { useCodexDeckConfigEditor } from "../hooks/use-codex-deck-config-editor";
 import { usePageVisibility } from "../hooks/use-page-visibility";
 import {
   CONVERSATION_HOVER_FIELDS,
@@ -302,33 +296,23 @@ function validateConfig(config: EditableCodexDeckConfig): ConfigValidation {
 export default function ConfigModal(props: ConfigModalProps) {
   const { open, addHomeOnOpen = false, onClose, onApplied } = props;
   const [activeSection, setActiveSection] = useState<ConfigSection>("general");
-  const [path, setPath] = useState("");
-  const [configPaths, setConfigPaths] = useState<string[]>([]);
-  const [content, setContent] = useState("");
-  const [loadedContent, setLoadedContent] = useState("");
-  const [revision, setRevision] = useState("");
-  const [config, setConfig] = useState<EditableCodexDeckConfig>(() =>
-    createEmptyCodexDeckConfig(),
-  );
-  const configRef = useRef(config);
-  configRef.current = config;
-  const [homeToFocus, setHomeToFocus] = useState<number | null>(null);
+  const editor = useCodexDeckConfigEditor({ open, addHomeOnOpen, onApplied });
+  const {
+    content,
+    config,
+    loading,
+    saving,
+    error,
+    result,
+    homeToFocus,
+    isDirty,
+  } = editor;
+  const path = editor.file?.path ?? "";
+  const configPaths = editor.file?.configPaths ?? [];
+  const effectiveHoverSettings =
+    editor.file?.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS;
+  const updateStructuredConfig = editor.setConfig;
   const newHomeIdInputRef = useRef<HTMLInputElement>(null);
-  const configLoadRequestIdRef = useRef(0);
-  const hasLoadedConfigRef = useRef(false);
-  const contentRef = useRef(content);
-  const loadedContentRef = useRef(loadedContent);
-  contentRef.current = content;
-  loadedContentRef.current = loadedContent;
-  const [loading, setLoading] = useState(false);
-  const [effectiveHoverSettings, setEffectiveHoverSettings] = useState(
-    DEFAULT_CONVERSATION_HOVER_SETTINGS,
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<CodexDeckConfigWriteResponse | null>(
-    null,
-  );
   const [updateStatus, setUpdateStatus] =
     useState<CodexDeckUpdateStatusResponse | null>(null);
   const [updateMethod, setUpdateMethod] =
@@ -350,7 +334,6 @@ export default function ConfigModal(props: ConfigModalProps) {
 
   const validation = useMemo(() => validateConfig(config), [config]);
   const disabled = loading || saving || applyingUpdate;
-  const isDirty = content !== loadedContent;
   const hasBlockingValidation =
     activeSection !== "advanced" && validation.count > 0;
   const updateBusy = Boolean(
@@ -374,7 +357,7 @@ export default function ConfigModal(props: ConfigModalProps) {
     if (input) {
       input.focus({ preventScroll: true });
       input.scrollIntoView({ block: "nearest" });
-      setHomeToFocus(null);
+      editor.clearHomeFocus();
     }
   }, [activeSection, disabled, homeToFocus, open]);
 
@@ -429,75 +412,12 @@ export default function ConfigModal(props: ConfigModalProps) {
     }
   }, [applyingUpdate]);
 
-  const loadConfig = async (
-    addHome = false,
-    refresh = false,
-    showLoading = true,
-  ) => {
-    const requestId = ++configLoadRequestIdRef.current;
-    if (showLoading) setLoading(true);
-    setHomeToFocus(null);
-    setError(null);
-    setResult(null);
-    try {
-      const response = await getCodexDeckConfig({ refresh });
-      if (configLoadRequestIdRef.current !== requestId) {
-        return;
-      }
-      setPath(response.path);
-      setConfigPaths(response.configPaths ?? []);
-      contentRef.current = response.content;
-      loadedContentRef.current = response.content;
-      setContent(response.content);
-      setLoadedContent(response.content);
-      setRevision(response.revision);
-      const loadedConfig = readCodexDeckConfigForm(response);
-      if (addHome) {
-        setHomeToFocus(loadedConfig.codexHomes.length);
-        loadedConfig.codexHomes.push({ id: "", label: "", path: "" });
-      }
-      setConfig(loadedConfig);
-      hasLoadedConfigRef.current = true;
-      setEffectiveHoverSettings(
-        response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
-      );
-    } catch (loadError) {
-      if (configLoadRequestIdRef.current !== requestId) {
-        return;
-      }
-      setError(
-        loadError instanceof Error ? loadError.message : String(loadError),
-      );
-    } finally {
-      if (showLoading && configLoadRequestIdRef.current === requestId) {
-        setLoading(false);
-      }
-    }
-  };
-
   useEffect(() => {
-    if (!open) {
-      return;
-    }
+    if (!open) return;
     setActiveSection(addHomeOnOpen ? "homes" : "general");
     setUpdateStatus(null);
     setUpdateError(null);
     setUpdateResult(null);
-    const firstLoad = !hasLoadedConfigRef.current;
-    const hasUnsavedChanges = contentRef.current !== loadedContentRef.current;
-    if (firstLoad || !hasUnsavedChanges) {
-      void loadConfig(addHomeOnOpen, false, firstLoad);
-    } else if (addHomeOnOpen) {
-      const homeIndex = configRef.current.codexHomes.length;
-      setHomeToFocus(homeIndex);
-      setConfig((current) => ({
-        ...current,
-        codexHomes: [...current.codexHomes, { id: "", label: "", path: "" }],
-      }));
-    }
-    return () => {
-      configLoadRequestIdRef.current += 1;
-    };
   }, [addHomeOnOpen, open]);
 
   useEffect(() => {
@@ -548,21 +468,6 @@ export default function ConfigModal(props: ConfigModalProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [applyingUpdate, onClose, open, saving]);
 
-  const updateStructuredConfig = (nextConfig: EditableCodexDeckConfig) => {
-    configLoadRequestIdRef.current += 1;
-    setConfig(nextConfig);
-    const fileConfig = applyCodexDeckConfigFormChanges(
-      parseCodexDeckConfigContent(content),
-      config,
-      nextConfig,
-    );
-    const nextContent = updateCodexDeckConfigContent(content, fileConfig);
-    contentRef.current = nextContent;
-    setContent(nextContent);
-    setResult(null);
-    setError(null);
-  };
-
   const updateRemote = (
     property: keyof EditableRemoteConfig,
     value: string,
@@ -573,36 +478,8 @@ export default function ConfigModal(props: ConfigModalProps) {
     });
   };
 
-  const handleApply = async () => {
-    if (loading || saving || !revision || !isDirty || hasBlockingValidation) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    setResult(null);
-    try {
-      const response = await applyCodexDeckConfig({ content, revision });
-      setPath(response.path);
-      setConfigPaths(response.configPaths ?? []);
-      contentRef.current = response.content;
-      loadedContentRef.current = response.content;
-      setContent(response.content);
-      setLoadedContent(response.content);
-      setRevision(response.revision);
-      setConfig(readCodexDeckConfigForm(response));
-      hasLoadedConfigRef.current = true;
-      setEffectiveHoverSettings(
-        response.hoverSettings ?? DEFAULT_CONVERSATION_HOVER_SETTINGS,
-      );
-      setResult(response);
-      onApplied(response);
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error ? saveError.message : String(saveError),
-      );
-    } finally {
-      setSaving(false);
-    }
+  const handleApply = () => {
+    if (!hasBlockingValidation) void editor.apply();
   };
 
   const handleCheckNpmUpdate = async () => {
@@ -740,7 +617,7 @@ export default function ConfigModal(props: ConfigModalProps) {
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               type="button"
-              onClick={() => void loadConfig(false, true)}
+              onClick={editor.reload}
               disabled={disabled}
               className="h-8 w-8 rounded border border-zinc-700 bg-zinc-900 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
               title="Reload settings"
@@ -1103,16 +980,7 @@ export default function ConfigModal(props: ConfigModalProps) {
                       action={
                         <button
                           type="button"
-                          onClick={() => {
-                            setHomeToFocus(config.codexHomes.length);
-                            updateStructuredConfig({
-                              ...config,
-                              codexHomes: [
-                                ...config.codexHomes,
-                                { id: "", label: "", path: "" },
-                              ],
-                            });
-                          }}
+                          onClick={editor.addHome}
                           disabled={disabled}
                           className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-600/60 bg-cyan-500/10 px-2.5 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                         >
@@ -1596,21 +1464,9 @@ export default function ConfigModal(props: ConfigModalProps) {
                         <span className="sr-only">Config TOML</span>
                         <textarea
                           value={content}
-                          onChange={(event) => {
-                            const nextContent = event.target.value;
-                            configLoadRequestIdRef.current += 1;
-                            contentRef.current = nextContent;
-                            setConfig(
-                              applyCodexDeckConfigFormChanges(
-                                config,
-                                parseCodexDeckConfigContent(content),
-                                parseCodexDeckConfigContent(nextContent),
-                              ),
-                            );
-                            setContent(nextContent);
-                            setResult(null);
-                            setError(null);
-                          }}
+                          onChange={(event) =>
+                            editor.setContent(event.target.value)
+                          }
                           disabled={disabled}
                           spellCheck={false}
                           autoCapitalize="off"
@@ -1672,7 +1528,10 @@ export default function ConfigModal(props: ConfigModalProps) {
               type="button"
               onClick={() => void handleApply()}
               disabled={
-                disabled || !revision || !isDirty || hasBlockingValidation
+                disabled ||
+                !editor.file?.revision ||
+                !isDirty ||
+                hasBlockingValidation
               }
               className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-600/70 bg-cyan-600/25 px-3 text-xs font-medium text-cyan-100 transition-colors hover:bg-cyan-600/35 disabled:cursor-not-allowed disabled:opacity-50"
             >

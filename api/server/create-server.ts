@@ -218,6 +218,7 @@ import {
   type ResolvedCodexHome,
 } from "../codex-home-registry";
 import type { CodexDeckConfig } from "../config";
+import { equalCodexProxyConfig } from "../codex-proxy";
 import { registerConfigRoutes } from "./config-routes";
 import { registerConversationHoverSettingsRoutes } from "./conversation-hover-settings-routes";
 import { registerDaemonUpdateRoutes } from "./daemon-update-routes";
@@ -2020,6 +2021,7 @@ export interface ServerOptions {
   conversationHoverCodexHome?: string;
   hostname?: string;
   runtimeEntryPath?: string;
+  warmAppServer?: boolean;
   additionalCodexHomes?: ResolvedCodexHome[];
   dev?: boolean;
   open?: boolean;
@@ -2077,9 +2079,7 @@ function getChangedConfigKeys(
   if (previous.translationCommand !== next.translationCommand) {
     changed.push("translation_command");
   }
-  if (
-    JSON.stringify(previous.proxy ?? {}) !== JSON.stringify(next.proxy ?? {})
-  ) {
+  if (!equalCodexProxyConfig(previous.proxy, next.proxy)) {
     changed.push("proxy");
   }
   if (
@@ -2137,6 +2137,7 @@ export function createServer(options: ServerOptions) {
       isMain: true,
       available: true,
       unavailableReason: null,
+      proxy,
     },
     ...additionalCodexHomes,
   ];
@@ -2723,22 +2724,22 @@ export function createServer(options: ServerOptions) {
         appliedKeys.push("translation_command");
       }
 
-      if (changedKeys.includes("proxy")) {
-        configureCodexAppServerClient({
-          codexHome: getCodexDir(),
-          proxy: nextConfig.proxy,
-        });
-      }
-
       if (
         changedKeys.includes("codex_homes") ||
-        changedKeys.includes("translation_command") ||
-        changedKeys.includes("proxy")
+        changedKeys.includes("translation_command")
       ) {
         const registry = buildCodexHomeRegistry({
           mainCodexHome: getCodexDir(),
-          mainConfig: nextConfig,
+          mainConfig: { ...nextConfig, proxy },
         });
+        // Proxy edits are saved for the next daemon start. Keep the running
+        // homes' startup values even when live settings rebuild the catalog.
+        for (const home of registry) {
+          const runningHome = allCodexHomes.find(
+            (current) => current.id === home.id && current.path === home.path,
+          );
+          if (runningHome) home.proxy = runningHome.proxy;
+        }
         const nextAdditionalHomes = registry.filter((home) => !home.isMain);
         await homeRuntimeManager?.updateHomes(nextAdditionalHomes);
         allCodexHomes.splice(0, allCodexHomes.length, ...registry);
@@ -5944,16 +5945,15 @@ export function createServer(options: ServerOptions) {
   const initialize = (): Promise<void> => {
     if (!initializationPromise) {
       initializationPromise = loadStorage();
-      if (runtimeEntryPath) {
+      if (options.warmAppServer) {
         // The initial page requests these immediately. Start the app-server
         // work while storage builds its session index so neither path waits
         // for the other before the browser connects.
         const appServer = getCodexAppServerClient();
         void Promise.allSettled([
-          appServer.listModels(),
-          appServer.listCollaborationModes(),
+          Promise.resolve().then(() => appServer.listModels()),
+          Promise.resolve().then(() => appServer.listCollaborationModes()),
         ]);
-        void initializationPromise.then(() => getSessions()).catch(() => {});
       }
     }
     return initializationPromise;

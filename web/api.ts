@@ -222,12 +222,18 @@ let preloadedCodexDeckConfig: {
   promise: Promise<CodexDeckConfigFileResponse>;
 } | null = null;
 
-export function preloadCodexDeckConfig(): void {
+// Config belongs to the connected CLI, not the selected Codex home. Drop
+// prefetches on login, logout, and machine changes, including in-flight reads.
+remoteClient.subscribe(() => {
+  preloadedCodexDeckConfig = null;
+});
+
+function loadCodexDeckConfig() {
   if (
     preloadedCodexDeckConfig &&
     preloadedCodexDeckConfig.expiresAt > Date.now()
   ) {
-    return;
+    return preloadedCodexDeckConfig;
   }
 
   const entry = {
@@ -240,6 +246,11 @@ export function preloadCodexDeckConfig(): void {
       preloadedCodexDeckConfig = null;
     }
   });
+  return entry;
+}
+
+export function preloadCodexDeckConfig(): void {
+  loadCodexDeckConfig();
 }
 
 export async function getCodexDeckConfig(options?: {
@@ -248,11 +259,7 @@ export async function getCodexDeckConfig(options?: {
   if (options?.refresh) {
     preloadedCodexDeckConfig = null;
   }
-  preloadCodexDeckConfig();
-  const entry = preloadedCodexDeckConfig;
-  if (!entry) {
-    throw new Error("Codex Deck config request was not started");
-  }
+  const entry = loadCodexDeckConfig();
 
   try {
     return await entry.promise;
@@ -266,13 +273,21 @@ export async function getCodexDeckConfig(options?: {
 export async function applyCodexDeckConfig(
   input: CodexDeckConfigWriteRequest,
 ): Promise<CodexDeckConfigWriteResponse> {
-  return requestJson<CodexDeckConfigWriteResponse>("/api/codex-deck/config", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(input),
-  });
+  preloadedCodexDeckConfig = null;
+  try {
+    return await requestJson<CodexDeckConfigWriteResponse>(
+      "/api/codex-deck/config",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      },
+    );
+  } finally {
+    preloadedCodexDeckConfig = null;
+  }
 }
 
 export async function getCodexDeckUpdateStatus(): Promise<CodexDeckUpdateStatusResponse> {
@@ -402,6 +417,7 @@ const terminalSessionRolesLoader = createKeyedTimedLoader<
 >(SESSION_ROLE_CACHE_TTL_MS);
 
 function resetApiRequestCaches(): void {
+  preloadedCodexDeckConfig = null;
   loadCodexModels.clearMatching(() => true);
   loadCodexCollaborationModes.clearMatching(() => true);
   loadCodexConfigDefaults.clearMatching(() => true);

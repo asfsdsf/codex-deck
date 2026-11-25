@@ -105,6 +105,7 @@ import {
 } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import type { CodexDeckProxyConfig } from "./config";
+import { codexProxyEnvironment, hasCodexProxyEnvironment } from "./codex-proxy";
 import WebSocket from "ws";
 import {
   parseElicitationRequest,
@@ -1026,7 +1027,7 @@ class CodexAppServerClient {
     this.executablePath =
       options.executablePath?.trim() || resolveCodexExecutablePath();
     this.cwd = options.cwd;
-    this.env = options.env;
+    this.env = options.env ? { ...options.env } : undefined;
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userAgent = options.userAgent ?? "codex-deck/0.2.4";
@@ -4207,10 +4208,7 @@ class CodexAppServerClient {
         this.env?.CODEX_HOME?.trim() ||
         process.env.CODEX_HOME?.trim() ||
         join(homedir(), ".codex");
-      const hasProxyConfig = PROXY_ENV_KEYS.some(([, environmentKey]) =>
-        this.env?.[environmentKey]?.trim(),
-      );
-      const socketPath = hasProxyConfig
+      const socketPath = hasCodexProxyEnvironment(this.env)
         ? null
         : this.sharedSocketPath === undefined
           ? findSharedAppServerSocket(codexHome)
@@ -7245,14 +7243,7 @@ function isCommandAvailable(command: string): boolean {
 
 let client: CodexAppServerClient | null = null;
 let clientOverride: CodexAppServerClientFacade | null = null;
-let configuredCodexHome: string | null = null;
-const configuredAppServerEnv: NodeJS.ProcessEnv = {};
-
-const PROXY_ENV_KEYS = [
-  ["httpProxy", "HTTP_PROXY"],
-  ["httpsProxy", "HTTPS_PROXY"],
-  ["noProxy", "NO_PROXY"],
-] as const;
+let configuredAppServerEnv: NodeJS.ProcessEnv = {};
 
 export interface CodexAppServerClientFacade {
   listWorktrees?: (
@@ -7666,25 +7657,15 @@ export function configureCodexAppServerClient(input: {
   proxy?: CodexDeckProxyConfig;
 }): void {
   const nextCodexHome = input.codexHome?.trim() || null;
-  const codexHomeChanged = configuredCodexHome !== nextCodexHome;
-  configuredCodexHome = nextCodexHome;
+  const nextEnv: NodeJS.ProcessEnv = {
+    ...(nextCodexHome ? { CODEX_HOME: nextCodexHome } : {}),
+    ...codexProxyEnvironment(input.proxy),
+  };
+  if (JSON.stringify(configuredAppServerEnv) === JSON.stringify(nextEnv))
+    return;
+  configuredAppServerEnv = nextEnv;
 
-  if (nextCodexHome) {
-    configuredAppServerEnv.CODEX_HOME = nextCodexHome;
-  } else {
-    delete configuredAppServerEnv.CODEX_HOME;
-  }
-
-  for (const [property, environmentKey] of PROXY_ENV_KEYS) {
-    const value = input.proxy?.[property];
-    if (value?.trim()) {
-      configuredAppServerEnv[environmentKey] = value.trim();
-    } else {
-      delete configuredAppServerEnv[environmentKey];
-    }
-  }
-
-  if (codexHomeChanged && client) {
+  if (client) {
     const current = client;
     client = null;
     void current.close().catch(() => {});

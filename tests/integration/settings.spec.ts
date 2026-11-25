@@ -124,3 +124,144 @@ test("settings display effective config values without saving inherited fields",
     "14000",
   );
 });
+
+test("closing during a reload keeps settings usable on reopen", async ({
+  page,
+  app,
+}) => {
+  let reads = 0;
+  let releaseReload!: () => void;
+  let reloadStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    reloadStarted = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseReload = resolve;
+  });
+  await page.route("**/api/codex-deck/config", async (route) => {
+    if (route.request().method() === "GET" && ++reads === 2) {
+      reloadStarted();
+      await released;
+    }
+    await route.continue();
+  });
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  const open = page.getByRole("button", {
+    name: "Codex Deck settings",
+    exact: true,
+  });
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await open.click();
+  await expect(settings.getByLabel("Port", { exact: false })).toBeVisible();
+  await settings
+    .getByRole("button", { name: "Reload settings", exact: true })
+    .click();
+  await started;
+  try {
+    await settings.getByRole("button", { name: "Close settings" }).click();
+    await open.click();
+    await expect(settings.getByLabel("Port", { exact: false })).toBeEnabled();
+  } finally {
+    releaseReload();
+  }
+  await expect(
+    settings.getByText("Loading settings", { exact: true }),
+  ).not.toBeVisible();
+  await expect(settings.getByLabel("Port", { exact: false })).toBeEnabled();
+});
+
+test("a delayed background refresh preserves edits and their saved revision", async ({
+  page,
+  app,
+}) => {
+  let reads = 0;
+  let releaseRefresh!: () => void;
+  let refreshStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    refreshStarted = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  await page.route("**/api/codex-deck/config", async (route) => {
+    if (route.request().method() === "GET" && ++reads === 2) {
+      const response = await route.fetch();
+      refreshStarted();
+      await released;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
+  });
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  const open = page.getByRole("button", {
+    name: "Codex Deck settings",
+    exact: true,
+  });
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const port = settings.getByLabel("Port", { exact: false });
+  await open.click();
+  await expect(port).toBeVisible();
+  await settings.getByRole("button", { name: "Close settings" }).click();
+  await open.click();
+  await started;
+  try {
+    await port.fill("14001");
+    await settings
+      .getByRole("button", { name: "Apply changes", exact: true })
+      .click();
+    await expect(
+      settings.getByText("Settings applied", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    releaseRefresh();
+  }
+  await expect(port).toHaveValue("14001");
+  await port.fill("14002");
+  await settings
+    .getByRole("button", { name: "Apply changes", exact: true })
+    .click();
+  await expect(
+    settings.getByText("Settings applied", { exact: true }),
+  ).toBeVisible();
+  expect(
+    await readFile(join(app.rootDir, "codex-deck", "config.toml"), "utf-8"),
+  ).toContain("port = 14002");
+});
+
+test("reopening settings preserves unsaved forms and blank home rows", async ({
+  page,
+  app,
+}) => {
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  const open = page.getByRole("button", {
+    name: "Codex Deck settings",
+    exact: true,
+  });
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await open.click();
+  const port = settings.getByLabel("Port", { exact: false });
+  await expect(port).toBeVisible();
+  await port.fill("14500");
+  await settings.getByRole("button", { name: "Close settings" }).click();
+  await open.click();
+  await expect(port).toHaveValue("14500");
+  await settings
+    .getByRole("button", { name: "Reload settings", exact: true })
+    .click();
+  await expect(port).toHaveValue("");
+  await settings
+    .getByRole("button", { name: "Codex homes", exact: true })
+    .click();
+  await settings.getByRole("button", { name: "Add home", exact: true }).click();
+  await expect(settings.getByLabel("Home ID", { exact: true })).toBeVisible();
+  await settings.getByRole("button", { name: "Close settings" }).click();
+  await open.click();
+  await settings
+    .getByRole("button", { name: "Codex homes", exact: true })
+    .click();
+  await expect(settings.getByLabel("Home ID", { exact: true })).toBeVisible();
+});
