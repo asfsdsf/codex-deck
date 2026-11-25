@@ -3672,7 +3672,7 @@ export default function CodexDeckApp() {
       setSessionFileContentError(null);
       setSelectedFileContentPage(1);
 
-      if (mode === "tasks") {
+      if (mode === "tasks" || mode === "process") {
         setSessionDiff(null);
         setSessionFileTreeNodes(null);
         setSessionFileTreeLoadingMore(false);
@@ -3872,6 +3872,7 @@ export default function CodexDeckApp() {
     if (
       selectedPaneMode === "home" ||
       selectedPaneMode === "tasks" ||
+      selectedPaneMode === "process" ||
       selectedPaneMode === "skills" ||
       selectedPaneMode === "hooks"
     ) {
@@ -14438,6 +14439,7 @@ export default function CodexDeckApp() {
       </main>
       <DiffPane
         runtimeScopeKey={selectedCodexHomeId}
+        connectionMode={connectionMode}
         collapsed={diffPaneCollapsed}
         fileLinkOpenVersion={fileLinkOpenVersion}
         isMobilePhone={isMobilePhone}

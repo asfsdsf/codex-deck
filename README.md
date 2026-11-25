@@ -321,7 +321,9 @@ The web app's Settings button at the bottom of the left pane opens a structured 
 
 **Settings → Floating tip** controls each hover field independently and can disable the tip entirely. Available details include numbering, local time, token counts, cache reuse percentage, context usage, model, reasoning effort, service tier, tool duration, command exit code, original tool output tokens, output truncation, and goal usage. Model, reasoning effort, and service tier are off by default; other fields are on. Missing values stay hidden, and collapsed text-mode rows do not show the tip. Context usage uses that call's recorded token count and context capacity; model settings come from the historical turn rather than the current composer selection. Tool measurements come from recorded tool envelopes, with timestamps used as a fallback for duration.
 
-The same switches are available in TOML. All are optional, and `./config.toml` overrides the main home's file per field. For example:
+The right pane's **Process** entry lists the selected session's background processes, available CPU/memory metrics, and captured output. Select a process to inspect its output as it updates. Processes observed finishing remain available in the pane for reviewing final output. Refresh defaults to **0.5 seconds locally** and **2 seconds remotely**. Change either interval under **Settings → General → Process refresh** (0.1–60 seconds); these browser preferences save automatically and apply immediately without restarting the daemon. Refreshing pauses while the page is hidden and resumes with a fresh snapshot when it becomes visible.
+
+The floating tip switches are also available in TOML. All are optional, and `./config.toml` overrides the main home's file per field. For example:
 
 ```toml
 [conversation_hover]

@@ -35,6 +35,7 @@ import type {
 } from "@codex-deck/api";
 import HooksPane from "./hooks-pane";
 import SkillsPane from "./skills-pane";
+import ProcessPane from "./process-pane";
 import { PatchTextRenderer, SourceCodeRenderer } from "./patch-text-renderer";
 import { AnsiText } from "./tool-renderers/ansi-text";
 import { isMarkdownPath } from "../path-utils";
@@ -73,11 +74,13 @@ export type RightPaneMode =
   | "file-preview"
   | "git"
   | "tasks"
+  | "process"
   | "skills"
   | "hooks";
 
 interface DiffPaneProps {
   runtimeScopeKey?: string;
+  connectionMode?: "local" | "remote";
   collapsed: boolean;
   fileLinkOpenVersion: number;
   isMobilePhone: boolean;
@@ -1087,6 +1090,8 @@ function DiffPaneContent(props: PaneContentProps) {
                 />
               ) : tab === "skills" ? (
                 <Sparkles className="right-pane__tab-icon" />
+              ) : tab === "process" ? (
+                <Terminal className="right-pane__tab-icon" />
               ) : (
                 <Zap className="right-pane__tab-icon" />
               );
@@ -2062,6 +2067,16 @@ function DiffPaneContent(props: PaneContentProps) {
             </details>
           ) : null}
         </div>
+      ) : mode === "process" ? (
+        props.threadId ? (
+          <ProcessPane
+            key={props.runtimeScopeKey + ":" + props.threadId}
+            threadId={props.threadId}
+            connectionMode={props.connectionMode ?? "local"}
+          />
+        ) : (
+          <EmptyState text="Open a session to inspect its background processes and output." />
+        )
       ) : isHooksMode ? (
         <div className="right-pane-inspector">
           <HooksPane

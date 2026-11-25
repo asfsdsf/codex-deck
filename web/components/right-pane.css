@@ -117,6 +117,29 @@
   font-size: 12px;
 }
 
+.right-pane-process {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.right-pane-process__footer {
+  flex: none;
+  padding: 8px 12px;
+  border-top: 1px solid var(--right-pane-rule);
+  color: var(--app-text-muted);
+  font-size: 11px;
+}
+
+.right-pane-process pre.right-pane-process__output {
+  max-height: none;
+  color: var(--app-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .pane-right[data-fullscreen="true"] {
   position: fixed;
   inset: 0;
@@ -1947,7 +1970,7 @@
   height: 16px;
 }
 
-/* Skills and hooks share the dock's compact, theme-aware collection surface. */
+/* Collection panes share the dock's compact, theme-aware surface. */
 .right-pane-start__icon--skills,
 .right-pane-catalog__icon--skills {
   color: light-dark(#8059c7, #b69aeb);
@@ -1956,8 +1979,18 @@
 .right-pane-catalog__icon--hooks {
   color: light-dark(#287e9a, #7dbdce);
 }
+.right-pane-start__icon--process,
+.right-pane-catalog__icon--process {
+  color: var(--right-pane-secondary);
+}
+.right-pane__tab[data-right-pane-tab="process"] {
+  flex-basis: 130px;
+  min-width: 130px;
+  width: 130px;
+}
 .right-pane__tab[data-right-pane-tab="skills"] .right-pane__tab-title > svg,
-.right-pane__tab[data-right-pane-tab="hooks"] .right-pane__tab-title > svg {
+.right-pane__tab[data-right-pane-tab="hooks"] .right-pane__tab-title > svg,
+.right-pane__tab[data-right-pane-tab="process"] .right-pane__tab-title > svg {
   width: 14px;
   height: 14px;
   margin-right: 6px;
