@@ -126,7 +126,7 @@ import {
   notifyWorkflowMutation as notifyWorkflowMutationTransport,
   remoteClient,
   requestJson,
-  requestThreadSnapshot,
+  requestCodexSnapshot,
   setRemoteLatencyLoggingEnabled as setRemoteLatencyLoggingEnabledTransport,
   subscribeConversationStream as subscribeTransportConversationStream,
   subscribeSessionsStream as subscribeTransportSessionsStream,
@@ -1025,7 +1025,8 @@ export function notifyWorkflowMutation(workflowKey?: string | null): void {
 
 export async function listCodexModels(): Promise<CodexModelOption[]> {
   return loadCodexModels.getOrLoad(getActiveCodexHomeId(), async () => {
-    const payload = await requestJson<CodexModelsResponse>("/api/codex/models");
+    const payload =
+      await requestCodexSnapshot<CodexModelsResponse>("/api/codex/models");
     return Array.isArray(payload.models) ? payload.models : [];
   });
 }
@@ -1052,9 +1053,10 @@ export async function listCodexCollaborationModes(): Promise<
   return loadCodexCollaborationModes.getOrLoad(
     getActiveCodexHomeId(),
     async () => {
-      const payload = await requestJson<CodexCollaborationModesResponse>(
-        "/api/codex/collaboration-modes",
-      );
+      const payload =
+        await requestCodexSnapshot<CodexCollaborationModesResponse>(
+          "/api/codex/collaboration-modes",
+        );
       return Array.isArray(payload.modes) ? payload.modes : [];
     },
   );
@@ -1122,7 +1124,7 @@ export async function getCodexThreadState(
     options?.includeStatusDetails ? "status" : "",
   ].join(":");
   return codexThreadStateLoader.getOrLoad(cacheKey, () =>
-    requestJson<CodexThreadStateResponse>(
+    requestCodexSnapshot<CodexThreadStateResponse>(
       `/api/codex/threads/${encodeURIComponent(normalizedThreadId)}/state${query ? `?${query}` : ""}`,
     ),
   );
@@ -1303,7 +1305,7 @@ export function getDiffGuideSource(
 }
 
 export function listCodexSideThreads(threadId: string) {
-  return requestThreadSnapshot<{ threads: CodexThreadSummary[] }>(
+  return requestCodexSnapshot<{ threads: CodexThreadSummary[] }>(
     `/api/codex/threads/${encodeURIComponent(threadId)}/side`,
   );
 }
@@ -1470,7 +1472,7 @@ export async function sendCodexAgentAction(
 export async function getCodexThreadSummaries(
   input: CodexThreadSummariesRequest,
 ): Promise<CodexThreadSummariesResponse> {
-  return requestThreadSnapshot<CodexThreadSummariesResponse>(
+  return requestCodexSnapshot<CodexThreadSummariesResponse>(
     "/api/codex/threads/summaries",
     {
       method: "POST",
@@ -2270,7 +2272,7 @@ function threadQueueUrl(threadId: string, suffix = ""): string {
 export function getCodexThreadQueue(
   threadId: string,
 ): Promise<import("@codex-deck/api").CodexThreadQueueSnapshot> {
-  return requestThreadSnapshot(threadQueueUrl(threadId));
+  return requestCodexSnapshot(threadQueueUrl(threadId));
 }
 /** `supported: false` means the app-server has no shared queue. */
 export function addCodexThreadQueueMessage(

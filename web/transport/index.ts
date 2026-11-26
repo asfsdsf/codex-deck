@@ -47,13 +47,13 @@ export function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return getTransport().requestJson<T>(url, init);
 }
 
-// Session and conversation SSE already hold two HTTP/1.1 connections.
-// Leave room for user actions while session selection fans out slow RPC reads.
-const MAX_LOCAL_THREAD_SNAPSHOTS = 2;
-let activeThreadSnapshots = 0;
-const waitingThreadSnapshots: (() => void)[] = [];
+// Home selection starts several Codex RPC reads together. Keep connections
+// available for the session stream, conversation history, and user actions.
+const MAX_LOCAL_CODEX_SNAPSHOTS = 2;
+let activeSnapshots = 0;
+const waitingSnapshots: (() => void)[] = [];
 
-export async function requestThreadSnapshot<T>(
+export async function requestCodexSnapshot<T>(
   url: string,
   init?: RequestInit,
 ): Promise<T> {
@@ -61,17 +61,17 @@ export async function requestThreadSnapshot<T>(
     return remoteTransport.requestJson<T>(url, init);
 
   const homeId = getActiveCodexHomeId();
-  if (activeThreadSnapshots < MAX_LOCAL_THREAD_SNAPSHOTS) {
-    activeThreadSnapshots++;
+  if (activeSnapshots < MAX_LOCAL_CODEX_SNAPSHOTS) {
+    activeSnapshots++;
   } else {
-    await new Promise<void>((resolve) => waitingThreadSnapshots.push(resolve));
+    await new Promise<void>((resolve) => waitingSnapshots.push(resolve));
   }
   try {
     return await requestLocalJson<T>(url, init, homeId);
   } finally {
-    const next = waitingThreadSnapshots.shift();
+    const next = waitingSnapshots.shift();
     if (next) next();
-    else activeThreadSnapshots--;
+    else activeSnapshots--;
   }
 }
 
