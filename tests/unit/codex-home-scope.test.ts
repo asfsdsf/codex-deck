@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   __TEST_ONLY__ as WEB_API_TEST_ONLY,
+  getCodexThreadState,
+  listCodexCollaborationModes,
   listCodexModels,
 } from "../../web/api";
+import {
+  getCodexProjects,
+  getThreadReadStates,
+} from "../../web/codex-organization-api";
+import { requestJson } from "../../web/transport";
 import {
   addCodexHomeToApiUrl,
   setActiveCodexHomeId,
@@ -73,6 +80,46 @@ test("Codex model caches are isolated by active home", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("a busy home's background RPCs leave connections for session history", async (t) => {
+  let release!: () => void;
+  const busy = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const urls: URL[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string) => {
+    const url = new URL(input, "http://codex-deck.local");
+    urls.push(url);
+    if (url.pathname.startsWith("/api/codex/")) await busy;
+    return jsonResponse({});
+  });
+
+  setActiveCodexHomeId("work");
+  const snapshots = Promise.all([
+    getThreadReadStates(),
+    getCodexProjects(["running"]),
+    listCodexModels(),
+    listCodexCollaborationModes(),
+    getCodexThreadState("running", "turn-1"),
+  ]);
+  try {
+    await requestJson("/api/conversation/running/messages");
+    assert.deepEqual(
+      urls.map((url) => url.pathname),
+      [
+        "/api/codex/read-states",
+        "/api/codex/projects",
+        "/api/conversation/running/messages",
+      ],
+    );
+    setActiveCodexHomeId("other");
+  } finally {
+    release();
+    await snapshots;
+  }
+  assert.equal(urls.length, 6);
+  assert.ok(urls.every((url) => url.searchParams.get("codexHome") === "work"));
 });
 
 test("remote requests preserve the selected Codex home in the relay path", async () => {

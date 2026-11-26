@@ -11,7 +11,7 @@ import type {
   ThreadReadStatesSnapshot,
   ThreadReadStateUpdateResult,
 } from "@codex-deck/api";
-import { requestJson } from "./transport";
+import { requestCodexSnapshot, requestJson } from "./transport";
 
 // Browser calls for upstream organization/remote APIs. These go through the
 // active transport, so local and remote mode behave the same.
@@ -24,7 +24,7 @@ const post = (body: unknown): RequestInit => ({
 });
 
 export function getThreadReadStates(): Promise<ThreadReadStatesSnapshot> {
-  return requestJson("/api/codex/read-states");
+  return requestCodexSnapshot("/api/codex/read-states");
 }
 
 export function updateThreadReadState(
@@ -114,7 +114,7 @@ export function getCodexProjects(
 ): Promise<ProjectsSnapshot> {
   const query = new URLSearchParams();
   for (const threadId of threadIds) query.append("threadId", threadId);
-  return requestJson(
+  return requestCodexSnapshot(
     query.size ? `/api/codex/projects?${query}` : "/api/codex/projects",
   );
 }

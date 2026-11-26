@@ -3,7 +3,7 @@ import type {
   RealtimeVoiceHistoryPage,
   RealtimeVoiceSnapshot,
 } from "@codex-deck/api";
-import { requestJson, requestThreadSnapshot } from "../transport";
+import { requestCodexSnapshot, requestJson } from "../transport";
 
 // Plain JSON requests work over both the local HTTP API and the encrypted
 // remote relay, so voice signaling behaves the same in both modes.
@@ -49,7 +49,7 @@ export function getVoiceHistory(
         snapshotEnd: String(page.snapshotEnd),
       })
     : null;
-  return requestThreadSnapshot(
+  return requestCodexSnapshot(
     `${threadPath(threadId, "/history")}${query ? `?${query}` : ""}`,
   );
 }
