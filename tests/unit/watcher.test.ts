@@ -298,6 +298,8 @@ test("watcher roots exclude unrelated codex directories", () => {
     join(codexHome, "sessions"),
     join(codexHome, "codex-deck", "workflows"),
     join(codexHome, "codex-deck", "diff", "sessions"),
+    join(codexHome, "codex-deck", "conversation"),
+    join(codexHome, "codex-deck", "providers"),
   ]);
   assert.equal(
     shouldIgnoreWatchPathForTests(

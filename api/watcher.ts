@@ -15,6 +15,19 @@ let workflowsDir = "";
 let workflowSessionIndexDir = "";
 let workflowDaemonDir = "";
 let diffGuidesDir = "";
+let llmHistoryDir = "";
+let llmProvidersDir = "";
+const providerListeners = new Set<() => void>();
+export function onLlmProvidersChange(listener: () => void) {
+  providerListeners.add(listener);
+  return () => providerListeners.delete(listener);
+}
+const llmHistoryListeners = new Set<(providerId: string) => void>();
+
+export function onLlmHistoryChange(listener: (providerId: string) => void) {
+  llmHistoryListeners.add(listener);
+  return () => llmHistoryListeners.delete(listener);
+}
 let watcherReadyPromise: Promise<void> | null = null;
 let watcherRefCount = 0;
 
@@ -43,10 +56,19 @@ export function initWatcher(dir: string): void {
   workflowSessionIndexDir = join(workflowsDir, "session-index");
   workflowDaemonDir = join(workflowsDir, "daemon-state");
   diffGuidesDir = join(codexDir, "codex-deck", "diff", "sessions");
+  llmHistoryDir = join(codexDir, "codex-deck", "conversation");
+  llmProvidersDir = join(codexDir, "codex-deck", "providers");
 }
 
 function getWatchRoots(): string[] {
-  return [historyPath, sessionsDir, workflowsDir, diffGuidesDir]
+  return [
+    historyPath,
+    sessionsDir,
+    workflowsDir,
+    diffGuidesDir,
+    llmHistoryDir,
+    llmProvidersDir,
+  ]
     .map((value) => value.trim())
     .filter(Boolean);
 }
@@ -219,6 +241,18 @@ function handleChange(filePath: string): void {
 
   const timer = setTimeout(() => {
     debounceTimers.delete(filePath);
+    if (filePath.endsWith(".json") && dirname(filePath) === llmProvidersDir) {
+      for (const listener of providerListeners) listener();
+      return;
+    }
+    if (
+      filePath.endsWith(".json") &&
+      isPathWithinDirectory(filePath, llmHistoryDir)
+    ) {
+      const providerId = basename(dirname(dirname(filePath)));
+      for (const listener of llmHistoryListeners) listener(providerId);
+      return;
+    }
     if (
       isPathWithinDirectory(filePath, diffGuidesDir) ||
       filePath === diffGuidesDir

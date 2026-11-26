@@ -8,6 +8,8 @@ interface CodexHomeSelectorProps {
   loading: boolean;
   onSelectHome: (homeId: string) => void;
   onAddHome: () => void;
+  onAddProvider: () => void;
+  onOpen?: () => void;
 }
 
 export default function CodexHomeSelector({
@@ -16,6 +18,8 @@ export default function CodexHomeSelector({
   loading,
   onSelectHome,
   onAddHome,
+  onAddProvider,
+  onOpen,
 }: CodexHomeSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -104,10 +108,14 @@ export default function CodexHomeSelector({
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-controls={isOpen ? menuId : undefined}
-        onClick={() => setIsOpen((current) => !current)}
+        onClick={() => {
+          if (!isOpen) onOpen?.();
+          setIsOpen((current) => !current);
+        }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
+            onOpen?.();
             setIsOpen(true);
           }
         }}
@@ -134,7 +142,7 @@ export default function CodexHomeSelector({
             className="px-2.5 pb-1.5 pt-2 text-[11px] font-medium text-zinc-500"
             aria-hidden="true"
           >
-            Codex homes
+            Codex homes and providers
           </div>
           <div
             role="group"
@@ -177,9 +185,9 @@ export default function CodexHomeSelector({
                       </span>
                     )}
                   </span>
-                  {home.isMain && (
+                  {(home.isMain || home.kind === "llm") && (
                     <span className="shrink-0 text-[10px] text-zinc-500">
-                      Default
+                      {home.isMain ? "Default" : "LLM"}
                     </span>
                   )}
                 </button>
@@ -205,6 +213,22 @@ export default function CodexHomeSelector({
               aria-hidden="true"
             />
             Add Codex home
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
+              setIsOpen(false);
+              onAddProvider();
+            }}
+            className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-zinc-300 hover:bg-zinc-800/70 focus:bg-zinc-800/70"
+          >
+            <Plus
+              className="h-3.5 w-3.5 shrink-0 text-zinc-400"
+              aria-hidden="true"
+            />
+            Add LLM provider
           </button>
         </div>
       )}

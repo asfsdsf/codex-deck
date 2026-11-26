@@ -781,6 +781,9 @@ export interface SystemContextResponse {
 }
 
 export interface CodexHomeDescriptor {
+  kind?: "llm";
+  model?: string;
+  providerRevision?: string;
   id: string;
   label: string;
   isMain: boolean;

@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { createSerializedRunner } from "../serialized-runner";
 import { resolveConversationHoverSettings } from "../conversation-hover-settings";
 import {
   loadCodexDeckConfig,
@@ -28,24 +29,6 @@ export interface ConfigRouteOptions {
     previousConfig: CodexDeckConfig,
     nextConfig: CodexDeckConfig,
   ) => Promise<CodexDeckConfigApplyResult>;
-}
-
-function createSerializedRunner() {
-  let tail = Promise.resolve();
-
-  return async function runSerialized<T>(operation: () => Promise<T>) {
-    const previous = tail;
-    let release = () => {};
-    tail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous.catch(() => {});
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
-  };
 }
 
 export function registerConfigRoutes(

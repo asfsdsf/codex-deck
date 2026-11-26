@@ -145,6 +145,9 @@ import {
 } from "../plugins/pane-entries";
 import ProjectSelector from "../components/project-selector";
 import CodexHomeSelector from "../components/codex-home-selector";
+import { LlmWorkspace } from "../components/llm-workspace";
+import { useEventSource } from "../hooks/use-event-source";
+import { createPollingSubscription } from "../transport/shared";
 import CodexValuePicker, {
   type CodexValuePickerHandle,
   type CodexValuePickerOption,
@@ -1687,7 +1690,11 @@ export default function CodexDeckApp() {
   );
   const resolvedRemoteServerUrl = remoteLoginTarget.serverUrl;
   const remoteTrustPins = remoteLoginTarget.pins;
-  const apiReady = connectionMode === "local" || remoteConnected;
+  const connectionReady = connectionMode === "local" || remoteConnected;
+  const selectedProvider = codexHomes.find(
+    (home) => home.kind === "llm" && home.id === selectedCodexHomeId,
+  );
+  const apiReady = connectionReady && !selectedCodexHomeId.startsWith("llm:");
   const configScopeKey = JSON.stringify([
     connectionMode,
     remoteConnected,
@@ -1882,7 +1889,7 @@ export default function CodexDeckApp() {
   );
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [configModalAction, setConfigModalAction] = useState<
-    "settings" | "add-home" | null
+    "settings" | "add-home" | "add-provider" | null
   >(null);
   const showConfigModal = configModalAction !== null;
   const [hasOpenedConfigModal, setHasOpenedConfigModal] = useState(false);
@@ -2293,8 +2300,41 @@ export default function CodexDeckApp() {
     resetHomeBrowsingState(MAIN_CODEX_HOME_ID);
   }, [resetHomeBrowsingState]);
 
+  const refreshOrigins = useCallback(async () => {
+    const generation = codexHomeGenerationRef.current;
+    try {
+      const response = await listCodexHomes();
+      if (generation !== codexHomeGenerationRef.current) return;
+      setCodexHomes(response.homes);
+      if (
+        !response.homes.some(
+          (home) => home.id === selectedCodexHomeId && home.available,
+        )
+      ) {
+        resetHomeBrowsingState(response.mainHomeId);
+      }
+    } catch {
+      // Keep the last catalog while the connection recovers.
+    }
+  }, [selectedCodexHomeId, resetHomeBrowsingState]);
+  const watchOrigins =
+    connectionReady &&
+    isPageVisible &&
+    (showConfigModal || selectedCodexHomeId.startsWith("llm:"));
+  useEventSource("/api/codex-homes/providers/stream", {
+    enabled: watchOrigins && !remoteConnected,
+    events: [
+      { eventName: "change", onMessage: refreshOrigins },
+      { eventName: "heartbeat", onMessage: () => {} },
+    ],
+  });
   useEffect(() => {
-    if (!apiReady) {
+    if (watchOrigins && remoteConnected)
+      return createPollingSubscription(refreshOrigins, 3000);
+  }, [watchOrigins, remoteConnected, refreshOrigins, configScopeKey]);
+
+  useEffect(() => {
+    if (!connectionReady) {
       setCodexHomes([]);
       setCodexHomesLoading(false);
       return;
@@ -2336,7 +2376,7 @@ export default function CodexDeckApp() {
       cancelled = true;
     };
   }, [
-    apiReady,
+    connectionReady,
     connectionMode,
     resetHomeBrowsingState,
     selectedCodexHomeId,
@@ -12121,6 +12161,63 @@ export default function CodexDeckApp() {
     );
   }
 
+  const originSelector = (
+    <CodexHomeSelector
+      homes={codexHomes}
+      selectedHomeId={selectedCodexHomeId}
+      loading={codexHomesLoading}
+      onSelectHome={handleSelectCodexHome}
+      onAddHome={() => setConfigModalAction("add-home")}
+      onAddProvider={() => setConfigModalAction("add-provider")}
+      onOpen={refreshOrigins}
+    />
+  );
+  const settingsModal = (showConfigModal || hasOpenedConfigModal) && (
+    <ConfigModal
+      key={configScopeKey}
+      pluginContributions={pluginContributions.snapshot?.plugins ?? []}
+      pluginScope={selectedCodexHomeId}
+      open={showConfigModal}
+      addHomeOnOpen={configModalAction === "add-home"}
+      addProviderOnOpen={configModalAction === "add-provider"}
+      providers={codexHomes}
+      onProviderSaved={(provider) =>
+        setCodexHomes((current) => [
+          ...current.filter((home) => home.id !== provider.id),
+          provider,
+        ])
+      }
+      onProviderRemoved={(id) => {
+        setCodexHomes((current) => current.filter((home) => home.id !== id));
+        if (id === selectedCodexHomeId)
+          resetHomeBrowsingState(MAIN_CODEX_HOME_ID);
+      }}
+      onClose={() => setConfigModalAction(null)}
+      onApplied={(response) => {
+        setCodexHomes(response.homes);
+        const selectedHome = response.homes.find(
+          (home) => home.id === selectedCodexHomeId,
+        );
+        if (!selectedHome?.available)
+          resetHomeBrowsingState(response.mainHomeId || MAIN_CODEX_HOME_ID);
+        showCommandNoticeForDuration("Applied Codex Deck config.");
+      }}
+    />
+  );
+  if (selectedProvider) {
+    return (
+      <>
+        <LlmWorkspace
+          key={configScopeKey + selectedProvider.id}
+          provider={selectedProvider}
+          selector={originSelector}
+          onSettings={() => setConfigModalAction("settings")}
+          remote={remoteConnected}
+        />
+        <Suspense fallback={null}>{settingsModal}</Suspense>
+      </>
+    );
+  }
   return (
     <div
       className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100"
@@ -12254,13 +12351,7 @@ export default function CodexDeckApp() {
           }
           home={
             <div className="px-2 pb-1">
-              <CodexHomeSelector
-                homes={codexHomes}
-                selectedHomeId={selectedCodexHomeId}
-                loading={codexHomesLoading}
-                onSelectHome={handleSelectCodexHome}
-                onAddHome={() => setConfigModalAction("add-home")}
-              />
+              {originSelector}
               {codexHomesError ? (
                 <p
                   className="mt-1 truncate text-[10px] text-red-400"
@@ -13041,28 +13132,7 @@ export default function CodexDeckApp() {
             />
           )}
 
-          {(showConfigModal || hasOpenedConfigModal) && (
-            <ConfigModal
-              key={configScopeKey}
-              pluginContributions={pluginContributions.snapshot?.plugins ?? []}
-              pluginScope={selectedCodexHomeId}
-              open={showConfigModal}
-              addHomeOnOpen={configModalAction === "add-home"}
-              onClose={() => setConfigModalAction(null)}
-              onApplied={(response) => {
-                setCodexHomes(response.homes);
-                const selectedHome = response.homes.find(
-                  (home) => home.id === selectedCodexHomeId,
-                );
-                if (!selectedHome?.available) {
-                  resetHomeBrowsingState(
-                    response.mainHomeId || MAIN_CODEX_HOME_ID,
-                  );
-                }
-                showCommandNoticeForDuration("Applied Codex Deck config.");
-              }}
-            />
-          )}
+          {settingsModal}
         </Suspense>
 
         {showRenameModal && (

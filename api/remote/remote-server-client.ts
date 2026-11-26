@@ -146,6 +146,8 @@ function ensureAllowedProxyPath(path: string): void {
   }
   if (
     path.startsWith("/api/sessions/stream") ||
+    (path.startsWith("/api/codex-homes/providers/") &&
+      path.includes("/stream")) ||
     (path.startsWith("/api/conversation/") && path.includes("/stream")) ||
     path.startsWith("/api/terminals/stream") ||
     (path.startsWith("/api/terminals/") && path.includes("/stream"))

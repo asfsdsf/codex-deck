@@ -222,6 +222,7 @@ import {
 import { loadCodexDeckConfig, type CodexDeckConfig } from "../config";
 import { equalCodexProxyConfig } from "../codex-proxy";
 import { registerConfigRoutes } from "./config-routes";
+import { registerLlmRoutes } from "./llm-routes";
 import { registerConversationHoverSettingsRoutes } from "./conversation-hover-settings-routes";
 import { registerDaemonUpdateRoutes } from "./daemon-update-routes";
 import {
@@ -2181,9 +2182,14 @@ export function createServer(options: ServerOptions) {
     );
   }
 
-  app.get("/api/codex-homes", (c) =>
+  const llm = registerLlmRoutes(app, getCodexDir());
+  const listOrigins = async () => [
+    ...allCodexHomes.map(toCodexHomeDescriptor),
+    ...(await llm.providers()),
+  ];
+  app.get("/api/codex-homes", async (c) =>
     c.json({
-      homes: allCodexHomes.map(toCodexHomeDescriptor),
+      homes: await listOrigins(),
       mainHomeId: MAIN_CODEX_HOME_ID,
     }),
   );
@@ -2778,7 +2784,7 @@ export function createServer(options: ServerOptions) {
         restartRequiredKeys: changedKeys.filter(
           (key) => !appliedKeys.includes(key),
         ),
-        homes: allCodexHomes.map(toCodexHomeDescriptor),
+        homes: await listOrigins(),
         mainHomeId: MAIN_CODEX_HOME_ID,
       };
     },

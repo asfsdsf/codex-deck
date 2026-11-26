@@ -1,4 +1,12 @@
 import DeckPluginRuntime from "./deck-plugin-runtime";
+import { LlmProviderSettings } from "./llm-provider-settings";
+import {
+  EmptySettingsList,
+  Field,
+  INPUT_CLASS,
+  REMOVE_BUTTON,
+  SETTINGS_CARD,
+} from "./settings-fields";
 import { pluginViews } from "../plugins/contributions";
 import type { DeckPluginContributionsSnapshot } from "../../api/deck-plugin-manifest";
 import ProcessRefreshSettings from "./process-refresh-settings";
@@ -54,6 +62,12 @@ interface ConfigModalProps {
   pluginContributions?: DeckPluginContributionsSnapshot["plugins"];
   pluginScope?: string;
   addHomeOnOpen?: boolean;
+  addProviderOnOpen?: boolean;
+  providers?: import("@codex-deck/api").CodexHomeDescriptor[];
+  onProviderSaved: (
+    provider: import("@codex-deck/api").CodexHomeDescriptor,
+  ) => void;
+  onProviderRemoved: (id: string) => void;
   onClose: () => void;
   onApplied: (response: CodexDeckConfigWriteResponse) => void;
 }
@@ -75,8 +89,8 @@ interface ConfigValidation {
   count: number;
 }
 
-const INPUT_CLASS =
-  "h-9 w-full rounded border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-60";
+const ADD_BUTTON_CLASS =
+  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded border border-cyan-600/60 bg-cyan-500/10 px-2.5 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50";
 
 const SECTIONS: Array<{
   id: ConfigSection;
@@ -132,33 +146,6 @@ function SectionHeader({
       </div>
       {action}
     </div>
-  );
-}
-
-function Field({
-  label,
-  badge,
-  error,
-  children,
-}: {
-  label: string;
-  badge?: ReactNode;
-  error?: string | null;
-  children: ReactNode;
-}) {
-  return (
-    <label className="block min-w-0">
-      <span className="mb-1.5 flex items-center gap-2 text-xs font-medium text-zinc-300">
-        <span>{label}</span>
-        {badge}
-      </span>
-      {children}
-      {error ? (
-        <span className="mt-1.5 block text-[11px] text-red-300" role="alert">
-          {error}
-        </span>
-      ) : null}
-    </label>
   );
 }
 
@@ -304,12 +291,14 @@ export default function ConfigModal(props: ConfigModalProps) {
   const {
     open,
     addHomeOnOpen = false,
+    addProviderOnOpen = false,
     onClose,
     onApplied,
     pluginContributions = [],
     pluginScope = "main",
   } = props;
   const [activeSection, setActiveSection] = useState<ConfigSection>("general");
+  const [addingProvider, setAddingProvider] = useState(false);
   const editor = useCodexDeckConfigEditor({ open, addHomeOnOpen, onApplied });
   const {
     content,
@@ -428,11 +417,12 @@ export default function ConfigModal(props: ConfigModalProps) {
 
   useEffect(() => {
     if (!open) return;
-    setActiveSection(addHomeOnOpen ? "homes" : "general");
+    setActiveSection(addHomeOnOpen || addProviderOnOpen ? "homes" : "general");
+    setAddingProvider(addProviderOnOpen);
     setUpdateStatus(null);
     setUpdateError(null);
     setUpdateResult(null);
-  }, [addHomeOnOpen, open]);
+  }, [addHomeOnOpen, addProviderOnOpen, open]);
 
   useEffect(() => {
     if (!open || activeSection !== "updates" || updateStatus) {
@@ -1036,6 +1026,29 @@ export default function ConfigModal(props: ConfigModalProps) {
                 {activeSection === "homes" ? (
                   <div>
                     <SectionHeader
+                      title="LLM providers"
+                      badge={<StatusBadge tone="live">Applies now</StatusBadge>}
+                      action={
+                        <button
+                          type="button"
+                          onClick={() => setAddingProvider(true)}
+                          disabled={disabled || addingProvider}
+                          aria-expanded={addingProvider}
+                          className={ADD_BUTTON_CLASS}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Add provider
+                        </button>
+                      }
+                    />
+                    <LlmProviderSettings
+                      adding={addingProvider}
+                      onClose={() => setAddingProvider(false)}
+                      providers={props.providers ?? []}
+                      onSaved={props.onProviderSaved}
+                      onRemoved={props.onProviderRemoved}
+                    />
+                    <SectionHeader
                       title="Additional Codex homes"
                       badge={<StatusBadge tone="live">Applies now</StatusBadge>}
                       action={
@@ -1043,7 +1056,7 @@ export default function ConfigModal(props: ConfigModalProps) {
                           type="button"
                           onClick={editor.addHome}
                           disabled={disabled}
-                          className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-600/60 bg-cyan-500/10 px-2.5 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          className={ADD_BUTTON_CLASS}
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Add home
@@ -1052,19 +1065,16 @@ export default function ConfigModal(props: ConfigModalProps) {
                     />
                     <div className="space-y-3 py-5">
                       {config.codexHomes.length === 0 ? (
-                        <div className="flex min-h-40 flex-col items-center justify-center border-y border-dashed border-zinc-800 text-zinc-500">
-                          <FolderCog className="h-6 w-6" />
-                          <div className="mt-2 text-xs">
-                            No additional homes
-                          </div>
-                        </div>
+                        <EmptySettingsList icon={FolderCog}>
+                          No additional homes
+                        </EmptySettingsList>
                       ) : (
                         config.codexHomes.map((home, index) => {
                           const homeErrors = validation.homes[index] ?? [];
                           return (
                             <div
                               key={index}
-                              className={`rounded-md border bg-zinc-900/45 p-3 ${
+                              className={`${SETTINGS_CARD} ${
                                 homeErrors.length > 0
                                   ? "border-red-500/45"
                                   : "border-zinc-800"
@@ -1129,7 +1139,7 @@ export default function ConfigModal(props: ConfigModalProps) {
                                     })
                                   }
                                   disabled={disabled}
-                                  className="mt-[22px] h-9 w-8 rounded text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                  className={`mt-[22px] ${REMOVE_BUTTON}`}
                                   title="Remove Codex home"
                                   aria-label="Remove Codex home"
                                 >
