@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { Redo2 } from "lucide-react";
 import type { DeckPluginContributionsSnapshot } from "../../api/deck-plugin-manifest";
 
 type Plugin = DeckPluginContributionsSnapshot["plugins"][number];
@@ -49,7 +49,7 @@ export function DeckPluginSessionToggles({
         }}
       >
         {compact ? (
-          <RotateCcw
+          <Redo2
             className="h-4 w-4"
             strokeWidth={1.75}
             aria-hidden="true"
