@@ -11934,10 +11934,12 @@ export default function CodexDeckApp() {
       data-conversation-view-mode={conversationViewMode || undefined}
     >
       <DeckPluginSessionTips
+        key={selectedCodexHomeId}
         plugins={pluginContributions.snapshot?.plugins ?? []}
         threadId={centerView === "session" ? selectedSession : null}
         serverOffset={pluginContributions.serverOffset}
         error={pluginContributions.error}
+        onAction={pluginContributions.action}
       />
       {sidebarCollapsed ? (
         <aside

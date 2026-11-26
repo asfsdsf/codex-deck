@@ -56,13 +56,20 @@ export function DeckPluginSessionTips({
   threadId,
   serverOffset,
   error,
+  onAction,
 }: {
   plugins: Plugin[];
   threadId: string | null;
   serverOffset: number;
   error?: string;
+  onAction: (
+    pluginId: string,
+    threadId: string,
+    actionId: string,
+  ) => Promise<void>;
 }) {
   const [now, setNow] = useState(Date.now());
+  const [pending, setPending] = useState<Record<string, boolean>>({});
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -90,6 +97,7 @@ export function DeckPluginSessionTips({
       )}
       {visible.map((plugin) => {
         const status = plugin.statuses[threadId!];
+        const pendingKey = `${plugin.id}:${threadId}`;
         const seconds = status?.nextAt
           ? Math.max(0, Math.ceil((status.nextAt - now - serverOffset) / 1000))
           : null;
@@ -102,7 +110,7 @@ export function DeckPluginSessionTips({
         return (
           <div
             key={plugin.id}
-            className="rounded-lg border border-zinc-700 bg-zinc-900/95 p-3 text-xs text-zinc-300 shadow-sm"
+            className="pointer-events-auto rounded-lg border border-zinc-700/55 bg-zinc-900/72 p-3 text-xs text-zinc-300 shadow-sm"
           >
             <p className="flex justify-between gap-2 font-medium">
               <span>{plugin.name}</span>
@@ -116,6 +124,30 @@ export function DeckPluginSessionTips({
             <p className="mt-1 break-words text-zinc-400">
               {plugin.workerError ?? status?.reason}
             </p>
+            {!!status?.actions?.length && !plugin.workerError && (
+              <div className="mt-2 flex flex-wrap justify-end gap-2">
+                {status.actions.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    disabled={pending[pendingKey]}
+                    className="min-h-8 rounded-md border border-zinc-700/55 px-2.5 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800/70 focus-visible:outline-2 focus-visible:outline-cyan-500 disabled:opacity-50"
+                    onClick={() => {
+                      setPending((value) => ({ ...value, [pendingKey]: true }));
+                      void onAction(plugin.id, threadId!, action.id).finally(
+                        () =>
+                          setPending((value) => ({
+                            ...value,
+                            [pendingKey]: false,
+                          })),
+                      );
+                    }}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

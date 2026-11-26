@@ -3,6 +3,7 @@ import type { DeckPluginContributionsSnapshot } from "../../api/deck-plugin-mani
 import { subscribeCodexRuntimeEvents } from "../codex-runtime-events";
 import {
   getDeckPluginContributions,
+  requestDeckPluginWorker,
   setDeckPluginSessionEnabled,
 } from "../deck-plugins-api";
 
@@ -69,10 +70,27 @@ export function useDeckPluginContributions(homeId: string, enabled: boolean) {
     },
     [homeId],
   );
+  const action = useCallback(
+    async (pluginId: string, threadId: string, actionId: string) => {
+      setError("");
+      try {
+        await requestDeckPluginWorker(
+          pluginId,
+          "status.action",
+          { threadId, actionId },
+          homeId,
+        );
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
+    },
+    [homeId],
+  );
   return {
     snapshot: result?.homeId === homeId ? result.snapshot : null,
     serverOffset: result?.offset ?? 0,
     toggle,
+    action,
     error,
   };
 }

@@ -385,6 +385,7 @@ test("status contributions use server timestamps, broadcast changes, and stay is
       phase: "waiting",
       reason: "Transient",
       nextAt: Date.now() + 30_000,
+      actions: [{ id: "cancel:episode", label: "Cancel retry" }],
     },
   });
   const snapshot = await (
@@ -392,8 +393,30 @@ test("status contributions use server timestamps, broadcast changes, and stay is
   ).json();
   assert.equal(snapshot.plugins[0].sessions.s, true);
   assert.equal(snapshot.plugins[0].statuses.s.phase, "waiting");
+  assert.deepEqual(snapshot.plugins[0].statuses.s.actions, [
+    { id: "cancel:episode", label: "Cancel retry" },
+  ]);
   assert.ok(snapshot.plugins[0].statuses.s.updatedAt <= snapshot.serverTime);
   assert.ok(first.changes() > before);
+  for (const actions of [
+    [
+      { id: "cancel", label: "Cancel" },
+      { id: "cancel", label: "Duplicate" },
+    ],
+    [{ id: "cancel", label: "x".repeat(81) }],
+    [{ id: "", label: "Cancel" }],
+    Array.from({ length: 5 }, (_, i) => ({
+      id: `action-${i}`,
+      label: "Action",
+    })),
+  ]) {
+    await assert.rejects(
+      first.rpc("status.set", {
+        threadId: "s",
+        status: { phase: "waiting", reason: "Transient", actions },
+      }),
+    );
+  }
   assert.deepEqual((await second.manager.snapshot()).plugins[0].sessions, {});
   await first.manager.setSessionEnabled("example.worker", "s", false);
   assert.equal(

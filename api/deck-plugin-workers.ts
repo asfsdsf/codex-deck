@@ -495,6 +495,26 @@ export class DeckPluginWorkers {
     if (method === "status.set") {
       const threadId = text(params.threadId);
       const input = params.status === null ? null : object(params.status);
+      const actions: NonNullable<DeckPluginStatus["actions"]> = [];
+      if (input?.actions !== undefined) {
+        if (!Array.isArray(input.actions) || input.actions.length > 4)
+          throw new Error("Status supports at most four actions.");
+        if (
+          input.actions.length &&
+          !worker.plugin.capabilities.includes("worker.request")
+        )
+          throw new Error("Status actions require worker.request.");
+        for (const value of input.actions) {
+          const action = object(value);
+          const id = text(action.id);
+          const label = text(action.label).trim();
+          if (label.length > 80 || actions.some((item) => item.id === id))
+            throw new Error(
+              "Status action labels must be short and IDs unique.",
+            );
+          actions.push({ id, label });
+        }
+      }
       const status: DeckPluginStatus | null = input
         ? {
             phase: text(input.phase).slice(0, 80),
@@ -511,6 +531,7 @@ export class DeckPluginWorkers {
               Number.isFinite(input.deadline)
                 ? input.deadline
                 : null,
+            actions,
             updatedAt: Date.now(),
           }
         : null;

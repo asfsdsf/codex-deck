@@ -279,6 +279,7 @@ export interface DeckPluginStatus {
   reason: string;
   nextAt?: number | null;
   deadline?: number | null;
+  actions?: Array<{ id: string; label: string }>;
   updatedAt: number;
 }
 
