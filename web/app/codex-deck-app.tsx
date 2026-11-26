@@ -59,7 +59,6 @@ import {
   useRef,
   type FormEvent as ReactFormEvent,
   type PointerEvent as ReactPointerEvent,
-  type RefObject,
 } from "react";
 import type {
   DiffGuideSummary,
@@ -94,25 +93,18 @@ import type {
   WorkflowTaskSummary,
 } from "@codex-deck/api";
 import {
-  Copy,
-  Check,
   Circle,
   CircleDot,
   Search,
   Plus,
-  X,
-  ChevronUp,
-  ChevronDown,
   ChevronLeft,
-  Moon,
-  Sun,
   Send,
   Clock3,
   OctagonX,
   Activity,
   ExternalLink,
 } from "lucide-react";
-import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
+import { reconcilePendingTurnWithThreadState } from "../utils";
 import {
   isKnownSessionSelection,
   normalizeSessionSelectionId,
@@ -146,6 +138,12 @@ import {
 import ProjectSelector from "../components/project-selector";
 import CodexHomeSelector from "../components/codex-home-selector";
 import { LlmWorkspace } from "../components/llm-workspace";
+import {
+  SessionHeader,
+  SessionSearchBar,
+  ThemeToggleButton,
+} from "../components/session-header";
+import { REASONING_EFFORTS } from "../reasoning-efforts";
 import { useEventSource } from "../hooks/use-event-source";
 import { createPollingSubscription } from "../transport/shared";
 import CodexValuePicker, {
@@ -361,7 +359,6 @@ import {
   readStoredThemePreference,
   resolveThemePreference,
   THEME_STORAGE_KEY,
-  type ResolvedTheme,
   type ThemePreference,
 } from "../theme";
 import {
@@ -410,6 +407,9 @@ const WorkflowView = lazy(
   () => import("../../builtin-plugins/workflow/client"),
 );
 const ConfigModal = lazy(() => import("../components/config-modal"));
+const DeckPluginsDirectory = lazy(
+  () => import("../components/deck-plugins-directory"),
+);
 const MemoriesModal = lazy(() => import("../components/memories-modal"));
 const ReviewModal = lazy(() => import("../components/review-modal"));
 
@@ -420,145 +420,6 @@ function PanelLoading() {
       role="status"
     >
       Loading...
-    </div>
-  );
-}
-
-interface SessionHeaderProps {
-  session: Session;
-  copied: boolean;
-  isMobilePhone: boolean;
-  railCollapsedByDefault: boolean;
-  conversationSearchOpen: boolean;
-  resolvedTheme: ResolvedTheme;
-  onCopySessionId: (sessionId: string) => void;
-  onCopyProjectPath: (projectPath: string) => void;
-  onToggleConversationSearch: () => void;
-  onToggleRailCollapsedByDefault: () => void;
-  onToggleTheme: () => void;
-}
-
-interface ThemeToggleButtonProps {
-  resolvedTheme: ResolvedTheme;
-  onToggleTheme: () => void;
-}
-
-interface SessionSearchBarProps {
-  query: string;
-  status: SessionSearchStatus;
-  inputRef: RefObject<HTMLInputElement | null>;
-  onChangeQuery: (value: string) => void;
-  onClose: () => void;
-  onNavigate: (direction: "previous" | "next") => void;
-}
-
-function ThemeToggleButton(props: ThemeToggleButtonProps) {
-  const { resolvedTheme, onToggleTheme } = props;
-  const switchingTo = resolvedTheme === "dark" ? "light" : "dark";
-
-  return (
-    <button
-      type="button"
-      onClick={onToggleTheme}
-      className="group relative h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-      title={`Switch to ${switchingTo} theme`}
-      aria-label={`Switch to ${switchingTo} theme`}
-    >
-      <span className="relative mx-auto block h-4 w-4">
-        <Sun
-          className={`absolute inset-0 h-4 w-4 transition-all duration-200 ${
-            resolvedTheme === "dark"
-              ? "scale-100 rotate-0 opacity-100"
-              : "scale-75 -rotate-90 opacity-0"
-          }`}
-        />
-        <Moon
-          className={`absolute inset-0 h-4 w-4 transition-all duration-200 ${
-            resolvedTheme === "light"
-              ? "scale-100 rotate-0 opacity-100"
-              : "scale-75 rotate-90 opacity-0"
-          }`}
-        />
-      </span>
-    </button>
-  );
-}
-
-function SessionSearchBar(props: SessionSearchBarProps) {
-  const { query, status, inputRef, onChangeQuery, onClose, onNavigate } = props;
-  const hasMatches = status.totalMatches > 0;
-  const hasQuery = query.trim().length > 0;
-  const activeLabel =
-    hasMatches && status.activeMatchIndex !== null
-      ? `${status.activeMatchIndex + 1}/${status.totalMatches}`
-      : hasQuery
-        ? `0/${status.totalMatches}`
-        : "0/0";
-
-  return (
-    <div className="rounded-xl border border-zinc-700/60 bg-zinc-950/45 px-3 py-2 shadow-lg shadow-black/20 backdrop-blur-md">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-900/20 px-3 py-2">
-          <Search className="h-4 w-4 shrink-0 text-zinc-400" />
-          <input
-            ref={inputRef}
-            type="search"
-            value={query}
-            onChange={(event) => onChangeQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                onNavigate(event.shiftKey ? "previous" : "next");
-                return;
-              }
-
-              if (event.key === "Escape") {
-                event.preventDefault();
-                inputRef.current?.blur();
-                onClose();
-              }
-            }}
-            placeholder="Search this conversation view"
-            className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
-            aria-label="Search conversation"
-          />
-          <span className="shrink-0 text-[11px] font-mono text-zinc-400">
-            {activeLabel}
-          </span>
-        </div>
-
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => onNavigate("previous")}
-            disabled={!hasMatches}
-            className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Previous search result"
-            title="Previous search result"
-          >
-            <ChevronUp className="mx-auto h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate("next")}
-            disabled={!hasMatches}
-            className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Next search result"
-            title="Next search result"
-          >
-            <ChevronDown className="mx-auto h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-9 w-9 shrink-0 rounded-lg border border-zinc-700/60 bg-zinc-900/30 text-zinc-300 transition-colors hover:bg-zinc-800/55"
-            aria-label="Close search"
-            title="Close search"
-          >
-            <X className="mx-auto h-4 w-4" />
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -600,17 +461,6 @@ function formatWorkflowStopHint(output: string | null | undefined): string {
   }
   return text || "Stop request sent.";
 }
-
-const REASONING_EFFORTS: CodexReasoningEffort[] = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-  "ultra",
-];
 
 const FIX_DANGLING_WAIT_THRESHOLD_MS = 8_000;
 const WAIT_STATE_SETTLE_DELAY_MS = 750;
@@ -1742,8 +1592,8 @@ export default function CodexDeckApp() {
     [paneCatalog],
   );
   const rightEntries = useMemo(
-    () => paneEntries(paneCatalog, "pane.right"),
-    [paneCatalog],
+    () => (selectedProvider ? [] : paneEntries(paneCatalog, "pane.right")),
+    [paneCatalog, selectedProvider],
   );
   const leftLayout = useMemo(
     () => activePaneLayout(paneCatalog, "layout.left"),
@@ -1754,7 +1604,8 @@ export default function CodexDeckApp() {
     [paneCatalog],
   );
   const LeftPane = leftLayout?.builtin ? LeftPaneView : null;
-  const RightPane = rightLayout?.builtin ? RightPaneView : null;
+  const RightPane =
+    selectedProvider || rightLayout?.builtin ? RightPaneView : null;
   const [leftPluginKey, setLeftPluginKey] = useState<string | null>(null);
   const leftPluginEntry = leftEntries.find(
     (entry) => entry.key === leftPluginKey,
@@ -1771,7 +1622,7 @@ export default function CodexDeckApp() {
     )
       setCenterView("session");
     if (leftPluginKey && !leftPluginEntry) setLeftPluginKey(null);
-    if (!rightLayout) setDiffPaneCollapsed(true);
+    if (!rightLayout && !selectedProvider) setDiffPaneCollapsed(true);
     if (!RightPane) setSecondaryPaneMode(null);
     if (
       selectedPaneMode !== "home" &&
@@ -1786,6 +1637,7 @@ export default function CodexDeckApp() {
     leftPluginKey,
     leftPluginEntry,
     rightLayout,
+    selectedProvider,
     RightPane,
     selectedPaneMode,
     rightEntries,
@@ -1852,6 +1704,7 @@ export default function CodexDeckApp() {
   );
   useEffect(() => {
     if (
+      !selectedProvider &&
       pluginDialog &&
       pluginContributions.snapshot &&
       !pluginContributions.snapshot.plugins.some(
@@ -1862,7 +1715,7 @@ export default function CodexDeckApp() {
       )
     )
       setPluginDialog(null);
-  }, [pluginContributions.snapshot, pluginDialog]);
+  }, [pluginContributions.snapshot, pluginDialog, selectedProvider]);
   const [nativeDialog, setNativeDialog] = useState<{
     kind: "mcp" | "voice-settings" | OrganizationDialogKind;
     model?: string | null;
@@ -12052,115 +11905,6 @@ export default function CodexDeckApp() {
     </div>
   );
 
-  function SessionHeader(props: SessionHeaderProps) {
-    const {
-      session,
-      copied,
-      isMobilePhone,
-      railCollapsedByDefault,
-      conversationSearchOpen,
-      resolvedTheme,
-      onCopySessionId,
-      onCopyProjectPath,
-      onToggleConversationSearch,
-      onToggleRailCollapsedByDefault,
-      onToggleTheme,
-    } = props;
-
-    return (
-      <>
-        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-          <button
-            type="button"
-            onClick={onToggleRailCollapsedByDefault}
-            className={`h-7 shrink-0 rounded-lg px-2.5 text-[11px] font-medium transition-colors ${
-              railCollapsedByDefault
-                ? "bg-zinc-800 text-zinc-100 hover:bg-zinc-700/80"
-                : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
-            }`}
-            title={
-              railCollapsedByDefault
-                ? "Switch all rails to block mode"
-                : "Switch all rails to collapsed text mode"
-            }
-          >
-            {railCollapsedByDefault ? "Text Mode" : "Block Mode"}
-          </button>
-          <span className="min-w-0 truncate text-[14px] font-medium text-zinc-100 max-w-md">
-            {session.display}
-          </span>
-          {session.project ? (
-            <button
-              type="button"
-              onClick={() => onCopyProjectPath(session.project)}
-              className="inline-flex h-6 min-w-0 max-w-[14rem] shrink items-center gap-1 rounded-md bg-zinc-800/60 px-2 text-left text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-              title={`Copy project path: ${session.project}`}
-              aria-label="Copy project path"
-            >
-              <span className="min-w-0 truncate">
-                {session.projectName || getPathBaseName(session.project)}
-              </span>
-              <Copy aria-hidden="true" className="h-3 w-3 shrink-0" />
-            </button>
-          ) : (
-            <span className="text-xs text-zinc-600 shrink-0">
-              {session.projectName}
-            </span>
-          )}
-          <span className="text-xs text-zinc-600 shrink-0">
-            {formatTime(session.timestamp)}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onToggleConversationSearch}
-            className={`h-8 w-8 shrink-0 rounded-lg transition-colors cursor-pointer ${
-              conversationSearchOpen
-                ? "bg-zinc-800 text-zinc-100 hover:bg-zinc-700/80"
-                : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
-            }`}
-            title={
-              conversationSearchOpen
-                ? "Hide conversation search"
-                : "Search this conversation"
-            }
-            aria-label={
-              conversationSearchOpen
-                ? "Hide conversation search"
-                : "Search this conversation"
-            }
-          >
-            <Search className="mx-auto h-3.5 w-3.5" />
-          </button>
-          <ThemeToggleButton
-            resolvedTheme={resolvedTheme}
-            onToggleTheme={onToggleTheme}
-          />
-          {!isMobilePhone && (
-            <button
-              onClick={() => onCopySessionId(session.id)}
-              className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 cursor-pointer shrink-0"
-              title="Copy session ID to clipboard"
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-green-500" />
-                  <span className="text-green-500">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy ID</span>
-                </>
-              )}
-            </button>
-          )}
-        </div>
-      </>
-    );
-  }
-
   const originSelector = (
     <CodexHomeSelector
       homes={codexHomes}
@@ -12172,6 +11916,85 @@ export default function CodexDeckApp() {
       onOpen={refreshOrigins}
     />
   );
+  const leftPaneChrome = {
+    collapsed: sidebarCollapsed,
+    onBrowse: openDeckPlugins,
+    width: sidebarCollapsed ? LEFT_PANE_COLLAPSED_WIDTH : leftPaneWidth,
+    isMobilePhone,
+    onExpand: openLeftPane,
+    onCollapse: () => setSidebarCollapsed(true),
+    onResize: handleLeftPaneResizeStart,
+    onSettings: () => setConfigModalAction("settings"),
+    connection: (
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-2 overflow-hidden pl-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-zinc-100">
+            Codex Deck
+          </span>
+          <span className="shrink-0 rounded-md bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+            {remoteConnected ? "Remote" : "Local"}
+          </span>
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-1.5 overflow-hidden">
+          {remoteConnected && (
+            <button
+              type="button"
+              onClick={() => {
+                void handleDisconnectRemote();
+              }}
+              className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
+              title="Log out from remote mode"
+            >
+              Logout
+            </button>
+          )}
+          {!remoteConnected && (
+            <button
+              type="button"
+              onClick={() => {
+                setConnectionMode("remote");
+                setRemoteError(null);
+                setRemoteAutoRestoreServerUrl(null);
+              }}
+              className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
+              title="Remote Login"
+            >
+              Remote Login
+            </button>
+          )}
+        </div>
+      </div>
+    ),
+    home: (
+      <div className="px-2 pb-1">
+        {originSelector}
+        {codexHomesError ? (
+          <p className="mt-1 truncate text-[10px] text-red-400" role="alert">
+            {codexHomesError}
+          </p>
+        ) : null}
+      </div>
+    ),
+    machine: remoteConnected && remoteMachines.length > 0 && (
+      <label className="block">
+        <select
+          value={selectedRemoteMachine || ""}
+          onChange={(event) =>
+            handleSelectRemoteMachine(event.target.value || null)
+          }
+          className="h-8 w-full cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
+        >
+          {remoteMachines.map((machine) => (
+            <option key={machine.id} value={machine.id}>
+              {machine.metadata
+                ? `${machine.metadata.label} · ${machine.metadata.host}`
+                : machine.id}
+            </option>
+          ))}
+        </select>
+      </label>
+    ),
+  };
   const settingsModal = (showConfigModal || hasOpenedConfigModal) && (
     <ConfigModal
       key={configScopeKey}
@@ -12204,25 +12027,44 @@ export default function CodexDeckApp() {
       }}
     />
   );
-  if (selectedProvider) {
-    return (
-      <>
-        <LlmWorkspace
-          key={configScopeKey + selectedProvider.id}
-          provider={selectedProvider}
-          selector={originSelector}
-          onSettings={() => setConfigModalAction("settings")}
-          remote={remoteConnected}
-        />
-        <Suspense fallback={null}>{settingsModal}</Suspense>
-      </>
+  const expandRightPane = (selectedProvider || rightLayout) &&
+    diffPaneCollapsed && (
+      <button
+        type="button"
+        onClick={openRightPane}
+        className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
+        aria-label="Expand right pane"
+        title="Expand right pane"
+      >
+        <ChevronLeft className="mx-auto h-4 w-4" />
+      </button>
     );
-  }
-  return (
-    <div
-      className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100"
-      data-conversation-view-mode={conversationViewMode || undefined}
-    >
+  const workspace = selectedProvider ? (
+    <LlmWorkspace
+      key={configScopeKey + selectedProvider.id}
+      provider={selectedProvider}
+      leftPane={leftPaneChrome}
+      expandRightPane={expandRightPane}
+      viewMode={conversationViewMode}
+      onViewModeChange={setConversationViewMode}
+      remote={remoteConnected}
+      header={{
+        copied,
+        onCopySessionId: handleCopySessionId,
+        isMobilePhone,
+        resolvedTheme,
+        onToggleTheme: handleToggleTheme,
+        railCollapsedByDefault,
+        onToggleRailCollapsedByDefault: () =>
+          setRailCollapsedByDefault((current) => !current),
+      }}
+      composerSize={{
+        messageBoxHeight,
+        onResizeMessageBoxStart: handleResizeMessageBoxStart,
+      }}
+    />
+  ) : (
+    <>
       <DeckPluginSessionTips
         key={selectedCodexHomeId}
         plugins={pluginContributions.snapshot?.plugins ?? []}
@@ -12252,21 +12094,14 @@ export default function CodexDeckApp() {
       )}
       {LeftPane && (
         <LeftPane
-          collapsed={sidebarCollapsed}
-          width={sidebarCollapsed ? LEFT_PANE_COLLAPSED_WIDTH : leftPaneWidth}
-          isMobilePhone={isMobilePhone}
-          onExpand={openLeftPane}
-          onCollapse={() => setSidebarCollapsed(true)}
-          onResize={handleLeftPaneResizeStart}
+          {...leftPaneChrome}
           entries={leftEntries}
           activeKey={
             leftPluginEntry?.key ??
             (centerView === "session" ? "sessions" : centerView)
           }
           onSelect={selectLeftEntry}
-          onBrowse={openDeckPlugins}
           onCreate={() => createPanePlugin("left")}
-          onSettings={() => setConfigModalAction("settings")}
           railActions={
             !leftPluginEntry && (
               <>
@@ -12307,81 +12142,6 @@ export default function CodexDeckApp() {
                   <Search className="h-4 w-4" />
                 </button>
               </>
-            )
-          }
-          connection={
-            <div className="flex min-w-0 flex-1 items-center justify-between gap-2 overflow-hidden pl-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-zinc-100">
-                  Codex Deck
-                </span>
-                <span className="shrink-0 rounded-md bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                  {remoteConnected ? "Remote" : "Local"}
-                </span>
-              </div>
-              <div className="flex min-w-0 items-center justify-end gap-1.5 overflow-hidden">
-                {remoteConnected && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleDisconnectRemote();
-                    }}
-                    className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                    title="Log out from remote mode"
-                  >
-                    Logout
-                  </button>
-                )}
-                {!remoteConnected && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConnectionMode("remote");
-                      setRemoteError(null);
-                      setRemoteAutoRestoreServerUrl(null);
-                    }}
-                    className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                    title="Remote Login"
-                  >
-                    Remote Login
-                  </button>
-                )}
-              </div>
-            </div>
-          }
-          home={
-            <div className="px-2 pb-1">
-              {originSelector}
-              {codexHomesError ? (
-                <p
-                  className="mt-1 truncate text-[10px] text-red-400"
-                  role="alert"
-                >
-                  {codexHomesError}
-                </p>
-              ) : null}
-            </div>
-          }
-          machine={
-            remoteConnected &&
-            remoteMachines.length > 0 && (
-              <label className="block">
-                <select
-                  value={selectedRemoteMachine || ""}
-                  onChange={(event) =>
-                    handleSelectRemoteMachine(event.target.value || null)
-                  }
-                  className="h-8 w-full cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
-                >
-                  {remoteMachines.map((machine) => (
-                    <option key={machine.id} value={machine.id}>
-                      {machine.metadata
-                        ? `${machine.metadata.label} · ${machine.metadata.host}`
-                        : machine.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
             )
           }
           controls={
@@ -12745,17 +12505,7 @@ export default function CodexDeckApp() {
                 <Puzzle className="mx-auto h-4 w-4" />
               </button>
             )}
-            {rightLayout && diffPaneCollapsed && (
-              <button
-                type="button"
-                onClick={openRightPane}
-                className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                aria-label="Expand right pane"
-                title="Expand right pane"
-              >
-                <ChevronLeft className="mx-auto h-4 w-4" />
-              </button>
-            )}
+            {expandRightPane}
           </div>
           {centerView === "session" &&
             selectedSessionData &&
@@ -12942,52 +12692,6 @@ export default function CodexDeckApp() {
             onRunPreset={handleRunPreset}
           />
         )}
-        {pluginDialog && (
-          <NativeDialog title={pluginDialog.title} onClose={closePluginDialog}>
-            <PaneNavigation.Provider
-              value={(pluginId, view) => {
-                const entry = [...leftEntries, ...rightEntries].find(
-                  (e) => e.pluginId === pluginId && e.view.id === view.id,
-                );
-                if (entry && view.slot === "pane.left" && LeftPane) {
-                  selectLeftEntry(entry);
-                  openLeftPane();
-                } else if (entry && view.slot === "pane.right" && RightPane) {
-                  openRightPane();
-                  handleChangePaneMode(entry.key);
-                } else if (
-                  view.slot === "layout.left" &&
-                  leftLayout?.pluginId === pluginId &&
-                  leftLayout.view.id === view.id
-                )
-                  openLeftPane();
-                else if (
-                  view.slot === "layout.right" &&
-                  rightLayout?.pluginId === pluginId &&
-                  rightLayout.view.id === view.id
-                )
-                  openRightPane();
-                else return false;
-                closePluginDialog();
-                return true;
-              }}
-            >
-              <DeckPluginRuntime
-                key={`${selectedCodexHomeId}:${pluginDialog.pluginId}:${pluginDialog.viewId}`}
-                pluginId={pluginDialog.pluginId}
-                homeId={selectedCodexHomeId}
-                viewId={pluginDialog.viewId}
-                context={{
-                  threadId: pluginDialog.threadId,
-                  cwd: pluginDialog.cwd,
-                  model: pluginDialog.model,
-                  args: pluginDialog.args,
-                }}
-                onClose={closePluginDialog}
-              />
-            </PaneNavigation.Provider>
-          </NativeDialog>
-        )}
         {nativeDialog && (
           <NativeDialog
             title={
@@ -13131,8 +12835,6 @@ export default function CodexDeckApp() {
               }}
             />
           )}
-
-          {settingsModal}
         </Suspense>
 
         {showRenameModal && (
@@ -14615,7 +14317,15 @@ export default function CodexDeckApp() {
           }}
         />
       </main>
-      {rightLayout && !rightLayout.builtin && (
+    </>
+  );
+  return (
+    <div
+      className="app-viewport-height app-viewport-safe-area flex bg-zinc-950 text-zinc-100"
+      data-conversation-view-mode={conversationViewMode || undefined}
+    >
+      {workspace}
+      {!selectedProvider && rightLayout && !rightLayout.builtin && (
         <PackagePane
           side="right"
           entry={rightLayout}
@@ -14643,14 +14353,16 @@ export default function CodexDeckApp() {
           entries={rightEntries}
           homeId={selectedCodexHomeId}
           onBrowsePlugins={openDeckPlugins}
-          onCreatePlugin={() => createPanePlugin("right")}
+          onCreatePlugin={
+            selectedProvider ? undefined : () => createPanePlugin("right")
+          }
           runtimeScopeKey={selectedCodexHomeId}
           connectionMode={connectionMode}
           collapsed={diffPaneCollapsed}
           fileLinkOpenVersion={fileLinkOpenVersion}
           isMobilePhone={isMobilePhone}
-          mode={selectedPaneMode}
-          sessionId={rightPaneSessionId}
+          mode={selectedProvider ? "home" : selectedPaneMode}
+          sessionId={selectedProvider ? null : rightPaneSessionId}
           threadId={
             rightPaneTarget?.kind === "session"
               ? rightPaneTarget.sessionId
@@ -14731,23 +14443,84 @@ export default function CodexDeckApp() {
           onPointerCancel={handleTouchResizeOverlayPointerCancel}
         />
       )}
-      <PetPicker
-        open={showPetPicker}
-        pets={pets}
-        currentPetId={currentPetId}
-        loading={loadingPets}
-        error={petsError}
-        onClose={() => setShowPetPicker(false)}
-        onSelect={(petId) => {
-          void selectPet(petId);
-        }}
-      />
-      <PetCompanion
-        pet={activePet}
-        onClose={() => {
-          void selectPet("disabled");
-        }}
-      />
+      <Suspense fallback={null}>{settingsModal}</Suspense>
+      {pluginDialog && (
+        <NativeDialog title={pluginDialog.title} onClose={closePluginDialog}>
+          {selectedProvider ? (
+            <Suspense fallback={<p role="status">Loading plugins...</p>}>
+              <DeckPluginsDirectory
+                homeId={MAIN_CODEX_HOME_ID}
+                cwd={null}
+                threadId={null}
+              />
+            </Suspense>
+          ) : (
+            <PaneNavigation.Provider
+              value={(pluginId, view) => {
+                const entry = [...leftEntries, ...rightEntries].find(
+                  (e) => e.pluginId === pluginId && e.view.id === view.id,
+                );
+                if (entry && view.slot === "pane.left" && LeftPane) {
+                  selectLeftEntry(entry);
+                  openLeftPane();
+                } else if (entry && view.slot === "pane.right" && RightPane) {
+                  openRightPane();
+                  handleChangePaneMode(entry.key);
+                } else if (
+                  view.slot === "layout.left" &&
+                  leftLayout?.pluginId === pluginId &&
+                  leftLayout.view.id === view.id
+                )
+                  openLeftPane();
+                else if (
+                  view.slot === "layout.right" &&
+                  rightLayout?.pluginId === pluginId &&
+                  rightLayout.view.id === view.id
+                )
+                  openRightPane();
+                else return false;
+                closePluginDialog();
+                return true;
+              }}
+            >
+              <DeckPluginRuntime
+                key={`${selectedCodexHomeId}:${pluginDialog.pluginId}:${pluginDialog.viewId}`}
+                pluginId={pluginDialog.pluginId}
+                homeId={selectedCodexHomeId}
+                viewId={pluginDialog.viewId}
+                context={{
+                  threadId: pluginDialog.threadId,
+                  cwd: pluginDialog.cwd,
+                  model: pluginDialog.model,
+                  args: pluginDialog.args,
+                }}
+                onClose={closePluginDialog}
+              />
+            </PaneNavigation.Provider>
+          )}
+        </NativeDialog>
+      )}
+      {!selectedProvider && (
+        <>
+          <PetPicker
+            open={showPetPicker}
+            pets={pets}
+            currentPetId={currentPetId}
+            loading={loadingPets}
+            error={petsError}
+            onClose={() => setShowPetPicker(false)}
+            onSelect={(petId) => {
+              void selectPet(petId);
+            }}
+          />
+          <PetCompanion
+            pet={activePet}
+            onClose={() => {
+              void selectPet("disabled");
+            }}
+          />
+        </>
+      )}
     </div>
   );
 }

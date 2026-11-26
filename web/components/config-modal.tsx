@@ -1026,7 +1026,7 @@ export default function ConfigModal(props: ConfigModalProps) {
                 {activeSection === "homes" ? (
                   <div>
                     <SectionHeader
-                      title="LLM providers"
+                      title="Chat providers"
                       badge={<StatusBadge tone="live">Applies now</StatusBadge>}
                       action={
                         <button

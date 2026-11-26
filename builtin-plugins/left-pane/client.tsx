@@ -19,11 +19,11 @@ interface LeftPaneProps {
   onExpand: () => void;
   onCollapse: () => void;
   onResize: (event: PointerEvent<HTMLDivElement>) => void;
-  entries: PaneEntry[];
-  activeKey: string;
-  onSelect: (entry: PaneEntry) => void;
+  entries?: PaneEntry[];
+  activeKey?: string;
+  onSelect?: (entry: PaneEntry) => void;
   onBrowse: () => void;
-  onCreate: () => void;
+  onCreate?: () => void;
   onSettings: () => void;
   connection: ReactNode;
   home: ReactNode;
@@ -31,10 +31,10 @@ interface LeftPaneProps {
   controls: ReactNode;
   railActions: ReactNode;
   children: ReactNode;
-  footer: ReactNode;
+  footer?: ReactNode;
 }
 export default function LeftPane(props: LeftPaneProps) {
-  const navigation = (
+  const navigation = props.entries && props.entries.length > 0 && (
     <div
       role="group"
       aria-label="Primary views"
@@ -62,7 +62,7 @@ export default function LeftPane(props: LeftPaneProps) {
             title={entry.view.title}
             aria-label={entry.view.title}
             className={`flex min-w-0 flex-1 items-center justify-center rounded-[7px] px-1.5 py-1 text-xs font-medium ${props.collapsed ? "min-h-9" : ""} ${active ? "bg-zinc-700/80 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"}`}
-            onClick={() => props.onSelect(entry)}
+            onClick={() => props.onSelect?.(entry)}
           >
             {props.collapsed ? (
               <Icon size={16} />
@@ -112,7 +112,7 @@ export default function LeftPane(props: LeftPaneProps) {
           aria-haspopup="dialog"
           className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
           aria-label="plugins"
-          title="plugins"
+          title="Plugins"
         >
           <Puzzle className="h-4 w-4" />
         </button>
@@ -161,9 +161,10 @@ export default function LeftPane(props: LeftPaneProps) {
           onClick={props.onBrowse}
           aria-haspopup="dialog"
           className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+          aria-label="plugins"
         >
           <Puzzle className="size-4 shrink-0" />
-          <span>plugins</span>
+          <span>Plugins</span>
         </button>
         <button
           type="button"

@@ -6,12 +6,12 @@ import {
 import { subscribeConversationHoverSettings } from "../transport";
 import { usePageVisibility } from "./use-page-visibility";
 
-export function useConversationHoverSettings() {
+export function useConversationHoverSettings(enabled = true) {
   const [settings, setSettings] = useState(DEFAULT_CONVERSATION_HOVER_SETTINGS);
   const isPageVisible = usePageVisibility();
   useEffect(
     () =>
-      isPageVisible
+      enabled && isPageVisible
         ? subscribeConversationHoverSettings({
             onSettings: (next) =>
               setSettings((previous) => {
@@ -22,7 +22,7 @@ export function useConversationHoverSettings() {
               }),
           })
         : undefined,
-    [isPageVisible],
+    [isPageVisible, enabled],
   );
   return settings;
 }

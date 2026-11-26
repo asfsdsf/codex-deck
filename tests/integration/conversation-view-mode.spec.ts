@@ -21,7 +21,10 @@ for (const viewport of [
       if (viewport.width < 500) {
         await page.getByRole("button", { name: "Collapse left pane" }).click();
       } else {
-        await ui.chooseRightPaneMode("File tree");
+        await page
+          .getByRole("button", { name: "Expand right pane", exact: true })
+          .click();
+        await expect(page.locator(".pane-right")).toBeVisible();
       }
       const leftVisible = await page.locator(".pane-left").isVisible();
       const rightVisible = await page.locator(".pane-right").isVisible();

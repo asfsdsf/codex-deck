@@ -26,7 +26,7 @@ export default function RightPaneGuide({
   entries: PaneEntry[];
   onOpen: (key: string) => void;
   onBrowse: () => void;
-  onCreate: () => void;
+  onCreate?: () => void;
 }) {
   return (
     <div className="right-pane-start">

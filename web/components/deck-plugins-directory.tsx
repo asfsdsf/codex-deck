@@ -394,22 +394,24 @@ export default function DeckPluginsDirectory({
               </button>
             ) : selected.installed ? (
               <>
-                {selected.enabled && selected.hasExecutableUi && (
-                  <button
-                    type="button"
-                    className={primaryButton}
-                    disabled={busy}
-                    onClick={() => {
-                      if (!openInPane) setOpenedPluginId(selected.id);
-                      else if (!navigate?.(selected.id, paneView))
-                        setActionError(
-                          "Enable the containing pane to open this view.",
-                        );
-                    }}
-                  >
-                    Open plugin
-                  </button>
-                )}
+                {selected.enabled &&
+                  selected.hasExecutableUi &&
+                  (!openInPane || navigate) && (
+                    <button
+                      type="button"
+                      className={primaryButton}
+                      disabled={busy}
+                      onClick={() => {
+                        if (!openInPane) setOpenedPluginId(selected.id);
+                        else if (!navigate?.(selected.id, paneView))
+                          setActionError(
+                            "Enable the containing pane to open this view.",
+                          );
+                      }}
+                    >
+                      Open plugin
+                    </button>
+                  )}
                 {selected.source === "package" && (
                   <button
                     type="button"

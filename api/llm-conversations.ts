@@ -18,6 +18,7 @@ import type {
   LlmTurn,
 } from "./llm-types";
 import { createSerializedRunner } from "./serialized-runner";
+import { readChatCompletion } from "./llm-completion";
 
 type StoredProvider = LlmProviderInput & { revision?: string };
 // Providers created before settings were editable have no revision on disk.
@@ -87,12 +88,21 @@ function endpoint(input: string) {
   return url.href;
 }
 
+function reasoningEffort(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(value)) {
+    throw new HTTPException(400, { message: "Invalid reasoning effort." });
+  }
+  return value;
+}
+
 function describe(id: string, provider: StoredProvider): CodexHomeDescriptor {
   return {
     id: "llm:" + id,
     kind: "llm",
     label: provider.label,
     model: provider.model,
+    reasoningEffort: provider.reasoningEffort,
     providerRevision: provider.revision ?? INITIAL_REVISION,
     isMain: false,
     available: true,
@@ -177,6 +187,7 @@ export class LlmConversations {
       label: label.trim(),
       url: endpoint(url),
       model: model.trim(),
+      reasoningEffort: reasoningEffort(input.reasoningEffort),
       apiKey: apiKey?.trim(),
       revision: randomUUID(),
     };
@@ -190,12 +201,14 @@ export class LlmConversations {
   }
 
   async settings(id: string): Promise<LlmProviderSettings> {
-    const { label, model, url, apiKey, revision } = await this.provider(id);
+    const { label, model, url, apiKey, revision, reasoningEffort } =
+      await this.provider(id);
     return {
       label,
       model,
       url,
       hasApiKey: Boolean(apiKey),
+      reasoningEffort,
       revision: revision ?? INITIAL_REVISION,
     };
   }
@@ -218,6 +231,8 @@ export class LlmConversations {
     return this.changeProvider(async () => {
       const current = await this.providerAtRevision(id, input.revision);
       const next = this.normalizeProvider(input);
+      if (input.reasoningEffort === undefined)
+        next.reasoningEffort = current.reasoningEffort;
       if (
         input.apiKey === undefined &&
         new URL(next.url).origin === new URL(current.url).origin
@@ -293,7 +308,12 @@ export class LlmConversations {
   async send(
     providerId: string,
     id: string,
-    input: { requestId?: unknown; message?: unknown; expectedTurns?: unknown },
+    input: {
+      requestId?: unknown;
+      message?: unknown;
+      expectedTurns?: unknown;
+      reasoningEffort?: unknown;
+    },
   ) {
     const { message, requestId, expectedTurns } = input;
     if (
@@ -309,6 +329,7 @@ export class LlmConversations {
       throw new HTTPException(400, { message: "Invalid conversation turn" });
     }
     const provider = await this.provider(providerId);
+    const override = reasoningEffort(input.reasoningEffort);
     const dir = this.directory(providerId, id);
     const files = await this.turnFiles(dir);
     const conflict = new HTTPException(409, {
@@ -317,7 +338,12 @@ export class LlmConversations {
     });
     if (files[expectedTurns]) {
       const existing = await readTurn(join(dir, files[expectedTurns]));
-      if (existing.requestId === requestId && existing.user === message) return;
+      if (
+        existing.requestId === requestId &&
+        existing.user === message &&
+        (!override || override === existing.reasoningEffort)
+      )
+        return;
       throw conflict;
     }
     if (files.length !== expectedTurns) throw conflict;
@@ -326,13 +352,24 @@ export class LlmConversations {
     );
     if (history.some((turn) => !turn.assistant && !turn.error)) throw conflict;
     const path = join(dir, expectedTurns + ".json");
-    const turn = { requestId, startedAt: Date.now(), user: message };
+    const turn = {
+      requestId,
+      startedAt: Date.now(),
+      user: message,
+      model: provider.model,
+      reasoningEffort: override ?? provider.reasoningEffort,
+    };
     try {
       await writeJson(path, turn, true);
     } catch (error) {
       if (!hasCode(error, "EEXIST")) throw error;
       const existing = await readTurn(path);
-      if (existing.requestId === requestId && existing.user === message) return;
+      if (
+        existing.requestId === requestId &&
+        existing.user === message &&
+        (!override || override === existing.reasoningEffort)
+      )
+        return;
       throw conflict;
     }
     // Return the receipt before waiting on inference, including for short-lived relay RPCs.
@@ -361,29 +398,48 @@ export class LlmConversations {
     messages.push({ role: "user", content: turn.user });
     let result: Pick<LlmTurn, "assistant" | "error">;
     try {
-      const response = await fetch(provider.url, {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        headers: {
-          "Content-Type": "application/json",
-          ...(provider.apiKey && {
-            Authorization: "Bearer " + provider.apiKey,
+      const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+      const request = (stream: boolean) =>
+        fetch(provider.url, {
+          method: "POST",
+          redirect: "error",
+          signal,
+          headers: {
+            "Content-Type": "application/json",
+            ...(provider.apiKey && {
+              Authorization: "Bearer " + provider.apiKey,
+            }),
+          },
+          body: JSON.stringify({
+            model: provider.model,
+            reasoning_effort: turn.reasoningEffort,
+            messages,
+            stream,
           }),
-        },
-        body: JSON.stringify({
-          model: provider.model,
-          messages,
-          stream: false,
-        }),
-      });
+        });
+      let response = await request(true);
+      if ([400, 406, 422, 501].includes(response.status)) {
+        // A provider can support Chat Completions without implementing streaming.
+        const reason = await response.text();
+        if (
+          /stream/i.test(reason) ||
+          response.status === 406 ||
+          response.status === 501
+        )
+          response = await request(false);
+      }
       if (!response.ok) {
-        await response.body?.cancel();
+        if (!response.bodyUsed) await response.body?.cancel();
         result = { error: "Provider returned HTTP " + response.status + "." };
       } else {
-        const payload = await response.json();
-        const message = payload?.choices?.[0]?.message;
-        const content = message?.content || message?.refusal;
+        const { content, thinking } = await readChatCompletion(
+          response,
+          async (partial) => {
+            turn.thinking = partial;
+            await writeJson(path, turn);
+          },
+        );
+        if (thinking.trim()) turn.thinking = thinking;
         result =
           typeof content === "string" && content.trim()
             ? { assistant: content }

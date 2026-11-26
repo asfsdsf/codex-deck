@@ -187,7 +187,7 @@ export default function CodexHomeSelector({
                   </span>
                   {(home.isMain || home.kind === "llm") && (
                     <span className="shrink-0 text-[10px] text-zinc-500">
-                      {home.isMain ? "Default" : "LLM"}
+                      {home.isMain ? "Default" : "Chat provider"}
                     </span>
                   )}
                 </button>
@@ -228,7 +228,7 @@ export default function CodexHomeSelector({
               className="h-3.5 w-3.5 shrink-0 text-zinc-400"
               aria-hidden="true"
             />
-            Add LLM provider
+            Add chat provider
           </button>
         </div>
       )}

@@ -3,11 +3,17 @@ import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
 import { LlmConversations } from "../llm-conversations";
 import { onLlmHistoryChange, onLlmProvidersChange } from "../watcher";
+import type { ConversationHoverSettings } from "../conversation-hover-settings";
+
+type SubscribeHoverSettings = (
+  listener: (settings: ConversationHoverSettings) => void,
+) => () => void;
 
 function changes(
   c: Context,
   subscribe: (notify: () => void) => () => void,
   heartbeatEvent: "change" | "heartbeat",
+  subscribeHoverSettings?: SubscribeHoverSettings,
 ) {
   return streamSSE(c, async (stream) => {
     let release!: () => void;
@@ -18,6 +24,11 @@ function changes(
       void stream.writeSSE({ event, data: "{}" }).catch(release);
     };
     const unsubscribe = subscribe(() => emit("change"));
+    const stopHoverSettings = subscribeHoverSettings?.((settings) => {
+      void stream
+        .writeSSE({ event: "hoverSettings", data: JSON.stringify(settings) })
+        .catch(release);
+    });
     stream.onAbort(release);
     emit("change");
     const timer = setInterval(() => emit(heartbeatEvent), 20_000);
@@ -26,11 +37,16 @@ function changes(
     } finally {
       clearInterval(timer);
       unsubscribe();
+      stopHoverSettings?.();
     }
   });
 }
 
-export function registerLlmRoutes(app: Hono, codexHome: string) {
+export function registerLlmRoutes(
+  app: Hono,
+  codexHome: string,
+  subscribeHoverSettings: SubscribeHoverSettings,
+) {
   const store = new LlmConversations(codexHome);
   const routes = new Hono();
   routes.onError((error, c) => {
@@ -101,6 +117,7 @@ export function registerLlmRoutes(app: Hono, codexHome: string) {
           if (id === providerId) notify();
         }),
       "change",
+      subscribeHoverSettings,
     );
   });
   app.route("/api/codex-homes/providers", routes);

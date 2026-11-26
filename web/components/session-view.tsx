@@ -260,6 +260,9 @@ function getCollapsedLineToneClasses(tone: ViewportTextTone): string {
 
 interface SessionViewProps {
   sessionId: string;
+  /** A full transcript supplied by a chat provider's own subscription. */
+  suppliedMessages?: ConversationMessage[];
+  suppliedHoverSettings?: ReturnType<typeof useConversationHoverSettings>;
   projectPath?: string | null;
   pendingUserMessages?: PendingUserMessage[];
   onForceSendPendingUserMessage?: (
@@ -800,7 +803,9 @@ const SessionView = memo(
         onTurnAction,
       } = props;
 
-      const [messages, setMessages] = useState<ConversationMessage[]>([]);
+      const [streamMessages, setMessages] = useState<ConversationMessage[]>([]);
+      const messages = props.suppliedMessages ?? streamMessages;
+      const isCodexSession = props.suppliedMessages === undefined;
       const [elicitationRevision, setElicitationRevision] = useState(0);
       const [pendingUserInputRequests, setPendingUserInputRequests] = useState<
         CodexUserInputRequest[]
@@ -856,7 +861,8 @@ const SessionView = memo(
       const [forceSendingPendingId, setForceSendingPendingId] = useState<
         string | null
       >(null);
-      const [loading, setLoading] = useState(true);
+      const [streamLoading, setLoading] = useState(true);
+      const loading = isCodexSession && streamLoading;
       const [autoScroll, setAutoScrollState] = useState(true);
       const [resizingAnswer, setResizingAnswer] = useState(false);
       const answerResizeCleanupRef = useRef<(() => void) | null>(null);
@@ -878,7 +884,11 @@ const SessionView = memo(
       );
       const isPageVisible = usePageVisibility();
       const containerRef = useRef<HTMLDivElement>(null);
-      const hoverSettings = useConversationHoverSettings();
+      const subscribedHoverSettings = useConversationHoverSettings(
+        !props.suppliedHoverSettings,
+      );
+      const hoverSettings =
+        props.suppliedHoverSettings ?? subscribedHoverSettings;
       const contentRef = useRef<HTMLDivElement>(null);
       const pendingUserInputRef = useRef<HTMLDivElement>(null);
       const pagesRef = useRef<HTMLDivElement>(null);
@@ -1015,7 +1025,7 @@ const SessionView = memo(
       );
 
       const connect = useCallback(() => {
-        if (!mountedRef.current) {
+        if (!isCodexSession || !mountedRef.current) {
           return;
         }
 
@@ -1105,7 +1115,7 @@ const SessionView = memo(
             initialFileId: conversationFileIdRef.current,
           },
         );
-      }, [appendDisplayMessages, sessionId]);
+      }, [appendDisplayMessages, sessionId, isCodexSession]);
 
       const handleEditMessage = useCallback(
         async (message: ConversationMessage, text: string) => {
@@ -1216,7 +1226,7 @@ const SessionView = memo(
       }, [connect, isPageVisible]);
 
       useEffect(() => {
-        if (!isPageVisible) {
+        if (!isCodexSession || !isPageVisible) {
           return;
         }
 
@@ -1254,7 +1264,7 @@ const SessionView = memo(
             window.removeEventListener("online", reconnectIfNeeded);
           }
         };
-      }, [connect, isPageVisible]);
+      }, [connect, isPageVisible, isCodexSession]);
 
       const pollPendingUserInputRequests = useCallback(async () => {
         if (userInputPollInFlightRef.current) {
@@ -1408,7 +1418,7 @@ const SessionView = memo(
       };
 
       useEffect(() => {
-        if (!isPageVisible) {
+        if (!isCodexSession || !isPageVisible) {
           return;
         }
 
@@ -1417,10 +1427,10 @@ const SessionView = memo(
           void pollPendingUserInputRequests();
         }, USER_INPUT_POLL_INTERVAL_MS);
         return () => clearInterval(interval);
-      }, [pollPendingUserInputRequests, isPageVisible]);
+      }, [pollPendingUserInputRequests, isPageVisible, isCodexSession]);
 
       useEffect(() => {
-        if (!isPageVisible) {
+        if (!isCodexSession || !isPageVisible) {
           return;
         }
 
@@ -1429,7 +1439,7 @@ const SessionView = memo(
           void pollPendingApprovalRequests();
         }, APPROVAL_POLL_INTERVAL_MS);
         return () => clearInterval(interval);
-      }, [pollPendingApprovalRequests, isPageVisible]);
+      }, [pollPendingApprovalRequests, isPageVisible, isCodexSession]);
 
       const submitUserInputResponse = useCallback(
         async (

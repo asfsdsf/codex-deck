@@ -18,7 +18,9 @@ export function addCodexHomeToApiUrl(
   if (
     !url.startsWith("/api/") ||
     url.startsWith("/api/codex-homes") ||
-    url.startsWith("/api/codex-deck/config")
+    url.startsWith("/api/codex-deck/config") ||
+    (homeId.startsWith("llm:") &&
+      (url === "/api/translate" || url.startsWith("/api/translations/")))
   ) {
     return url;
   }

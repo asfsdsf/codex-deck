@@ -8,7 +8,95 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { createServer } from "../../api/server";
 import { LlmConversations } from "../../api/llm-conversations";
+import { readChatCompletion } from "../../api/llm-completion";
 import { createTempCodexDir } from "./test-utils";
+
+test("chat completions keep visible thinking separate from the answer", async () => {
+  const cases = [
+    [{ content: "Answer only" }, "", "Answer only"],
+    [
+      { content: "Final", reasoning_content: "First step" },
+      "First step",
+      "Final",
+    ],
+    [
+      {
+        content: "Final",
+        reasoning: "Summary",
+        reasoning_details: [{ type: "reasoning.summary", summary: "Summary" }],
+      },
+      "Summary",
+      "Final",
+    ],
+    [
+      {
+        content: "Final",
+        reasoning_details: [
+          { type: "reasoning.encrypted", data: "opaque" },
+          { type: "reasoning.summary", summary: "Summary" },
+        ],
+      },
+      "Summary",
+      "Final",
+    ],
+    [
+      {
+        content: [
+          { type: "thinking", thinking: "Considering" },
+          { type: "text", text: "Conclusion" },
+        ],
+      },
+      "Considering",
+      "Conclusion",
+    ],
+    [
+      { content: "<think>Working through it.</think>\nFinal" },
+      "Working through it.",
+      "Final",
+    ],
+    [
+      { content: "Example: <think>literal markup</think>" },
+      "",
+      "Example: <think>literal markup</think>",
+    ],
+  ] as const;
+  for (const [message, thinking, content] of cases) {
+    const reply = await readChatCompletion(
+      Response.json({ choices: [{ message }] }),
+      async () => {},
+    );
+    assert.deepEqual(reply, { thinking, content });
+  }
+});
+
+test("stream decoding handles split UTF-8 and reports unfinished replies", async () => {
+  const wire =
+    ': heartbeat\r\n\r\ndata: {"choices":[{"delta":{"reasoning_content":"café"}}]}\r\n\r\ndata: {"choices":[{"delta":{"content":"Final"}}]}\r\n\r\n';
+  const streamed = (suffix: string) => {
+    const bytes = new TextEncoder().encode(wire + suffix);
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+          controller.close();
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+  };
+  const seen: string[] = [];
+  assert.deepEqual(
+    await readChatCompletion(streamed("data: [DONE]\r\n\r\n"), async (text) => {
+      seen.push(text);
+    }),
+    { thinking: "café", content: "Final" },
+  );
+  assert.deepEqual(seen, ["café"]);
+  await assert.rejects(
+    readChatCompletion(streamed(""), async () => {}),
+    /Incomplete/,
+  );
+});
 
 test("direct chat sends completed rounds, persists isolated history and handles concurrent retries", async () => {
   const { rootDir, sessionsDir, cleanup } =
@@ -115,7 +203,7 @@ test("direct chat sends completed rounds, persists isolated history and handles 
       auth: "Bearer mock-key",
       body: {
         model: "test-model",
-        stream: false,
+        stream: true,
         messages: [
           { role: "user", content: "Hello" },
           { role: "assistant", content: "Reply 1" },

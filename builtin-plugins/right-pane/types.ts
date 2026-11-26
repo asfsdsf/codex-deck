@@ -14,7 +14,7 @@ export interface RightPaneProps {
   entries: PaneEntry[];
   homeId: string;
   onBrowsePlugins: () => void;
-  onCreatePlugin: () => void;
+  onCreatePlugin?: () => void;
   runtimeScopeKey?: string;
   connectionMode?: "local" | "remote";
   collapsed: boolean;

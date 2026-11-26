@@ -784,6 +784,7 @@ export interface CodexHomeDescriptor {
   kind?: "llm";
   model?: string;
   providerRevision?: string;
+  reasoningEffort?: string;
   id: string;
   label: string;
   isMain: boolean;

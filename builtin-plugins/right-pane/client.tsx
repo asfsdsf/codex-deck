@@ -139,7 +139,7 @@ function DiffPaneContent(props: PaneContentProps) {
                 onSelect={() => activateTab(key)}
                 onClose={
                   tab === "home" && currentTabs.length === 1
-                    ? undefined
+                    ? props.onEmptyPane
                     : () => {
                         const next = currentTabs.filter(
                           (entry) => entry !== key,
@@ -350,10 +350,11 @@ export default function DiffPane(props: DiffPaneProps) {
     onToggleFullscreen: () => setFullscreen((value) => !value),
     canSplit: !split && (fullscreen || measuredWidth >= 560),
     onSplitPane: () => setSplit(true),
-    onEmptyPane: () => setSplit(false),
+    onEmptyPane: split ? () => setSplit(false) : undefined,
   };
   return (
     <aside
+      aria-label="Right pane"
       className="pane-right relative shrink-0 flex flex-col"
       style={{ width: `${props.width}px` }}
       data-fullscreen={fullscreen}

@@ -47,7 +47,7 @@ export default function NativeDialog({
   }, [onClose]);
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-3 sm:items-center"
+      className="fixed inset-0 z-[90] flex items-end justify-center bg-black/55 p-3 sm:items-center"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}

@@ -2182,7 +2182,9 @@ export function createServer(options: ServerOptions) {
     );
   }
 
-  const llm = registerLlmRoutes(app, getCodexDir());
+  const llm = registerLlmRoutes(app, getCodexDir(), (listener) =>
+    hoverSettingsRoutes.subscribe(listener),
+  );
   const listOrigins = async () => [
     ...allCodexHomes.map(toCodexHomeDescriptor),
     ...(await llm.providers()),

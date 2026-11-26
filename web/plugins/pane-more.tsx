@@ -11,7 +11,7 @@ export default function PaneMore({
   side: "left" | "right";
   compact?: boolean;
   onBrowse: () => void;
-  onCreate: () => void;
+  onCreate?: () => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -116,18 +116,20 @@ export default function PaneMore({
               <Puzzle size={15} />
               Browse other plugins
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setPosition(null);
-                trigger.current?.focus();
-                onCreate();
-              }}
-            >
-              <PencilLine size={15} />
-              Create your plugin
-            </button>
+            {onCreate && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setPosition(null);
+                  trigger.current?.focus();
+                  onCreate();
+                }}
+              >
+                <PencilLine size={15} />
+                Create your plugin
+              </button>
+            )}
           </div>,
           document.body,
         )}

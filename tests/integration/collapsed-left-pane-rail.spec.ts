@@ -30,7 +30,7 @@ test("a collapsed left rail stays beside the workspace and keeps its controls us
   await leftPane.getByRole("button", { name: "plugins" }).click();
   const plugins = page.getByRole("dialog", { name: "Plugins" });
   await expect(plugins).toBeVisible();
-  await plugins.getByRole("button", { name: "Close" }).click();
+  await plugins.getByRole("button", { name: "Close", exact: true }).click();
 
   await leftPane.getByRole("button", { name: "Codex Deck settings" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });

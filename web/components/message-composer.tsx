@@ -83,6 +83,8 @@ interface ComposerImageAttachment {
 }
 
 interface MessageComposerProps {
+  textOnly?: boolean;
+  inputDisabled?: boolean;
   sessionId: string | null;
   draftResetKey?: string;
   history: string[];
@@ -110,8 +112,8 @@ interface MessageComposerProps {
   onInterruptAndSend?:
     | ((payload: MessageComposerSubmitPayload) => Promise<boolean>)
     | null;
-  onRunSlashCommand: (commandName: string, args: string) => Promise<boolean>;
-  onStopConversation: () => Promise<void>;
+  onRunSlashCommand?: (commandName: string, args: string) => Promise<boolean>;
+  onStopConversation?: () => Promise<void>;
   /** Offer attaching a final-answer JSON schema to the next turn. */
   allowOutputSchema?: boolean;
   /** Shows audio attachments; a non-null reason disables them. */
@@ -201,6 +203,8 @@ const MessageComposer = memo(function MessageComposer(
 ) {
   const {
     sessionId,
+    textOnly = false,
+    inputDisabled = false,
     draftResetKey,
     history,
     slashCommands,
@@ -649,8 +653,8 @@ const MessageComposer = memo(function MessageComposer(
   }, [draft, draftTranslation, focusComposerInput]);
 
   const activeFileMention = useMemo(
-    () => findActiveFileMentionToken(draft, cursorPosition),
-    [cursorPosition, draft],
+    () => (textOnly ? null : findActiveFileMentionToken(draft, cursorPosition)),
+    [cursorPosition, draft, textOnly],
   );
   const fileMentionPaletteItems = useMemo<ComposerPickerItem[]>(() => {
     if (!activeFileMention) {
@@ -699,8 +703,9 @@ const MessageComposer = memo(function MessageComposer(
     });
   }, [activeFileMention, fileMentionResults, fileMentionSearchLoading]);
   const activeSkillSelector = useMemo(
-    () => findActiveSkillSelectorToken(draft, cursorPosition),
-    [cursorPosition, draft],
+    () =>
+      textOnly ? null : findActiveSkillSelectorToken(draft, cursorPosition),
+    [cursorPosition, draft, textOnly],
   );
   const filteredSkillSelectorOptions = useMemo<SkillSelectorOption[]>(() => {
     if (!activeSkillSelector) {
@@ -1066,7 +1071,7 @@ const MessageComposer = memo(function MessageComposer(
       if (slashCommandBusyRef.current) return;
       slashCommandBusyRef.current = true;
       try {
-        const handled = await onRunSlashCommand(command.name, args);
+        const handled = await onRunSlashCommand?.(command.name, args);
         if (handled) clearAfterSendSuccess();
       } finally {
         slashCommandBusyRef.current = false;
@@ -1250,10 +1255,10 @@ const MessageComposer = memo(function MessageComposer(
         <div
           ref={composerContainerRef}
           className="relative"
-          onDragEnter={handleComposerDragEnter}
-          onDragOver={handleComposerDragOver}
-          onDragLeave={handleComposerDragLeave}
-          onDrop={handleComposerDrop}
+          onDragEnter={textOnly ? undefined : handleComposerDragEnter}
+          onDragOver={textOnly ? undefined : handleComposerDragOver}
+          onDragLeave={textOnly ? undefined : handleComposerDragLeave}
+          onDrop={textOnly ? undefined : handleComposerDrop}
         >
           {imageAttachments.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-2">
@@ -1391,6 +1396,7 @@ const MessageComposer = memo(function MessageComposer(
               />
             ))}
           <textarea
+            aria-label={textOnly ? "Message" : undefined}
             ref={composerTextareaRef}
             value={draft}
             onChange={(event) => {
@@ -1431,7 +1437,7 @@ const MessageComposer = memo(function MessageComposer(
                   event.currentTarget.value.length,
               );
             }}
-            disabled={composerBusy}
+            disabled={composerBusy || inputDisabled}
             onKeyDown={(event) => {
               if (showFileMentionPalette) {
                 if (event.key === "Escape") {
@@ -1646,8 +1652,8 @@ const MessageComposer = memo(function MessageComposer(
                 void handleSendMessage("textarea-enter");
               }
             }}
-            onPaste={handleComposerPaste}
-            placeholder="Ask Codex anything..."
+            onPaste={textOnly ? undefined : handleComposerPaste}
+            placeholder={textOnly ? "Message" : "Ask Codex anything..."}
             rows={2}
             style={{ height: `${messageBoxHeight}px` }}
             className="block w-full min-h-[36px] resize-none border-0 bg-transparent px-4 pt-1.5 pb-1 text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
@@ -1659,7 +1665,7 @@ const MessageComposer = memo(function MessageComposer(
         >
           {audioInput && (
             <VoiceToggleButton
-              onToggle={() => void onRunSlashCommand("/voice", "")}
+              onToggle={() => void onRunSlashCommand?.("/voice", "")}
             />
           )}
           {audioInput && !audioInput.unavailableReason && (
@@ -1669,75 +1675,77 @@ const MessageComposer = memo(function MessageComposer(
               onError={audio.setError}
             />
           )}
-          <div className="relative flex">
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleMobileFileInputChange}
-              className="hidden"
-            />
-            <input
-              ref={galleryInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handleMobileFileInputChange}
-              className="hidden"
-            />
-            {isMobilePhone && showMobileAttachMenu && (
-              <div className="absolute bottom-10 right-0 z-30 min-w-[9rem] rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-xl">
-                <button
-                  type="button"
-                  onClick={handleOpenCameraPicker}
-                  disabled={isSendingLocked || composerBusy}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  <Camera className="h-3.5 w-3.5" />
-                  Camera
-                </button>
-                <button
-                  type="button"
-                  onClick={handleOpenGalleryPicker}
-                  disabled={isSendingLocked || composerBusy}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  <Images className="h-3.5 w-3.5" />
-                  Photos
-                </button>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                if (isMobilePhone) {
-                  setShowMobileAttachMenu((value) => !value);
-                  return;
-                }
-                handleOpenGalleryPicker();
-              }}
-              disabled={isSendingLocked || composerBusy}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-40"
-              title="Attach image"
-              aria-label="Attach image"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-                className="h-[18px] w-[18px]"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+          {!textOnly && (
+            <div className="relative flex">
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleMobileFileInputChange}
+                className="hidden"
+              />
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleMobileFileInputChange}
+                className="hidden"
+              />
+              {isMobilePhone && showMobileAttachMenu && (
+                <div className="absolute bottom-10 right-0 z-30 min-w-[9rem] rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={handleOpenCameraPicker}
+                    disabled={isSendingLocked || composerBusy}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    <Camera className="h-3.5 w-3.5" />
+                    Camera
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenGalleryPicker}
+                    disabled={isSendingLocked || composerBusy}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    <Images className="h-3.5 w-3.5" />
+                    Photos
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (isMobilePhone) {
+                    setShowMobileAttachMenu((value) => !value);
+                    return;
+                  }
+                  handleOpenGalleryPicker();
+                }}
+                disabled={isSendingLocked || composerBusy}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-40"
+                title="Attach image"
+                aria-label="Attach image"
               >
-                <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
-                <circle cx="9" cy="10" r="1.6" />
-                <path d="M5.5 17.5l4.6-4.8a1 1 0 011.46.02l2.3 2.45a1 1 0 001.45.03l1.6-1.6a1 1 0 011.41 0l2.2 2.2" />
-              </svg>
-            </button>
-          </div>
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  className="h-[18px] w-[18px]"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+                  <circle cx="9" cy="10" r="1.6" />
+                  <path d="M5.5 17.5l4.6-4.8a1 1 0 011.46.02l2.3 2.45a1 1 0 001.45.03l1.6-1.6a1 1 0 011.41 0l2.2 2.2" />
+                </svg>
+              </button>
+            </div>
+          )}
           {allowOutputSchema ? (
             <OutputSchemaToggleButton
               attached={!!outputSchema}
@@ -1800,7 +1808,7 @@ const MessageComposer = memo(function MessageComposer(
                 return;
               }
               if (primaryActionState.kind === "stop") {
-                void onStopConversation();
+                void onStopConversation?.();
                 return;
               }
               if (primaryActionState.kind === "idle") {
@@ -1811,6 +1819,7 @@ const MessageComposer = memo(function MessageComposer(
             }}
             disabled={
               composerBusy ||
+              (textOnly && isSendingLocked) ||
               (primaryActionState.disabled &&
                 !parseSlashCommandInvocation(draft, slashCommands))
             }

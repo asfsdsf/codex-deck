@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { Network, Pencil, Save, Trash2 } from "lucide-react";
 import type {
   CodexHomeDescriptor,
   LlmProviderSettings as ProviderDetails,
 } from "@codex-deck/api";
 import { requestJson } from "../transport";
+import { REASONING_EFFORTS } from "../reasoning-efforts";
 import {
   EmptySettingsList,
   Field,
@@ -33,6 +34,7 @@ function ProviderForm({
   onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const effortListId = useId();
   const [error, setError] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [url, setUrl] = useState(existing?.url ?? "");
@@ -53,6 +55,7 @@ function ProviderForm({
         body: JSON.stringify({
           label: data.get("label"),
           model: data.get("model"),
+          reasoningEffort: String(data.get("reasoningEffort") ?? "").trim(),
           url,
           revision: existing?.revision,
           apiKey: clearKey ? "" : key || undefined,
@@ -89,6 +92,22 @@ function ProviderForm({
             spellCheck={false}
             className={`${INPUT_CLASS} font-mono text-xs`}
           />
+        </Field>
+        <Field label="Default reasoning effort">
+          <input
+            name="reasoningEffort"
+            list={effortListId}
+            defaultValue={existing?.reasoningEffort}
+            placeholder="Model default"
+            autoCapitalize="none"
+            spellCheck={false}
+            className={INPUT_CLASS}
+          />
+          <datalist id={effortListId}>
+            {REASONING_EFFORTS.map((effort) => (
+              <option key={effort} value={effort} />
+            ))}
+          </datalist>
         </Field>
         <div className="sm:col-span-2">
           <Field label="OpenAI-compatible API URL">
@@ -315,7 +334,7 @@ export function LlmProviderSettings({
   return (
     <div className="space-y-3 py-5">
       {!list.length && !adding && (
-        <EmptySettingsList icon={Network}>No LLM providers</EmptySettingsList>
+        <EmptySettingsList icon={Network}>No chat providers</EmptySettingsList>
       )}
       {list.map((provider) => (
         <SavedProvider
