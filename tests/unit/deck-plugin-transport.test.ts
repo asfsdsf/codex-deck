@@ -1,4 +1,5 @@
 import {
+  getDeckPluginRuntime,
   getDeckPluginSource,
   installDeckPlugin,
   listDeckPlugins,
@@ -6,7 +7,17 @@ import {
   setDeckPluginEnabled,
   uninstallDeckPlugin,
 } from "../../web/deck-plugins-api";
-import { setActiveCodexHomeId } from "../../web/codex-home-scope";
+import {
+  getActiveCodexHomeId,
+  setActiveCodexHomeId,
+} from "../../web/codex-home-scope";
+import {
+  getCodexThreadQueue,
+  getCodexThreadSummaries,
+  listCodexSideThreads,
+} from "../../web/api";
+import { getCodexPlugins } from "../../web/extensions-api";
+import { getVoiceHistory } from "../../web/voice/voice-api";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
@@ -21,6 +32,63 @@ const event: CodexAppServerEvent = {
   threadId: null,
   revision: "plugin-status-1",
 };
+
+test("plugin catalogs load while thread reads are pending and queued reads keep their home", async (t) => {
+  const originalHome = getActiveCodexHomeId();
+  setActiveCodexHomeId("main");
+  t.after(() => setActiveCodexHomeId(originalHome));
+  const urls: string[] = [];
+  let release!: () => void;
+  const stalled = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.mock.method(globalThis, "fetch", async (input: string) => {
+    urls.push(input);
+    if (input === "/api/codex/threads/summaries") {
+      await stalled;
+      throw new Error("thread read failed");
+    }
+    if (input.endsWith("/side")) await stalled;
+    return Response.json({ url: input });
+  });
+
+  const snapshots = Promise.allSettled([
+    getCodexThreadSummaries({ threadIds: ["a"] }),
+    listCodexSideThreads("a"),
+    getVoiceHistory("a"),
+    getCodexThreadQueue("a"),
+  ]);
+  const catalogs = Promise.all([
+    getDeckPluginRuntime("codex-deck.manager"),
+    listDeckPlugins(),
+    getCodexPlugins(null),
+  ]);
+  try {
+    assert.deepEqual(urls, [
+      "/api/codex/threads/summaries",
+      "/api/codex/threads/a/side",
+      "/api/deck/plugins/codex-deck.manager/runtime?codexHome=main",
+      "/api/deck/plugins?codexHome=main",
+      "/api/codex/plugins",
+    ]);
+    await catalogs;
+    setActiveCodexHomeId("work");
+  } finally {
+    release();
+  }
+  const [summaries, side, history, queue] = await snapshots;
+  assert.equal(summaries.status, "rejected");
+  assert.equal(side.status, "fulfilled");
+  assert.deepEqual(history, {
+    status: "fulfilled",
+    value: { url: "/api/codex/threads/a/realtime/history" },
+  });
+  assert.deepEqual(queue, {
+    status: "fulfilled",
+    value: { url: "/api/codex/threads/a/queue" },
+  });
+});
+
 class FakeEventSource extends EventTarget {
   static sources: FakeEventSource[] = [];
   onopen: (() => void) | null = null;

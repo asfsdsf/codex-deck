@@ -126,6 +126,7 @@ import {
   notifyWorkflowMutation as notifyWorkflowMutationTransport,
   remoteClient,
   requestJson,
+  requestThreadSnapshot,
   setRemoteLatencyLoggingEnabled as setRemoteLatencyLoggingEnabledTransport,
   subscribeConversationStream as subscribeTransportConversationStream,
   subscribeSessionsStream as subscribeTransportSessionsStream,
@@ -1302,7 +1303,7 @@ export function getDiffGuideSource(
 }
 
 export function listCodexSideThreads(threadId: string) {
-  return requestJson<{ threads: CodexThreadSummary[] }>(
+  return requestThreadSnapshot<{ threads: CodexThreadSummary[] }>(
     `/api/codex/threads/${encodeURIComponent(threadId)}/side`,
   );
 }
@@ -1469,7 +1470,7 @@ export async function sendCodexAgentAction(
 export async function getCodexThreadSummaries(
   input: CodexThreadSummariesRequest,
 ): Promise<CodexThreadSummariesResponse> {
-  return requestJson<CodexThreadSummariesResponse>(
+  return requestThreadSnapshot<CodexThreadSummariesResponse>(
     "/api/codex/threads/summaries",
     {
       method: "POST",
@@ -2269,7 +2270,7 @@ function threadQueueUrl(threadId: string, suffix = ""): string {
 export function getCodexThreadQueue(
   threadId: string,
 ): Promise<import("@codex-deck/api").CodexThreadQueueSnapshot> {
-  return requestJson(threadQueueUrl(threadId));
+  return requestThreadSnapshot(threadQueueUrl(threadId));
 }
 /** `supported: false` means the app-server has no shared queue. */
 export function addCodexThreadQueueMessage(

@@ -22,8 +22,9 @@ export interface WakeablePollingSubscription {
 export async function requestLocalJson<T>(
   url: string,
   init?: RequestInit,
+  homeId?: string,
 ): Promise<T> {
-  const response = await fetch(addCodexHomeToApiUrl(url), init);
+  const response = await fetch(addCodexHomeToApiUrl(url, homeId), init);
   const text = await response.text();
   let payload: (T | ApiErrorPayload | { text?: string }) | null = null;
 

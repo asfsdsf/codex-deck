@@ -1,6 +1,8 @@
 import { RemoteClient } from "../remote-client";
+import { getActiveCodexHomeId } from "../codex-home-scope";
 import { createLocalTransport } from "./local";
 import { createRemoteTransport } from "./remote";
+import { requestLocalJson } from "./shared";
 import type {
   ConversationHoverSettingsHandlers,
   CodexDeckUpdateOutputStreamHandlers,
@@ -43,6 +45,34 @@ function getTransport() {
 
 export function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return getTransport().requestJson<T>(url, init);
+}
+
+// Session and conversation SSE already hold two HTTP/1.1 connections.
+// Leave room for user actions while session selection fans out slow RPC reads.
+const MAX_LOCAL_THREAD_SNAPSHOTS = 2;
+let activeThreadSnapshots = 0;
+const waitingThreadSnapshots: (() => void)[] = [];
+
+export async function requestThreadSnapshot<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
+  if (remoteClient.isConnected())
+    return remoteTransport.requestJson<T>(url, init);
+
+  const homeId = getActiveCodexHomeId();
+  if (activeThreadSnapshots < MAX_LOCAL_THREAD_SNAPSHOTS) {
+    activeThreadSnapshots++;
+  } else {
+    await new Promise<void>((resolve) => waitingThreadSnapshots.push(resolve));
+  }
+  try {
+    return await requestLocalJson<T>(url, init, homeId);
+  } finally {
+    const next = waitingThreadSnapshots.shift();
+    if (next) next();
+    else activeThreadSnapshots--;
+  }
 }
 
 export function subscribeConversationHoverSettings(
