@@ -90,7 +90,6 @@ export const panePlugins = [
     "Subagents spawned by this session",
     "pane.right",
     30,
-    { command: "ps" },
   ),
   panePlugin(
     "skills",
@@ -114,5 +113,6 @@ export const panePlugins = [
     "Background processes and live output",
     "pane.right",
     60,
+    { command: "ps" },
   ),
 ];

@@ -97,6 +97,28 @@ async function openProcess(page: Page) {
   return pane;
 }
 
+test("/ps opens the Process tab for the selected session", async ({
+  page,
+  app,
+}) => {
+  await mockProcesses(page, app.sessions.alpha);
+  const ui = new CodexDeckPage(page);
+  await ui.goto(app.baseURL);
+  await ui.selectSession("Review the launch checklist");
+
+  const composer = page.getByPlaceholder("Ask Codex anything...");
+  await composer.fill("/ps");
+  await composer.press("Enter");
+
+  const pane = page.locator(".pane-right");
+  await expect(
+    pane.getByRole("tab", { name: "Process Close", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(pane.locator('[data-catalog-key="123"]')).toContainText(
+    "pnpm dev",
+  );
+});
+
 for (const theme of ["light", "dark"] as const) {
   test(`Process lists live commands and keeps final output in ${theme} mode`, async ({
     page,
