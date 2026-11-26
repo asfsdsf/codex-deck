@@ -5318,6 +5318,7 @@ export function createServer(options: ServerOptions) {
         threadId: id,
         text,
         beforeSubmit,
+        inheritModelSettings: true,
       }),
     changed: pluginChanged,
     proxy,

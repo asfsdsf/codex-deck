@@ -346,6 +346,8 @@ export interface SendCodexMessageInput {
   serviceTier?: CodexServiceTier | null;
   effort?: CodexReasoningEffort | null;
   collaborationMode?: CodexCollaborationModeInput | null;
+  /** Inherit the thread's model and reasoning effort instead of home defaults. */
+  inheritModelSettings?: boolean;
   /** Steer the running turn when there is one; otherwise start a turn. */
   steerActiveTurn?: boolean;
   /** Turn the caller believes is running; the steer precondition. */
@@ -1118,7 +1120,10 @@ export class CodexAppServerClient {
     const collaboration = asRecord(params.collaborationMode);
     const settings = asRecord(collaboration?.settings);
     const model =
-      asString(settings?.model) || asString(params.model) || config.model;
+      asString(settings?.model) ||
+      asString(params.model) ||
+      asString(thread?.model) ||
+      config.model;
     const state = await readDaybreak(
       (method, payload) =>
         method === "thread/read" && thread
@@ -2628,7 +2633,6 @@ export class CodexAppServerClient {
     };
     const activeConfig = await this.readActiveConfig();
     await this.reloadProviderIfChanged(activeConfig);
-    this.applyActiveConfigToResumeParams(resumeParams, activeConfig);
     const resumeResult = await this.request("thread/resume", resumeParams);
     const resumeRecord = asRecord(
       resumeResult,
@@ -2883,7 +2887,11 @@ export class CodexAppServerClient {
     const activeConfig = await this.readActiveConfig(
       typeof params.cwd === "string" ? params.cwd : undefined,
     );
-    if (typeof params.model !== "string" && activeConfig.model) {
+    if (
+      !input.inheritModelSettings &&
+      typeof params.model !== "string" &&
+      activeConfig.model
+    ) {
       params.model = activeConfig.model;
     }
     if (input.serviceTier === null) {
@@ -2908,7 +2916,11 @@ export class CodexAppServerClient {
     ) {
       params.serviceTier = activeConfig.serviceTier;
     }
-    if (typeof params.effort !== "string" && activeConfig.reasoningEffort) {
+    if (
+      !input.inheritModelSettings &&
+      typeof params.effort !== "string" &&
+      activeConfig.reasoningEffort
+    ) {
       params.effort = activeConfig.reasoningEffort;
     }
     await this.reloadProviderIfChanged(activeConfig);
@@ -2932,7 +2944,11 @@ export class CodexAppServerClient {
     ) {
       // The daemon may already have this thread loaded for another app. A
       // resume subscribes our connection before turn/start can succeed there.
-      await this.resumeThread(threadId, activeConfig);
+      await this.resumeThread(
+        threadId,
+        activeConfig,
+        input.inheritModelSettings === true,
+      );
     }
 
     // turn/steer cannot carry an output schema; it applies to a new turn.
@@ -2962,7 +2978,11 @@ export class CodexAppServerClient {
         throw error;
       }
 
-      await this.resumeThread(threadId, activeConfig);
+      await this.resumeThread(
+        threadId,
+        activeConfig,
+        input.inheritModelSettings === true,
+      );
       this.newlyStartedThreadIds.delete(threadId);
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
@@ -3778,6 +3798,7 @@ export class CodexAppServerClient {
   private async resumeThread(
     threadId: string,
     activeConfig?: ActiveCodexConfig,
+    inheritModelSettings = true,
   ): Promise<void> {
     this.clearThreadStateCache(threadId);
     const params: Record<string, unknown> = {
@@ -3785,7 +3806,10 @@ export class CodexAppServerClient {
       persistExtendedHistory: true,
     };
     const config = activeConfig ?? (await this.readActiveConfig());
-    this.applyActiveConfigToResumeParams(params, config);
+    // Any config override on a cold resume can reapply home model defaults.
+    // Reads and inherited sends let Codex restore the saved thread settings.
+    if (!inheritModelSettings)
+      this.applyActiveConfigToResumeParams(params, config);
     if (this.readOnly) this.applyReadOnlyThreadParams(params, config);
     await this.request("thread/resume", params);
     this.clearThreadStateCache(threadId);

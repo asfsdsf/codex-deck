@@ -186,6 +186,42 @@ test("Daybreak uses native preferences, broadcasts changes, and applies the actu
   }
 });
 
+test("Daybreak checks the inherited thread model when home defaults differ", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const internal = client as unknown as {
+    request(method: string, params: Record<string, unknown>): Promise<unknown>;
+    ensureConnected(): Promise<void>;
+    ensureInitialized(): Promise<void>;
+  };
+  internal.ensureConnected = internal.ensureInitialized = async () => {};
+  let submitted = false;
+  internal.request = async (method, params) => {
+    if (method === "config/read")
+      return {
+        config: { model: "unsupported-default", model_provider: "openai" },
+      };
+    if (method === "thread/read")
+      return { thread: { model: "example", daybreakEnabled: true } };
+    if (method === "turn/start") {
+      assert.equal(params.model, undefined);
+      assert.equal(params.cyberAccessProgram, "daybreakBlue");
+      submitted = true;
+      return { turn: { id: "continued" } };
+    }
+    return discovery()(method);
+  };
+  try {
+    await client.sendMessage({
+      threadId: "thread",
+      text: "continue",
+      inheritModelSettings: true,
+    });
+    assert.equal(submitted, true);
+  } finally {
+    await client.close();
+  }
+});
+
 test("Daybreak routes reject invalid input and preserve explicit off", async () => {
   const app = new Hono();
   let saved: unknown;

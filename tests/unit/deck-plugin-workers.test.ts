@@ -15,6 +15,12 @@ import {
   type DeckPluginSession,
 } from "../../api/deck-plugin-manifest";
 import { registerDeckPluginRoutes } from "../../api/server/deck-plugin-routes";
+import { createServer } from "../../api/server";
+import {
+  __TEST_ONLY__,
+  setCodexAppServerClientForTests,
+  type CodexAppServerClientFacade,
+} from "../../api/codex-app-server";
 
 const workerSource = `
 const pending = new Map(); let count = 0;
@@ -270,6 +276,101 @@ test("concurrent clients cannot duplicate a guarded continuation, including with
   ]);
   assert.equal(f.sends(), 1);
   assert.deepEqual(results[0], results[1]);
+});
+
+test("guarded submissions through the server preserve the target model and effort", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "deck-plugin-model-"));
+  await new DeckPluginStore(root, () => {}).installPackage(
+    packageFiles(),
+    undefined,
+  );
+  const server = createServer({ port: 0, codexDir: root, open: false });
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const settings = { model: "gpt-6.2-astra", effort: "xhigh" };
+  const submitted: (typeof settings)[] = [];
+  client.readPluginSession = async () => session();
+  const rpc = client as unknown as {
+    request(method: string, params: Record<string, unknown>): Promise<unknown>;
+  };
+  rpc.request = async (method, params) => {
+    if (method === "config/read")
+      return {
+        config: {
+          model: "gpt-6.1-sol",
+          model_reasoning_effort: "low",
+          model_provider: "provider",
+        },
+      };
+    if (method === "thread/read") return { thread: { model: settings.model } };
+    if (method === "thread/resume") {
+      if (params.modelProvider) {
+        settings.model = "gpt-6.1-sol";
+        settings.effort = "low";
+      }
+      if (typeof params.model === "string") settings.model = params.model;
+      const config = params.config as Record<string, unknown> | undefined;
+      if (typeof config?.model_reasoning_effort === "string")
+        settings.effort = config.model_reasoning_effort;
+      return { thread: { id: "s" } };
+    }
+    assert.ok(method === "thread/settings/update" || method === "turn/start");
+    if (typeof params.model === "string") settings.model = params.model;
+    if (typeof params.effort === "string") settings.effort = params.effort;
+    if (method === "thread/settings/update") return {};
+    submitted.push({ ...settings });
+    return { turn: { id: "auto" } };
+  };
+  setCodexAppServerClientForTests(
+    client as unknown as CodexAppServerClientFacade,
+  );
+  t.after(async () => {
+    await server.stop();
+    setCodexAppServerClientForTests(null);
+    await rm(root, { recursive: true, force: true });
+  });
+  await server.initialize();
+  const base = "/api/deck/plugins/example.worker";
+  assert.equal(
+    (
+      await server.app.request(`${base}/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId: "s", enabled: true }),
+      })
+    ).status,
+    200,
+  );
+  const request = async (method: string, params: Record<string, unknown>) => {
+    const response = await server.app.request(`${base}/worker`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "rpc", params: { method, params } }),
+    });
+    assert.equal(response.status, 200);
+    const { requestId } = await response.json();
+    for (let tries = 0; tries < 100; tries++) {
+      const job = await (
+        await server.app.request(`${base}/worker/${requestId}`)
+      ).json();
+      if (job.done) {
+        assert.equal(job.error, undefined);
+        return job.result;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail("Worker request did not finish");
+  };
+  const state = await request("sessions.get", { threadId: "s" });
+  const result = await request("sessions.submit", {
+    threadId: "s",
+    text: "continue",
+    expectedTurnId: "failed",
+    expiresAt: Date.now() + 60_000,
+    revision: state.revision,
+    requestId: "retry",
+  });
+  assert.equal(result.phase, "accepted");
+  assert.deepEqual(submitted, [{ model: "gpt-6.2-astra", effort: "xhigh" }]);
 });
 
 test("guard rejects disabled recovery, newer manual actions, waits and queued messages", async (t) => {

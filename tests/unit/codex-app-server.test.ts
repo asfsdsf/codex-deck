@@ -1023,6 +1023,123 @@ test("app-server client updates loaded thread settings before starting a turn", 
   }
 });
 
+test("inherited model settings survive subscriptions, reconnects, and repeated continuations", async () => {
+  for (const effort of [null, "none", "xhigh", "future-effort"]) {
+    for (const reconnect of [false, true]) {
+      const client = new __TEST_ONLY__.CodexAppServerClient();
+      const rpc = client as unknown as {
+        request(
+          method: string,
+          params: Record<string, unknown>,
+        ): Promise<unknown>;
+      };
+      const settings = { model: "gpt-6.2-astra", effort };
+      let loaded = false;
+      let starts = 0;
+      const submitted: (typeof settings)[] = [];
+      const resumes: Record<string, unknown>[] = [];
+      rpc.request = async (method, params) => {
+        if (method === "config/read") {
+          return {
+            config: {
+              model: "gpt-6.1-sol",
+              model_reasoning_effort: "low",
+              model_provider: "provider",
+              model_service_tier: "fast",
+            },
+          };
+        }
+        if (method === "thread/read") {
+          return { thread: { model: settings.model } };
+        }
+        if (method === "getAuthStatus") return {};
+        if (method === "thread/resume") {
+          if (
+            !loaded &&
+            (params.modelProvider || params.serviceTier || params.config)
+          ) {
+            settings.model = "gpt-6.1-sol";
+            settings.effort = "low";
+          }
+          loaded = true;
+          resumes.push(params);
+          if (typeof params.model === "string") settings.model = params.model;
+          const config = params.config as Record<string, unknown> | undefined;
+          if (typeof config?.model_reasoning_effort === "string")
+            settings.effort = config.model_reasoning_effort;
+          return { thread: { id: "thread" } };
+        }
+        assert.ok(
+          method === "thread/settings/update" || method === "turn/start",
+        );
+        if (!loaded)
+          throw new CodexAppServerRpcError(-32602, "thread not found: thread");
+        if (typeof params.model === "string") settings.model = params.model;
+        if (typeof params.effort === "string") settings.effort = params.effort;
+        if (method === "thread/settings/update") return {};
+        submitted.push({ ...settings });
+        return { turn: { id: `turn-${++starts}` } };
+      };
+      try {
+        await client.getThreadLiveStatus("thread");
+        loaded = false;
+        await client.watchPluginSession("thread");
+        if (reconnect) loaded = false;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          await client.sendMessage({
+            threadId: "thread",
+            text: "continue",
+            inheritModelSettings: true,
+          });
+        }
+        assert.deepEqual(submitted, [
+          { model: "gpt-6.2-astra", effort },
+          { model: "gpt-6.2-astra", effort },
+        ]);
+        assert.equal(resumes.length, reconnect ? 3 : 2);
+        for (const params of resumes) {
+          assert.equal(params.model, undefined);
+          assert.equal(params.modelProvider, undefined);
+          assert.equal(params.serviceTier, undefined);
+          assert.equal(params.config, undefined);
+        }
+      } finally {
+        await client.close();
+      }
+    }
+  }
+});
+
+test("explicit model and effort still override inherited settings", async () => {
+  const client = new __TEST_ONLY__.CodexAppServerClient();
+  const rpc = client as unknown as {
+    request(method: string, params: Record<string, unknown>): Promise<unknown>;
+  };
+  rpc.request = async (method, params) => {
+    if (method === "config/read")
+      return {
+        config: { model: "home-default", model_reasoning_effort: "low" },
+      };
+    if (method === "thread/read")
+      return { thread: { model: "previous-model" } };
+    assert.ok(method === "thread/settings/update" || method === "turn/start");
+    assert.equal(params.model, "selected-model");
+    assert.equal(params.effort, "high");
+    return method === "turn/start" ? { turn: { id: "turn" } } : {};
+  };
+  try {
+    await client.sendMessage({
+      threadId: "thread",
+      text: "continue",
+      inheritModelSettings: true,
+      model: "selected-model",
+      effort: "high",
+    });
+  } finally {
+    await client.close();
+  }
+});
+
 test("app-server client starts first turn for new thread without pre-resume", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
   const requests: Array<{ method: string; params: Record<string, unknown> }> =
