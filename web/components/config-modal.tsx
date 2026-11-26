@@ -1,4 +1,5 @@
 import DeckPluginRuntime from "./deck-plugin-runtime";
+import { pluginViews } from "../plugins/contributions";
 import type { DeckPluginContributionsSnapshot } from "../../api/deck-plugin-manifest";
 import ProcessRefreshSettings from "./process-refresh-settings";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -669,6 +670,13 @@ export default function ConfigModal(props: ConfigModalProps) {
                   label: p.contributions.settings!.title,
                   icon: Package,
                 })),
+              ...pluginViews(pluginContributions, "settings").map(
+                ({ plugin, view }) => ({
+                  id: `plugin:${plugin.id}:${view.id}` as ConfigSection,
+                  label: view.title,
+                  icon: Package,
+                }),
+              ),
             ].map((section) => {
               const Icon = section.icon;
               const selected = activeSection === section.id;
@@ -721,7 +729,23 @@ export default function ConfigModal(props: ConfigModalProps) {
                     <DeckPluginRuntime
                       key={`${pluginScope}:${p.id}`}
                       pluginId={p.id}
+                      homeId={pluginScope}
                       surface="settings"
+                      context={{ threadId: null, cwd: null }}
+                      onClose={() => setActiveSection("general")}
+                    />
+                  ))}
+                {pluginViews(pluginContributions, "settings")
+                  .filter(
+                    ({ plugin, view }) =>
+                      activeSection === `plugin:${plugin.id}:${view.id}`,
+                  )
+                  .map(({ plugin, view }) => (
+                    <DeckPluginRuntime
+                      key={`${pluginScope}:${plugin.id}:${view.id}`}
+                      pluginId={plugin.id}
+                      viewId={view.id}
+                      homeId={pluginScope}
                       context={{ threadId: null, cwd: null }}
                       onClose={() => setActiveSection("general")}
                     />

@@ -9,6 +9,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { DECK_BUILTIN_PLUGINS } from "../builtin-plugins/catalog";
+import type { DeckBuiltinPlugin } from "../builtin-plugins/types";
 import {
   DECK_PLUGIN_STATE_MAX_BYTES,
   DeckPluginManifestError,
@@ -29,6 +31,7 @@ import {
 
 type InstalledPlugin =
   | { id: string; source: "package"; enabled: boolean }
+  | { id: string; source: "builtin"; enabled: boolean }
   | { id: string; source: "legacy"; enabled: boolean };
 
 const MAX_INSTALLED = 64;
@@ -101,6 +104,14 @@ export class DeckPluginError extends Error {
 }
 
 export class DeckPluginStore {
+  private changeRevision = 0;
+  get revision(): number {
+    return this.changeRevision;
+  }
+  private changed(): void {
+    this.changeRevision++;
+    this.onChange();
+  }
   private readonly registryPath: string;
   private readonly packageRoot: string;
   private readonly dataRoot: string;
@@ -111,6 +122,7 @@ export class DeckPluginStore {
   constructor(
     codexHome: string,
     private readonly onChange: () => void,
+    readonly builtins: readonly DeckBuiltinPlugin[] = DECK_BUILTIN_PLUGINS,
   ) {
     const root = join(codexHome, "codex-deck");
     this.registryPath = join(root, "plugins.json");
@@ -129,7 +141,10 @@ export class DeckPluginStore {
     }
     try {
       const entries: unknown = JSON.parse(text);
-      if (!Array.isArray(entries) || entries.length > MAX_INSTALLED) {
+      if (
+        !Array.isArray(entries) ||
+        entries.length > MAX_INSTALLED + this.builtins.length
+      ) {
         throw new Error("Invalid plugin list.");
       }
       const installed = new Map<string, InstalledPlugin>();
@@ -150,6 +165,15 @@ export class DeckPluginStore {
           installed.set(entry.id, {
             id: entry.id,
             source: "legacy",
+            enabled: entry.enabled,
+          });
+        } else if (
+          entry.source === "builtin" &&
+          this.builtins.some((b) => b.manifest.id === entry.id)
+        ) {
+          installed.set(entry.id, {
+            id: entry.id,
+            source: "builtin",
             enabled: entry.enabled,
           });
         } else if (entry.source === "package") {
@@ -249,39 +273,61 @@ export class DeckPluginStore {
     installed: Map<string, InstalledPlugin>,
   ): Promise<DeckPluginsSnapshot> {
     const plugins = await Promise.all(
-      [...installed.values()].map(async (entry) => {
-        const manifest =
-          entry.source === "package"
-            ? await this.readManifest(entry.id)
-            : legacyManifest(entry.id);
-        const summary = summarizeDeckPlugin(
-          manifest,
-          entry.source === "package" ? "package" : "legacy",
-          entry.enabled,
-        );
-        return {
-          ...summary,
-          hasExecutableUi:
-            entry.source === "package" &&
-            !!(manifest.entrypoints.panel || manifest.entrypoints.settings),
-        };
-      }),
+      [...installed.values()]
+        .filter((entry) => entry.source !== "builtin")
+        .map(async (entry) => {
+          const manifest =
+            entry.source === "package"
+              ? await this.readManifest(entry.id)
+              : legacyManifest(entry.id);
+          const summary = summarizeDeckPlugin(
+            manifest,
+            entry.source === "package" ? "package" : "legacy",
+            entry.enabled,
+          );
+          return {
+            ...summary,
+            hasExecutableUi:
+              entry.source === "package" &&
+              !!(
+                manifest.entrypoints.panel ||
+                manifest.entrypoints.settings ||
+                manifest.contributions?.views?.length
+              ),
+          };
+        }),
     );
-    return {
-      plugins: plugins.sort((left, right) =>
-        left.name.localeCompare(right.name),
+    const bundled = this.builtins.map((definition) => ({
+      ...summarizeDeckPlugin(
+        parseDeckPluginManifest(definition.manifest, { builtin: true }),
+        "builtin",
+        definition.canDisable
+          ? (installed.get(definition.manifest.id)?.enabled ??
+              definition.defaultEnabled)
+          : true,
       ),
+      canDisable: definition.canDisable,
+    }));
+    return {
+      plugins: [
+        ...plugins.filter((plugin) => !bundled.some((b) => b.id === plugin.id)),
+        ...bundled,
+      ].sort((left, right) => left.name.localeCompare(right.name)),
     };
   }
 
   async list(): Promise<DeckPluginsSnapshot> {
+    await this.pending;
     return this.snapshot(await this.read());
   }
 
   private async writeRegistry(
     installed: Map<string, InstalledPlugin>,
   ): Promise<void> {
-    if (installed.size > MAX_INSTALLED) {
+    if (
+      [...installed.values()].filter((p) => p.source === "package").length >
+      MAX_INSTALLED
+    ) {
       throw new DeckPluginError(
         `A Codex home can have at most ${MAX_INSTALLED} installed plugins.`,
         409,
@@ -373,7 +419,7 @@ export class DeckPluginStore {
       const installed = await this.read();
       await update(installed);
       await this.writeRegistry(installed);
-      this.onChange();
+      this.changed();
       return this.snapshot(installed);
     });
     this.pending = next.catch(() => undefined);
@@ -388,7 +434,7 @@ export class DeckPluginStore {
     const { manifest } = parsed;
     if (manifest.id.startsWith(LEGACY_BUNDLE_PREFIX)) {
       throw new DeckPluginError(
-        `The ${LEGACY_BUNDLE_PREFIX} ID prefix is reserved for legacy plugins.`,
+        `The ${LEGACY_BUNDLE_PREFIX} ID prefix is reserved for built-in plugins.`,
         400,
       );
     }
@@ -411,7 +457,11 @@ export class DeckPluginStore {
           409,
         );
       }
-      if (!existing && installed.size >= MAX_INSTALLED) {
+      if (
+        !existing &&
+        [...installed.values()].filter((p) => p.source === "package").length >=
+          MAX_INSTALLED
+      ) {
         throw new DeckPluginError(
           `A Codex home can have at most ${MAX_INSTALLED} installed plugins.`,
           409,
@@ -471,7 +521,7 @@ export class DeckPluginStore {
         await rm(temporary, { recursive: true, force: true });
       }
       if (movedExisting) await rm(backup, { recursive: true, force: true });
-      this.onChange();
+      this.changed();
       return this.snapshot(installed);
     });
     this.pending = next.catch(() => undefined);
@@ -480,15 +530,32 @@ export class DeckPluginStore {
 
   setEnabled(id: string, enabled: boolean): Promise<DeckPluginsSnapshot> {
     return this.change(async (installed) => {
+      const builtin = this.builtins.find((b) => b.manifest.id === id);
+      if (builtin && !builtin.canDisable && !enabled)
+        throw new DeckPluginError(
+          "This built-in plugin is required by Deck.",
+          409,
+        );
       const existing = installed.get(id);
-      if (!existing) throw new DeckPluginError("Plugin is not installed.", 404);
+      if (!existing && !builtin)
+        throw new DeckPluginError("Plugin is not installed.", 404);
       await this.beforePackageChange(id);
-      installed.set(id, { ...existing, enabled });
+      installed.set(
+        id,
+        existing
+          ? { ...existing, enabled }
+          : { id, source: "builtin", enabled },
+      );
     });
   }
 
   uninstall(id: string): Promise<DeckPluginsSnapshot> {
     const next = this.pending.then(async () => {
+      if (this.builtins.some((b) => b.manifest.id === id))
+        throw new DeckPluginError(
+          "Built-in plugins are shipped with Deck and cannot be uninstalled.",
+          409,
+        );
       const installed = await this.read();
       const existing = installed.get(id);
       if (!existing) throw new DeckPluginError("Plugin is not installed.", 404);
@@ -504,7 +571,7 @@ export class DeckPluginStore {
         await this.removeState(id);
         await this.removeBackendData(id);
       }
-      this.onChange();
+      this.changed();
       return this.snapshot(installed);
     });
     this.pending = next.catch(() => undefined);
@@ -525,6 +592,23 @@ export class DeckPluginStore {
   }
 
   async getRuntime(id: string): Promise<DeckPluginRuntimeResponse> {
+    await this.pending;
+    const builtin = this.builtins.find((b) => b.manifest.id === id);
+    if (builtin) {
+      const summary = (await this.list()).plugins.find((p) => p.id === id);
+      if (!summary?.enabled)
+        throw new DeckPluginError("Plugin is not enabled.", 404);
+      return {
+        plugin: {
+          id,
+          name: builtin.manifest.name,
+          version: builtin.manifest.version,
+        },
+        manifest: parseDeckPluginManifest(builtin.manifest, { builtin: true }),
+        state: await this.readState(id),
+        source: "builtin",
+      };
+    }
     const entry = (await this.read()).get(id);
     if (!entry || entry.source !== "package" || !entry.enabled) {
       throw new DeckPluginError("Plugin is not enabled.", 404);
@@ -532,12 +616,16 @@ export class DeckPluginStore {
     const manifest = await this.readManifest(id);
     for (const path of Object.values(manifest.entrypoints))
       await this.readPackageFile(id, path);
+    for (const view of manifest.contributions?.views ?? []) {
+      if (view.entrypoint) await this.readPackageFile(id, view.entrypoint);
+    }
     return {
       plugin: { id, name: manifest.name, version: manifest.version },
       manifest,
       state: manifest.capabilities.includes("state.read")
         ? await this.readState(id)
         : {},
+      source: "package",
     };
   }
 
@@ -648,7 +736,7 @@ export class DeckPluginStore {
       if (!manifest.capabilities.includes("state.write"))
         throw new DeckPluginError("state.write is not granted.", 400);
       await this.writeState(id, state);
-      this.onChange();
+      this.changed();
       return this.snapshot(installed);
     });
     this.pending = next.catch(() => undefined);

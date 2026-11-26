@@ -105,7 +105,7 @@ async function fixture(
   const store = new DeckPluginStore(root, () => {
     changes++;
     void manager?.reconcile();
-  });
+  }, []);
   await store.installPackage(packageFiles("1.0.0", capabilities), undefined);
   const state = session();
   const host: DeckPluginWorkerHost = {
@@ -157,7 +157,12 @@ test("manifest directly supports backend and UI contributions without API versio
     /backend.execute/,
   );
   assert.throws(
-    () => parseDeckPluginManifest({ ...source, entrypoints: {} }),
+    () =>
+      parseDeckPluginManifest({
+        ...source,
+        entrypoints: {},
+        contributions: undefined,
+      }),
     /at least one/,
   );
 });

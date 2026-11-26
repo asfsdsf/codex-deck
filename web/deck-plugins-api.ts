@@ -24,33 +24,48 @@ function scopedRequest<T>(
   );
 }
 
-function post(url: string, input: unknown): Promise<DeckPluginsSnapshot> {
-  return requestJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+function post(
+  url: string,
+  input: unknown,
+  homeId = getActiveCodexHomeId(),
+): Promise<DeckPluginsSnapshot> {
+  return scopedRequest(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    homeId,
+  );
 }
 
-export function listDeckPlugins(): Promise<DeckPluginsSnapshot> {
-  return requestJson(base);
+export function listDeckPlugins(
+  homeId = getActiveCodexHomeId(),
+): Promise<DeckPluginsSnapshot> {
+  return scopedRequest(base, undefined, homeId);
 }
 
 export function installDeckPlugin(
   input: DeckPluginInstallInput,
+  homeId = getActiveCodexHomeId(),
 ): Promise<DeckPluginsSnapshot> {
-  return post(`${base}/install`, input);
+  return post(`${base}/install`, input, homeId);
 }
 
 export function setDeckPluginEnabled(
   id: string,
   enabled: boolean,
+  homeId = getActiveCodexHomeId(),
 ): Promise<DeckPluginsSnapshot> {
-  return post(`${pluginPath(id)}/enabled`, { enabled });
+  return post(`${pluginPath(id)}/enabled`, { enabled }, homeId);
 }
 
-export function uninstallDeckPlugin(id: string): Promise<DeckPluginsSnapshot> {
-  return requestJson(pluginPath(id), { method: "DELETE" });
+export function uninstallDeckPlugin(
+  id: string,
+  homeId = getActiveCodexHomeId(),
+): Promise<DeckPluginsSnapshot> {
+  return scopedRequest(pluginPath(id), { method: "DELETE" }, homeId);
 }
 
 export function getDeckPluginRuntime(
@@ -62,8 +77,9 @@ export function getDeckPluginRuntime(
 
 export function getDeckPluginSource(
   id: string,
+  homeId = getActiveCodexHomeId(),
 ): Promise<DeckPluginSourceResponse> {
-  return requestJson(`${pluginPath(id)}/source`);
+  return scopedRequest(`${pluginPath(id)}/source`, undefined, homeId);
 }
 
 export function getDeckPluginFileUrl(
@@ -121,13 +137,14 @@ export async function requestDeckPluginWorker(
   method: string,
   params: unknown,
   homeId = getActiveCodexHomeId(),
+  service?: string,
 ): Promise<unknown> {
   const { requestId } = await scopedRequest<{ requestId: string }>(
-    `${pluginPath(id)}/worker`,
+    `${pluginPath(id)}/${service ? "services" : "worker"}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params }),
+      body: JSON.stringify({ method, params, ...(service ? { service } : {}) }),
     },
     homeId,
   );
@@ -149,6 +166,15 @@ export async function requestDeckPluginWorker(
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
   throw new Error("Plugin request timed out.");
+}
+export function callDeckPluginService(
+  id: string,
+  service: string,
+  method: string,
+  params: unknown,
+  homeId = getActiveCodexHomeId(),
+) {
+  return requestDeckPluginWorker(id, method, params, homeId, service);
 }
 export function getDeckPluginSecretStatus(
   id: string,

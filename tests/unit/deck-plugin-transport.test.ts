@@ -1,4 +1,11 @@
-import { requestDeckPluginWorker } from "../../web/deck-plugins-api";
+import {
+  getDeckPluginSource,
+  installDeckPlugin,
+  listDeckPlugins,
+  requestDeckPluginWorker,
+  setDeckPluginEnabled,
+  uninstallDeckPlugin,
+} from "../../web/deck-plugins-api";
 import { setActiveCodexHomeId } from "../../web/codex-home-scope";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -126,4 +133,29 @@ test("worker UI operations poll short requests and pin the original Codex home d
   );
   assert.equal(calls.length, 2);
   assert.match(calls[1], /\/worker\/job\?/);
+});
+
+test("plugin registry operations stay scoped to their owning Codex home", async (t) => {
+  const previous = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = async (input) => {
+    urls.push(String(input));
+    return Response.json({ plugins: [], files: [] });
+  };
+  t.after(() => {
+    globalThis.fetch = previous;
+  });
+
+  await listDeckPlugins("work");
+  await installDeckPlugin({ files: [] }, "work");
+  await setDeckPluginEnabled("example.plugin", false, "work");
+  await uninstallDeckPlugin("example.plugin", "work");
+  await getDeckPluginSource("example.plugin", "work");
+
+  assert.equal(urls.length, 5);
+  for (const value of urls)
+    assert.equal(
+      new URL(value, "http://codex-deck.local").searchParams.get("codexHome"),
+      "work",
+    );
 });

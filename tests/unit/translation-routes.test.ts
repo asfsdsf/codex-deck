@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { TranslateTextProgress } from "../../api/storage";
-import { registerTranslationRoutes } from "../../api/server/translation-routes";
+import { registerTranslationRoutes } from "../../builtin-plugins/translation/server";
 
 async function readProgress(
   reader: ReadableStreamDefaultReader<Uint8Array>,

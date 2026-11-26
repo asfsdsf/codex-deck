@@ -1,5 +1,10 @@
 # Workflow UI Command Mapping
 
+The **Workflow** built-in plugin contributes the left pane's Workflow entry and
+the workflow board. Enable it for the current Codex home in **Plugins**.
+Disabling it hides the board and stops its browser subscriptions. Running workflows
+continue on the daemon.
+
 This document records the current button-to-command mapping for the Workflow pane in the codex-deck web UI.
 
 ## Notes

@@ -7,9 +7,14 @@ import {
   setDeckPluginSessionEnabled,
 } from "../deck-plugins-api";
 
-export function useDeckPluginContributions(homeId: string, enabled: boolean) {
+export function useDeckPluginContributions(
+  homeId: string,
+  enabled: boolean,
+  connectionKey: string,
+) {
   const [result, setResult] = useState<{
     homeId: string;
+    connectionKey: string;
     snapshot: DeckPluginContributionsSnapshot;
     offset: number;
   } | null>(null);
@@ -18,7 +23,6 @@ export function useDeckPluginContributions(homeId: string, enabled: boolean) {
     let current = true;
     let pending = false;
     let refreshAgain = false;
-    setResult(null);
     setError("");
     if (!enabled) return;
     const refresh = async () => {
@@ -32,6 +36,7 @@ export function useDeckPluginContributions(homeId: string, enabled: boolean) {
         if (current)
           setResult({
             homeId,
+            connectionKey,
             snapshot,
             offset: snapshot.serverTime - Date.now(),
           });
@@ -58,7 +63,7 @@ export function useDeckPluginContributions(homeId: string, enabled: boolean) {
       current = false;
       off();
     };
-  }, [homeId, enabled]);
+  }, [homeId, enabled, connectionKey]);
   const toggle = useCallback(
     async (pluginId: string, threadId: string, value: boolean) => {
       setError("");
@@ -87,7 +92,10 @@ export function useDeckPluginContributions(homeId: string, enabled: boolean) {
     [homeId],
   );
   return {
-    snapshot: result?.homeId === homeId ? result.snapshot : null,
+    snapshot:
+      result?.homeId === homeId && result.connectionKey === connectionKey
+        ? result.snapshot
+        : null,
     serverOffset: result?.offset ?? 0,
     toggle,
     action,

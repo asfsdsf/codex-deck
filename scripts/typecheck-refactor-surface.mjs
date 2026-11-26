@@ -1,12 +1,18 @@
 import { spawnSync } from "node:child_process";
 
 const surfaceFiles = [
+  "api/deck-builtin-runtime.ts",
+  "api/deck-plugin-manifest.ts",
+  "api/deck-plugin-services.ts",
+  "api/deck-plugin-store.ts",
+  "api/deck-plugin-workers.ts",
+  "api/server/deck-plugin-routes.ts",
   "api/diff-guide.ts",
   "api/diff-guide-store.ts",
   "api/server/diff-guide-routes.ts",
   "web/components/diff-guide-viewer.tsx",
   "web/components/session-delete-dialog.tsx",
-  "web/components/session-list.tsx",
+  "builtin-plugins/sessions/client.tsx",
   "web/diff-guide-html.ts",
   "web/transport/remote.ts",
   "tests/unit/diff-guide.test.ts",
@@ -19,7 +25,7 @@ const surfaceFiles = [
   "web/hooks/use-codex-memories.ts",
   "web/hooks/use-codex-pets.ts",
   "web/hooks/use-session-hooks-pane.ts",
-  "web/components/diff-pane.tsx",
+  "builtin-plugins/right-pane/client.tsx",
   "web/components/hooks-pane.tsx",
   "web/components/memories-modal.tsx",
   "web/transport/types.ts",
@@ -54,10 +60,12 @@ const combined = `${stdout}${stderr}`;
 
 const relevantLines = combined
   .split(/\r?\n/)
-  .filter((line) =>
-    surfaceFiles.some(
-      (file) => line.includes(`${file}(`) || line.includes(`${file}:`),
-    ),
+  .filter(
+    (line) =>
+      (line.startsWith("builtin-plugins/") && !line.includes("TS6142")) ||
+      surfaceFiles.some(
+        (file) => line.includes(`${file}(`) || line.includes(`${file}:`),
+      ),
   );
 
 if (relevantLines.length > 0) {

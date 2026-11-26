@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  /><title>Session inspector</title>
+  <style>
+    body {
+      font: 14px system-ui;
+      margin: 16px;
+      color: #18181b;
+      background: #fafafa;
+    }
+    body.dark {
+      color: #e4e4e7;
+      background: #18181b;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    button {
+      min-height: 36px;
+    }
+  </style>
+  <h1>Session inspector</h1>
+  <button id="refresh">Refresh warnings</button>
+  <pre id="result" role="status">Loading…</pre>
+  <script type="module" src="panel.mjs"></script>
+</html>

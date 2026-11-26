@@ -7,7 +7,7 @@ The terminal pane is the live shell surface in codex-deck. It serves two related
 1. Provide a shared interactive terminal for a project directory.
 2. Attach that terminal to a Codex session so the UI can show AI terminal directives, approvals, and frozen terminal snapshots in the same pane.
 
-This is not a standalone frontend widget. The pane is a cross-cutting feature implemented across `web/app/codex-deck-app.tsx`, `web/components/terminal-view.tsx`, `web/transport/*`, `api/server/terminal-routes.ts`, `api/local-terminal.ts`, and the terminal artifact persistence modules under `api/`.
+This is not a standalone frontend widget. The pane is a cross-cutting feature implemented across `web/app/codex-deck-app.tsx`, `builtin-plugins/terminal/client.tsx`, `web/transport/*`, `api/server/terminal-routes.ts`, `api/local-terminal.ts`, and the terminal artifact persistence modules under `api/`.
 
 ## High-Level Design
 
@@ -458,7 +458,7 @@ Remote mode preserves the same browser-facing semantics by polling `GET /api/ter
 
 ### `TerminalView`
 
-`web/components/terminal-view.tsx` is the main terminal pane component.
+`builtin-plugins/terminal/client.tsx` is the main terminal pane component.
 
 State owned by the component includes:
 
@@ -603,7 +603,7 @@ If you add features to the terminal pane, keep the following boundaries:
 ## Relevant Files
 
 - `web/app/codex-deck-app.tsx`
-- `web/components/terminal-view.tsx`
+- `builtin-plugins/terminal/client.tsx`
 - `web/components/terminal-snapshot-block.tsx`
 - `web/terminal-session-client.ts`
 - `web/terminal-render.ts`

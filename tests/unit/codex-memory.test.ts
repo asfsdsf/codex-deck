@@ -5,7 +5,7 @@ import {
   __TEST_ONLY__,
   CodexAppServerRpcError,
 } from "../../api/codex-app-server";
-import { registerMemoryInsightRoutes } from "../../api/server/memory-insight-routes";
+import { registerMemoryInsightRoutes } from "../../builtin-plugins/memory/server";
 
 test("memory reads use the selected thread pipeline and resume only unloaded threads", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();

@@ -8,7 +8,7 @@ import {
   setMacOSTranslationBackendForTests,
   translateText,
   TranslationUnavailableError,
-} from "../../api/translation";
+} from "../../builtin-plugins/translation/translation";
 
 test("expandTranslationCommand substitutes shell-escaped values", () => {
   const expanded = expandTranslationCommand(

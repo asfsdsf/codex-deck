@@ -3,7 +3,7 @@ import type {
   TranslateTextRequest,
   TranslateTextResponse,
 } from "@codex-deck/api";
-import { translateTextInChunks } from "../../api/translation-chunks";
+import { translateTextInChunks } from "../../builtin-plugins/translation/translation-chunks";
 
 interface TranslationTransportOptions {
   requestJson: <T>(url: string, init?: RequestInit) => Promise<T>;

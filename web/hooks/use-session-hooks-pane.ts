@@ -6,7 +6,7 @@ import {
   setSessionHookState,
   setWorkflowProjectHookState,
 } from "../api";
-import type { RightPaneMode } from "../components/diff-pane";
+import type { RightPaneMode } from "../../builtin-plugins/right-pane/types";
 import type { RightPaneTarget } from "../right-pane-routing";
 
 interface UseSessionHooksPaneInput {
@@ -201,11 +201,7 @@ export function useSessionHooksPane(
   }, [rightPaneTarget, sessionHooks]);
 
   useEffect(() => {
-    if (
-      !rightPaneTarget ||
-      diffPaneCollapsed ||
-      selectedPaneMode !== "hooks"
-    ) {
+    if (!rightPaneTarget || diffPaneCollapsed || selectedPaneMode !== "hooks") {
       setLoadingSessionHooks(false);
       return;
     }

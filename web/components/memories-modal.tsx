@@ -1,7 +1,9 @@
-import MemoryInsights from "./memory-insights";
+import { DeckPluginSlot } from "../plugins/slot";
+import type { DeckPluginContributionsSnapshot } from "../../api/deck-plugin-manifest";
 import CenteredConfirmDialog from "./centered-confirm-dialog";
 
 interface MemoriesModalProps {
+  plugins?: DeckPluginContributionsSnapshot["plugins"];
   open: boolean;
   threadId?: string | null;
   homeId?: string;
@@ -61,9 +63,12 @@ export default function MemoriesModal(props: MemoriesModalProps) {
             </div>
           </div>
           <div className="space-y-3 p-4">
-            <MemoryInsights
+            <DeckPluginSlot
               key={`${props.homeId}:${props.threadId}`}
-              threadId={props.threadId ?? null}
+              plugins={props.plugins ?? []}
+              slot="memory.settings"
+              homeId={props.homeId ?? "main"}
+              context={{ threadId: props.threadId ?? null, cwd: null }}
             />
             {loading ? (
               <div className="rounded border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400">

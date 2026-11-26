@@ -140,6 +140,23 @@ export function registerDeckPluginRoutes(
 ) {
   app.get(base, (c) => respond(c, () => store.list()));
   if (workers) {
+    app.post(`${base}/:id/services`, (c) =>
+      respond(c, async () => {
+        const input = await body(c, 64 * 1024, "Service request too large.");
+        if (
+          typeof input.method !== "string" ||
+          input.method.length > 128 ||
+          typeof input.service !== "string"
+        )
+          throw new DeckPluginError("service and method are required.", 400);
+        return workers.beginRequest(
+          c.req.param("id"),
+          input.method,
+          { service: input.service, params: input.params ?? {} },
+          true,
+        );
+      }),
+    );
     app.get(`${base}/:id/worker/:requestId`, (c) =>
       respond(c, () =>
         workers.readRequest(c.req.param("id"), c.req.param("requestId")),

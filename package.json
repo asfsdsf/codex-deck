@@ -10,6 +10,7 @@
   "main": "./dist/index.js",
   "files": [
     "dist",
+    "plugin-sdk",
     "scripts/install-daemon.sh"
   ],
   "scripts": {

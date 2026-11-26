@@ -1,5 +1,6 @@
 import { ArrowLeft, FileUp, Puzzle, Search } from "lucide-react";
-import { useRef, useState } from "react";
+import { useCallback, useContext, useRef, useState } from "react";
+import { PaneNavigation } from "../plugins/pane-navigation";
 import {
   DECK_PLUGIN_PACKAGE_MAX_BYTES,
   DECK_PLUGIN_MANIFEST_MAX_BYTES,
@@ -124,16 +125,19 @@ function pluginStatus(plugin: DeckPluginSummary) {
 }
 
 export default function DeckPluginsDirectory({
+  homeId,
   threadId,
   cwd,
 }: {
+  homeId: string;
   threadId: string | null;
   cwd: string | null;
 }) {
+  const loadPlugins = useCallback(() => listDeckPlugins(homeId), [homeId]);
   const { data, loading, error, refresh, setData } = useNativeSnapshot(
     "deck-plugins",
-    null,
-    listDeckPlugins,
+    homeId,
+    loadPlugins,
   );
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -160,6 +164,14 @@ export default function DeckPluginsDirectory({
         installed: false,
       }
     : plugins.find((plugin) => plugin.id === selectedId);
+  const navigate = useContext(PaneNavigation);
+  const paneView = selected?.contributions?.views?.find(
+    (v) => v.slot.startsWith("layout.") || v.slot.startsWith("pane."),
+  );
+  const openInPane =
+    paneView &&
+    !selected?.entrypoints.panel &&
+    !selected?.contributions?.views?.some((v) => v.slot === "dialog");
   const sameVersion =
     imported && existing?.version === imported.manifest.version;
   const term = query.trim().toLowerCase();
@@ -266,7 +278,11 @@ export default function DeckPluginsDirectory({
               {[
                 selected.author,
                 `v${selected.version}`,
-                selected.source === "legacy" ? "Legacy plugin" : "Package",
+                selected.source === "builtin"
+                  ? "Built-in"
+                  : selected.source === "legacy"
+                    ? "Legacy plugin"
+                    : "Package",
                 ...(!imported && selected.installed
                   ? [pluginStatus(selected)]
                   : []),
@@ -359,10 +375,13 @@ export default function DeckPluginsDirectory({
                 onClick={() =>
                   void update(
                     () =>
-                      installDeckPlugin({
-                        files: imported.files,
-                        replaceVersion: existing?.version,
-                      }),
+                      installDeckPlugin(
+                        {
+                          files: imported.files,
+                          replaceVersion: existing?.version,
+                        },
+                        homeId,
+                      ),
                     () => {
                       setQuery("");
                       setSelectedId(imported.manifest.id);
@@ -380,12 +399,18 @@ export default function DeckPluginsDirectory({
                     type="button"
                     className={primaryButton}
                     disabled={busy}
-                    onClick={() => setOpenedPluginId(selected.id)}
+                    onClick={() => {
+                      if (!openInPane) setOpenedPluginId(selected.id);
+                      else if (!navigate?.(selected.id, paneView))
+                        setActionError(
+                          "Enable the containing pane to open this view.",
+                        );
+                    }}
                   >
                     Open plugin
                   </button>
                 )}
-                {selected.hasExecutableUi && (
+                {selected.source === "package" && (
                   <button
                     type="button"
                     className={secondaryButton}
@@ -398,7 +423,10 @@ export default function DeckPluginsDirectory({
                       setReviewingCode(true);
                       setActionError("");
                       try {
-                        const source = await getDeckPluginSource(selected.id);
+                        const source = await getDeckPluginSource(
+                          selected.id,
+                          homeId,
+                        );
                         setReviewedPlugin({
                           id: selected.id,
                           files: source.files,
@@ -421,33 +449,46 @@ export default function DeckPluginsDirectory({
                         : "Review plugin code"}
                   </button>
                 )}
-                {selected.source !== "legacy" && (
+                {selected.source !== "legacy" &&
+                  selected.canDisable !== false && (
+                    <button
+                      type="button"
+                      className={secondaryButton}
+                      disabled={busy}
+                      onClick={() =>
+                        void update(() =>
+                          setDeckPluginEnabled(
+                            selected.id,
+                            !selected.enabled,
+                            homeId,
+                          ),
+                        )
+                      }
+                    >
+                      {selected.enabled ? "Disable" : "Enable"}
+                    </button>
+                  )}
+                {selected.source !== "builtin" && (
                   <button
                     type="button"
                     className={secondaryButton}
                     disabled={busy}
                     onClick={() =>
-                      void update(() =>
-                        setDeckPluginEnabled(selected.id, !selected.enabled),
+                      void update(
+                        () => uninstallDeckPlugin(selected.id, homeId),
+                        () => setSelectedId(null),
                       )
                     }
                   >
-                    {selected.enabled ? "Disable" : "Enable"}
+                    Uninstall
                   </button>
                 )}
-                <button
-                  type="button"
-                  className={secondaryButton}
-                  disabled={busy}
-                  onClick={() =>
-                    void update(
-                      () => uninstallDeckPlugin(selected.id),
-                      () => setSelectedId(null),
-                    )
-                  }
-                >
-                  Uninstall
-                </button>
+                {selected.source === "builtin" &&
+                  selected.canDisable === false && (
+                    <span className="self-center text-xs text-zinc-500">
+                      Required by Deck
+                    </span>
+                  )}
               </>
             ) : null}
           </div>
@@ -477,15 +518,25 @@ export default function DeckPluginsDirectory({
               </div>
             </details>
           )}
-          {selected.installed && !selected.hasExecutableUi && (
-            <p className="text-xs text-zinc-400">
-              This plugin runs a backend worker without a browser panel.
-            </p>
-          )}
+          {selected.installed &&
+            !selected.hasExecutableUi &&
+            selected.source !== "builtin" && (
+              <p className="text-xs text-zinc-400">
+                This plugin runs a backend worker without a browser panel.
+              </p>
+            )}
           {openedPluginId === selected.id && selected.enabled && (
             <DeckPluginRuntime
               key={selected.id}
               pluginId={selected.id}
+              homeId={homeId}
+              viewId={
+                selected.contributions?.views?.find((v) => v.slot === "dialog")
+                  ?.id ??
+                (selected.entrypoints.panel
+                  ? undefined
+                  : selected.contributions?.views?.[0]?.id)
+              }
               context={{ threadId, cwd }}
               onClose={() => setOpenedPluginId(null)}
             />
@@ -556,7 +607,9 @@ export default function DeckPluginsDirectory({
                       <span
                         className={`mt-1 inline-flex rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-300`}
                       >
-                        Codex Deck
+                        {plugin.source === "builtin"
+                          ? "Built-in"
+                          : "Codex Deck"}
                       </span>
                       <span
                         className={`mt-1 block text-xs ${plugin.enabled ? "text-emerald-400" : "text-zinc-400"}`}

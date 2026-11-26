@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import React, { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import DiffPane from "../../web/components/diff-pane";
+import DiffPane from "../../builtin-plugins/right-pane/client";
+import { paneEntries } from "../../web/plugins/pane-entries";
+import { panePlugins } from "../../builtin-plugins/panes/manifests";
 
 (globalThis as { React?: typeof React }).React = React;
 
@@ -10,6 +12,20 @@ type DiffPaneProps = ComponentProps<typeof DiffPane>;
 
 function renderDiffPane(overrides: Partial<DiffPaneProps> = {}): string {
   const props: DiffPaneProps = {
+    homeId: "default",
+    onBrowsePlugins: () => {},
+    onCreatePlugin: () => {},
+    entries: paneEntries(
+      panePlugins.map(({ manifest }) => ({
+        id: manifest.id,
+        name: manifest.name,
+        source: "builtin",
+        sessions: {},
+        statuses: {},
+        contributions: manifest.contributions!,
+      })),
+      "pane.right",
+    ),
     collapsed: false,
     fileLinkOpenVersion: 0,
     isMobilePhone: false,

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../builtin-plugins";
 
 /* Keep the user-message rail in the gutter of a sufficiently wide Codex pane. */
 .conversation-navigator-host {

@@ -52,7 +52,7 @@ function packageFiles(
 
 function register(home: string, onChange: () => void = () => {}) {
   const app = new Hono();
-  registerDeckPluginRoutes(app, new DeckPluginStore(home, onChange));
+  registerDeckPluginRoutes(app, new DeckPluginStore(home, onChange, []));
   return {
     app,
     post(path: string, data: unknown) {

@@ -1,3 +1,4 @@
+import { DECK_BUILTIN_PLUGINS } from "../builtin-plugins/catalog";
 export interface SlashCommandDefinition {
   name: string;
   description: string;
@@ -147,36 +148,16 @@ export function parseSlashCommandInvocation(
 }
 
 export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
-  {
-    name: "/warnings",
-    description: "Read retained configuration warnings and deprecations",
-  },
-  {
-    name: "/debug-config",
-    description:
-      "Inspect configuration layers, value origins, and requirements",
-  },
-  {
-    name: "/daybreak",
-    description: "Manage eligible Daybreak access for new turns",
-  },
-  {
-    name: "/experimental",
-    description: "Discover and configure experimental features",
-  },
-  {
-    name: "/export",
-    description: "Export the conversation as Markdown",
-    supportsInlineArgs: true,
-  },
-  { name: "/recap", description: "Generate a brief conversation catch-up" },
+  ...DECK_BUILTIN_PLUGINS.flatMap((plugin) =>
+    (plugin.manifest.contributions?.commands ?? []).map((command) => ({
+      name: `/${command.id}`,
+      description: command.description,
+      supportsInlineArgs: command.supportsInlineArgs,
+    })),
+  ),
   {
     name: "/attachments",
     description: "View and manage resources attached to this conversation",
-  },
-  {
-    name: "/usage",
-    description: "View usage, rate limits, credit estimates, and resets",
   },
   {
     name: "/presets",
@@ -185,10 +166,6 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     name: "/apps",
     description: "Manage apps",
-  },
-  {
-    name: "/plugins",
-    description: "Browse plugins",
   },
   {
     name: "/import",
@@ -349,10 +326,7 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     description: "Review my current changes and find issues",
     supportsInlineArgs: true,
   },
-  {
-    name: "/diff",
-    description: "Show git diff (including untracked files)",
-  },
+
   {
     name: "/copy",
     description: "Copy the latest Codex output to your clipboard",
@@ -361,18 +335,7 @@ export const SESSION_COMPOSER_SLASH_COMMANDS: SlashCommandDefinition[] = [
     name: "/mention",
     description: "Mention a file",
   },
-  {
-    name: "/skills",
-    description: "Use skills to improve how Codex performs specific tasks",
-  },
-  {
-    name: "/hooks",
-    description: "View and manage lifecycle hooks",
-  },
-  {
-    name: "/ps",
-    description: "List background terminals",
-  },
+
   {
     name: "/stop",
     description: "Stop all background terminals",

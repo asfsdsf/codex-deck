@@ -15,6 +15,7 @@ import type {
   DeckPluginSummary,
 } from "./deck-plugin-manifest";
 import { DeckPluginError, DeckPluginStore } from "./deck-plugin-store";
+import { DeckPluginServices } from "./deck-plugin-services";
 
 type UiState = {
   sessions: Record<string, boolean>;
@@ -53,6 +54,8 @@ export interface DeckPluginWorkerHost {
   changed: () => void;
   proxy?: CodexDeckProxyConfig;
   codexHomes?: () => ResolvedCodexHome[];
+  services?: DeckPluginServices;
+  builtinError?: (id: string) => string | undefined;
 }
 const emptyUi = (): UiState => ({ sessions: {}, statuses: {} });
 const object = (value: unknown): Record<string, unknown> => {
@@ -68,6 +71,7 @@ const text = (value: unknown): string => {
 
 /** One manager per Codex home. UI connections never own worker lifetime. */
 export class DeckPluginWorkers {
+  readonly services: DeckPluginServices;
   private workers = new Map<string, Worker>();
   private errors = new Map<string, string>();
   private storage: DeckPluginBackendStorage;
@@ -76,6 +80,7 @@ export class DeckPluginWorkers {
   private locks = new Map<string, Promise<unknown>>();
   private identity = randomUUID();
   private active = false;
+  private unsubscribeServices?: () => void;
   private reconciliation: Promise<unknown> = Promise.resolve();
   private restartTimer: ReturnType<typeof setTimeout> | undefined;
   private stopping = new Map<string, Promise<void>>();
@@ -89,11 +94,13 @@ export class DeckPluginWorkers {
       error?: string;
     }
   >();
+  private serviceCalls = new Map<string, Set<AbortController>>();
 
   constructor(
     private readonly store: DeckPluginStore,
     private readonly host: DeckPluginWorkerHost,
   ) {
+    this.services = host.services ?? new DeckPluginServices();
     this.storage = new DeckPluginBackendStorage(store.backendRoot);
     this.codexSessions = new DeckPluginCodexSessions(
       this.storage,
@@ -136,6 +143,16 @@ export class DeckPluginWorkers {
   }
   async start(): Promise<void> {
     this.active = true;
+    this.unsubscribeServices?.();
+    this.unsubscribeServices = this.services.subscribe(() => {
+      for (const [id, worker] of this.workers)
+        if (
+          !worker.stopping &&
+          worker.plugin.requires?.some((name) => !this.services.has(name))
+        )
+          void this.stopPlugin(id).catch(() => {});
+      void this.reconcile().catch(() => {});
+    });
     await this.reconcile();
     this.restartTimer = setInterval(() => {
       void this.reconcile().catch(() => {});
@@ -149,7 +166,11 @@ export class DeckPluginWorkers {
         if (!this.active) return;
         const { plugins } = await this.store.list();
         const enabled = plugins.filter(
-          (p) => p.enabled && p.entrypoints.backend,
+          (p) =>
+            p.enabled &&
+            p.source !== "builtin" &&
+            p.entrypoints.backend &&
+            !p.requires?.some((name) => !this.services.has(name)),
         );
         for (const [id, worker] of this.workers) {
           if (
@@ -212,6 +233,7 @@ export class DeckPluginWorkers {
   private failed(worker: Worker): void {
     if (this.workers.get(worker.plugin.id) !== worker) return;
     this.workers.delete(worker.plugin.id);
+    this.services.unload(worker.plugin.id);
     worker.abort.abort();
     for (const pending of worker.pending.values()) {
       clearTimeout(pending.timer);
@@ -225,11 +247,16 @@ export class DeckPluginWorkers {
     this.host.changed();
   }
   async stopPlugin(id: string, cancel = true): Promise<void> {
+    for (const controller of this.serviceCalls.get(id) ?? [])
+      controller.abort(new Error("Plugin was disabled or unloaded."));
+    this.serviceCalls.delete(id);
     const current = this.stopping.get(id);
     if (current) return current;
     const worker = this.workers.get(id);
     if (!worker) return;
+    if (worker.stopping) return;
     worker.stopping = true;
+    this.services.unload(id);
     worker.abort.abort();
     for (const pending of worker.pending.values()) {
       clearTimeout(pending.timer);
@@ -287,6 +314,7 @@ export class DeckPluginWorkers {
   }
   async stop(): Promise<void> {
     this.active = false;
+    this.unsubscribeServices?.();
     clearInterval(this.restartTimer);
     await this.reconciliation.catch(() => {});
     await Promise.all(
@@ -371,7 +399,39 @@ export class DeckPluginWorkers {
     try {
       const msg = object(value);
       if (msg.type === "ready") {
-        worker.ready = true;
+        if (
+          worker.stopping ||
+          this.workers.get(worker.plugin.id) !== worker ||
+          worker.ready
+        )
+          return;
+        try {
+          for (const name of worker.plugin.services?.provides ?? []) {
+            this.allowed(worker, "services.provide");
+            this.services.register(
+              worker.plugin.id,
+              name,
+              (method, params, call) =>
+                this.requestWorker(worker, "service.call", {
+                  service: name,
+                  method,
+                  params,
+                  caller: call.caller,
+                }),
+            );
+          }
+          worker.ready = true;
+        } catch (error) {
+          this.errors.set(
+            worker.plugin.id,
+            error instanceof Error
+              ? error.message
+              : "Service registration failed.",
+          );
+          await this.stopPlugin(worker.plugin.id, false);
+          this.host.changed();
+          return;
+        }
         this.host.changed();
         return;
       }
@@ -468,9 +528,23 @@ export class DeckPluginWorkers {
       "codex.sessions.get": "codex.sessions.manage",
       "codex.sessions.submit": "codex.sessions.manage",
       "codex.sessions.interrupt": "codex.sessions.manage",
+      "services.list": "services.call",
+      "services.call": "services.call",
     };
     if (!cap[method]) throw new Error("Unsupported backend RPC.");
     this.allowed(worker, cap[method]);
+    if (method === "services.list")
+      return this.services
+        .list()
+        .filter((entry) => worker.plugin.services?.uses?.includes(entry.name));
+    if (method === "services.call")
+      return this.services.call(
+        worker.plugin,
+        text(params.service),
+        text(params.method),
+        params.params ?? {},
+        worker.abort.signal,
+      );
     const validate = () => this.allowed(worker, "codex.sessions.manage");
     if (method === "codex.homes.list") return this.codexSessions.listHomes();
     if (method === "codex.sessions.ensure")
@@ -669,14 +743,23 @@ export class DeckPluginWorkers {
       serverTime: Date.now(),
       plugins: await Promise.all(
         plugins
-          .filter((p) => p.enabled && p.contributions)
+          .filter((p) => p.enabled)
           .map(async (p) => ({
             id: p.id,
             name: p.name,
-            contributions: p.contributions!,
+            source: p.source,
+            contributions: p.contributions ?? {},
             ...(await this.storage.read(p.id, "ui", emptyUi())),
-            ...(this.errors.has(p.id)
-              ? { workerError: this.errors.get(p.id) }
+            ...(p.requires?.some((name) => !this.services.has(name)) ||
+            this.errors.has(p.id) ||
+            this.host.builtinError?.(p.id)
+              ? {
+                  workerError: p.requires?.some(
+                    (name) => !this.services.has(name),
+                  )
+                    ? `Waiting for services: ${p.requires.filter((name) => !this.services.has(name)).join(", ")}`
+                    : (this.errors.get(p.id) ?? this.host.builtinError?.(p.id)),
+                }
               : {}),
           })),
       ),
@@ -759,10 +842,12 @@ export class DeckPluginWorkers {
     id: string,
     method: string,
     params: unknown,
+    serviceCall = false,
   ): Promise<{ requestId: string }> {
     const runtime = await this.store.getRuntime(id);
-    if (!runtime.manifest.capabilities.includes("worker.request"))
-      throw new DeckPluginError("worker.request is not granted.", 400);
+    const capability = serviceCall ? "services.call" : "worker.request";
+    if (!runtime.manifest.capabilities.includes(capability))
+      throw new DeckPluginError(`${capability} is not granted.`, 400);
     for (const [key, job] of this.jobs)
       if (job.expiresAt < Date.now()) this.jobs.delete(key);
     if (this.jobs.size >= 256)
@@ -780,17 +865,37 @@ export class DeckPluginWorkers {
       error?: string;
     };
     this.jobs.set(requestId, job);
-    void this.request(id, method, params).then(
-      (result) => {
-        job.result = result;
-        job.done = true;
-      },
-      (error: unknown) => {
-        job.error =
-          error instanceof Error ? error.message : "Plugin request failed.";
-        job.done = true;
-      },
-    );
+    const input = serviceCall ? object(params) : null;
+    const controller = serviceCall ? new AbortController() : null;
+    if (controller) {
+      const calls = this.serviceCalls.get(id) ?? new Set<AbortController>();
+      calls.add(controller);
+      this.serviceCalls.set(id, calls);
+    }
+    const operation = serviceCall
+      ? this.services.call(
+          runtime.manifest,
+          text(input!.service),
+          method,
+          input!.params ?? {},
+          controller!.signal,
+        )
+      : this.request(id, method, params);
+    void operation
+      .then(
+        (result) => {
+          job.result = result;
+          job.done = true;
+        },
+        (error: unknown) => {
+          job.error =
+            error instanceof Error ? error.message : "Plugin request failed.";
+          job.done = true;
+        },
+      )
+      .finally(() => {
+        if (controller) this.serviceCalls.get(id)?.delete(controller);
+      });
     return { requestId };
   }
 
@@ -835,6 +940,19 @@ export class DeckPluginWorkers {
         "Backend worker is starting or unavailable.",
         409,
       );
+    return this.requestWorker(worker, method, params);
+  }
+  private requestWorker(
+    worker: Worker,
+    method: string,
+    params: unknown,
+  ): Promise<unknown> {
+    if (
+      !worker.ready ||
+      worker.stopping ||
+      this.workers.get(worker.plugin.id) !== worker
+    )
+      return Promise.reject(new Error("Backend worker is unavailable."));
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

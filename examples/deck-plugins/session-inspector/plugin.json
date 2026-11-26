@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "example.session-inspector",
+  "name": "Session inspector",
+  "version": "1.0.0",
+  "description": "A plugin-owned command and view using the diagnostics service.",
+  "capabilities": ["context.read", "services.call"],
+  "entrypoints": {
+    "panel": "index.html"
+  },
+  "services": {
+    "uses": ["codex-deck.diagnostics"]
+  },
+  "requires": ["codex-deck.diagnostics"],
+  "contributions": {
+    "views": [
+      {
+        "id": "inspect-session",
+        "title": "Session inspector",
+        "slot": "dialog",
+        "entrypoint": "index.html"
+      }
+    ],
+    "commands": [
+      {
+        "id": "inspect-session",
+        "title": "Inspect session",
+        "description": "Inspect session warnings through a shared service",
+        "action": {
+          "view": "inspect-session"
+        }
+      }
+    ]
+  }
+}

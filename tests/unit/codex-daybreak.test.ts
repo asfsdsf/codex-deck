@@ -3,7 +3,7 @@ import test from "node:test";
 import { Hono } from "hono";
 import { __TEST_ONLY__ } from "../../api/codex-app-server";
 import { readDaybreak, selectCyberProgram } from "../../api/codex-daybreak";
-import { registerNativeWorkflowRoutes } from "../../api/server/native-workflow-routes";
+import { registerNativeWorkflowRoutes } from "../helpers/builtin-feature-routes";
 
 function discovery(
   options: {

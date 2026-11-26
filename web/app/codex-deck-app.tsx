@@ -1,3 +1,10 @@
+import { DECK_BUILTIN_PLUGINS } from "../../builtin-plugins/catalog";
+import { pluginCommands } from "../plugins/contributions";
+import { DeckPluginSlot } from "../plugins/slot";
+import { Puzzle } from "lucide-react";
+import { PaneNavigation } from "../plugins/pane-navigation";
+import DeckPluginRuntime from "../components/deck-plugin-runtime";
+import { requestDeckPluginWorker } from "../deck-plugins-api";
 import { useDeckPluginContributions } from "../hooks/use-deck-plugin-contributions";
 import {
   DeckPluginSessionTips,
@@ -8,10 +15,6 @@ import PermissionsPanel from "../components/permissions-panel";
 import WorktreePanel from "../components/worktree-panel";
 import { AutoReviewDenials } from "../components/auto-review";
 import { parsePermissionArgs } from "../permission-args";
-import ConfigDiagnostics from "../components/config-diagnostics";
-import RetainedWarnings from "../components/retained-warnings";
-import DaybreakSettings from "../components/daybreak-settings";
-import ExperimentalFeatures from "../components/experimental-features";
 import VoiceSessionBar from "../components/voice-session-bar";
 import VoiceSettings from "../components/voice-settings";
 import { getVoiceController } from "../voice/voice-controller";
@@ -21,9 +24,6 @@ import {
   parseVoiceCommandArgs,
   VOICE_USAGE,
 } from "../voice/voice-support";
-import TranscriptExport from "../components/transcript-export";
-import ConversationRecapView from "../components/conversation-recap";
-import UsageDashboard from "../components/usage-dashboard";
 import NativeDialog from "../components/native-dialog";
 import ExtensionDialogs, {
   type ExtensionDialogState,
@@ -96,19 +96,14 @@ import type {
 import {
   Copy,
   Check,
-  GripVertical,
   Circle,
   CircleDot,
   Search,
-  Terminal,
-  Code2,
-  Workflow,
   Plus,
   X,
   ChevronUp,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
   Moon,
   Sun,
   Send,
@@ -116,8 +111,6 @@ import {
   OctagonX,
   Activity,
   ExternalLink,
-  Puzzle,
-  Settings,
 } from "lucide-react";
 import { formatTime, reconcilePendingTurnWithThreadState } from "../utils";
 import {
@@ -125,7 +118,7 @@ import {
   normalizeSessionSelectionId,
   resolveSessionSelection,
 } from "../session-selection";
-import SessionList from "../components/session-list";
+import SessionList from "../../builtin-plugins/sessions/client";
 import SessionDeleteDialog, {
   type SessionDeleteMode,
 } from "../components/session-delete-dialog";
@@ -139,7 +132,17 @@ import {
   DiffSkillInstallDialog,
 } from "../components/diff-guide-viewer";
 import LatestSessionMessageBox from "../components/latest-session-message-box";
-import DiffPane, { type RightPaneMode } from "../components/diff-pane";
+import LeftPaneView from "../../builtin-plugins/left-pane/client";
+import PackagePane from "../plugins/package-pane";
+import RightPaneView from "../../builtin-plugins/right-pane/client";
+import type { RightPaneMode } from "../../builtin-plugins/right-pane/types";
+import {
+  paneEntries,
+  paneEntryKey,
+  initialPanePlugins,
+  activePaneLayout,
+  type PaneEntry,
+} from "../plugins/pane-entries";
 import ProjectSelector from "../components/project-selector";
 import CodexHomeSelector from "../components/codex-home-selector";
 import CodexValuePicker, {
@@ -203,7 +206,6 @@ import {
   type RightPaneTarget,
 } from "../right-pane-routing";
 import {
-  getWorkflowComposerSlashCommands,
   parseSlashCommandInvocation,
   SESSION_COMPOSER_SLASH_COMMANDS,
   type SlashCommandDefinition,
@@ -398,8 +400,12 @@ import {
   buildRemoteAdminUrl,
 } from "../remote-login";
 
-const TerminalView = lazy(() => import("../components/terminal-view"));
-const WorkflowView = lazy(() => import("../components/workflow-view"));
+const TerminalView = lazy(
+  () => import("../../builtin-plugins/terminal/client"),
+);
+const WorkflowView = lazy(
+  () => import("../../builtin-plugins/workflow/client"),
+);
 const ConfigModal = lazy(() => import("../components/config-modal"));
 const MemoriesModal = lazy(() => import("../components/memories-modal"));
 const ReviewModal = lazy(() => import("../components/review-modal"));
@@ -1717,18 +1723,141 @@ export default function CodexDeckApp() {
     threadId: string;
     instructions: string;
   } | null>(null);
+  const pluginContributions = useDeckPluginContributions(
+    selectedCodexHomeId,
+    apiReady && isPageVisible,
+    configScopeKey,
+  );
+  const paneCatalog =
+    pluginContributions.snapshot?.plugins ?? initialPanePlugins;
+  const leftEntries = useMemo(
+    () => paneEntries(paneCatalog, "pane.left"),
+    [paneCatalog],
+  );
+  const rightEntries = useMemo(
+    () => paneEntries(paneCatalog, "pane.right"),
+    [paneCatalog],
+  );
+  const leftLayout = useMemo(
+    () => activePaneLayout(paneCatalog, "layout.left"),
+    [paneCatalog],
+  );
+  const rightLayout = useMemo(
+    () => activePaneLayout(paneCatalog, "layout.right"),
+    [paneCatalog],
+  );
+  const LeftPane = leftLayout?.builtin ? LeftPaneView : null;
+  const RightPane = rightLayout?.builtin ? RightPaneView : null;
+  const [leftPluginKey, setLeftPluginKey] = useState<string | null>(null);
+  const leftPluginEntry = leftEntries.find(
+    (entry) => entry.key === leftPluginKey,
+  );
+  const terminalEnabled = leftEntries.some((entry) => entry.key === "terminal");
+  const workflowEnabled = leftEntries.some((entry) => entry.key === "workflow");
+  const filesEnabled =
+    !!RightPane && rightEntries.some((entry) => entry.key === "files");
+  useEffect(() => {
+    if (!pluginContributions.snapshot) return;
+    if (
+      (centerView === "terminal" && !terminalEnabled) ||
+      (centerView === "workflow" && !workflowEnabled)
+    )
+      setCenterView("session");
+    if (leftPluginKey && !leftPluginEntry) setLeftPluginKey(null);
+    if (!rightLayout) setDiffPaneCollapsed(true);
+    if (!RightPane) setSecondaryPaneMode(null);
+    if (
+      selectedPaneMode !== "home" &&
+      (!RightPane || !rightEntries.some((e) => e.key === selectedPaneMode))
+    )
+      setSelectedPaneMode("home");
+  }, [
+    pluginContributions.snapshot,
+    centerView,
+    terminalEnabled,
+    workflowEnabled,
+    leftPluginKey,
+    leftPluginEntry,
+    rightLayout,
+    RightPane,
+    selectedPaneMode,
+    rightEntries,
+  ]);
+  const [pluginDialog, setPluginDialog] = useState<{
+    pluginId: string;
+    viewId: string;
+    title: string;
+    threadId: string | null;
+    cwd: string | null;
+    model?: string | null;
+    args?: string;
+  } | null>(null);
+  const closePluginDialog = useCallback(() => setPluginDialog(null), []);
+  const builtinCommandNames = useMemo(
+    () =>
+      new Set(
+        DECK_BUILTIN_PLUGINS.flatMap((p) =>
+          (p.manifest.contributions?.commands ?? []).map((c) => `/${c.id}`),
+        ),
+      ),
+    [],
+  );
+  const enabledPluginCommands = useMemo(
+    () =>
+      pluginCommands(
+        (pluginContributions.snapshot?.plugins ?? []).map((plugin) =>
+          RightPane
+            ? plugin
+            : {
+                ...plugin,
+                contributions: {
+                  ...plugin.contributions,
+                  commands: plugin.contributions.commands?.filter(
+                    ({ action }) =>
+                      !(
+                        "view" in action &&
+                        plugin.contributions.views?.some(
+                          (v) =>
+                            v.id === action.view && v.slot === "pane.right",
+                        )
+                      ),
+                  ),
+                },
+              },
+        ),
+      ),
+    [pluginContributions.snapshot, RightPane],
+  );
+  const sessionSlashCommands = useMemo(
+    () => [
+      ...SESSION_COMPOSER_SLASH_COMMANDS.filter(
+        (command) => !builtinCommandNames.has(command.name),
+      ),
+      ...enabledPluginCommands.filter(
+        (command) =>
+          !SESSION_COMPOSER_SLASH_COMMANDS.some(
+            (core) =>
+              core.name === command.name && !builtinCommandNames.has(core.name),
+          ),
+      ),
+    ],
+    [builtinCommandNames, enabledPluginCommands],
+  );
+  useEffect(() => {
+    if (
+      pluginDialog &&
+      pluginContributions.snapshot &&
+      !pluginContributions.snapshot.plugins.some(
+        (p) =>
+          p.id === pluginDialog.pluginId &&
+          !p.workerError &&
+          p.contributions.views?.some((v) => v.id === pluginDialog.viewId),
+      )
+    )
+      setPluginDialog(null);
+  }, [pluginContributions.snapshot, pluginDialog]);
   const [nativeDialog, setNativeDialog] = useState<{
-    kind:
-      | "mcp"
-      | "usage"
-      | "recap"
-      | "export"
-      | "experimental"
-      | "daybreak"
-      | "warnings"
-      | "debug-config"
-      | "voice-settings"
-      | OrganizationDialogKind;
+    kind: "mcp" | "voice-settings" | OrganizationDialogKind;
     model?: string | null;
     filename?: string;
     threadId: string | null;
@@ -1982,6 +2111,8 @@ export default function CodexDeckApp() {
     setSelectedTerminalProject(null);
     setSelectedTerminalId(null);
     setPendingTerminalSelectionId(null);
+    setLeftPluginKey(null);
+    setSelectedPaneMode("home");
     setWorkflows([]);
     setSelectedWorkflowProject(null);
     setSelectedWorkflowKey(null);
@@ -2098,6 +2229,7 @@ export default function CodexDeckApp() {
     setDeleteTerminalTargetId(null);
     setShowCollabModePicker(false);
     setNativeDialog(null);
+    setPluginDialog(null);
     setExtensionDialog(null);
     setWorkspaceDialog(null);
     setAttachmentsThreadId(null);
@@ -3144,8 +3276,10 @@ export default function CodexDeckApp() {
   }, [sessionsWithThreadNames, selectedSession]);
   const openDeckPlugins = useCallback(
     () =>
-      setExtensionDialog({
-        kind: "plugins",
+      setPluginDialog({
+        pluginId: "codex-deck.manager",
+        viewId: "plugins",
+        title: "Plugins",
         threadId: selectedSession,
         cwd: selectedSessionData?.project ?? null,
       }),
@@ -3425,8 +3559,8 @@ export default function CodexDeckApp() {
     selectedWorkflowSummary?.projectRoot ??
     null;
   const workflowComposerSlashCommands = useMemo(
-    () => getWorkflowComposerSlashCommands(workflowComposerSessionId),
-    [workflowComposerSessionId],
+    () => (workflowComposerSessionId ? sessionSlashCommands : []),
+    [workflowComposerSessionId, sessionSlashCommands],
   );
 
   const rightPaneTarget = useMemo<RightPaneTarget>(() => {
@@ -3869,13 +4003,7 @@ export default function CodexDeckApp() {
       return;
     }
 
-    if (
-      selectedPaneMode === "home" ||
-      selectedPaneMode === "tasks" ||
-      selectedPaneMode === "process" ||
-      selectedPaneMode === "skills" ||
-      selectedPaneMode === "hooks"
-    ) {
+    if (selectedPaneMode !== "files" && selectedPaneMode !== "git") {
       previousRightPaneDataKeyRef.current = null;
       return;
     }
@@ -4940,11 +5068,6 @@ export default function CodexDeckApp() {
     [],
   );
 
-  const pluginContributions = useDeckPluginContributions(
-    selectedCodexHomeId,
-    apiReady && isPageVisible,
-  );
-
   const handleSessionsError = useCallback(() => {
     setLoading(false);
   }, []);
@@ -5018,7 +5141,7 @@ export default function CodexDeckApp() {
   ]);
 
   useEffect(() => {
-    if (!apiReady || !isPageVisible) {
+    if (!terminalEnabled || !apiReady || !isPageVisible) {
       return;
     }
 
@@ -5035,7 +5158,7 @@ export default function CodexDeckApp() {
         }
       },
     });
-  }, [apiReady, isPageVisible, selectedCodexHomeId]);
+  }, [terminalEnabled, apiReady, isPageVisible, selectedCodexHomeId]);
 
   useEffect(() => {
     if (!apiReady || !isPageVisible) return;
@@ -5128,7 +5251,7 @@ export default function CodexDeckApp() {
       return;
     }
 
-    if (!apiReady || !isPageVisible) {
+    if (!workflowEnabled || !apiReady || !isPageVisible) {
       return;
     }
 
@@ -5157,6 +5280,7 @@ export default function CodexDeckApp() {
       cancelled = true;
     };
   }, [
+    workflowEnabled,
     apiReady,
     isPageVisible,
     sessionIdsKey,
@@ -5170,7 +5294,7 @@ export default function CodexDeckApp() {
       return;
     }
 
-    if (!apiReady || !isPageVisible) {
+    if (!terminalEnabled || !apiReady || !isPageVisible) {
       return;
     }
 
@@ -5197,7 +5321,14 @@ export default function CodexDeckApp() {
     return () => {
       cancelled = true;
     };
-  }, [apiReady, isPageVisible, sessionIds, sessionIdsKey, terminals]);
+  }, [
+    terminalEnabled,
+    apiReady,
+    isPageVisible,
+    sessionIds,
+    sessionIdsKey,
+    terminals,
+  ]);
 
   const filteredSessions = useMemo(() => {
     if (!selectedProject) {
@@ -5925,7 +6056,7 @@ export default function CodexDeckApp() {
   );
 
   const handleCreateSession = useCallback(
-    async (cwdOverride?: string): Promise<boolean> => {
+    async (cwdOverride?: string, initialDraft?: string): Promise<boolean> => {
       const normalizedOverride =
         typeof cwdOverride === "string" ? cwdOverride.trim() : "";
       const cwd =
@@ -5978,6 +6109,7 @@ export default function CodexDeckApp() {
         // A brand-new thread may not have a materialized rollout yet.
         // Suppress wait-state polling until the first user message is sent.
         waitSuppressSessionsRef.current.add(created.threadId);
+        if (initialDraft) requestComposerDraft(created.threadId, initialDraft);
         setSelectedSession(created.threadId);
         setCenterView("session");
         if (isMobilePhone) {
@@ -6005,6 +6137,37 @@ export default function CodexDeckApp() {
       sessionCurrentCwd,
     ],
   );
+
+  const selectLeftEntry = useCallback(
+    (entry: PaneEntry) => {
+      setLeftPluginKey(entry.builtin ? null : entry.key);
+      if (!entry.builtin) openLeftPane();
+      else if (entry.key === "workflow") handleSelectWorkflow();
+      else if (entry.key === "terminal") handleSelectTerminal();
+      else handleSelectCodex();
+    },
+    [
+      openLeftPane,
+      handleSelectWorkflow,
+      handleSelectTerminal,
+      handleSelectCodex,
+    ],
+  );
+
+  function createPanePlugin(side: "left" | "right") {
+    if (creatingSession) return;
+    const cwd =
+      newSessionCwd.trim() ||
+      activeComposerSessionData?.project ||
+      selectedProject ||
+      workflowRightPaneProjectPath ||
+      terminalCurrentCwd;
+    const draft = `Help me create a Codex Deck plugin for the ${side} pane. Ask what I want it to do, then build an installable plugin folder with plugin.json and an HTML view registered in contributions.views with slot "pane.${side}".`;
+    setLeftPluginKey(null);
+    void handleCreateSession(cwd, draft).then((created) => {
+      if (created && isMobilePhone) setDiffPaneCollapsed(true);
+    });
+  }
 
   const upsertSessionInLocalState = useCallback((session: Session) => {
     setSessions((current) => {
@@ -6551,7 +6714,7 @@ export default function CodexDeckApp() {
   }, [isWorkflowCreateChatWaiting]);
 
   useEffect(() => {
-    if (!apiReady || !isPageVisible) {
+    if (!workflowEnabled || !apiReady || !isPageVisible) {
       return;
     }
 
@@ -6583,10 +6746,10 @@ export default function CodexDeckApp() {
       cancelled = true;
       unsubscribe();
     };
-  }, [apiReady, isPageVisible, selectedCodexHomeId]);
+  }, [workflowEnabled, apiReady, isPageVisible, selectedCodexHomeId]);
 
   useEffect(() => {
-    if (!apiReady || !isPageVisible) {
+    if (!workflowEnabled || !apiReady || !isPageVisible) {
       return;
     }
 
@@ -6612,7 +6775,13 @@ export default function CodexDeckApp() {
       cancelled = true;
       unsubscribe();
     };
-  }, [apiReady, centerView, isPageVisible, selectedCodexHomeId]);
+  }, [
+    workflowEnabled,
+    apiReady,
+    centerView,
+    isPageVisible,
+    selectedCodexHomeId,
+  ]);
 
   useEffect(() => {
     if (!selectedSession) {
@@ -6620,7 +6789,12 @@ export default function CodexDeckApp() {
       return;
     }
 
-    if (!apiReady || !isPageVisible || centerView !== "session") {
+    if (
+      !workflowEnabled ||
+      !apiReady ||
+      !isPageVisible ||
+      centerView !== "session"
+    ) {
       return;
     }
 
@@ -6644,6 +6818,7 @@ export default function CodexDeckApp() {
       cancelled = true;
     };
   }, [
+    workflowEnabled,
     apiReady,
     centerView,
     isPageVisible,
@@ -9172,6 +9347,87 @@ export default function CodexDeckApp() {
         refresh?.();
       };
       setInteractionError(null);
+      const pluginCommand = enabledPluginCommands.find(
+        (command) => command.name === commandName,
+      );
+      if (pluginCommand) {
+        const plugin = pluginContributions.snapshot?.plugins.find(
+          (p) => p.id === pluginCommand.pluginId,
+        );
+        const command = plugin?.contributions.commands?.find(
+          (c) => c.id === pluginCommand.commandId,
+        );
+        if (!command || !plugin) return false;
+        if (command.requiresSession && !commandSessionId) {
+          setInteractionError(`Select a session before using ${commandName}.`);
+          return false;
+        }
+        if ("view" in command.action) {
+          const viewId = command.action.view;
+          const view = plugin.contributions.views?.find((v) => v.id === viewId);
+          if (!view) return false;
+          if (view.slot === "pane.right") {
+            if (!RightPane) {
+              setInteractionError(
+                "Enable the Right pane plugin to open this view.",
+              );
+              return false;
+            }
+            const key = paneEntryKey(plugin, view);
+            openPaneForCommand(
+              key,
+              key === "hooks"
+                ? handleRefreshHooks
+                : key === "skills"
+                  ? handleRefreshSkills
+                  : key === "tasks"
+                    ? handleRefreshTerminalRuns
+                    : undefined,
+            );
+            return true;
+          }
+          if (view.slot === "pane.left") {
+            const entry = leftEntries.find(
+              (e) => e.key === paneEntryKey(plugin, view),
+            );
+            if (!entry) return false;
+            selectLeftEntry(entry);
+            return true;
+          }
+          setPluginDialog({
+            pluginId: plugin.id,
+            viewId,
+            title: view.title,
+            threadId: commandSessionId,
+            cwd: commandSessionData?.project ?? null,
+            model: selectedModeOption?.model || selectedModelId || null,
+            args: normalizedArgs,
+          });
+          return true;
+        }
+        try {
+          await requestDeckPluginWorker(
+            plugin.id,
+            command.action.method,
+            {
+              threadId: commandSessionId,
+              cwd: commandSessionData?.project ?? null,
+              args: normalizedArgs,
+            },
+            selectedCodexHomeId,
+          );
+          return true;
+        } catch (error) {
+          setInteractionError(
+            error instanceof Error ? error.message : String(error),
+          );
+          return false;
+        }
+      }
+      if (builtinCommandNames.has(commandName)) {
+        setInteractionError("This plugin is disabled or still loading.");
+        return false;
+      }
 
       if (commandName === "/codex-deck-diff") {
         if (!commandSessionId) {
@@ -9340,41 +9596,6 @@ export default function CodexDeckApp() {
         return true;
       }
 
-      if (commandName === "/warnings" || commandName === "/debug-config") {
-        setNativeDialog({
-          kind: commandName === "/warnings" ? "warnings" : "debug-config",
-          threadId: commandSessionId,
-        });
-        return true;
-      }
-      if (commandName === "/daybreak") {
-        if (!commandSessionId) {
-          setInteractionError("Select a session before using /daybreak.");
-          return false;
-        }
-        setNativeDialog({
-          kind: "daybreak",
-          threadId: commandSessionId,
-          model: selectedModeOption?.model || selectedModelId || null,
-        });
-        return true;
-      }
-      if (commandName === "/experimental") {
-        setNativeDialog({ kind: "experimental", threadId: commandSessionId });
-        return true;
-      }
-      if (commandName === "/export") {
-        if (!commandSessionId) {
-          setInteractionError("Select a session before using /export.");
-          return false;
-        }
-        setNativeDialog({
-          kind: "export",
-          threadId: commandSessionId,
-          filename: normalizedArgs,
-        });
-        return true;
-      }
       if (commandName === "/voice") {
         const action = parseVoiceCommandArgs(normalizedArgs);
         const voice = getVoiceController();
@@ -9433,14 +9654,6 @@ export default function CodexDeckApp() {
         setAttachmentsThreadId(commandSessionId);
         return true;
       }
-      if (commandName === "/recap") {
-        if (!commandSessionId) {
-          setInteractionError("Select a session before using /recap.");
-          return false;
-        }
-        setNativeDialog({ kind: "recap", threadId: commandSessionId });
-        return true;
-      }
       if (commandName === "/presets") {
         setExtensionDialog({
           kind: "presets",
@@ -9458,9 +9671,9 @@ export default function CodexDeckApp() {
         });
         return true;
       }
-      if (commandName === "/import" || commandName === "/plugins") {
+      if (commandName === "/import") {
         setExtensionDialog({
-          kind: commandName === "/import" ? "import" : "plugins",
+          kind: "import",
           threadId: commandSessionId,
           cwd: commandSessionData?.project ?? null,
         });
@@ -9481,9 +9694,9 @@ export default function CodexDeckApp() {
         });
         return true;
       }
-      if (commandName === "/mcp" || commandName === "/usage") {
+      if (commandName === "/mcp") {
         setNativeDialog({
-          kind: commandName === "/usage" ? "usage" : "mcp",
+          kind: "mcp",
           threadId: commandSessionId,
         });
         return true;
@@ -9913,42 +10126,6 @@ export default function CodexDeckApp() {
         return true;
       }
 
-      if (commandName === "/diff") {
-        if (!commandSessionId) {
-          setInteractionError("Select a session before using /diff.");
-          return false;
-        }
-        openPaneForCommand("git");
-        return true;
-      }
-
-      if (commandName === "/skills") {
-        if (!commandSessionId) {
-          setInteractionError("Select a session before using /skills.");
-          return false;
-        }
-        openPaneForCommand("skills", handleRefreshSkills);
-        return true;
-      }
-
-      if (commandName === "/hooks") {
-        if (!commandSessionId) {
-          setInteractionError("Select a session before using /hooks.");
-          return false;
-        }
-        openPaneForCommand("hooks", handleRefreshHooks);
-        return true;
-      }
-
-      if (commandName === "/ps") {
-        if (!commandSessionId) {
-          setInteractionError("Select a session before using /ps.");
-          return false;
-        }
-        openPaneForCommand("tasks", handleRefreshTerminalRuns);
-        return true;
-      }
-
       if (commandName === "/stop") {
         if (!commandSessionId) {
           setInteractionError("Select a session before using /stop.");
@@ -9957,7 +10134,8 @@ export default function CodexDeckApp() {
 
         try {
           await cleanSessionBackgroundTerminalRuns(commandSessionId);
-          openPaneForCommand("tasks", handleRefreshTerminalRuns);
+          if (RightPane && rightEntries.some((e) => e.key === "tasks"))
+            openPaneForCommand("tasks", handleRefreshTerminalRuns);
           showCommandNoticeForDuration("Stopping all background terminals.");
           return true;
         } catch (error) {
@@ -10022,6 +10200,14 @@ export default function CodexDeckApp() {
       sessionsWithThreadNames,
       ensureSessionExistsForUse,
       openModelSelectorFromCommand,
+      enabledPluginCommands,
+      pluginContributions.snapshot,
+      RightPane,
+      rightEntries,
+      leftEntries,
+      selectLeftEntry,
+      builtinCommandNames,
+      selectedCodexHomeId,
       hasPlanMode,
       handleTogglePlanMode,
       applyModeSelection,
@@ -10058,7 +10244,7 @@ export default function CodexDeckApp() {
     async (threadId: string, input: string): Promise<boolean> => {
       const invocation = parseSlashCommandInvocation(
         input,
-        SESSION_COMPOSER_SLASH_COMMANDS,
+        sessionSlashCommands,
       );
       if (invocation)
         return handleRunSlashCommand(invocation.command.name, invocation.args);
@@ -10067,7 +10253,7 @@ export default function CodexDeckApp() {
         { sessionIdOverride: threadId },
       );
     },
-    [handleRunSlashCommand, sendMessageText],
+    [handleRunSlashCommand, sendMessageText, sessionSlashCommands],
   );
 
   const handleConfirmRename = useCallback(async () => {
@@ -10218,6 +10404,7 @@ export default function CodexDeckApp() {
         return false;
       }
 
+      if (!filesEnabled) return false;
       pendingFilePathLinkTargetRef.current = target.path;
       setFileLinkOpenVersion((current) => current + 1);
       openRightPane();
@@ -10229,7 +10416,13 @@ export default function CodexDeckApp() {
       setSessionFileContentError(null);
       return true;
     },
-    [openRightPane, selectedSessionData?.project, selectedProject, sessions],
+    [
+      filesEnabled,
+      openRightPane,
+      selectedSessionData?.project,
+      selectedProject,
+      sessions,
+    ],
   );
 
   useEffect(() => {
@@ -11941,192 +12134,125 @@ export default function CodexDeckApp() {
         error={pluginContributions.error}
         onAction={pluginContributions.action}
       />
-      {sidebarCollapsed ? (
-        <aside
-          aria-label="Collapsed left pane"
-          className="pane-left relative flex shrink-0 flex-col border-r border-zinc-800/60 bg-zinc-950"
-          style={{ width: `${LEFT_PANE_COLLAPSED_WIDTH}px` }}
-        >
-          <div className="pane-header-left flex h-[50px] shrink-0 items-center justify-center border-b border-zinc-800/60 px-1.5 py-2">
-            <button
-              type="button"
-              onClick={openLeftPane}
-              className="flex h-8 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
-              aria-label="Expand left pane"
-              title="Expand left pane"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1.5 pb-2">
-              <div
-                role="group"
-                aria-label="Primary views"
-                className="flex flex-col gap-1"
-              >
+      {leftLayout && !leftLayout.builtin && (
+        <PackagePane
+          side="left"
+          entry={leftLayout}
+          homeId={selectedCodexHomeId}
+          context={{
+            threadId: activeComposerSessionId,
+            cwd: activeComposerSessionData?.project ?? null,
+          }}
+          collapsed={sidebarCollapsed}
+          width={sidebarCollapsed ? LEFT_PANE_COLLAPSED_WIDTH : leftPaneWidth}
+          onToggle={() =>
+            sidebarCollapsed ? openLeftPane() : setSidebarCollapsed(true)
+          }
+          onBrowse={openDeckPlugins}
+          onCreate={() => createPanePlugin("left")}
+          onResize={handleLeftPaneResizeStart}
+        />
+      )}
+      {LeftPane && (
+        <LeftPane
+          collapsed={sidebarCollapsed}
+          width={sidebarCollapsed ? LEFT_PANE_COLLAPSED_WIDTH : leftPaneWidth}
+          isMobilePhone={isMobilePhone}
+          onExpand={openLeftPane}
+          onCollapse={() => setSidebarCollapsed(true)}
+          onResize={handleLeftPaneResizeStart}
+          entries={leftEntries}
+          activeKey={
+            leftPluginEntry?.key ??
+            (centerView === "session" ? "sessions" : centerView)
+          }
+          onSelect={selectLeftEntry}
+          onBrowse={openDeckPlugins}
+          onCreate={() => createPanePlugin("left")}
+          onSettings={() => setConfigModalAction("settings")}
+          railActions={
+            !leftPluginEntry && (
+              <>
+                {" "}
                 <button
                   type="button"
-                  onClick={() => handleSelectTerminal()}
-                  aria-label="Terminal"
-                  aria-pressed={centerView === "terminal"}
-                  title="Terminal"
-                  className={`flex h-9 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
-                    centerView === "terminal"
-                      ? "bg-zinc-800/80 text-zinc-100"
-                      : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
-                  }`}
-                >
-                  <Terminal className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSelectCodex}
-                  aria-label="Codex"
-                  aria-pressed={centerView === "session"}
-                  title="Codex"
-                  className={`flex h-9 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
-                    centerView === "session"
-                      ? "bg-zinc-800/80 text-zinc-100"
-                      : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
-                  }`}
-                >
-                  <Code2 className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectWorkflow()}
-                  aria-label="Workflow"
-                  aria-pressed={centerView === "workflow"}
-                  title="Workflow"
-                  className={`flex h-9 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
-                    centerView === "workflow"
-                      ? "bg-zinc-800/80 text-zinc-100"
-                      : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100"
-                  }`}
-                >
-                  <Workflow className="h-4 w-4" />
-                </button>
-              </div>
-
-              <button
-                type="button"
-                disabled={
-                  creatingSession ||
-                  (centerView === "workflow" && workflowActionBusy)
-                }
-                onClick={() => {
-                  if (centerView === "workflow") {
-                    setInteractionError(null);
-                    setWorkflowIdPromptDraft("");
-                    setShowWorkflowIdPromptModal(true);
-                  } else {
-                    void (centerView === "terminal"
-                      ? handleCreateTerminal()
-                      : handleCreateSession());
+                  disabled={
+                    creatingSession ||
+                    (centerView === "workflow" && workflowActionBusy)
                   }
-                }}
-                className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label={`New ${centerView === "terminal" ? "terminal" : centerView === "workflow" ? "workflow" : "session"}`}
-                title={`New ${centerView === "terminal" ? "terminal" : centerView === "workflow" ? "workflow" : "session"}`}
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  openLeftPane();
-                  focusSessionSearchInput();
-                }}
-                className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
-                aria-label="Search sessions"
-                title="Search sessions"
-              >
-                <Search className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-
-          <div className="shrink-0 space-y-1 p-1.5">
-            <button
-              type="button"
-              onClick={openDeckPlugins}
-              aria-haspopup="dialog"
-              className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
-              aria-label="plugins"
-              title="plugins"
-            >
-              <Puzzle className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfigModalAction("settings")}
-              className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
-              title="Codex Deck settings"
-              aria-label="Codex Deck settings"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-          </div>
-        </aside>
-      ) : (
-        <aside
-          className="pane-left relative shrink-0 border-r border-zinc-800/60 flex flex-col bg-zinc-950"
-          style={{ width: `${leftPaneWidth}px` }}
-        >
-          <div className="pane-header-left">
-            <div className="flex min-h-[50px] items-center gap-1.5 px-3 py-2">
-              <button
-                type="button"
-                onClick={() => setSidebarCollapsed(true)}
-                className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                aria-label="Collapse left pane"
-                title="Collapse left pane"
-              >
-                <ChevronLeft className="mx-auto h-4 w-4" />
-              </button>
-              <div className="flex min-w-0 flex-1 items-center justify-between gap-2 overflow-hidden pl-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-zinc-100">
-                    Codex Deck
-                  </span>
-                  <span className="shrink-0 rounded-md bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                    {remoteConnected ? "Remote" : "Local"}
-                  </span>
-                </div>
-                <div className="flex min-w-0 items-center justify-end gap-1.5 overflow-hidden">
-                  {remoteConnected && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleDisconnectRemote();
-                      }}
-                      className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                      title="Log out from remote mode"
-                    >
-                      Logout
-                    </button>
-                  )}
-                  {!remoteConnected && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConnectionMode("remote");
-                        setRemoteError(null);
-                        setRemoteAutoRestoreServerUrl(null);
-                      }}
-                      className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
-                      title="Remote Login"
-                    >
-                      Remote Login
-                    </button>
-                  )}
-                </div>
+                  onClick={() => {
+                    if (centerView === "workflow") {
+                      setInteractionError(null);
+                      setWorkflowIdPromptDraft("");
+                      setShowWorkflowIdPromptModal(true);
+                    } else {
+                      void (centerView === "terminal"
+                        ? handleCreateTerminal()
+                        : handleCreateSession());
+                    }
+                  }}
+                  className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label={`New ${centerView === "terminal" ? "terminal" : centerView === "workflow" ? "workflow" : "session"}`}
+                  title={`New ${centerView === "terminal" ? "terminal" : centerView === "workflow" ? "workflow" : "session"}`}
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openLeftPane();
+                    focusSessionSearchInput();
+                  }}
+                  className="flex h-9 w-full items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+                  aria-label="Search sessions"
+                  title="Search sessions"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+              </>
+            )
+          }
+          connection={
+            <div className="flex min-w-0 flex-1 items-center justify-between gap-2 overflow-hidden pl-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-zinc-100">
+                  Codex Deck
+                </span>
+                <span className="shrink-0 rounded-md bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                  {remoteConnected ? "Remote" : "Local"}
+                </span>
+              </div>
+              <div className="flex min-w-0 items-center justify-end gap-1.5 overflow-hidden">
+                {remoteConnected && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleDisconnectRemote();
+                    }}
+                    className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
+                    title="Log out from remote mode"
+                  >
+                    Logout
+                  </button>
+                )}
+                {!remoteConnected && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConnectionMode("remote");
+                      setRemoteError(null);
+                      setRemoteAutoRestoreServerUrl(null);
+                    }}
+                    className="h-7 min-w-0 max-w-full shrink truncate rounded-lg px-2 text-[12px] text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-100"
+                    title="Remote Login"
+                  >
+                    Remote Login
+                  </button>
+                )}
               </div>
             </div>
-
+          }
+          home={
             <div className="px-2 pb-1">
               <CodexHomeSelector
                 homes={codexHomes}
@@ -12144,195 +12270,189 @@ export default function CodexDeckApp() {
                 </p>
               ) : null}
             </div>
-
-            <div className="space-y-2 px-2 pb-2">
-              {remoteConnected && remoteMachines.length > 0 && (
-                <label className="block">
-                  <select
-                    value={selectedRemoteMachine || ""}
-                    onChange={(event) =>
-                      handleSelectRemoteMachine(event.target.value || null)
-                    }
-                    className="h-8 w-full cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
-                  >
-                    {remoteMachines.map((machine) => (
-                      <option key={machine.id} value={machine.id}>
-                        {machine.metadata
-                          ? `${machine.metadata.label} · ${machine.metadata.host}`
-                          : machine.id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <div className="grid grid-cols-3 items-center gap-0.5 rounded-[10px] bg-zinc-800/50 p-[3px]">
-                <button
-                  type="button"
-                  onClick={() => handleSelectTerminal()}
-                  className={`rounded-[7px] px-2 py-1 text-center text-[12px] font-medium transition-colors ${
-                    centerView === "terminal"
-                      ? "bg-zinc-700/80 text-zinc-50 shadow-sm"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
+          }
+          machine={
+            remoteConnected &&
+            remoteMachines.length > 0 && (
+              <label className="block">
+                <select
+                  value={selectedRemoteMachine || ""}
+                  onChange={(event) =>
+                    handleSelectRemoteMachine(event.target.value || null)
+                  }
+                  className="h-8 w-full cursor-pointer rounded-lg border-0 bg-transparent px-2 text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
                 >
-                  Terminal
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSelectCodex}
-                  className={`rounded-[7px] px-2 py-1 text-center text-[12px] font-medium transition-colors ${
-                    centerView === "session"
-                      ? "bg-zinc-700/80 text-zinc-50 shadow-sm"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  Codex
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectWorkflow()}
-                  className={`rounded-[7px] px-2 py-1 text-center text-[12px] font-medium transition-colors ${
-                    centerView === "workflow"
-                      ? "bg-zinc-700/80 text-zinc-50 shadow-sm"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  Workflow
-                </button>
-              </div>
-
-              <label
-                htmlFor={"select-project"}
-                className="block w-full min-w-0"
-              >
-                <ProjectSelector
-                  buttonId="select-project"
-                  projects={
-                    centerView === "terminal"
-                      ? terminalProjects
-                      : centerView === "workflow"
-                        ? workflowProjects
-                        : projects
-                  }
-                  selectedProject={
-                    centerView === "terminal"
-                      ? selectedTerminalProject
-                      : centerView === "workflow"
-                        ? selectedWorkflowProject
-                        : selectedProject
-                  }
-                  allLabel={
-                    centerView === "terminal"
-                      ? "All terminals"
-                      : centerView === "workflow"
-                        ? "All workflows"
-                        : "All Projects"
-                  }
-                  searchPlaceholder={
-                    centerView === "terminal"
-                      ? "Type to narrow terminals..."
-                      : centerView === "workflow"
-                        ? "Type to narrow workflows..."
-                        : "Type to narrow projects..."
-                  }
-                  ariaLabel={
-                    centerView === "terminal"
-                      ? "Terminals"
-                      : centerView === "workflow"
-                        ? "Workflows"
-                        : "Projects"
-                  }
-                  noMatchLabel={
-                    centerView === "terminal"
-                      ? "No terminals match this search."
-                      : centerView === "workflow"
-                        ? "No workflows match this search."
-                        : "No projects match this search."
-                  }
-                  onSelectProject={(project) => {
-                    if (centerView === "terminal") {
-                      setSelectedTerminalProject(project);
-                    } else if (centerView === "workflow") {
-                      setSelectedWorkflowProject(project);
-                      setSelectedWorkflowKey(null);
-                    } else {
-                      setSelectedProject(project);
-                    }
-                    setNewSessionCwdState(
-                      clearNewSessionCwdForProjectSelection(),
-                    );
-                  }}
-                />
+                  {remoteMachines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>
+                      {machine.metadata
+                        ? `${machine.metadata.label} · ${machine.metadata.host}`
+                        : machine.id}
+                    </option>
+                  ))}
+                </select>
               </label>
-
-              {centerView === "workflow" ? (
-                <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                  <input
-                    type="text"
-                    value={workflowCreateProjectRoot}
-                    onChange={(event) =>
-                      setWorkflowCreateProjectRoot(event.target.value)
-                    }
-                    placeholder={
-                      selectedWorkflowSummary?.projectRoot ||
-                      selectedWorkflowProject ||
-                      "Project path"
-                    }
-                    className="project-path-placeholder-tail min-w-0 flex-1 h-8 bg-zinc-800/40 text-zinc-200 text-[12px] rounded-lg border border-transparent px-2.5 placeholder:text-zinc-500 transition-colors hover:bg-zinc-800/60 focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setInteractionError(null);
-                      setWorkflowIdPromptDraft("");
-                      setShowWorkflowIdPromptModal(true);
-                    }}
-                    disabled={workflowActionBusy}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-100 px-3 text-[12px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    New Workflow
-                  </button>
-                </div>
-              ) : (
-                <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                  <input
-                    type="text"
-                    value={newSessionCwd}
-                    onChange={(event) =>
-                      setNewSessionCwdState(
-                        setNewSessionCwdFromUserInput(event.target.value),
-                      )
-                    }
-                    placeholder={newSessionPlaceholder}
-                    className="project-path-placeholder-tail min-w-0 flex-1 h-8 bg-zinc-800/40 text-zinc-200 text-[12px] rounded-lg border border-transparent px-2.5 placeholder:text-zinc-500 transition-colors hover:bg-zinc-800/60 focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none"
-                  />
-                  <button
-                    onClick={() => {
-                      void (centerView === "terminal"
-                        ? handleCreateTerminal()
-                        : handleCreateSession());
-                    }}
-                    disabled={creatingSession}
-                    className="h-8 min-w-0 max-w-full shrink truncate rounded-lg bg-zinc-100 px-3 text-[12px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
-                    title={
+            )
+          }
+          controls={
+            !leftPluginEntry && (
+              <>
+                {" "}
+                <label
+                  htmlFor={"select-project"}
+                  className="block w-full min-w-0"
+                >
+                  <ProjectSelector
+                    buttonId="select-project"
+                    projects={
                       centerView === "terminal"
-                        ? "Start a new terminal"
-                        : "Start a new Codex session"
+                        ? terminalProjects
+                        : centerView === "workflow"
+                          ? workflowProjects
+                          : projects
                     }
-                  >
-                    {creatingSession
-                      ? "Creating..."
-                      : centerView === "terminal"
-                        ? "New Terminal"
-                        : "New Session"}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="min-h-0 flex-1">
+                    selectedProject={
+                      centerView === "terminal"
+                        ? selectedTerminalProject
+                        : centerView === "workflow"
+                          ? selectedWorkflowProject
+                          : selectedProject
+                    }
+                    allLabel={
+                      centerView === "terminal"
+                        ? "All terminals"
+                        : centerView === "workflow"
+                          ? "All workflows"
+                          : "All Projects"
+                    }
+                    searchPlaceholder={
+                      centerView === "terminal"
+                        ? "Type to narrow terminals..."
+                        : centerView === "workflow"
+                          ? "Type to narrow workflows..."
+                          : "Type to narrow projects..."
+                    }
+                    ariaLabel={
+                      centerView === "terminal"
+                        ? "Terminals"
+                        : centerView === "workflow"
+                          ? "Workflows"
+                          : "Projects"
+                    }
+                    noMatchLabel={
+                      centerView === "terminal"
+                        ? "No terminals match this search."
+                        : centerView === "workflow"
+                          ? "No workflows match this search."
+                          : "No projects match this search."
+                    }
+                    onSelectProject={(project) => {
+                      if (centerView === "terminal") {
+                        setSelectedTerminalProject(project);
+                      } else if (centerView === "workflow") {
+                        setSelectedWorkflowProject(project);
+                        setSelectedWorkflowKey(null);
+                      } else {
+                        setSelectedProject(project);
+                      }
+                      setNewSessionCwdState(
+                        clearNewSessionCwdForProjectSelection(),
+                      );
+                    }}
+                  />
+                </label>
+                {centerView === "workflow" ? (
+                  <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                    <input
+                      type="text"
+                      value={workflowCreateProjectRoot}
+                      onChange={(event) =>
+                        setWorkflowCreateProjectRoot(event.target.value)
+                      }
+                      placeholder={
+                        selectedWorkflowSummary?.projectRoot ||
+                        selectedWorkflowProject ||
+                        "Project path"
+                      }
+                      className="project-path-placeholder-tail min-w-0 flex-1 h-8 bg-zinc-800/40 text-zinc-200 text-[12px] rounded-lg border border-transparent px-2.5 placeholder:text-zinc-500 transition-colors hover:bg-zinc-800/60 focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInteractionError(null);
+                        setWorkflowIdPromptDraft("");
+                        setShowWorkflowIdPromptModal(true);
+                      }}
+                      disabled={workflowActionBusy}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-100 px-3 text-[12px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      New Workflow
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                    <input
+                      type="text"
+                      value={newSessionCwd}
+                      onChange={(event) =>
+                        setNewSessionCwdState(
+                          setNewSessionCwdFromUserInput(event.target.value),
+                        )
+                      }
+                      placeholder={newSessionPlaceholder}
+                      className="project-path-placeholder-tail min-w-0 flex-1 h-8 bg-zinc-800/40 text-zinc-200 text-[12px] rounded-lg border border-transparent px-2.5 placeholder:text-zinc-500 transition-colors hover:bg-zinc-800/60 focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        void (centerView === "terminal"
+                          ? handleCreateTerminal()
+                          : handleCreateSession());
+                      }}
+                      disabled={creatingSession}
+                      className="h-8 min-w-0 max-w-full shrink truncate rounded-lg bg-zinc-100 px-3 text-[12px] font-medium text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
+                      title={
+                        centerView === "terminal"
+                          ? "Start a new terminal"
+                          : "Start a new Codex session"
+                      }
+                    >
+                      {creatingSession
+                        ? "Creating..."
+                        : centerView === "terminal"
+                          ? "New Terminal"
+                          : "New Session"}
+                    </button>
+                  </div>
+                )}
+              </>
+            )
+          }
+          footer={
+            <DeckPluginSlot
+              plugins={pluginContributions.snapshot?.plugins ?? []}
+              slot="app.sidebar"
+              homeId={selectedCodexHomeId}
+              context={{
+                threadId: activeComposerSessionId,
+                cwd: activeComposerSessionData?.project ?? null,
+              }}
+            />
+          }
+        >
+          {leftPluginEntry ? (
+            <DeckPluginRuntime
+              key={selectedCodexHomeId + ":" + leftPluginEntry.key}
+              embedded
+              fillPane
+              homeId={selectedCodexHomeId}
+              pluginId={leftPluginEntry.pluginId}
+              viewId={leftPluginEntry.view.id}
+              context={{
+                threadId: activeComposerSessionId,
+                cwd: activeComposerSessionData?.project ?? null,
+              }}
+              onClose={() => setLeftPluginKey(null)}
+            />
+          ) : (
             <SessionList
               sessions={
                 centerView === "terminal"
@@ -12413,46 +12533,8 @@ export default function CodexDeckApp() {
                 centerView === "session" ? searchSessionContent : undefined
               }
             />
-          </div>
-          <div className="shrink-0 p-2">
-            <button
-              type="button"
-              onClick={openDeckPlugins}
-              aria-haspopup="dialog"
-              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
-            >
-              <Puzzle className="size-4 shrink-0" />
-              <span>plugins</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfigModalAction("settings")}
-              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
-              title="Codex Deck settings"
-              aria-label="Codex Deck settings"
-            >
-              <Settings className="h-4 w-4 shrink-0" />
-              <span>Settings</span>
-            </button>
-          </div>
-          <div
-            role="separator"
-            aria-label="Resize left pane"
-            aria-orientation="vertical"
-            onPointerDown={handleLeftPaneResizeStart}
-            className={
-              isMobilePhone
-                ? "absolute top-1/2 right-0 z-20 -translate-y-1/2 translate-x-1/2 cursor-col-resize touch-none"
-                : "absolute top-0 right-0 z-20 h-full w-2 translate-x-1/2 cursor-col-resize touch-none"
-            }
-          >
-            {isMobilePhone && (
-              <div className="flex h-10 w-6 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900/95 text-zinc-400 shadow-lg">
-                <GripVertical className="h-4 w-4" />
-              </div>
-            )}
-          </div>
-        </aside>
+          )}
+        </LeftPane>
       )}
 
       <main className="pane-main flex-1 overflow-hidden bg-zinc-950 flex flex-col">
@@ -12462,6 +12544,15 @@ export default function CodexDeckApp() {
             threadId={activeComposerSessionId}
           />
         )}
+        <DeckPluginSlot
+          plugins={pluginContributions.snapshot?.plugins ?? []}
+          slot="session.toolbar"
+          homeId={selectedCodexHomeId}
+          context={{
+            threadId: activeComposerSessionId,
+            cwd: activeComposerSessionData?.project ?? null,
+          }}
+        />
         <div className="pane-header-center border-b border-zinc-800/60 px-4 py-2">
           <div className="flex min-h-[34px] items-center gap-3">
             {centerView === "terminal" ? (
@@ -12552,7 +12643,18 @@ export default function CodexDeckApp() {
                 />
               </>
             )}
-            {diffPaneCollapsed && (
+            {!leftLayout && (
+              <button
+                type="button"
+                aria-label="plugins"
+                title="Plugins"
+                className="h-8 w-8 text-zinc-400"
+                onClick={openDeckPlugins}
+              >
+                <Puzzle className="mx-auto h-4 w-4" />
+              </button>
+            )}
+            {rightLayout && diffPaneCollapsed && (
               <button
                 type="button"
                 onClick={openRightPane}
@@ -12749,70 +12851,64 @@ export default function CodexDeckApp() {
             onRunPreset={handleRunPreset}
           />
         )}
+        {pluginDialog && (
+          <NativeDialog title={pluginDialog.title} onClose={closePluginDialog}>
+            <PaneNavigation.Provider
+              value={(pluginId, view) => {
+                const entry = [...leftEntries, ...rightEntries].find(
+                  (e) => e.pluginId === pluginId && e.view.id === view.id,
+                );
+                if (entry && view.slot === "pane.left" && LeftPane) {
+                  selectLeftEntry(entry);
+                  openLeftPane();
+                } else if (entry && view.slot === "pane.right" && RightPane) {
+                  openRightPane();
+                  handleChangePaneMode(entry.key);
+                } else if (
+                  view.slot === "layout.left" &&
+                  leftLayout?.pluginId === pluginId &&
+                  leftLayout.view.id === view.id
+                )
+                  openLeftPane();
+                else if (
+                  view.slot === "layout.right" &&
+                  rightLayout?.pluginId === pluginId &&
+                  rightLayout.view.id === view.id
+                )
+                  openRightPane();
+                else return false;
+                closePluginDialog();
+                return true;
+              }}
+            >
+              <DeckPluginRuntime
+                key={`${selectedCodexHomeId}:${pluginDialog.pluginId}:${pluginDialog.viewId}`}
+                pluginId={pluginDialog.pluginId}
+                homeId={selectedCodexHomeId}
+                viewId={pluginDialog.viewId}
+                context={{
+                  threadId: pluginDialog.threadId,
+                  cwd: pluginDialog.cwd,
+                  model: pluginDialog.model,
+                  args: pluginDialog.args,
+                }}
+                onClose={closePluginDialog}
+              />
+            </PaneNavigation.Provider>
+          </NativeDialog>
+        )}
         {nativeDialog && (
           <NativeDialog
             title={
-              nativeDialog.kind === "warnings"
-                ? "Retained warnings"
-                : nativeDialog.kind === "debug-config"
-                  ? "Configuration diagnostics"
-                  : nativeDialog.kind === "daybreak"
-                    ? "Daybreak selection"
-                    : nativeDialog.kind === "experimental"
-                      ? "Experimental features"
-                      : nativeDialog.kind === "export"
-                        ? "Export transcript"
-                        : nativeDialog.kind === "recap"
-                          ? "Conversation recap"
-                          : nativeDialog.kind === "voice-settings"
-                            ? "Voice settings"
-                            : nativeDialog.kind === "usage"
-                              ? "Usage dashboard"
-                              : (getOrganizationDialogTitle(
-                                  nativeDialog.kind,
-                                ) ?? "MCP administration")
+              nativeDialog.kind === "voice-settings"
+                ? "Voice settings"
+                : (getOrganizationDialogTitle(nativeDialog.kind) ??
+                  "MCP administration")
             }
             onClose={closeNativeDialog}
           >
-            {nativeDialog.kind === "warnings" ? (
-              <RetainedWarnings
-                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-                threadId={nativeDialog.threadId}
-              />
-            ) : nativeDialog.kind === "debug-config" ? (
-              <ConfigDiagnostics
-                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-                threadId={nativeDialog.threadId}
-              />
-            ) : nativeDialog.kind === "daybreak" && nativeDialog.threadId ? (
-              <DaybreakSettings
-                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-                threadId={nativeDialog.threadId}
-                model={nativeDialog.model || null}
-              />
-            ) : nativeDialog.kind === "experimental" ? (
-              <ExperimentalFeatures
-                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-                threadId={nativeDialog.threadId}
-              />
-            ) : nativeDialog.kind === "export" && nativeDialog.threadId ? (
-              <TranscriptExport
-                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-                threadId={nativeDialog.threadId}
-                filename={nativeDialog.filename}
-              />
-            ) : nativeDialog.kind === "recap" && nativeDialog.threadId ? (
-              <ConversationRecapView
-                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-                threadId={nativeDialog.threadId}
-              />
-            ) : nativeDialog.kind === "voice-settings" ? (
+            {nativeDialog.kind === "voice-settings" ? (
               <VoiceSettings
-                key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
-                threadId={nativeDialog.threadId}
-              />
-            ) : nativeDialog.kind === "usage" ? (
-              <UsageDashboard
                 key={`${selectedCodexHomeId}:${nativeDialog.threadId}`}
                 threadId={nativeDialog.threadId}
               />
@@ -12921,6 +13017,7 @@ export default function CodexDeckApp() {
         <Suspense fallback={null}>
           {showMemoriesModal && (
             <MemoriesModal
+              plugins={pluginContributions.snapshot?.plugins ?? []}
               threadId={activeComposerSessionId}
               homeId={selectedCodexHomeId}
               open={showMemoriesModal}
@@ -14204,7 +14301,7 @@ export default function CodexDeckApp() {
                       ? (messageHistoryBySession[terminalComposerSessionId] ??
                         [])
                       : [],
-                    slashCommands: SESSION_COMPOSER_SLASH_COMMANDS,
+                    slashCommands: sessionSlashCommands,
                     isGeneratingForSession: isGeneratingForTerminalComposer,
                     isSendingLocked: isTerminalComposerLocked,
                     sendingMessage,
@@ -14274,7 +14371,7 @@ export default function CodexDeckApp() {
                   conversationSearchOpen={conversationSearchOpen}
                   conversationSearchQuery={conversationSearchQuery}
                   workflowShortcut={
-                    selectedSessionWorkflowShortcut
+                    workflowEnabled && selectedSessionWorkflowShortcut
                       ? {
                           label: selectedSessionWorkflowShortcut.label,
                           title: selectedSessionWorkflowShortcut.title,
@@ -14313,7 +14410,7 @@ export default function CodexDeckApp() {
                       : null
                   }
                   terminalShortcut={
-                    selectedSessionTerminalShortcut
+                    terminalEnabled && selectedSessionTerminalShortcut
                       ? {
                           label: selectedSessionTerminalShortcut.label,
                           title: selectedSessionTerminalShortcut.title,
@@ -14408,7 +14505,7 @@ export default function CodexDeckApp() {
                 sessionId: selectedSession,
                 audioInput: selectedSessionAudioInput,
                 history: messageHistoryBySession[selectedSession] ?? [],
-                slashCommands: SESSION_COMPOSER_SLASH_COMMANDS,
+                slashCommands: sessionSlashCommands,
                 isGeneratingForSession: isGeneratingForSelectedSession,
                 isSendingLocked,
                 sendingMessage,
@@ -14438,84 +14535,124 @@ export default function CodexDeckApp() {
             </div>
           )}
         </div>
+        <DeckPluginSlot
+          plugins={pluginContributions.snapshot?.plugins ?? []}
+          slot="session.footer"
+          homeId={selectedCodexHomeId}
+          context={{
+            threadId: activeComposerSessionId,
+            cwd: activeComposerSessionData?.project ?? null,
+          }}
+        />
       </main>
-      <DiffPane
-        runtimeScopeKey={selectedCodexHomeId}
-        connectionMode={connectionMode}
-        collapsed={diffPaneCollapsed}
-        fileLinkOpenVersion={fileLinkOpenVersion}
-        isMobilePhone={isMobilePhone}
-        mode={selectedPaneMode}
-        sessionId={rightPaneSessionId}
-        threadId={
-          rightPaneTarget?.kind === "session" ? rightPaneTarget.sessionId : null
-        }
-        width={rightPaneWidth}
-        loading={loadingSessionDiff}
-        error={sessionDiffError}
-        diffData={sessionDiff}
-        fileTreeNodesData={sessionFileTreeNodes}
-        fileTreeLoadingMore={sessionFileTreeLoadingMore}
-        fileContent={sessionFileContent}
-        fileContentLoading={loadingSessionFileContent}
-        fileContentError={sessionFileContentError}
-        fileContentPage={selectedFileContentPage}
-        selectedFilePath={selectedDiffFilePath}
-        targetLineNumber={selectedFileTargetLine}
-        terminalRuns={terminalRuns}
-        terminalRunsLoading={loadingTerminalRuns}
-        terminalRunsError={terminalRunsError}
-        selectedTerminalRunId={selectedTerminalRunId}
-        terminalRunOutput={terminalRunOutput}
-        terminalRunOutputLoading={loadingTerminalRunOutput}
-        terminalRunOutputError={terminalRunOutputError}
-        hooksData={sessionHooks}
-        hooksLoading={loadingSessionHooks}
-        hooksError={sessionHooksError}
-        selectedHookKey={selectedHookKey}
-        updatingHookKey={updatingHookKey}
-        skillsData={sessionSkills}
-        onSecondaryModeChange={setSecondaryPaneMode}
-        skillsLoading={loadingSessionSkills}
-        skillsError={sessionSkillsError}
-        selectedSkillPath={selectedSkillPath}
-        updatingSkillPath={updatingSkillPath}
-        onToggleCollapsed={() => setDiffPaneCollapsed((current) => !current)}
-        onResizeStart={handleRightPaneResizeStart}
-        onChangeMode={handleChangePaneMode}
-        onSelectFilePath={handleSelectDiffFilePath}
-        onOpenFileTreeDirectory={handleOpenFileTreeDirectory}
-        onLoadMoreFileTreeNodes={handleLoadMoreFileTreeNodes}
-        onRefreshFiles={handleRefreshFiles}
-        onChangeFileContentPage={handleChangeFileContentPage}
-        onSelectTerminalRun={setSelectedTerminalRunId}
-        onRefreshTerminalRuns={handleRefreshTerminalRuns}
-        onSelectHookKey={setSelectedHookKey}
-        onToggleHookEnabled={handleToggleHookEnabled}
-        onTrustHook={handleTrustHook}
-        onTrustAllHooks={handleTrustAllHooks}
-        onRefreshHooks={handleRefreshHooks}
-        onSelectSkillPath={setSelectedSkillPath}
-        onToggleSkillEnabled={handleToggleSkillEnabled}
-        onRefreshSkills={handleRefreshSkills}
-        agentThreads={agentThreads}
-        agentThreadsLoading={loadingAgentThreads}
-        agentThreadsError={agentThreadsError}
-        onRefreshAgentThreads={refreshRightPaneAgentThreads}
-        onOpenAgentThread={(threadId) => handleSelectSession(threadId)}
-        workspacePath={
-          rightPaneTarget?.kind === "session"
-            ? rightPaneSessionData?.project
-            : rightPaneTarget?.kind === "workflow-project"
-              ? rightPaneTarget.projectPath
+      {rightLayout && !rightLayout.builtin && (
+        <PackagePane
+          side="right"
+          entry={rightLayout}
+          homeId={selectedCodexHomeId}
+          context={{
+            threadId:
+              rightPaneTarget?.kind === "session"
+                ? rightPaneTarget.sessionId
+                : null,
+            cwd:
+              rightPaneTarget?.kind === "workflow-project"
+                ? rightPaneTarget.projectPath
+                : (rightPaneSessionData?.project ?? null),
+          }}
+          collapsed={diffPaneCollapsed}
+          width={rightPaneWidth}
+          onToggle={() => setDiffPaneCollapsed(true)}
+          onBrowse={openDeckPlugins}
+          onCreate={() => createPanePlugin("right")}
+          onResize={handleRightPaneResizeStart}
+        />
+      )}
+      {RightPane && (
+        <RightPane
+          entries={rightEntries}
+          homeId={selectedCodexHomeId}
+          onBrowsePlugins={openDeckPlugins}
+          onCreatePlugin={() => createPanePlugin("right")}
+          runtimeScopeKey={selectedCodexHomeId}
+          connectionMode={connectionMode}
+          collapsed={diffPaneCollapsed}
+          fileLinkOpenVersion={fileLinkOpenVersion}
+          isMobilePhone={isMobilePhone}
+          mode={selectedPaneMode}
+          sessionId={rightPaneSessionId}
+          threadId={
+            rightPaneTarget?.kind === "session"
+              ? rightPaneTarget.sessionId
               : null
-        }
-        workflowKey={
-          rightPaneTarget?.kind === "workflow-project"
-            ? rightPaneTarget.workflowKey
-            : null
-        }
-      />
+          }
+          width={rightPaneWidth}
+          loading={loadingSessionDiff}
+          error={sessionDiffError}
+          diffData={sessionDiff}
+          fileTreeNodesData={sessionFileTreeNodes}
+          fileTreeLoadingMore={sessionFileTreeLoadingMore}
+          fileContent={sessionFileContent}
+          fileContentLoading={loadingSessionFileContent}
+          fileContentError={sessionFileContentError}
+          fileContentPage={selectedFileContentPage}
+          selectedFilePath={selectedDiffFilePath}
+          targetLineNumber={selectedFileTargetLine}
+          terminalRuns={terminalRuns}
+          terminalRunsLoading={loadingTerminalRuns}
+          terminalRunsError={terminalRunsError}
+          selectedTerminalRunId={selectedTerminalRunId}
+          terminalRunOutput={terminalRunOutput}
+          terminalRunOutputLoading={loadingTerminalRunOutput}
+          terminalRunOutputError={terminalRunOutputError}
+          hooksData={sessionHooks}
+          hooksLoading={loadingSessionHooks}
+          hooksError={sessionHooksError}
+          selectedHookKey={selectedHookKey}
+          updatingHookKey={updatingHookKey}
+          skillsData={sessionSkills}
+          onSecondaryModeChange={setSecondaryPaneMode}
+          skillsLoading={loadingSessionSkills}
+          skillsError={sessionSkillsError}
+          selectedSkillPath={selectedSkillPath}
+          updatingSkillPath={updatingSkillPath}
+          onToggleCollapsed={() => setDiffPaneCollapsed((current) => !current)}
+          onResizeStart={handleRightPaneResizeStart}
+          onChangeMode={handleChangePaneMode}
+          onSelectFilePath={handleSelectDiffFilePath}
+          onOpenFileTreeDirectory={handleOpenFileTreeDirectory}
+          onLoadMoreFileTreeNodes={handleLoadMoreFileTreeNodes}
+          onRefreshFiles={handleRefreshFiles}
+          onChangeFileContentPage={handleChangeFileContentPage}
+          onSelectTerminalRun={setSelectedTerminalRunId}
+          onRefreshTerminalRuns={handleRefreshTerminalRuns}
+          onSelectHookKey={setSelectedHookKey}
+          onToggleHookEnabled={handleToggleHookEnabled}
+          onTrustHook={handleTrustHook}
+          onTrustAllHooks={handleTrustAllHooks}
+          onRefreshHooks={handleRefreshHooks}
+          onSelectSkillPath={setSelectedSkillPath}
+          onToggleSkillEnabled={handleToggleSkillEnabled}
+          onRefreshSkills={handleRefreshSkills}
+          agentThreads={agentThreads}
+          agentThreadsLoading={loadingAgentThreads}
+          agentThreadsError={agentThreadsError}
+          onRefreshAgentThreads={refreshRightPaneAgentThreads}
+          onOpenAgentThread={(threadId) => handleSelectSession(threadId)}
+          workspacePath={
+            rightPaneTarget?.kind === "session"
+              ? rightPaneSessionData?.project
+              : rightPaneTarget?.kind === "workflow-project"
+                ? rightPaneTarget.projectPath
+                : null
+          }
+          workflowKey={
+            rightPaneTarget?.kind === "workflow-project"
+              ? rightPaneTarget.workflowKey
+              : null
+          }
+        />
+      )}
       {isTouchResizeOverlayVisible && (
         <div
           className="fixed inset-0 z-[70] touch-none"

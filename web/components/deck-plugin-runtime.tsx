@@ -7,7 +7,9 @@ import {
   requestDeckPluginWorker,
   getDeckPluginSecretStatus,
   setDeckPluginSecrets,
+  callDeckPluginService,
 } from "../deck-plugins-api";
+import BuiltinPluginView from "../plugins/builtin-plugin-view";
 
 const CHANNEL = "codex-deck-plugin";
 const MAX_BRIDGE_MESSAGE_BYTES = 64 * 1024;
@@ -16,6 +18,8 @@ const MAX_BRIDGE_REQUESTS_PER_MINUTE = 60;
 interface PluginContext {
   threadId: string | null;
   cwd: string | null;
+  model?: string | null;
+  args?: string;
 }
 
 interface PluginRequest {
@@ -28,7 +32,11 @@ interface PluginRequest {
 
 interface PluginRuntimeProps {
   pluginId: string;
+  homeId?: string;
   surface?: "panel" | "settings";
+  viewId?: string;
+  embedded?: boolean;
+  fillPane?: boolean;
   context: PluginContext;
   onClose: () => void;
 }
@@ -47,11 +55,15 @@ function getMessageSize(value: unknown): number {
 
 export default function DeckPluginRuntime({
   pluginId,
+  homeId: requestedHomeId,
   surface = "panel",
+  viewId,
+  embedded = false,
+  fillPane = false,
   context,
   onClose,
 }: PluginRuntimeProps) {
-  const homeId = useRef(getActiveCodexHomeId()).current;
+  const homeId = useRef(requestedHomeId ?? getActiveCodexHomeId()).current;
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const contextRef = useRef(context);
   const stateRef = useRef<Record<string, unknown>>({});
@@ -111,6 +123,18 @@ export default function DeckPluginRuntime({
     return () => observer.disconnect();
   }, [send]);
 
+  useEffect(() => {
+    if (runtime?.manifest.capabilities.includes("context.read"))
+      send({ type: "context", context: contextRef.current });
+  }, [
+    runtime,
+    send,
+    context.threadId,
+    context.cwd,
+    context.model,
+    context.args,
+  ]);
+
   const respond = useCallback(
     (requestId: string, result?: unknown, errorMessage?: string) => {
       send({
@@ -152,14 +176,18 @@ export default function DeckPluginRuntime({
       requestTimesRef.current.push(now);
 
       if (
-        ["workerRequest", "getSecrets", "setSecrets"].includes(request.method)
+        ["workerRequest", "getSecrets", "setSecrets", "callService"].includes(
+          request.method,
+        )
       ) {
         const permission =
-          request.method === "workerRequest"
-            ? "worker.request"
-            : request.method === "setSecrets"
-              ? "secrets.write"
-              : "secrets.read";
+          request.method === "callService"
+            ? "services.call"
+            : request.method === "workerRequest"
+              ? "worker.request"
+              : request.method === "setSecrets"
+                ? "secrets.write"
+                : "secrets.read";
         if (!runtime?.manifest.capabilities.includes(permission)) {
           respond(
             request.requestId,
@@ -171,20 +199,28 @@ export default function DeckPluginRuntime({
         try {
           const params = isObject(request.params) ? request.params : {};
           const result =
-            request.method === "workerRequest"
-              ? await requestDeckPluginWorker(
+            request.method === "callService"
+              ? await callDeckPluginService(
                   pluginId,
+                  String(params.service ?? ""),
                   String(params.method ?? ""),
                   params.params ?? {},
                   homeId,
                 )
-              : request.method === "getSecrets"
-                ? await getDeckPluginSecretStatus(pluginId, homeId)
-                : await setDeckPluginSecrets(
+              : request.method === "workerRequest"
+                ? await requestDeckPluginWorker(
                     pluginId,
-                    params as Record<string, string | null>,
+                    String(params.method ?? ""),
+                    params.params ?? {},
                     homeId,
-                  );
+                  )
+                : request.method === "getSecrets"
+                  ? await getDeckPluginSecretStatus(pluginId, homeId)
+                  : await setDeckPluginSecrets(
+                      pluginId,
+                      params as Record<string, string | null>,
+                      homeId,
+                    );
           respond(request.requestId, result);
         } catch (reason) {
           respond(
@@ -268,29 +304,40 @@ export default function DeckPluginRuntime({
   }, [handleRequest]);
 
   return (
-    <section className="space-y-3 rounded-lg border border-zinc-700 bg-zinc-950/70 text-zinc-100 p-3">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h4 className="font-medium">{runtime?.plugin.name ?? "Plugin"}</h4>
-          <p className="text-xs text-zinc-400">
-            Sandboxed plugin interface · {runtime?.plugin.version ?? ""}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {saving && (
-            <span role="status" className="text-xs text-zinc-400">
-              Saving plugin state…
-            </span>
-          )}
-          <button
-            type="button"
-            className="rounded border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800"
-            onClick={onClose}
-          >
-            Close plugin
-          </button>
-        </div>
-      </header>
+    <section
+      className={
+        fillPane
+          ? "flex flex-1 min-h-0 h-full flex-col"
+          : "space-y-3 rounded-lg border border-zinc-700 bg-zinc-950/70 text-zinc-100 p-3"
+      }
+    >
+      {!embedded && (
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="font-medium">{runtime?.plugin.name ?? "Plugin"}</h4>
+            <p className="text-xs text-zinc-400">
+              {runtime?.source === "builtin"
+                ? "Built-in"
+                : "Sandboxed plugin interface"}{" "}
+              · {runtime?.plugin.version ?? ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {saving && (
+              <span role="status" className="text-xs text-zinc-400">
+                Saving plugin state…
+              </span>
+            )}
+            <button
+              type="button"
+              className="rounded border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800"
+              onClick={onClose}
+            >
+              Close plugin
+            </button>
+          </div>
+        </header>
+      )}
 
       {error && (
         <p role="alert" className="break-words text-sm text-rose-300">
@@ -302,39 +349,72 @@ export default function DeckPluginRuntime({
           Loading plugin…
         </p>
       )}
-      {runtime && (
-        <iframe
-          ref={frameRef}
-          title={runtime.plugin.name}
-          sandbox="allow-scripts"
-          referrerPolicy="same-origin"
-          src={getDeckPluginFileUrl(
-            pluginId,
-            runtime.manifest.entrypoints[surface] ??
-              runtime.manifest.entrypoints.panel ??
-              runtime.manifest.entrypoints.settings ??
-              "",
-            homeId,
-          )}
-          onLoad={() =>
-            send({
-              type: "initialize",
-              theme:
-                document.documentElement.dataset.theme === "light"
-                  ? "light"
-                  : "dark",
-              plugin: runtime.plugin,
-              capabilities: runtime.manifest.capabilities,
-              context: runtime.manifest.capabilities.includes("context.read")
-                ? contextRef.current
-                : null,
-              state: runtime.manifest.capabilities.includes("state.read")
-                ? stateRef.current
-                : {},
-            })
-          }
-          className="h-[min(58dvh,36rem)] min-h-72 w-full rounded-lg border border-zinc-800 bg-white"
+      {runtime?.source === "builtin" ? (
+        <BuiltinPluginView
+          pluginId={pluginId}
+          viewId={viewId}
+          homeId={homeId}
+          context={context}
         />
+      ) : (
+        runtime && (
+          <iframe
+            ref={frameRef}
+            title={runtime.plugin.name}
+            sandbox="allow-scripts"
+            referrerPolicy="same-origin"
+            src={getDeckPluginFileUrl(
+              pluginId,
+              runtime.manifest.contributions?.views?.find(
+                (view) => view.id === viewId,
+              )?.entrypoint ??
+                runtime.manifest.entrypoints[surface] ??
+                runtime.manifest.entrypoints.panel ??
+                runtime.manifest.entrypoints.settings ??
+                "",
+              homeId,
+            )}
+            onLoad={() =>
+              send({
+                type: "initialize",
+                theme:
+                  document.documentElement.dataset.theme === "light"
+                    ? "light"
+                    : "dark",
+                plugin: runtime.plugin,
+                capabilities: runtime.manifest.capabilities,
+                context: runtime.manifest.capabilities.includes("context.read")
+                  ? contextRef.current
+                  : null,
+                state: runtime.manifest.capabilities.includes("state.read")
+                  ? stateRef.current
+                  : {},
+              })
+            }
+            className={
+              embedded
+                ? fillPane
+                  ? "w-full flex-1 min-h-0 border-0"
+                  : "min-h-8 w-full rounded-lg border border-zinc-800 bg-white"
+                : "h-[min(58dvh,36rem)] min-h-72 w-full rounded-lg border border-zinc-800 bg-white"
+            }
+            style={
+              embedded && !fillPane
+                ? {
+                    height:
+                      runtime.manifest.contributions?.views?.find(
+                        (view) => view.id === viewId,
+                      )?.height ??
+                      (runtime.manifest.contributions?.views?.find(
+                        (view) => view.id === viewId,
+                      )?.slot === "session.toolbar"
+                        ? 64
+                        : 160),
+                  }
+                : undefined
+            }
+          />
+        )
       )}
     </section>
   );

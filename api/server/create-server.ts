@@ -7,7 +7,9 @@ import { registerRealtimeVoiceRoutes } from "./realtime-voice-routes";
 import { registerBackgroundTerminalRoutes } from "./background-terminal-routes";
 import { registerOperationalNotificationRoutes } from "./operational-notification-routes";
 import { registerHookRunRoutes } from "./hook-run-routes";
-import { registerMemoryInsightRoutes } from "./memory-insight-routes";
+import { DeckBuiltinRuntime } from "../deck-builtin-runtime";
+import { DeckPluginServices } from "../deck-plugin-services";
+import { builtinServerModules } from "../../builtin-plugins/server";
 import { serviceTierAvailable } from "../service-tiers";
 import { registerReviewRoutes } from "./review-routes";
 import { registerExtensionRoutes } from "./extension-routes";
@@ -185,7 +187,6 @@ import { INTERNAL_REMOTE_PROXY_ACCESS_HEADER } from "../remote/internal-proxy";
 import { RemoteServerClient } from "../remote/remote-server-client";
 import { registerTerminalRoutes } from "./terminal-routes";
 import { registerDiffGuideRoutes } from "./diff-guide-routes";
-import { registerTranslationRoutes } from "./translation-routes";
 import { registerSystemRoutes } from "./system-routes";
 import { registerSettingsRoutes } from "./settings-routes";
 import {
@@ -2155,6 +2156,7 @@ export function createServer(options: ServerOptions) {
     new DaemonUpdater(createDaemonUpdaterOptionsFromEnvironment(appVersion));
 
   const app = new Hono();
+  let builtinRuntime: DeckBuiltinRuntime | undefined;
   const internalRemoteProxyAccessToken = remoteServerUrl
     ? remoteProxyAccessToken?.trim() || randomUUID()
     : null;
@@ -2491,6 +2493,7 @@ export function createServer(options: ServerOptions) {
   let deckPluginWorkers: DeckPluginWorkers | undefined;
   const conversationEventQueues = new Map<string, Promise<void>>();
   const emitAppServerEvent = (event: CodexAppServerEvent) => {
+    builtinRuntime?.event(event);
     if (
       !(event.type === "native_state_changed" && event.scope === "deck-plugins")
     )
@@ -2784,9 +2787,6 @@ export function createServer(options: ServerOptions) {
   registerSettingsRoutes(app);
   registerTerminalRoutes(app);
   const diffGuides = registerDiffGuideRoutes(app);
-  registerTranslationRoutes(app, {
-    getTranslationCommand: () => runtimeTranslationCommand,
-  });
   registerHooksRoutes(app, {
     workflowRouteUnavailable,
     resolveSessionProjectPath,
@@ -5276,7 +5276,6 @@ export function createServer(options: ServerOptions) {
   });
   registerOperationalNotificationRoutes(app);
   registerHookRunRoutes(app);
-  registerMemoryInsightRoutes(app);
   registerNativeWorkflowRoutes(app, {
     subscribe: ensureAppServerEventSourceSubscribed,
   });
@@ -5302,6 +5301,15 @@ export function createServer(options: ServerOptions) {
       ?.reconcile()
       .catch((error) => console.error("Plugin reconciliation failed:", error));
   });
+  const pluginServices = new DeckPluginServices();
+  builtinRuntime = new DeckBuiltinRuntime(
+    deckPluginStore,
+    pluginServices,
+    builtinServerModules({
+      subscribe: ensureAppServerEventSourceSubscribed,
+      getTranslationCommand: () => runtimeTranslationCommand,
+    }),
+  );
   deckPluginWorkers = new DeckPluginWorkers(deckPluginStore, {
     readSession: async (id) => {
       const client = getCodexAppServerClient();
@@ -5321,6 +5329,8 @@ export function createServer(options: ServerOptions) {
         inheritModelSettings: true,
       }),
     changed: pluginChanged,
+    services: pluginServices,
+    builtinError: (id) => builtinRuntime?.error(id),
     proxy,
     codexHomes: () =>
       options.conversationHoverCodexHome
@@ -5332,6 +5342,15 @@ export function createServer(options: ServerOptions) {
             ).config,
           })
         : allCodexHomes,
+  });
+  const stopPluginWorker = deckPluginStore.beforePackageChange;
+  deckPluginStore.beforePackageChange = async (id) => {
+    await builtinRuntime?.unload(id);
+    await stopPluginWorker(id);
+  };
+  pluginServices.subscribe(() => {
+    pluginChanged();
+    void deckPluginWorkers?.reconcile().catch(() => {});
   });
   registerDeckPluginRoutes(app, deckPluginStore, deckPluginWorkers);
   app.get("/api/deck-plugin-resource/:homeId/:id/:file{.+}", (c) => {
@@ -5950,6 +5969,14 @@ export function createServer(options: ServerOptions) {
     },
   );
 
+  // Built-in feature routes are the API fallback. Keep normal app routes ahead
+  // of plugin startup so session streaming and other core requests stay direct.
+  app.use("/api/*", async (c, next) => {
+    const response = await builtinRuntime?.fetch(c.req.raw);
+    if (response) return response;
+    return next();
+  });
+
   const webDistPath = getWebDistPath();
 
   registerWebAssets(app, webDistPath);
@@ -6003,6 +6030,7 @@ export function createServer(options: ServerOptions) {
   const initialize = (): Promise<void> => {
     if (!initializationPromise) {
       initializationPromise = loadStorage().then(async () => {
+        await builtinRuntime?.reconcile();
         await deckPluginWorkers?.start();
         await homeRuntimeManager?.startBackgroundHomes();
       });
@@ -6088,7 +6116,10 @@ export function createServer(options: ServerOptions) {
       return httpServer;
     },
     stop: () => {
-      const pluginsStopped = deckPluginWorkers?.stop();
+      const pluginsStopped = Promise.all([
+        deckPluginWorkers?.stop(),
+        builtinRuntime?.close(),
+      ]);
       hoverSettingsRoutes.stop();
       offHistoryChange(handleHistoryChange);
       offSessionChange(handleSessionChange);

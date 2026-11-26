@@ -1215,7 +1215,8 @@
   color: var(--right-pane-secondary);
 }
 .right-pane-start__entries {
-  padding: 0 24px;
+  flex: 1 0 auto;
+  padding: 16px 24px;
 }
 .right-pane-start__entries::after {
   content: "";

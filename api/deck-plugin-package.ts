@@ -99,6 +99,12 @@ export function parseDeckPluginPackage(
     throw new DeckPluginManifestError("plugin.json must contain valid JSON.");
   }
   const manifest = parseDeckPluginManifest(rawManifest);
+  for (const view of manifest.contributions?.views ?? []) {
+    if (!view.entrypoint || !paths.has(view.entrypoint))
+      throw new DeckPluginManifestError(
+        `The view entrypoint "${view.entrypoint}" is missing from the package.`,
+      );
+  }
   for (const [kind, path] of Object.entries(manifest.entrypoints)) {
     if (!paths.has(path))
       throw new DeckPluginManifestError(

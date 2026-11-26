@@ -31,7 +31,15 @@ if (testFiles.length === 0) {
 const runnerCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const result = spawnSync(
   runnerCommand,
-  ["exec", "tsx", "--tsconfig", "tsconfig.test.json", "--test", ...testFiles],
+  [
+    "exec",
+    "tsx",
+    "--tsconfig",
+    "tsconfig.test.json",
+    "--test",
+    "--test-concurrency=4",
+    ...testFiles,
+  ],
   {
     stdio: "inherit",
     env: process.env,

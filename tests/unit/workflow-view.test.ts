@@ -11,7 +11,7 @@ import type {
 } from "../../api/storage";
 import WorkflowView, {
   WorkflowHistoryEntryCard,
-} from "../../web/components/workflow-view";
+} from "../../builtin-plugins/workflow/client";
 
 (globalThis as { React?: typeof React }).React = React;
 

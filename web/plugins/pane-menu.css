@@ -1,0 +1,38 @@
+.pane-more-trigger,
+.pane-more-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--color-zinc-300);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pane-more-menu {
+  position: fixed;
+  z-index: 1000;
+  width: min(196px, calc(100vw - 8px));
+  padding: 4px;
+  border: 1px solid var(--app-border-composer);
+  border-radius: 8px;
+  background: var(--app-surface-composer);
+  box-shadow: 0 4px 16px #0002;
+}
+.pane-more-menu button {
+  width: 100%;
+}
+.pane-more-trigger:hover,
+.pane-more-menu button:hover,
+.pane-more-menu button:focus-visible {
+  background: var(--app-border-subtle);
+}
+.pane-left .pane-more-trigger {
+  width: 100%;
+}
+.pane-left[aria-label="Collapsed left pane"] .pane-more-trigger {
+  justify-content: center;
+  padding-inline: 0;
+}

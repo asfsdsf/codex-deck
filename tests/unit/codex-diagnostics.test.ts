@@ -139,7 +139,7 @@ test("diagnostics routes read native data and warning changes fan out to every c
   const { Hono } = await import("hono");
   const { __TEST_ONLY__ } = await import("../../api/codex-app-server");
   const { registerNativeWorkflowRoutes } =
-    await import("../../api/server/native-workflow-routes");
+    await import("../helpers/builtin-feature-routes");
   const client = new __TEST_ONLY__.CodexAppServerClient();
   const internal = client as unknown as {
     request: (

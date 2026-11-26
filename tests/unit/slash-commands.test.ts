@@ -98,7 +98,7 @@ test("getSlashPaletteCommands only returns visible matching commands", () => {
   );
   assert.deepEqual(
     memoryCommands.map((command) => command.name),
-    ["/memories"],
+    ["/memory-insights", "/memories"],
   );
 
   const hookCommands = getSlashPaletteCommands(

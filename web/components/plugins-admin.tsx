@@ -41,9 +41,11 @@ const target = (plugin: CodexPluginView) => ({
 });
 
 export default function PluginsAdmin({
+  homeId,
   cwd,
   threadId,
 }: {
+  homeId: string;
   cwd: string | null;
   threadId: string | null;
 }) {
@@ -178,7 +180,12 @@ export default function PluginsAdmin({
 
   return (
     <div className="space-y-3 text-sm">
-      <DeckPluginsDirectory cwd={cwd} threadId={threadId} />
+      <DeckPluginsDirectory
+        key={homeId}
+        homeId={homeId}
+        cwd={cwd}
+        threadId={threadId}
+      />
       {data?.enabled && (
         <p className="text-zinc-400">
           Browse plugins from available marketplaces. Installed {installedCount}{" "}

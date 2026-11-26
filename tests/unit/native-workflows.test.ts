@@ -3,7 +3,7 @@ import test from "node:test";
 import { Hono } from "hono";
 import { __TEST_ONLY__ } from "../../api/codex-app-server";
 import { nativePages } from "../../api/codex-native";
-import { registerNativeWorkflowRoutes } from "../../api/server/native-workflow-routes";
+import { registerNativeWorkflowRoutes } from "../helpers/builtin-feature-routes";
 
 function mockClient(
   rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>,
