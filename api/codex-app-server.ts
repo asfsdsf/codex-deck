@@ -3933,13 +3933,34 @@ export class CodexAppServerClient {
       const seen = new Set<string>();
       let cursor: string | undefined;
       do {
-        const page = (await this.request(method, {
-          threadId,
-          limit: 100,
-          sortDirection: "asc",
-          ...extra,
-          ...(cursor ? { cursor } : {}),
-        })) as { data?: Record<string, unknown>[]; nextCursor?: string | null };
+        let page: {
+          data?: Record<string, unknown>[];
+          nextCursor?: string | null;
+        };
+        try {
+          page = (await this.request(method, {
+            threadId,
+            limit: 100,
+            sortDirection: "asc",
+            ...extra,
+            ...(cursor ? { cursor } : {}),
+          })) as typeof page;
+        } catch (error) {
+          // Before the first user message, a paginated thread has metadata but
+          // no materialized history. It must remain eligible for its first turn.
+          if (
+            method === "thread/turns/list" &&
+            cursor === undefined &&
+            error instanceof CodexAppServerRpcError &&
+            error.code === -32600 &&
+            /not materialized yet; thread\/turns\/list is unavailable before first user message/i.test(
+              error.message,
+            )
+          ) {
+            return [];
+          }
+          throw error;
+        }
         if (!Array.isArray(page?.data)) {
           throw new Error(`Invalid ${method} history page`);
         }
@@ -3964,7 +3985,7 @@ export class CodexAppServerClient {
           throw new Error("Invalid history turn");
         turns.set(turn.id, { ...turn, items: [] });
       }
-      if (!includeItems)
+      if (!includeItems || turns.size === 0)
         return {
           ...metadata,
           thread: { ...metadata.thread, turns: [...turns.values()] },

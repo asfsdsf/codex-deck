@@ -2484,6 +2484,45 @@ test("paginated history only falls back for unsupported RPC methods", async () =
   }
 });
 
+test("unmaterialized history errors cannot hide partial history or unrelated failures", async () => {
+  const message =
+    "thread thread is not materialized yet; thread/turns/list is unavailable before first user message";
+  for (const scenario of ["next page", "items", "other error", "other code"]) {
+    const client = new __TEST_ONLY__.CodexAppServerClient();
+    const rpc = client as unknown as {
+      request(
+        method: string,
+        params: Record<string, unknown>,
+      ): Promise<unknown>;
+      readThreadWithTurns(id: string): Promise<unknown>;
+    };
+    const failure = new CodexAppServerRpcError(
+      scenario === "other code" ? -32000 : -32600,
+      scenario === "other error" ? "history storage unavailable" : message,
+    );
+    rpc.request = async (method, params) => {
+      if (method === "thread/read")
+        return { thread: { historyMode: "paginated" } };
+      if (
+        method === "thread/turns/list" &&
+        ["next page", "items"].includes(scenario) &&
+        !params.cursor
+      ) {
+        return {
+          data: [{ id: "first" }],
+          nextCursor: scenario === "next page" ? "next" : null,
+        };
+      }
+      throw failure;
+    };
+    try {
+      await assert.rejects(rpc.readThreadWithTurns("thread"), failure);
+    } finally {
+      await client.close();
+    }
+  }
+});
+
 test("app-server broadcasts native image lifecycle items to every subscriber", async () => {
   const client = new __TEST_ONLY__.CodexAppServerClient();
   const first: unknown[] = [];

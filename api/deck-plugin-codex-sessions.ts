@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
-import { CodexAppServerClient } from "./codex-app-server";
+import {
+  CodexAppServerClient,
+  CodexAppServerRpcError,
+} from "./codex-app-server";
 import type { ResolvedCodexHome } from "./codex-home-registry";
 import { codexProxyEnvironment } from "./codex-proxy";
 import { parseOutputSchemaInput } from "./codex-output-schema";
@@ -138,10 +141,39 @@ export class DeckPluginCodexSessions {
       const existing = Object.values(await this.records(id)).find(
         (record) => record.key === key && record.homePath === home.path,
       );
-      if (existing) return reference(existing);
       const cwd = identifier(params.cwd);
       if (!isAbsolute(cwd))
         throw new Error("Session working directory must be absolute.");
+      if (existing) {
+        return this.lock(JSON.stringify([id, existing.sessionId]), async () => {
+          const record = await this.owned(id, existing.sessionId);
+          // Codex does not persist an unused thread until its first message.
+          // Recreate only when no submission was ever recorded; an uncertain
+          // or accepted send must always reconcile against its original thread.
+          if (Object.keys(record.requests).length === 0) {
+            try {
+              await this.client(home).readPluginSession(record.threadId);
+            } catch (error) {
+              if (
+                !(error instanceof CodexAppServerRpcError) ||
+                !/no rollout found for thread id|thread not found|unknown thread/i.test(
+                  error.message,
+                )
+              )
+                throw error;
+              validate();
+              record.threadId = await this.client(home).createThread({
+                cwd,
+                readOnly: true,
+              });
+              validate();
+              await this.persist(id, record);
+            }
+          }
+          validate();
+          return reference(record);
+        });
+      }
       validate();
       const threadId = await this.client(home).createThread({
         cwd,
