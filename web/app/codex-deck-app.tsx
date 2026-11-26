@@ -12566,9 +12566,10 @@ export default function CodexDeckApp() {
                 pluginContributions.snapshot?.plugins.some(
                   (p) => p.contributions.sessionToggle,
                 )
-                  ? (id) => (
+                  ? (id, placement) => (
                       <DeckPluginSessionToggles
                         plugins={pluginContributions.snapshot!.plugins}
+                        placement={placement}
                         threadId={id}
                         onToggle={pluginContributions.toggle}
                       />
