@@ -147,6 +147,7 @@ import { REASONING_EFFORTS } from "../reasoning-efforts";
 import { useEventSource } from "../hooks/use-event-source";
 import { createPollingSubscription } from "../transport/shared";
 import CodexValuePicker, {
+  ModelPicker,
   type CodexValuePickerHandle,
   type CodexValuePickerOption,
 } from "../components/codex-value-picker";
@@ -5556,15 +5557,6 @@ export default function CodexDeckApp() {
     );
     return [...knownEfforts, ...customEfforts];
   }, [filteredModels, selectedModelId, selectedEffort]);
-  const modelPickerOptions = useMemo<CodexValuePickerOption[]>(
-    () =>
-      filteredModels.map((model) => ({
-        value: model.id,
-        label: model.displayName,
-        description: model.description || undefined,
-      })),
-    [filteredModels],
-  );
   const effortPickerOptions = useMemo<CodexValuePickerOption[]>(
     () =>
       effortOptions.map((effort) => ({
@@ -11847,17 +11839,14 @@ export default function CodexDeckApp() {
                     Plan
                   </span>
                 </button>
-                <CodexValuePicker
+                <ModelPicker
                   ref={modelSelectRef}
                   value={selectedModelId}
                   defaultLabel={modelControlLabel}
-                  options={modelPickerOptions}
+                  models={filteredModels}
                   onChange={setSelectedModelId}
-                  inputAriaLabel="Model"
-                  inputPlaceholder="Search or enter a model ID"
                   onRefresh={handleFetchModels}
                   refreshing={fetchingModels}
-                  refreshAriaLabel="Fetch models from provider"
                 />
                 <CodexValuePicker
                   value={selectedEffort}
@@ -11877,17 +11866,14 @@ export default function CodexDeckApp() {
 
           {isToolbarCompact && isToolbarControlsExpanded && (
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <CodexValuePicker
+              <ModelPicker
                 ref={compactModelSelectRef}
                 value={selectedModelId}
                 defaultLabel={modelControlLabel}
-                options={modelPickerOptions}
+                models={filteredModels}
                 onChange={setSelectedModelId}
-                inputAriaLabel="Model"
-                inputPlaceholder="Search or enter a model ID"
                 onRefresh={handleFetchModels}
                 refreshing={fetchingModels}
-                refreshAriaLabel="Fetch models from provider"
               />
               <CodexValuePicker
                 value={selectedEffort}

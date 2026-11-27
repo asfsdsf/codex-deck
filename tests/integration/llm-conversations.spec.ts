@@ -8,14 +8,29 @@ test("add a provider, continue chat from another tab, and switch back to Codex",
   app,
 }) => {
   const efforts: (string | undefined)[] = [];
+  const sentModels: string[] = [];
+  let discoveryRequests = 0;
   let releaseAnswer!: () => void;
   const answerReady = new Promise<void>((resolve) => {
     releaseAnswer = resolve;
   });
   const upstream = createServer(async (req, res) => {
+    if (req.method === "GET" && req.url === "/v1/models") {
+      discoveryRequests++;
+      if (
+        req.headers.authorization !== "Bearer mock-key" ||
+        discoveryRequests > 2
+      ) {
+        res.writeHead(403).end();
+        return;
+      }
+      const id = discoveryRequests === 1 ? "first-model" : "refreshed-model";
+      res.end(JSON.stringify({ data: [{ id, display_name: "Listed " + id }] }));
+      return;
+    }
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
-    const { messages, reasoning_effort, stream } = JSON.parse(
+    const { messages, reasoning_effort, stream, model } = JSON.parse(
       Buffer.concat(chunks).toString(),
     );
     if (messages.length > 1 && stream) {
@@ -24,6 +39,7 @@ test("add a provider, continue chat from another tab, and switch back to Codex",
       return;
     }
     efforts.push(reasoning_effort);
+    sentModels.push(model);
     if (messages.length === 1) {
       res.writeHead(200, { "Content-Type": "text/event-stream" });
       res.write(
@@ -167,6 +183,19 @@ test("add a provider, continue chat from another tab, and switch back to Codex",
     await page.keyboard.press("Escape");
     await expect(pluginsDialog).toHaveCount(0);
     const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await page
+      .getByRole("button", { name: "Default (example)", exact: true })
+      .click();
+    const picker = page.getByRole("listbox", { name: "Model", exact: true });
+    await expect(
+      picker.getByRole("option", { name: "Listed first-model" }),
+    ).toBeVisible();
+    await picker
+      .getByRole("button", { name: "Fetch models from provider" })
+      .click();
+    await picker
+      .getByRole("option", { name: "Listed refreshed-model" })
+      .click();
     await input.fill("First question");
     await input.press("Enter");
     // Block mode exposes individual reasoning blocks when compact rails are enabled.
@@ -224,6 +253,20 @@ test("add a provider, continue chat from another tab, and switch back to Codex",
       exact: true,
     });
     await second
+      .getByRole("button", { name: "Default (example)", exact: true })
+      .click();
+    const customPicker = second.getByRole("listbox", {
+      name: "Model",
+      exact: true,
+    });
+    await expect(customPicker.getByRole("alert")).toContainText("HTTP 403");
+    await customPicker
+      .getByRole("textbox", { name: "Model", exact: true })
+      .fill("vendor/custom-model");
+    await customPicker
+      .getByRole("option", { name: "Use custom value: vendor/custom-model" })
+      .click();
+    await second
       .getByRole("button", { name: "Effort: medium (default)" })
       .click();
     await second.getByRole("option", { name: "high", exact: true }).click();
@@ -231,6 +274,7 @@ test("add a provider, continue chat from another tab, and switch back to Codex",
     await followup.press("Enter");
     await expect(second.getByText("Received 3 messages")).toBeVisible();
     expect(efforts).toEqual(["medium", "high"]);
+    expect(sentModels).toEqual(["refreshed-model", "vendor/custom-model"]);
     await page.bringToFront();
     await expect(page.getByText("Received 3 messages")).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });

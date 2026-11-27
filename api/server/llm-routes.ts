@@ -78,6 +78,10 @@ export function registerLlmRoutes(
     return c.json(await store.addProvider(body), 201);
   });
   routes.get("/stream", (c) => changes(c, onLlmProvidersChange, "heartbeat"));
+  routes.get("/:provider/models", async (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json({ models: await store.listModels(c.req.param("provider")) });
+  });
   routes.get("/:provider", async (c) => {
     c.header("Cache-Control", "no-store");
     return c.json(await store.settings(c.req.param("provider")));

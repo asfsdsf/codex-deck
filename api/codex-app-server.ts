@@ -5913,7 +5913,7 @@ function getProviderModelsErrorMessage(
   return normalizedText ? normalizedText.slice(0, 300) : null;
 }
 
-function normalizeProviderModels(payload: unknown): CodexModelOption[] {
+export function normalizeProviderModels(payload: unknown): CodexModelOption[] {
   const record = asRecord(payload);
   const entries = Array.isArray(payload)
     ? payload

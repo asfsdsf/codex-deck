@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Check, ChevronDown, RefreshCw } from "lucide-react";
+import type { CodexModelOption } from "@codex-deck/api";
 
 export interface CodexValuePickerOption {
   value: string;
@@ -32,6 +33,8 @@ interface CodexValuePickerProps {
   className?: string;
   disabled?: boolean;
   onRefresh?: () => void | Promise<void>;
+  onOpen?: () => void;
+  error?: string;
   refreshing?: boolean;
   refreshAriaLabel?: string;
 }
@@ -50,6 +53,8 @@ const CodexValuePicker = forwardRef<
     className = "",
     disabled = false,
     onRefresh,
+    onOpen,
+    error,
     refreshing = false,
     refreshAriaLabel = "Refresh options",
   } = props;
@@ -66,8 +71,9 @@ const CodexValuePicker = forwardRef<
     }
     setQuery(options.some((option) => option.value === value) ? "" : value);
     setIsOpen(true);
+    onOpen?.();
     window.requestAnimationFrame(() => inputRef.current?.focus());
-  }, [disabled, options, value]);
+  }, [disabled, options, value, onOpen]);
 
   useImperativeHandle(
     ref,
@@ -142,7 +148,7 @@ const CodexValuePicker = forwardRef<
   const triggerLabel = value ? (selectedOption?.label ?? value) : defaultLabel;
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative min-w-0">
       <button
         ref={triggerRef}
         type="button"
@@ -152,7 +158,7 @@ const CodexValuePicker = forwardRef<
         aria-haspopup="listbox"
         aria-controls={listboxId}
         onClick={openPicker}
-        className={`inline-flex h-7 max-w-[16rem] items-center justify-between gap-1 rounded-full px-2.5 text-left text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+        className={`inline-flex h-7 max-w-[min(16rem,100%)] items-center justify-between gap-1 rounded-full px-2.5 text-left text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
         title={value || defaultLabel}
       >
         <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
@@ -198,6 +204,11 @@ const CodexValuePicker = forwardRef<
               </button>
             )}
           </div>
+          {error && (
+            <p role="alert" className="px-3 pt-2 text-xs text-red-400">
+              {error}
+            </p>
+          )}
           <div className="max-h-64 overflow-y-auto py-1">
             <button
               type="button"
@@ -271,3 +282,31 @@ const CodexValuePicker = forwardRef<
 });
 
 export default CodexValuePicker;
+
+export const ModelPicker = forwardRef<
+  CodexValuePickerHandle,
+  Omit<
+    CodexValuePickerProps,
+    "options" | "inputAriaLabel" | "inputPlaceholder" | "refreshAriaLabel"
+  > & { models: CodexModelOption[] }
+>(function ModelPicker({ models, ...props }, ref) {
+  const options = useMemo(
+    () =>
+      models.map(({ id, displayName, description }) => ({
+        value: id,
+        label: displayName,
+        description: description || undefined,
+      })),
+    [models],
+  );
+  return (
+    <CodexValuePicker
+      {...props}
+      ref={ref}
+      options={options}
+      inputAriaLabel="Model"
+      inputPlaceholder="Search or enter a model ID"
+      refreshAriaLabel="Fetch models from provider"
+    />
+  );
+});

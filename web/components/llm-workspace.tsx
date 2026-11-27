@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import { MessageSquarePlus } from "lucide-react";
 import LeftPane from "../../builtin-plugins/left-pane/client";
 import type {
   CodexHomeDescriptor,
+  CodexModelOption,
   ConversationMessage,
   LlmConversation,
   LlmConversationSummary,
@@ -29,7 +31,7 @@ import {
 } from "./session-header";
 import ConversationCanvas from "./conversation-canvas";
 import MessageComposer from "./message-composer";
-import CodexValuePicker from "./codex-value-picker";
+import CodexValuePicker, { ModelPicker } from "./codex-value-picker";
 import { REASONING_EFFORTS } from "../reasoning-efforts";
 import {
   DEFAULT_CONVERSATION_HOVER_SETTINGS,
@@ -109,6 +111,46 @@ export function LlmWorkspace({
     null,
   );
   const [effort, setEffort] = useState("");
+  const [model, setModel] = useState("");
+  const [models, setModels] = useState<CodexModelOption[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const discovery = useRef<{ loaded: boolean; pending: boolean }>({
+    loaded: false,
+    pending: false,
+  });
+  useEffect(() => {
+    const current = { loaded: false, pending: false };
+    discovery.current = current;
+    setModels([]);
+    setModelsError("");
+    setFetchingModels(false);
+    return () => {
+      discovery.current = { loaded: false, pending: false };
+    };
+  }, [base, provider.providerRevision]);
+  const fetchModels = useCallback(async () => {
+    const current = discovery.current;
+    if (current.pending) return;
+    current.pending = true;
+    setFetchingModels(true);
+    setModelsError("");
+    try {
+      const result = await requestJson<{ models: CodexModelOption[] }>(
+        base + "/models",
+      );
+      if (current === discovery.current) {
+        current.loaded = true;
+        setModels(result.models);
+      }
+    } catch (e) {
+      if (current === discovery.current)
+        setModelsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      current.pending = false;
+      if (current === discovery.current) setFetchingModels(false);
+    }
+  }, [base]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<SessionSearchStatus>({
@@ -131,6 +173,7 @@ export function LlmWorkspace({
     count: number;
     requestId: string;
     effort: string;
+    model: string;
   } | null>(null);
   const latestTurn = conversation?.turns.at(-1);
   const pending = latestTurn && !latestTurn.assistant && !latestTurn.error;
@@ -247,12 +290,14 @@ export function LlmWorkspace({
     if (
       request.current?.message !== message ||
       request.current.count !== count ||
-      request.current.effort !== effort
+      request.current.effort !== effort ||
+      request.current.model !== model
     ) {
       request.current = {
         message,
         count,
         effort,
+        model,
         requestId: newIdempotencyKey(),
       };
     }
@@ -262,7 +307,7 @@ export function LlmWorkspace({
       user: message,
       startedAt: Date.now(),
       requestId: request.current.requestId,
-      model: provider.model,
+      model: model || provider.model,
       reasoningEffort: effort || provider.reasoningEffort,
     };
     try {
@@ -274,6 +319,7 @@ export function LlmWorkspace({
           expectedTurns: count,
           requestId: turn.requestId,
           reasoningEffort: effort || undefined,
+          model: model || undefined,
         }),
       });
       setConversation({
@@ -464,12 +510,19 @@ export function LlmWorkspace({
               onSendMessage={send}
             />
             <div className="composer-toolbar flex min-w-0 items-center gap-2 pl-3 pb-2 pt-1 pr-[calc(var(--composer-actions-width,6.5rem)+1rem)]">
-              <span
-                className="min-w-0 truncate text-xs text-zinc-400"
-                title={provider.model}
-              >
-                {provider.model}
-              </span>
+              <ModelPicker
+                value={model}
+                defaultLabel={`Default (${provider.model})`}
+                models={models}
+                onChange={setModel}
+                onOpen={() => {
+                  if (!discovery.current.loaded) void fetchModels();
+                }}
+                onRefresh={fetchModels}
+                refreshing={fetchingModels}
+                error={modelsError}
+                disabled={sending}
+              />
               <CodexValuePicker
                 value={effort}
                 defaultLabel={

@@ -175,7 +175,8 @@ test("direct chat sends completed rounds, persists isolated history and handles 
       message: string,
       expectedTurns: number,
       requestId = randomUUID(),
-    ) => post(path, { message, expectedTurns, requestId });
+      model?: string,
+    ) => post(path, { message, expectedTurns, requestId, model });
     const key = randomUUID();
     assert.deepEqual(
       (await Promise.all([send("Hello", 0, key), send("Hello", 0, key)])).map(
@@ -196,13 +197,21 @@ test("direct chat sends completed rounds, persists isolated history and handles 
       throw Error("Turn did not settle");
     }
     assert.equal((await settled(0)).assistant, "Reply 1");
-    assert.equal((await send("Follow up", 1)).status, 202);
-    assert.equal((await settled(1)).assistant, "Reply 2");
+    const followupKey = randomUUID();
+    assert.equal(
+      (await send("Follow up", 1, followupKey, "custom/fast")).status,
+      202,
+    );
+    assert.equal((await settled(1)).model, "custom/fast");
+    assert.equal(
+      (await send("Follow up", 1, followupKey, "custom/other")).status,
+      409,
+    );
     assert.deepEqual(requests[1], {
       path: "/v1/chat/completions",
       auth: "Bearer mock-key",
       body: {
-        model: "test-model",
+        model: "custom/fast",
         stream: true,
         messages: [
           { role: "user", content: "Hello" },
@@ -215,6 +224,7 @@ test("direct chat sends completed rounds, persists isolated history and handles 
     assert.match((await settled(2)).error!, /401/);
     assert.equal((await send("Retry", 3)).status, 202);
     assert.equal((await settled(3)).assistant, "Reply 4");
+    assert.equal(requests[3].body.model, "test-model");
     assert.equal(
       requests[3].body.messages.some((m) => m.content === "Failure"),
       false,

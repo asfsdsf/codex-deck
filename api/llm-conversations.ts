@@ -19,6 +19,7 @@ import type {
 } from "./llm-types";
 import { createSerializedRunner } from "./serialized-runner";
 import { readChatCompletion } from "./llm-completion";
+import { normalizeProviderModels } from "./codex-app-server";
 import { pluginHttpRequest } from "./deck-plugin-http";
 import type { CodexDeckProxyConfig } from "./config";
 
@@ -185,6 +186,36 @@ export class LlmConversations {
     return providers
       .filter((p) => p !== null)
       .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  async listModels(id: string) {
+    const provider = await this.provider(id);
+    const url = new URL(provider.url);
+    url.pathname = url.pathname.replace(/\/chat\/completions$/, "/models");
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          ...(provider.apiKey && {
+            Authorization: "Bearer " + provider.apiKey,
+          }),
+        },
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new HTTPException(502, {
+          message: `Model discovery returned HTTP ${response.status}.`,
+        });
+      }
+      return normalizeProviderModels(await response.json());
+    } catch (error) {
+      if (error instanceof HTTPException) throw error;
+      throw new HTTPException(502, {
+        message: "Could not load this provider's model list.",
+      });
+    }
   }
 
   private normalizeProvider(input: Partial<LlmProviderInput>) {
@@ -407,6 +438,7 @@ export class LlmConversations {
       message?: unknown;
       expectedTurns?: unknown;
       reasoningEffort?: unknown;
+      model?: unknown;
     },
   ) {
     const { message, requestId, expectedTurns } = input;
@@ -418,11 +450,14 @@ export class LlmConversations {
       requestId.length > 128 ||
       typeof expectedTurns !== "number" ||
       !Number.isSafeInteger(expectedTurns) ||
-      expectedTurns < 0
+      expectedTurns < 0 ||
+      (input.model !== undefined &&
+        (typeof input.model !== "string" || !input.model.trim()))
     ) {
       throw new HTTPException(400, { message: "Invalid conversation turn" });
     }
     const provider = await this.provider(providerId);
+    const modelOverride = input.model?.trim();
     const override = reasoningEffort(input.reasoningEffort);
     const dir = this.directory(providerId, id);
     const files = await this.turnFiles(dir);
@@ -435,6 +470,7 @@ export class LlmConversations {
       if (
         existing.requestId === requestId &&
         existing.user === message &&
+        (!modelOverride || modelOverride === existing.model) &&
         (!override || override === existing.reasoningEffort)
       )
         return;
@@ -450,7 +486,7 @@ export class LlmConversations {
       requestId,
       startedAt: Date.now(),
       user: message,
-      model: provider.model,
+      model: modelOverride ?? provider.model,
       reasoningEffort: override ?? provider.reasoningEffort,
     };
     try {
@@ -461,13 +497,19 @@ export class LlmConversations {
       if (
         existing.requestId === requestId &&
         existing.user === message &&
+        (!modelOverride || modelOverride === existing.model) &&
         (!override || override === existing.reasoningEffort)
       )
         return;
       throw conflict;
     }
     // Return the receipt before waiting on inference, including for short-lived relay RPCs.
-    void this.complete(provider, history, turn, path).catch(() => {
+    void this.complete(
+      { ...provider, model: turn.model },
+      history,
+      turn,
+      path,
+    ).catch(() => {
       console.error(
         "[codex-deck] Could not persist a provider reply for conversation",
         id,
