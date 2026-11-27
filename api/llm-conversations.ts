@@ -19,8 +19,26 @@ import type {
 } from "./llm-types";
 import { createSerializedRunner } from "./serialized-runner";
 import { readChatCompletion } from "./llm-completion";
+import { pluginHttpRequest } from "./deck-plugin-http";
+import type { CodexDeckProxyConfig } from "./config";
 
 type StoredProvider = LlmProviderInput & { revision?: string };
+
+function completionRequest(
+  provider: LlmProviderInput,
+  messages: { role: string; content: string }[],
+  stream: boolean,
+  effort = provider.reasoningEffort,
+) {
+  return {
+    url: provider.url,
+    headers: {
+      "Content-Type": "application/json",
+      ...(provider.apiKey && { Authorization: "Bearer " + provider.apiKey }),
+    },
+    body: { model: provider.model, reasoning_effort: effort, messages, stream },
+  };
+}
 // Providers created before settings were editable have no revision on disk.
 const INITIAL_REVISION = "initial";
 
@@ -213,6 +231,82 @@ export class LlmConversations {
     };
   }
 
+  /** A worker can request inference from a registered provider without reading its credentials. */
+  async completeForPlugin(
+    params: Record<string, unknown>,
+    proxy: CodexDeckProxyConfig | undefined,
+    signal: AbortSignal,
+  ) {
+    const { providerId, instructions, prompt, schema } = params;
+    if (
+      typeof providerId !== "string" ||
+      !providerId.startsWith("llm:") ||
+      typeof instructions !== "string" ||
+      typeof prompt !== "string" ||
+      !prompt.trim() ||
+      !schema ||
+      typeof schema !== "object" ||
+      Array.isArray(schema)
+    )
+      throw new Error("Invalid structured chat completion request.");
+    let provider: StoredProvider;
+    try {
+      provider = await this.provider(providerId.slice(4));
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 404)
+        return { status: 404 };
+      throw error;
+    }
+    const request = completionRequest(
+      provider,
+      [
+        { role: "system", content: instructions },
+        { role: "user", content: prompt },
+      ],
+      false,
+    );
+    const { status, body } = await pluginHttpRequest(
+      {
+        ...request,
+        body: {
+          ...request.body,
+          store: false,
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "result", strict: true, schema },
+          },
+        },
+      },
+      proxy,
+      signal,
+    );
+    if (status < 200 || status >= 300) return { status };
+    let payload;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      throw new Error("Chat provider returned invalid JSON.");
+    }
+    const choice = payload?.choices?.[0];
+    if (
+      payload?.error ||
+      choice?.finish_reason !== "stop" ||
+      choice.message?.refusal ||
+      (Array.isArray(choice.message?.content) &&
+        choice.message.content.some(
+          (part: { type?: string }) => !part || part.type !== "text",
+        )) ||
+      choice.message?.tool_calls ||
+      choice.message?.function_call
+    )
+      throw new Error("Chat provider returned an incomplete or refused reply.");
+    const { content } = await readChatCompletion(
+      Response.json(payload),
+      async () => {},
+    );
+    return { status, content };
+  }
+
   private async providerAtRevision(id: string, revision: unknown) {
     const current = await this.provider(id);
     if (revision !== (current.revision ?? INITIAL_REVISION)) {
@@ -399,24 +493,21 @@ export class LlmConversations {
     let result: Pick<LlmTurn, "assistant" | "error">;
     try {
       const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-      const request = (stream: boolean) =>
-        fetch(provider.url, {
+      const request = (stream: boolean) => {
+        const { url, headers, body } = completionRequest(
+          provider,
+          messages,
+          stream,
+          turn.reasoningEffort,
+        );
+        return fetch(url, {
           method: "POST",
           redirect: "error",
           signal,
-          headers: {
-            "Content-Type": "application/json",
-            ...(provider.apiKey && {
-              Authorization: "Bearer " + provider.apiKey,
-            }),
-          },
-          body: JSON.stringify({
-            model: provider.model,
-            reasoning_effort: turn.reasoningEffort,
-            messages,
-            stream,
-          }),
+          headers,
+          body: JSON.stringify(body),
         });
+      };
       let response = await request(true);
       if ([400, 406, 422, 501].includes(response.status)) {
         // A provider can support Chat Completions without implementing streaming.

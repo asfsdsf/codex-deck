@@ -2182,8 +2182,10 @@ export function createServer(options: ServerOptions) {
     );
   }
 
-  const llm = registerLlmRoutes(app, getCodexDir(), (listener) =>
-    hoverSettingsRoutes.subscribe(listener),
+  const llm = registerLlmRoutes(
+    app,
+    options.conversationHoverCodexHome ?? getCodexDir(),
+    (listener) => hoverSettingsRoutes.subscribe(listener),
   );
   const listOrigins = async () => [
     ...allCodexHomes.map(toCodexHomeDescriptor),
@@ -5310,6 +5312,26 @@ export function createServer(options: ServerOptions) {
       .catch((error) => console.error("Plugin reconciliation failed:", error));
   });
   const pluginServices = new DeckPluginServices();
+  const unregisterChatProviders = pluginServices.register(
+    "codex-deck",
+    "codex-deck.chat-providers",
+    (method, params, { signal }) => {
+      if (method === "list") return llm.providers();
+      if (
+        method === "complete" &&
+        params &&
+        typeof params === "object" &&
+        !Array.isArray(params)
+      ) {
+        return llm.completeForPlugin(
+          params as Record<string, unknown>,
+          proxy,
+          signal,
+        );
+      }
+      throw new Error("Invalid chat provider service request.");
+    },
+  );
   builtinRuntime = new DeckBuiltinRuntime(
     deckPluginStore,
     pluginServices,
@@ -6129,6 +6151,7 @@ export function createServer(options: ServerOptions) {
         builtinRuntime?.close(),
       ]);
       hoverSettingsRoutes.stop();
+      unregisterChatProviders();
       offHistoryChange(handleHistoryChange);
       offSessionChange(handleSessionChange);
       if (unsubscribeAppServerEventSource) {

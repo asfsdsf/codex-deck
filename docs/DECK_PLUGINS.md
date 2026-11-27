@@ -192,6 +192,14 @@ Workers call `services.list` to discover available declared providers and
 `service.call` requests with `{ service, method, params, caller }`, where `caller`
 is the host-assigned plugin ID. Use the SDK to avoid writing the IPC protocol.
 
+The host provides `codex-deck.chat-providers` in each home. Declare it in
+`services.uses` to list saved providers with method `list`. Method `complete`
+accepts `{ providerId, instructions, prompt, schema }` and makes a one-shot
+Chat Completions request using the selected provider's model, reasoning
+effort and credentials from the main home. Completed replies return
+`{ status, content }`. HTTP failures return only the status. The host
+rejects incomplete or refused replies and keeps API keys out of worker IPC.
+
 Built-in route services use the plugin ID as their service name, such as
 `codex-deck.diagnostics`, `codex-deck.recap`, `codex-deck.usage`,
 `codex-deck.daybreak`, `codex-deck.experimental`, `codex-deck.translation` and
@@ -218,8 +226,14 @@ entry or `slot: "pane.right"` for a tool in the right pane's Start tab.
 Both use the same sandbox and browser SDK as dialog views. For example:
 
 ```json
-{ "id": "notes", "title": "Notes", "description": "Workspace notes",
-  "slot": "pane.right", "entrypoint": "notes.html", "order": 70 }
+{
+  "id": "notes",
+  "title": "Notes",
+  "description": "Workspace notes",
+  "slot": "pane.right",
+  "entrypoint": "notes.html",
+  "order": 70
+}
 ```
 
 A command targeting that view opens its pane. Titles are shown in navigation
