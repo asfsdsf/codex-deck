@@ -26,13 +26,16 @@ export async function requestLocalJson<T>(
 ): Promise<T> {
   const response = await fetch(addCodexHomeToApiUrl(url, homeId), init);
   const text = await response.text();
-  let payload: (T | ApiErrorPayload | { text?: string }) | null = null;
+  let payload: (T | ApiErrorPayload) | null = null;
+  // Track parse failures explicitly. Valid JSON objects may legitimately
+  // carry a `text` field (for example plugin hook job results).
+  let nonJsonText: string | null = null;
 
   if (text.length > 0) {
     try {
       payload = JSON.parse(text) as T | ApiErrorPayload;
     } catch {
-      payload = { text };
+      nonJsonText = text;
     }
   }
 
@@ -43,34 +46,23 @@ export async function requestLocalJson<T>(
       !Array.isArray(payload) &&
       typeof (payload as ApiErrorPayload).error === "string"
         ? (payload as ApiErrorPayload).error
-        : payload &&
-            typeof payload === "object" &&
-            !Array.isArray(payload) &&
-            typeof (payload as { text?: string }).text === "string"
-          ? `Request failed with status ${response.status} (${response.headers.get("content-type") || "unknown"}): ${(payload as { text: string }).text.replace(/\s+/g, " ").trim().slice(0, 200)}`
+        : nonJsonText !== null
+          ? `Request failed with status ${response.status} (${response.headers.get("content-type") || "unknown"}): ${nonJsonText.replace(/\s+/g, " ").trim().slice(0, 200)}`
           : `Request failed with status ${response.status}`;
     throw new Error(errorMessage);
   }
 
-  if (payload === null) {
-    return {} as T;
-  }
-
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    !Array.isArray(payload) &&
-    "text" in payload &&
-    !("error" in payload)
-  ) {
+  if (nonJsonText !== null) {
     throw new Error(
-      `Endpoint returned a non-JSON response (${response.headers.get("content-type") || "unknown"}): ${String(
-        (payload as { text: string }).text,
-      )
+      `Endpoint returned a non-JSON response (${response.headers.get("content-type") || "unknown"}): ${nonJsonText
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 200)}`,
     );
+  }
+
+  if (payload === null) {
+    return {} as T;
   }
 
   return payload as T;

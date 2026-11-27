@@ -330,8 +330,9 @@ async function requestJson<T>(
 
   try {
     const text = await response.text();
-    let payload: (T | { error?: string; code?: string; text?: string }) | null =
-      null;
+    let payload: (T | { error?: string; code?: string }) | null = null;
+    // Parse failures are tracked explicitly; valid JSON may contain `text`.
+    let nonJsonText: string | null = null;
 
     if (text.length > 0) {
       try {
@@ -340,10 +341,9 @@ async function requestJson<T>(
           | {
               error?: string;
               code?: string;
-              text?: string;
             };
       } catch {
-        payload = { text };
+        nonJsonText = text;
       }
     }
 
@@ -361,15 +361,8 @@ async function requestJson<T>(
         !Array.isArray(payload) &&
         typeof (payload as { error?: string }).error === "string"
           ? (payload as { error: string }).error
-          : payload &&
-              typeof payload === "object" &&
-              !Array.isArray(payload) &&
-              typeof (payload as { text?: string }).text === "string"
-            ? formatNonJsonResponseError(
-                response,
-                (payload as { text: string }).text,
-                "Remote request",
-              )
+          : nonJsonText !== null
+            ? formatNonJsonResponseError(response, nonJsonText, "Remote request")
             : null;
       const requestError = new Error(
         error ?? `Request failed with status ${response.status}`,
@@ -384,24 +377,13 @@ async function requestJson<T>(
       throw requestError;
     }
 
+    if (nonJsonText !== null) {
+      throw new Error(
+        formatNonJsonResponseError(response, nonJsonText, "Remote endpoint"),
+      );
+    }
     if (payload === null) {
       return {} as T;
-    }
-    if (
-      typeof payload === "object" &&
-      payload !== null &&
-      !Array.isArray(payload) &&
-      "text" in payload &&
-      !("error" in payload) &&
-      !("code" in payload)
-    ) {
-      throw new Error(
-        formatNonJsonResponseError(
-          response,
-          String((payload as { text: string }).text),
-          "Remote endpoint",
-        ),
-      );
     }
 
     return payload as T;

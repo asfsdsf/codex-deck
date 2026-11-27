@@ -465,8 +465,9 @@ async function requestRemoteServerJson<T>(
     },
   );
   const text = await response.text();
-  let payload: (T | { error?: string; code?: string; text?: string }) | null =
-    null;
+  let payload: (T | { error?: string; code?: string }) | null = null;
+  // Parse failures are tracked explicitly; valid JSON may contain `text`.
+  let nonJsonText: string | null = null;
 
   if (text.length > 0) {
     try {
@@ -475,10 +476,9 @@ async function requestRemoteServerJson<T>(
         | {
             error?: string;
             code?: string;
-            text?: string;
           };
     } catch {
-      payload = { text };
+      nonJsonText = text;
     }
   }
 
@@ -496,13 +496,10 @@ async function requestRemoteServerJson<T>(
       !Array.isArray(payload) &&
       typeof (payload as { error?: string }).error === "string"
         ? (payload as { error: string }).error
-        : payload &&
-            typeof payload === "object" &&
-            !Array.isArray(payload) &&
-            typeof (payload as { text?: string }).text === "string"
+        : nonJsonText !== null
           ? response.headers.get("content-type")?.includes("text/html")
             ? `Remote server returned an HTML error page (${response.status}). The remote tunnel or proxy may be unstable.`
-            : `Remote server returned a non-JSON response (${response.status}, ${response.headers.get("content-type") || "unknown"}): ${(payload as { text: string }).text.replace(/\s+/g, " ").trim().slice(0, 200)}`
+            : `Remote server returned a non-JSON response (${response.status}, ${response.headers.get("content-type") || "unknown"}): ${nonJsonText.replace(/\s+/g, " ").trim().slice(0, 200)}`
           : null;
     const requestError = new Error(
       error ?? `Request failed with status ${response.status}`,
@@ -517,26 +514,17 @@ async function requestRemoteServerJson<T>(
     throw requestError;
   }
 
-  if (payload === null) {
-    return {} as T;
-  }
-
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    !Array.isArray(payload) &&
-    "text" in payload &&
-    !("error" in payload) &&
-    !("code" in payload)
-  ) {
+  if (nonJsonText !== null) {
     throw new Error(
-      `Remote server returned a non-JSON response (${response.headers.get("content-type") || "unknown"}): ${String(
-        (payload as { text: string }).text,
-      )
+      `Remote server returned a non-JSON response (${response.headers.get("content-type") || "unknown"}): ${nonJsonText
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 200)}`,
     );
+  }
+
+  if (payload === null) {
+    return {} as T;
   }
 
   return payload as T;
