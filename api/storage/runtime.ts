@@ -249,6 +249,12 @@ export interface SendCodexMessageRequest {
   /** JSON Schema object for this turn's final answer (`turn/start`). */
   outputSchema?: Record<string, unknown> | null;
   /**
+   * Finished beforeFirstMessage hook job whose developer context should be
+   * attached to this thread. The context itself never passes through the
+   * browser; the server claims it from the job.
+   */
+  beforeFirstMessageHookJobId?: string;
+  /**
    * Fetch IDE context (active file, selection, open tabs) from the local IDE
    * IPC router and prepend it like Codex CLI `/ide` does.
    */
@@ -307,6 +313,13 @@ export interface SendCodexMessageResponse {
   /** True when the input joined the running turn instead of starting one. */
   steered?: boolean;
   ideContext?: SendCodexMessageIdeContextResult;
+  /**
+   * Thread that received the message when it differs from the requested one:
+   * a first-message hook set a system prompt, so the empty session was
+   * replaced by a new thread started with it.
+   */
+  threadId?: string;
+  replacedThreadId?: string;
 }
 
 export type CodexTurnStatus =

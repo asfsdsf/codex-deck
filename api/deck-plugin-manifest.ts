@@ -588,6 +588,10 @@ export interface DeckPluginBeforeFirstMessagePluginResult {
   pluginName: string;
   changed: boolean;
   skipped?: boolean;
+  /** Characters of developer context this plugin attached. */
+  contextChars?: number;
+  /** This plugin replaced the session's system prompt. */
+  systemPromptChanged?: boolean;
   summary?: string;
   appliedItems?: DeckPluginAppliedPromptSummary[];
   error?: string;
@@ -606,5 +610,12 @@ export interface DeckPluginBeforeFirstMessageJobStatus {
   text?: string;
   originalText?: string;
   changed?: boolean;
+  /** The job produced developer context; send with its job ID to attach it. */
+  hasContext?: boolean;
+  /**
+   * The job produced a replacement system prompt. Sending with the job ID
+   * starts the session on a new thread that uses it.
+   */
+  hasSystemPrompt?: boolean;
   error?: string;
 }

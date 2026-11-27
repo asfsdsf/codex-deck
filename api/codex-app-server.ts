@@ -55,6 +55,10 @@ import {
 } from "./codex-worktrees";
 import { getCodexDir } from "./storage/runtime";
 import {
+  normalizeThreadContext,
+  ThreadContextStore,
+} from "./codex-thread-context";
+import {
   GuardianReviewStore,
   type CodexGuardianSnapshot,
 } from "./codex-guardian";
@@ -335,6 +339,11 @@ export interface CreateCodexThreadInput {
   model?: string | null;
   effort?: CodexReasoningEffort | null;
   readOnly?: boolean;
+  /**
+   * Replace the model's system prompt for this thread. Codex stores it with
+   * the thread, so it also applies after resume, fork and compaction.
+   */
+  baseInstructions?: string;
 }
 
 export interface SendCodexMessageInput {
@@ -354,6 +363,12 @@ export interface SendCodexMessageInput {
   expectedTurnId?: string | null;
   /** JSON Schema constraining this turn's final answer (turn/start only). */
   outputSchema?: Record<string, unknown> | null;
+  /**
+   * Developer-level context blocks keyed by source (for example a plugin ID).
+   * They are stored for the thread, attached to the next turn/start as Codex
+   * `additionalContext`, and attached again after compaction or rollback.
+   */
+  additionalContext?: Record<string, string>;
   /** Recheck host preconditions immediately before submitting to Codex. */
   beforeSubmit?: () => void;
   readOnly?: boolean;
@@ -1244,6 +1259,11 @@ export class CodexAppServerClient {
     (method, params) => this.request(method, params),
     (id) => this.notifyNativeState("recap", id),
   );
+  /** Per-thread developer context re-attached after compaction. */
+  private readonly threadContexts = new ThreadContextStore(() =>
+    join(this.env?.CODEX_HOME || getCodexDir(), "codex-deck", "thread-context"),
+  );
+
   public readonly organization = new CodexOrganizationService({
     rpc: (method, params) => this.request(method, params),
     notify: (scope, id) => this.notifyNativeState(scope, id),
@@ -2115,6 +2135,9 @@ export class CodexAppServerClient {
       };
     }
     if (readOnly) this.applyReadOnlyThreadParams(params, activeConfig);
+    if (typeof input.baseInstructions === "string" && input.baseInstructions) {
+      params.baseInstructions = input.baseInstructions;
+    }
 
     const result = readOnly
       ? await this.request("thread/start", params)
@@ -2286,9 +2309,23 @@ export class CodexAppServerClient {
         : {}),
     };
 
+    // A truncated fork or a side chat may not contain the turn that carried
+    // this thread's context, so the fork attaches it again on its next turn.
+    const inheritContext = async (summary: CodexThreadSummary) => {
+      await this.threadContexts
+        .copy(normalizedThreadId, summary.threadId, {
+          historyMayLackContext: Boolean(
+            options.lastTurnId ||
+            options.beforeTurnId ||
+            options.attachToSource,
+          ),
+        })
+        .catch(() => {});
+      return summary;
+    };
     try {
       const result = await this.request("thread/fork", params);
-      return extractThreadSummaryFromResult(result);
+      return inheritContext(extractThreadSummaryFromResult(result));
     } catch (error) {
       if (!shouldRetryAfterResume(error)) {
         throw error;
@@ -2296,8 +2333,44 @@ export class CodexAppServerClient {
 
       await this.resumeThread(normalizedThreadId);
       const result = await this.request("thread/fork", params);
-      return extractThreadSummaryFromResult(result);
+      return inheritContext(extractThreadSummaryFromResult(result));
     }
+  }
+
+  /**
+   * Codex fixes a thread's system prompt when the thread starts, and a thread
+   * with no turns cannot be resumed with new settings (it has no rollout).
+   * Start a replacement thread with `baseInstructions` for a session that has
+   * not sent anything yet, and return its ID.
+   */
+  public async replaceEmptyThread(
+    threadId: string,
+    input: Omit<CreateCodexThreadInput, "readOnly"> & {
+      baseInstructions: string;
+    },
+  ): Promise<string> {
+    if (!input.baseInstructions.trim()) {
+      throw new CodexInputError("baseInstructions is required.");
+    }
+    let turns: unknown[] = [];
+    try {
+      turns = extractTurnsFromThreadReadResult(
+        await this.readThreadWithTurns(threadId.trim()),
+      );
+    } catch (error) {
+      if (!isUnmaterializedThreadError(error)) throw error;
+    }
+    if (turns.length > 0) {
+      throw new CodexInputError(
+        "A session's system prompt can only be set before its first message.",
+      );
+    }
+    return this.createThread({
+      cwd: input.cwd,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.effort ? { effort: input.effort } : {}),
+      baseInstructions: input.baseInstructions,
+    });
   }
 
   public async startSideChat(threadId: string): Promise<CodexThreadSummary> {
@@ -2844,6 +2917,13 @@ export class CodexAppServerClient {
       throw new Error("input is required");
     }
 
+    // Stored before submission: if this send fails, the next turn/start on the
+    // thread still carries the context.
+    await this.threadContexts.add(
+      threadId,
+      normalizeThreadContext(input.additionalContext),
+    );
+
     const params: Record<string, unknown> = {
       threadId,
       input: normalizedInput.map((item) =>
@@ -2966,13 +3046,14 @@ export class CodexAppServerClient {
     try {
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
+      const withContext = await this.attachThreadContext(threadId, params);
       input.beforeSubmit?.();
       const result = await this.startTurn(threadId, params);
       this.organization.environments.confirmSelection(threadId, params);
       this.newlyStartedThreadIds.delete(threadId);
-      return {
-        turnId: extractTurnIdFromTurnStartResult(result),
-      };
+      const turnId = extractTurnIdFromTurnStartResult(result);
+      if (withContext) await this.confirmThreadContext(threadId, turnId);
+      return { turnId };
     } catch (error) {
       if (!shouldRetryAfterResume(error)) {
         throw error;
@@ -2986,12 +3067,74 @@ export class CodexAppServerClient {
       this.newlyStartedThreadIds.delete(threadId);
       this.clearThreadStateCache(threadId);
       await this.updateThreadSettingsForTurn(threadId, params);
+      const withContext = await this.attachThreadContext(threadId, params);
       input.beforeSubmit?.();
       const result = await this.startTurn(threadId, params);
       this.organization.environments.confirmSelection(threadId, params);
-      return {
-        turnId: extractTurnIdFromTurnStartResult(result),
-      };
+      const turnId = extractTurnIdFromTurnStartResult(result);
+      if (withContext) await this.confirmThreadContext(threadId, turnId);
+      return { turnId };
+    }
+  }
+
+  /** Attach stored context that the thread's history may be missing. */
+  private async attachThreadContext(
+    threadId: string,
+    params: Record<string, unknown>,
+  ): Promise<boolean> {
+    const context = await this.threadContexts.pendingContext(threadId);
+    if (!context) {
+      delete params.additionalContext;
+      return false;
+    }
+    params.additionalContext = context;
+    return true;
+  }
+
+  private async confirmThreadContext(
+    threadId: string,
+    turnId: string | null,
+  ): Promise<void> {
+    // The turn was accepted; a bookkeeping failure must not fail the send.
+    await this.threadContexts
+      .markInjected(threadId, turnId)
+      .catch((error) =>
+        console.warn("Could not record injected thread context:", error),
+      );
+  }
+
+  /**
+   * Compaction rebuilds history without turn-level context, and a rollback
+   * can remove the turn that carried it. Either way, attach it again.
+   */
+  private trackThreadContext(method: string, params: unknown): void {
+    const record = asRecord(params);
+    const threadId = asTrimmedString(record?.threadId);
+    if (!threadId) return;
+    if (
+      method === "thread/compacted" ||
+      (method === "item/completed" &&
+        asRecord(record?.item)?.type === "contextCompaction")
+    ) {
+      void this.threadContexts.markMissing(threadId).catch(() => {});
+    } else if (method === "thread/reverted") {
+      void this.recheckThreadContextAfterRevert(threadId).catch(() => {});
+    }
+  }
+
+  private async recheckThreadContextAfterRevert(
+    threadId: string,
+  ): Promise<void> {
+    const record = await this.threadContexts.read(threadId);
+    if (!record || record.pending || !Object.keys(record.entries).length)
+      return;
+    const turnIds = new Set(
+      extractTurnsFromThreadReadResult(
+        await this.readThreadWithTurns(threadId),
+      ).map((turn) => asTrimmedString(asRecord(turn)?.id)),
+    );
+    if (!record.injectedTurnId || !turnIds.has(record.injectedTurnId)) {
+      await this.threadContexts.markMissing(threadId);
     }
   }
 
@@ -4645,6 +4788,7 @@ export class CodexAppServerClient {
   }
 
   private handleServerNotification(method: string, params: unknown): void {
+    this.trackThreadContext(method, params);
     if (this.recaps.handleNotification(method, params)) return;
     if (this.realtimeVoice.handleNotification(method, params)) return;
     this.permissions.handleNotification(method, params);
@@ -7147,6 +7291,16 @@ function parseSteerTurnMismatch(message: string): string | null {
   return match?.[1] ?? null;
 }
 
+/** A started thread that has no turns yet, so Codex has not written it. */
+function isUnmaterializedThreadError(error: unknown): boolean {
+  if (!(error instanceof CodexAppServerRpcError)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("not materialized yet") ||
+    message.includes("no rollout found for thread id")
+  );
+}
+
 function shouldRetryAfterResume(error: unknown): boolean {
   if (!(error instanceof CodexAppServerRpcError)) {
     return false;
@@ -7563,6 +7717,12 @@ export interface CodexAppServerClientFacade {
     turnId: string | null;
   }>;
   createThread: (input: CreateCodexThreadInput) => Promise<string>;
+  replaceEmptyThread?: (
+    threadId: string,
+    input: Omit<CreateCodexThreadInput, "readOnly"> & {
+      baseInstructions: string;
+    },
+  ) => Promise<string>;
   startSideChat?: (threadId: string) => Promise<CodexThreadSummary>;
   listSideChats?: (threadId: string) => Promise<CodexThreadSummary[]>;
   setThreadName?: (threadId: string, name: string) => Promise<void>;
@@ -7748,6 +7908,8 @@ export function getCodexAppServerClient(): CodexAppServerClientFacade {
       client!.implementPlanInFreshThread(sourceId, markdown),
     createThread: (input: CreateCodexThreadInput) =>
       client!.createThread(input),
+    replaceEmptyThread: (threadId, input) =>
+      client!.replaceEmptyThread(threadId, input),
     startSideChat: (threadId) => client!.startSideChat(threadId),
     listSideChats: (threadId) => client!.listSideChats(threadId),
     setThreadName: (threadId: string, name: string) =>

@@ -115,6 +115,11 @@ export class DeckPluginWorkers {
       originalText: string;
       text: string;
       changed: boolean;
+      /** Developer context by plugin ID, held server-side until claimed. */
+      contexts: Record<string, string>;
+      /** Replacement system prompt; the last hook that sets it wins. */
+      baseInstructions: string | null;
+      contextClaimed: boolean;
       error?: string;
     }
   >();
@@ -1074,6 +1079,9 @@ export class DeckPluginWorkers {
       originalText,
       text: originalText,
       changed: false,
+      contexts: {} as Record<string, string>,
+      baseInstructions: null as string | null,
+      contextClaimed: false,
       error: undefined as string | undefined,
     };
     this.hookJobs.set(jobId, job);
@@ -1114,6 +1122,10 @@ export class DeckPluginWorkers {
               mode,
               imageCount,
               audioCount,
+              // Hooks may return `context` (developer-level instructions)
+              // and `baseInstructions` (a replacement system prompt).
+              contextSupported: true,
+              systemPromptSupported: true,
             },
             job.abort.signal,
           );
@@ -1124,10 +1136,16 @@ export class DeckPluginWorkers {
             currentText,
           );
           currentText = parsed.text;
+          if (parsed.context) job.contexts[plugin.id] = parsed.context;
+          else delete job.contexts[plugin.id];
+          if (parsed.baseInstructions)
+            job.baseInstructions = parsed.baseInstructions;
           job.completedPlugins.push({
             pluginId: plugin.id,
             pluginName: plugin.name,
             changed: parsed.changed,
+            ...(parsed.context ? { contextChars: parsed.context.length } : {}),
+            ...(parsed.baseInstructions ? { systemPromptChanged: true } : {}),
             ...(parsed.skipped ? { skipped: true } : {}),
             ...(parsed.summary ? { summary: parsed.summary } : {}),
             ...(parsed.appliedItems?.length
@@ -1158,6 +1176,8 @@ export class DeckPluginWorkers {
             error: message,
           });
         }
+        job.contexts = {};
+        job.baseInstructions = null;
         job.error = job.activePlugin
           ? `${job.activePlugin.name}: ${message}`
           : message;
@@ -1183,6 +1203,37 @@ export class DeckPluginWorkers {
     return this.formatBeforeFirstMessageJob(job);
   }
 
+  /**
+   * Hand a finished job's developer context and system prompt to the send
+   * route, once. The browser only names the job, so it cannot supply either.
+   */
+  claimBeforeFirstMessageResult(
+    jobId: string,
+    threadId: string,
+  ): {
+    context: Record<string, string> | null;
+    baseInstructions: string | null;
+  } | null {
+    const job = this.hookJobs.get(jobId);
+    if (
+      !job ||
+      job.expiresAt < Date.now() ||
+      !job.done ||
+      job.canceled ||
+      job.error ||
+      job.threadId !== threadId ||
+      job.contextClaimed
+    ) {
+      return null;
+    }
+    job.contextClaimed = true;
+    const context = Object.keys(job.contexts).length
+      ? { ...job.contexts }
+      : null;
+    if (!context && job.baseInstructions === null) return null;
+    return { context, baseInstructions: job.baseInstructions };
+  }
+
   async cancelBeforeFirstMessageHook(
     jobId: string,
   ): Promise<DeckPluginBeforeFirstMessageJobStatus> {
@@ -1205,6 +1256,8 @@ export class DeckPluginWorkers {
       job.done = true;
       job.phase = "canceled";
       job.activePlugin = null;
+      job.contexts = {};
+      job.baseInstructions = null;
       if (activeId) {
         this.sendTo(activeId, {
           type: "hook_canceled",
@@ -1230,6 +1283,8 @@ export class DeckPluginWorkers {
     originalText: string;
     text: string;
     changed: boolean;
+    contexts: Record<string, string>;
+    baseInstructions: string | null;
     error?: string;
   }): Promise<DeckPluginBeforeFirstMessageJobStatus> {
     let phase = job.phase;
@@ -1259,6 +1314,8 @@ export class DeckPluginWorkers {
             text: job.text,
             originalText: job.originalText,
             changed: job.changed,
+            hasContext: Object.keys(job.contexts).length > 0,
+            hasSystemPrompt: job.baseInstructions !== null,
             ...(job.error ? { error: job.error } : {}),
           }
         : {}),
@@ -1272,6 +1329,8 @@ export class DeckPluginWorkers {
     text: string;
     changed: boolean;
     skipped: boolean;
+    context?: string;
+    baseInstructions?: string;
     summary?: string;
     appliedItems?: DeckPluginAppliedPromptSummary[];
   } {
@@ -1279,6 +1338,34 @@ export class DeckPluginWorkers {
       return { text: fallbackText, changed: false, skipped: true };
     }
     const record = object(value);
+    let context: string | undefined;
+    if (record.context !== undefined && record.context !== null) {
+      if (
+        typeof record.context !== "string" ||
+        Buffer.byteLength(record.context, "utf8") > 64 * 1024
+      ) {
+        throw new Error(
+          "Plugin returned invalid developer context (a string of at most 64 KiB).",
+        );
+      }
+      context = record.context.trim() || undefined;
+    }
+    let baseInstructions: string | undefined;
+    if (
+      record.baseInstructions !== undefined &&
+      record.baseInstructions !== null
+    ) {
+      if (
+        typeof record.baseInstructions !== "string" ||
+        !record.baseInstructions.trim() ||
+        Buffer.byteLength(record.baseInstructions, "utf8") > 512 * 1024
+      ) {
+        throw new Error(
+          "Plugin returned an invalid system prompt (a nonempty string of at most 512 KiB).",
+        );
+      }
+      baseInstructions = record.baseInstructions;
+    }
     let nextText = fallbackText;
     if (record.text !== undefined) {
       if (
@@ -1324,6 +1411,8 @@ export class DeckPluginWorkers {
           ? record.changed
           : nextText !== fallbackText,
       skipped: record.skipped === true,
+      ...(context ? { context } : {}),
+      ...(baseInstructions ? { baseInstructions } : {}),
       ...(summary ? { summary } : {}),
       ...(appliedItems?.length ? { appliedItems } : {}),
     };

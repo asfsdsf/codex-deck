@@ -734,3 +734,135 @@ test("beforeFirstMessage hooks validate manifest, transform messages sequentiall
   assert.equal(canceled.done, true);
   assert.equal(canceled.canceled, true);
 });
+
+test("beforeFirstMessage hooks return developer context that only the send route can claim, once", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "deck-plugin-hook-context-"));
+  let manager: DeckPluginWorkers;
+  const store = new DeckPluginStore(root, () => {
+    void manager?.reconcile();
+  }, []);
+  const hookPackage = (id: string, order: number, result: string) =>
+    Object.entries({
+      "plugin.json": JSON.stringify({
+        schemaVersion: 1,
+        id,
+        name: id,
+        version: "1.0.0",
+        description: "Context hook fixture",
+        capabilities: ["backend.execute", "sessions.transform"],
+        entrypoints: { backend: "worker.mjs" },
+        contributions: { beforeFirstMessage: { method: "hook.run", order } },
+      }),
+      "worker.mjs": `
+        process.on('message', (msg) => {
+          if (msg.type === 'initialize') process.send({ type: 'ready' });
+          if (msg.type === 'request' && msg.method === 'host.shutdown') { process.send({ type: 'response', requestId: msg.requestId, result: null }); return; }
+          if (msg.type === 'request' && msg.method === 'hook.run') {
+            const text = msg.params.text;
+            process.send({ type: 'response', requestId: msg.requestId, result: ${result} });
+          }
+        });
+        process.on('disconnect', () => process.exit(0));
+      `,
+    }).map(([path, content]) => ({
+      path,
+      contentBase64: Buffer.from(content).toString("base64"),
+    }));
+  await store.installPackage(
+    hookPackage(
+      "hook.rules",
+      1,
+      `text === 'BAD' ? { context: 42 } : text === 'SYS' ? { text, changed: false, baseInstructions: 'You are Codex. Explain each decision.' } : text === 'EMPTYSYS' ? { baseInstructions: '   ' } : { text, changed: false, context: '  Follow rule A.  ', summary: 'Rule A' }`,
+    ),
+    undefined,
+  );
+  await store.installPackage(
+    hookPackage("hook.plain", 2, `{ text, changed: false }`),
+    undefined,
+  );
+  manager = new DeckPluginWorkers(store, {
+    readSession: async () => session(),
+    sendMessage: async () => ({ turnId: "t" }),
+    changed: () => {},
+  });
+  await manager.start();
+  t.after(async () => {
+    await manager.stop();
+    await rm(root, { recursive: true, force: true });
+  });
+  const app = new Hono();
+  registerDeckPluginRoutes(app, store, manager);
+  const run = async (threadId: string, text: string) => {
+    let state = await (
+      await app.request("/api/deck/plugins/hooks/before-first-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId, text }),
+      })
+    ).json();
+    for (let i = 0; i < 200 && !state.done; i++) {
+      await new Promise((r) => setTimeout(r, 15));
+      state = await (
+        await app.request(
+          `/api/deck/plugins/hooks/before-first-message/${state.jobId}`,
+        )
+      ).json();
+    }
+    return state;
+  };
+
+  const state = await run("thread-ctx", "Build feature X");
+  assert.equal(state.done, true);
+  assert.equal(state.changed, false, "the user's message is untouched");
+  assert.equal(state.text, "Build feature X");
+  assert.equal(state.hasContext, true);
+  assert.equal(state.completedPlugins[0].contextChars, "Follow rule A.".length);
+  assert.equal(state.completedPlugins[1].contextChars, undefined);
+  assert.equal(
+    JSON.stringify(state).includes("Follow rule A."),
+    false,
+    "context never reaches the browser",
+  );
+
+  assert.equal(
+    manager.claimBeforeFirstMessageResult(state.jobId, "other-thread"),
+    null,
+  );
+  assert.deepEqual(
+    manager.claimBeforeFirstMessageResult(state.jobId, "thread-ctx"),
+    { context: { "hook.rules": "Follow rule A." }, baseInstructions: null },
+  );
+  assert.equal(
+    manager.claimBeforeFirstMessageResult(state.jobId, "thread-ctx"),
+    null,
+    "a job's context is claimed at most once",
+  );
+  assert.equal(manager.claimBeforeFirstMessageResult("missing", "x"), null);
+
+  const sys = await run("thread-sys", "SYS");
+  assert.equal(sys.hasSystemPrompt, true);
+  assert.equal(sys.hasContext, false);
+  assert.equal(sys.completedPlugins[0].systemPromptChanged, true);
+  assert.equal(
+    JSON.stringify(sys).includes("Explain each decision"),
+    false,
+    "the system prompt never reaches the browser",
+  );
+  assert.deepEqual(
+    manager.claimBeforeFirstMessageResult(sys.jobId, "thread-sys"),
+    {
+      context: null,
+      baseInstructions: "You are Codex. Explain each decision.",
+    },
+  );
+  const emptySys = await run("thread-empty-sys", "EMPTYSYS");
+  assert.match(emptySys.error, /invalid system prompt/);
+
+  const bad = await run("thread-bad", "BAD");
+  assert.match(bad.error, /invalid developer context/);
+  assert.equal(bad.hasContext, false);
+  assert.equal(
+    manager.claimBeforeFirstMessageResult(bad.jobId, "thread-bad"),
+    null,
+  );
+});

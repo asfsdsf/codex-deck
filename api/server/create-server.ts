@@ -5554,6 +5554,53 @@ export function createServer(options: ServerOptions) {
         threadCwd = threadSummary.cwd?.trim() || null;
       }
 
+      if (
+        body.beforeFirstMessageHookJobId !== undefined &&
+        (typeof body.beforeFirstMessageHookJobId !== "string" ||
+          body.beforeFirstMessageHookJobId.length > 128)
+      ) {
+        return c.json({ error: "beforeFirstMessageHookJobId is invalid" }, 400);
+      }
+      const hookResult = body.beforeFirstMessageHookJobId
+        ? (deckPluginWorkers?.claimBeforeFirstMessageResult(
+            body.beforeFirstMessageHookJobId,
+            threadId,
+          ) ?? null)
+        : null;
+      const hookContext = hookResult?.context ?? null;
+
+      // A system prompt is fixed when a thread starts, so a hook that sets one
+      // moves the still-empty session to a new thread started with it.
+      let targetThreadId = threadId;
+      if (hookResult?.baseInstructions) {
+        if (!client.replaceEmptyThread) {
+          return c.json(
+            { error: "This server cannot set a session's system prompt." },
+            501,
+          );
+        }
+        const replacementCwd = normalizedCwd || threadCwd;
+        if (!replacementCwd) {
+          return c.json(
+            { error: "The session's working directory is unknown." },
+            400,
+          );
+        }
+        targetThreadId = await client.replaceEmptyThread(threadId, {
+          cwd: replacementCwd,
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+          baseInstructions: hookResult.baseInstructions,
+        });
+        // Plugins keyed records and status to the empty thread's ID.
+        deckPluginWorkers?.event({
+          type: "thread_replaced",
+          threadId: targetThreadId,
+          replacedThreadId: threadId,
+          timestamp: Date.now(),
+        });
+      }
+
       // Codex CLI `/ide`: fetch fresh IDE context for this turn.
       const withIdeContext =
         body.ideContext === true
@@ -5561,7 +5608,7 @@ export function createServer(options: ServerOptions) {
           : null;
 
       const result = await client.sendMessage({
-        threadId,
+        threadId: targetThreadId,
         input: withIdeContext?.input ?? input,
         ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
         ...(model !== undefined ? { model } : {}),
@@ -5575,10 +5622,11 @@ export function createServer(options: ServerOptions) {
           ? { expectedTurnId: body.expectedTurnId.trim() }
           : {}),
         ...(outputSchema.value ? { outputSchema: outputSchema.value } : {}),
+        ...(hookContext ? { additionalContext: hookContext } : {}),
       });
 
       for (const listener of conversationWakeListeners) {
-        listener(threadId);
+        listener(targetThreadId);
       }
 
       const response: SendCodexMessageResponse = {
@@ -5586,6 +5634,9 @@ export function createServer(options: ServerOptions) {
         turnId: result.turnId,
         ...(result.steered ? { steered: true } : {}),
         ...(withIdeContext ? { ideContext: withIdeContext.ideContext } : {}),
+        ...(targetThreadId !== threadId
+          ? { threadId: targetThreadId, replacedThreadId: threadId }
+          : {}),
       };
       return c.json(response);
     } catch (error) {

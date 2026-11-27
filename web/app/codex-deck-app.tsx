@@ -352,12 +352,14 @@ import {
   getPendingUserMessage,
   nextQueuedPendingUserMessage,
   markPendingUserMessageSteered,
+  movePendingUserMessages,
   removePendingUserMessage,
   updatePendingUserMessageStatus,
   updatePendingUserMessageText,
   type PendingUserMessage,
   type PendingUserMessagesBySession,
 } from "../pending-user-messages";
+import { replaceSessionId } from "../session-replacement";
 import { mergeDisplayConversationMessages } from "../conversation-message-merge";
 import { runApprovedAiTerminalStepInTerminal } from "../ai-terminal-runtime";
 import {
@@ -7821,6 +7823,33 @@ export default function CodexDeckApp() {
     [firstMessageHookWaitBySession, requestFirstMessageHookControl],
   );
 
+  /**
+   * A first-message hook that sets a system prompt makes the server start the
+   * session on a new thread. Move the empty session's local state there.
+   */
+  const adoptReplacementSession = useCallback(
+    (fromSessionId: string, toSessionId: string) => {
+      setSessions((current) =>
+        replaceSessionId(current, fromSessionId, toSessionId),
+      );
+      setPendingUserMessagesBySession((current) =>
+        movePendingUserMessages(current, fromSessionId, toSessionId),
+      );
+      freshSessionIdsRef.current.delete(fromSessionId);
+      waitSuppressSessionsRef.current.delete(fromSessionId);
+      firstMessageHookDoneSessionsRef.current.add(toSessionId);
+      const confirmed = confirmedComposerUserMessageCountBySessionRef.current;
+      if (fromSessionId in confirmed) {
+        confirmed[toSessionId] = confirmed[fromSessionId];
+        delete confirmed[fromSessionId];
+      }
+      setSelectedSession((current) =>
+        current === fromSessionId ? toSessionId : current,
+      );
+    },
+    [],
+  );
+
   const sendMessageText = useCallback(
     async (
       payload: MessageComposerSubmitPayload,
@@ -8002,6 +8031,8 @@ export default function CodexDeckApp() {
                 (session) => session.id === sessionId,
               )?.project ?? null));
         let finalInput = input;
+        // Set when hooks produced developer context; the server claims it.
+        let hookContextJobId: string | null = null;
         const enabledHookPlugins = (pluginContributions.snapshot?.plugins ?? [])
           .filter(
             (plugin) =>
@@ -8189,6 +8220,12 @@ export default function CodexDeckApp() {
                 return false;
               }
               if (
+                (hookStatus.hasContext || hookStatus.hasSystemPrompt) &&
+                hookStatus.jobId
+              ) {
+                hookContextJobId = hookStatus.jobId;
+              }
+              if (
                 hookStatus.changed &&
                 typeof hookStatus.text === "string" &&
                 hookStatus.text.trim()
@@ -8237,29 +8274,42 @@ export default function CodexDeckApp() {
               }
             : {}),
           ...(ideContext.enabledRef.current ? { ideContext: true } : {}),
+          ...(hookContextJobId
+            ? { beforeFirstMessageHookJobId: hookContextJobId }
+            : {}),
         });
         ideContext.handleSendResult(response.ideContext);
 
-        markSessionUserMessagedAt(sessionId, Date.now());
-        freshSessionIdsRef.current.delete(sessionId);
-        firstMessageHookDoneSessionsRef.current.add(sessionId);
-        setSessionMode(sessionId, modeToUse);
+        // The message may have gone to a replacement thread (see
+        // adoptReplacementSession); continue with the session that has it.
+        const deliveredSessionId = response.threadId?.trim() || sessionId;
+        if (deliveredSessionId !== sessionId) {
+          adoptReplacementSession(sessionId, deliveredSessionId);
+        }
+        markSessionUserMessagedAt(deliveredSessionId, Date.now());
+        freshSessionIdsRef.current.delete(deliveredSessionId);
+        firstMessageHookDoneSessionsRef.current.add(deliveredSessionId);
+        setSessionMode(deliveredSessionId, modeToUse);
         pendingSendOptionsByIdRef.current.delete(pendingId);
         // A steered message joins a turn that already has a confirmed user
         // message, so keep it unattached to stay visible until it is saved.
         markPendingUserMessageAwaitingConfirmation(
-          sessionId,
+          deliveredSessionId,
           pendingId,
           response.steered ? null : response.turnId,
         );
         if (response.steered) {
           setPendingUserMessagesBySession((current) =>
-            markPendingUserMessageSteered(current, sessionId, pendingId),
+            markPendingUserMessageSteered(
+              current,
+              deliveredSessionId,
+              pendingId,
+            ),
           );
         }
-        trackWebManagedSessionTurn(sessionId, response.turnId);
+        trackWebManagedSessionTurn(deliveredSessionId, response.turnId);
         setPendingTurn({
-          sessionId,
+          sessionId: deliveredSessionId,
           turnId: response.turnId,
         });
         return true;
@@ -8311,6 +8361,7 @@ export default function CodexDeckApp() {
     [
       activeComposerSessionData,
       activeComposerSessionId,
+      adoptReplacementSession,
       clearConnectionFailureNoticeForSession,
       collaborationModes,
       configDefaults,

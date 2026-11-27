@@ -215,3 +215,20 @@ export function consumeConfirmedPendingUserMessages(
     [sessionId]: next,
   };
 }
+
+/**
+ * Move a session's pending messages to another session ID, for example when
+ * an empty session is replaced by a new thread before its first message.
+ */
+export function movePendingUserMessages(
+  previous: PendingUserMessagesBySession,
+  fromSessionId: string,
+  toSessionId: string,
+): PendingUserMessagesBySession {
+  const moving = previous[fromSessionId];
+  if (!moving || fromSessionId === toSessionId) return previous;
+  const next = { ...previous };
+  delete next[fromSessionId];
+  next[toSessionId] = [...(previous[toSessionId] ?? []), ...moving];
+  return next;
+}

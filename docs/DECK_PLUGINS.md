@@ -162,7 +162,19 @@ Backend plugins with `sessions.transform` can declare `contributions.beforeFirst
 }
 ```
 
-When a user sends the first message of a new Codex session, the browser starts `POST /api/deck/plugins/hooks/before-first-message` and polls `GET /api/deck/plugins/hooks/before-first-message/:jobId` (with `POST .../cancel` to skip or cancel). Enabled hook plugins run sequentially by `order`, then `id`. Each worker receives `{ hookJobId, threadId, cwd, text, originalText, model, effort, mode, imageCount, audioCount }` and returns `{ text, changed?, skipped?, summary?, appliedItems? }`. While running, the worker may publish progress via `status.set` and listen for `{ type: "hook_canceled", hookJobId, threadId }` events to abort in-flight work.
+When a user sends the first message of a new Codex session, the browser starts `POST /api/deck/plugins/hooks/before-first-message` and polls `GET /api/deck/plugins/hooks/before-first-message/:jobId` (with `POST .../cancel` to skip or cancel). Enabled hook plugins run sequentially by `order`, then `id`. Each worker receives `{ hookJobId, threadId, cwd, text, originalText, model, effort, mode, imageCount, audioCount, contextSupported, systemPromptSupported }` and returns `{ text?, context?, baseInstructions?, changed?, skipped?, summary?, appliedItems? }`. While running, the worker may publish progress via `status.set` and listen for `{ type: "hook_canceled", hookJobId, threadId }` events to abort in-flight work.
+
+A hook can change what the model sees in three ways:
+
+- `text` replaces the user's message. The new text is what the conversation shows.
+- `context` (a string of at most 64 KiB) adds **developer-level context**. Hosts that accept it send `contextSupported: true`; a plugin can fall back to `text` when it is absent. Context leaves the user's message unchanged. Codex Deck passes it to `turn/start` as Codex `additionalContext` with kind `application`, keyed by plugin ID. Codex records it as a developer message, `<plugin-id>…</plugin-id>`, before the user's message.
+- `baseInstructions` (a nonempty string of at most 512 KiB) **replaces the session's system prompt**. Hosts that accept it send `systemPromptSupported: true`. If several hooks return one, the last wins.
+
+Codex fixes a thread's system prompt when the thread starts, and a new session's thread already exists when its first message is sent. When a job sets `baseInstructions`, the send route therefore starts a replacement thread with it (same working directory, model and effort), sends the message there, and returns `{ threadId, replacedThreadId }`. The browser moves the session to the new thread, and workers with `sessions.events` receive `{ type: "thread_replaced", threadId, replacedThreadId }` so they can move records or status kept under the old ID. Only a thread without turns can be replaced. Codex stores the prompt with the thread, so it still applies after resume, fork and compaction.
+
+Context and system prompts stay on the server. The job status reports only `hasContext`, `hasSystemPrompt` and each plugin's `contextChars` and `systemPromptChanged`. The browser sends the finished job's ID as `beforeFirstMessageHookJobId` with the message, and the send route claims the context and system prompt once, for the job's own thread. Canceled, skipped or failed jobs attach nothing.
+
+Codex Deck stores each thread's context blocks under `<CODEX_HOME>/codex-deck/thread-context/` and attaches them again on the next `turn/start` whenever the history may have lost them: after compaction (a `contextCompaction` item or `thread/compacted`), after a rollback that removed the turn that carried them, and in forks or side chats whose history may not include that turn. A send that fails keeps them for the next turn. Context added during an automatic compaction in the middle of a turn returns on the following turn.
 
 ## Services, commands and slots
 
