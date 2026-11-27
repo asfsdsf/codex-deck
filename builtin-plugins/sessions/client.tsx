@@ -128,7 +128,10 @@ interface SessionListProps {
   countLabel?: string;
   deleteButtonLabel?: string;
   searchControls?: ReactNode;
-  renderSessionControls?: (sessionId: string) => ReactNode;
+  renderSessionControls?: (
+    sessionId: string,
+    placement: "actions" | "below",
+  ) => ReactNode;
   searchPlaceholder?: string;
   onDeepSearch?: (
     query: string,
@@ -424,12 +427,6 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                 onToggleReadReceipt && session.readReceipt
                   ? session.readReceipt
                   : null;
-              const actionPadding =
-                onRequestDeleteSession && readToggle
-                  ? "pr-[4.5rem]"
-                  : onRequestDeleteSession || readToggle
-                    ? "pr-10"
-                    : "pr-2.5";
               const sessionTypeTitle = sessionTypeLabel
                 ? `${sessionTypeLabel[0].toUpperCase()}${sessionTypeLabel.slice(1)} session`
                 : undefined;
@@ -447,11 +444,11 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                   }}
                   className="overflow-hidden px-2 py-px"
                 >
-                  <div className="group relative">
+                  <div className="group grid grid-cols-[minmax(0,1fr)_auto]">
                     <button
                       type="button"
                       onClick={() => onSelectSession(session.id)}
-                      className={`block w-full rounded-lg px-2.5 py-2 ${actionPadding} text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
+                      className={`col-span-full row-start-1 grid grid-cols-subgrid rounded-lg px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
                         selectedSession === session.id
                           ? "bg-zinc-800"
                           : "hover:bg-zinc-800/45"
@@ -477,7 +474,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                         ) : null}
                         <span>{session.display}</span>
                       </p>
-                      <div className="mt-1 flex items-center justify-between gap-2">
+                      <div className="col-start-1 mt-1 flex items-center justify-between gap-2">
                         <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-500">
                           {session.status ? (
                             <SessionStatusIcon
@@ -508,87 +505,100 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                         </span>
                       </div>
                     </button>
-                    {renderSessionControls?.(session.id)}
-                    {readToggle && onToggleReadReceipt ? (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onToggleReadReceipt(
-                            session.id,
-                            readToggle === "read",
-                          );
-                        }}
-                        className={`absolute ${onRequestDeleteSession ? "right-9" : "right-1.5"} top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-zinc-700/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60`}
-                        aria-label={`${readToggle === "read" ? "Mark as unread" : "Mark as read"} ${session.id}`}
-                        title={
-                          readToggle === "read"
-                            ? "Mark as unread (shared with other Codex clients)"
-                            : "Mark as read (shared with other Codex clients)"
-                        }
-                      >
-                        {readToggle === "read" ? (
+                    <div className="relative col-start-2 row-start-1 mt-1.5 mr-1.5 flex items-start gap-0.5 self-start empty:hidden">
+                      {renderSessionControls?.(session.id, "actions")}
+                      {readToggle && onToggleReadReceipt ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleReadReceipt(
+                              session.id,
+                              readToggle === "read",
+                            );
+                          }}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-zinc-700/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+                          aria-label={`${readToggle === "read" ? "Mark as unread" : "Mark as read"} ${session.id}`}
+                          title={
+                            readToggle === "read"
+                              ? "Mark as unread (shared with other Codex clients)"
+                              : "Mark as read (shared with other Codex clients)"
+                          }
+                        >
+                          {readToggle === "read" ? (
+                            <svg
+                              className="h-4 w-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                              aria-hidden="true"
+                            >
+                              <circle
+                                cx="12"
+                                cy="12"
+                                r="8"
+                                strokeWidth={1.75}
+                              />
+                              <circle
+                                cx="12"
+                                cy="12"
+                                r="3.5"
+                                fill="currentColor"
+                                stroke="none"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              className="h-4 w-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                              aria-hidden="true"
+                            >
+                              <circle
+                                cx="12"
+                                cy="12"
+                                r="8"
+                                strokeWidth={1.75}
+                              />
+                              <path
+                                d="m8.75 12 2.25 2.25 4.25-4.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={1.75}
+                              />
+                            </svg>
+                          )}
+                        </button>
+                      ) : null}
+                      {onRequestDeleteSession && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRequestDeleteSession(session.id);
+                          }}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                          aria-label={`${deleteButtonLabel} ${session.id}`}
+                          title={deleteButtonLabel}
+                        >
                           <svg
                             className="h-4 w-4"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
-                            aria-hidden="true"
                           >
-                            <circle cx="12" cy="12" r="8" strokeWidth={1.75} />
-                            <circle
-                              cx="12"
-                              cy="12"
-                              r="3.5"
-                              fill="currentColor"
-                              stroke="none"
-                            />
-                          </svg>
-                        ) : (
-                          <svg
-                            className="h-4 w-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                            aria-hidden="true"
-                          >
-                            <circle cx="12" cy="12" r="8" strokeWidth={1.75} />
                             <path
-                              d="m8.75 12 2.25 2.25 4.25-4.5"
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               strokeWidth={1.75}
+                              d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m3 0-.7 11.1A2 2 0 0115.3 20H8.7a2 2 0 01-1.99-1.9L6 7m4 4v5m4-5v5"
                             />
                           </svg>
-                        )}
-                      </button>
-                    ) : null}
-                    {onRequestDeleteSession && (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onRequestDeleteSession(session.id);
-                        }}
-                        className="absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
-                        aria-label={`${deleteButtonLabel} ${session.id}`}
-                        title={deleteButtonLabel}
-                      >
-                        <svg
-                          className="h-4 w-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={1.75}
-                            d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m3 0-.7 11.1A2 2 0 0115.3 20H8.7a2 2 0 01-1.99-1.9L6 7m4 4v5m4-5v5"
-                          />
-                        </svg>
-                      </button>
-                    )}
+                        </button>
+                      )}
+                    </div>
+                    {renderSessionControls?.(session.id, "below")}
                   </div>
                 </div>
               );
