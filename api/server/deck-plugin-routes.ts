@@ -140,6 +140,26 @@ export function registerDeckPluginRoutes(
 ) {
   app.get(base, (c) => respond(c, () => store.list()));
   if (workers) {
+    app.post(`${base}/hooks/before-first-message`, (c) =>
+      respond(c, async () => {
+        const input = await body(
+          c,
+          300 * 1024,
+          "First-message hook request too large.",
+        );
+        return workers.beginBeforeFirstMessageHook(input);
+      }),
+    );
+    app.get(`${base}/hooks/before-first-message/:jobId`, (c) =>
+      respond(c, () =>
+        workers.readBeforeFirstMessageHook(c.req.param("jobId")),
+      ),
+    );
+    app.post(`${base}/hooks/before-first-message/:jobId/cancel`, (c) =>
+      respond(c, () =>
+        workers.cancelBeforeFirstMessageHook(c.req.param("jobId")),
+      ),
+    );
     app.post(`${base}/:id/services`, (c) =>
       respond(c, async () => {
         const input = await body(c, 64 * 1024, "Service request too large.");

@@ -8,6 +8,9 @@ import { DeckPluginCodexSessions } from "./deck-plugin-codex-sessions";
 import type { ResolvedCodexHome } from "./codex-home-registry";
 import { pluginHttpRequest } from "./deck-plugin-http";
 import type {
+  DeckPluginAppliedPromptSummary,
+  DeckPluginBeforeFirstMessageJobStatus,
+  DeckPluginBeforeFirstMessagePluginResult,
   DeckPluginCapability,
   DeckPluginContributionsSnapshot,
   DeckPluginSession,
@@ -95,6 +98,26 @@ export class DeckPluginWorkers {
     }
   >();
   private serviceCalls = new Map<string, Set<AbortController>>();
+  private hookJobs = new Map<
+    string,
+    {
+      jobId: string;
+      threadId: string;
+      startedAt: number;
+      expiresAt: number;
+      done: boolean;
+      canceled: boolean;
+      abort: AbortController;
+      plugins: Array<{ id: string; name: string; waitingLabel: string }>;
+      activePlugin: { id: string; name: string; waitingLabel: string } | null;
+      phase: string;
+      completedPlugins: DeckPluginBeforeFirstMessagePluginResult[];
+      originalText: string;
+      text: string;
+      changed: boolean;
+      error?: string;
+    }
+  >();
 
   constructor(
     private readonly store: DeckPluginStore,
@@ -250,6 +273,15 @@ export class DeckPluginWorkers {
     for (const controller of this.serviceCalls.get(id) ?? [])
       controller.abort(new Error("Plugin was disabled or unloaded."));
     this.serviceCalls.delete(id);
+    for (const job of this.hookJobs.values()) {
+      if (!job.done && job.activePlugin?.id === id) {
+        job.error = `${job.activePlugin.name} was disabled or unloaded.`;
+        job.phase = "error";
+        job.activePlugin = null;
+        job.done = true;
+        job.abort.abort(new Error(job.error));
+      }
+    }
     const current = this.stopping.get(id);
     if (current) return current;
     const worker = this.workers.get(id);
@@ -316,6 +348,16 @@ export class DeckPluginWorkers {
     this.active = false;
     this.unsubscribeServices?.();
     clearInterval(this.restartTimer);
+    for (const job of this.hookJobs.values()) {
+      if (!job.done) {
+        job.canceled = true;
+        job.done = true;
+        job.phase = "canceled";
+        job.activePlugin = null;
+        job.abort.abort(new Error("Daemon stopped."));
+      }
+    }
+    this.hookJobs.clear();
     await this.reconciliation.catch(() => {});
     await Promise.all(
       [...this.workers.keys()].map((id) => this.stopPlugin(id, false)),
@@ -920,21 +962,404 @@ export class DeckPluginWorkers {
     };
   }
 
+  async beginBeforeFirstMessageHook(
+    rawParams: Record<string, unknown>,
+  ): Promise<DeckPluginBeforeFirstMessageJobStatus> {
+    const threadId = text(rawParams.threadId);
+    if (
+      typeof rawParams.text !== "string" ||
+      !rawParams.text.trim() ||
+      Buffer.byteLength(rawParams.text, "utf8") > 256 * 1024
+    ) {
+      throw new DeckPluginError(
+        "text is required and must be at most 256 KiB.",
+        400,
+      );
+    }
+    const originalText = rawParams.text;
+    const cwd =
+      typeof rawParams.cwd === "string" && rawParams.cwd.trim()
+        ? rawParams.cwd.trim().slice(0, 4096)
+        : null;
+    const model =
+      typeof rawParams.model === "string" && rawParams.model.trim()
+        ? rawParams.model.trim().slice(0, 200)
+        : null;
+    const effort =
+      typeof rawParams.effort === "string" && rawParams.effort.trim()
+        ? rawParams.effort.trim().slice(0, 64)
+        : null;
+    const mode =
+      typeof rawParams.mode === "string" && rawParams.mode.trim()
+        ? rawParams.mode.trim().slice(0, 64)
+        : null;
+    const imageCount =
+      typeof rawParams.imageCount === "number" &&
+      Number.isInteger(rawParams.imageCount) &&
+      rawParams.imageCount >= 0
+        ? rawParams.imageCount
+        : 0;
+    const audioCount =
+      typeof rawParams.audioCount === "number" &&
+      Number.isInteger(rawParams.audioCount) &&
+      rawParams.audioCount >= 0
+        ? rawParams.audioCount
+        : 0;
+
+    const { plugins } = await this.store.list();
+    const matching = plugins
+      .filter(
+        (plugin) =>
+          plugin.enabled &&
+          plugin.source !== "builtin" &&
+          Boolean(plugin.entrypoints.backend) &&
+          plugin.capabilities.includes("sessions.transform") &&
+          Boolean(plugin.contributions?.beforeFirstMessage) &&
+          !plugin.requires?.some((name) => !this.services.has(name)),
+      )
+      .sort(
+        (left, right) =>
+          (left.contributions?.beforeFirstMessage?.order ?? 0) -
+            (right.contributions?.beforeFirstMessage?.order ?? 0) ||
+          left.id.localeCompare(right.id),
+      );
+
+    const startedAt = Date.now();
+    if (matching.length === 0) {
+      return {
+        jobId: null,
+        done: true,
+        plugins: [],
+        activePlugin: null,
+        phase: "done",
+        startedAt,
+        completedPlugins: [],
+        text: originalText,
+        originalText,
+        changed: false,
+      };
+    }
+
+    for (const [key, existing] of this.hookJobs) {
+      if (existing.expiresAt < startedAt) this.hookJobs.delete(key);
+    }
+    if (this.hookJobs.size >= 128) {
+      throw new DeckPluginError("Too many pending plugin hook jobs.", 409);
+    }
+
+    const pluginEntries = matching.map((plugin) => ({
+      id: plugin.id,
+      name: plugin.name,
+      waitingLabel:
+        plugin.contributions?.beforeFirstMessage?.waitingLabel ??
+        `Waiting for ${plugin.name}…`,
+    }));
+    const jobId = randomUUID();
+    const job = {
+      jobId,
+      threadId,
+      startedAt,
+      expiresAt: startedAt + 300_000,
+      done: false,
+      canceled: false,
+      abort: new AbortController(),
+      plugins: pluginEntries,
+      activePlugin: (pluginEntries[0] ?? null) as {
+        id: string;
+        name: string;
+        waitingLabel: string;
+      } | null,
+      phase: "running",
+      completedPlugins: [] as DeckPluginBeforeFirstMessagePluginResult[],
+      originalText,
+      text: originalText,
+      changed: false,
+      error: undefined as string | undefined,
+    };
+    this.hookJobs.set(jobId, job);
+
+    void (async () => {
+      let currentText = originalText;
+      try {
+        for (let index = 0; index < matching.length; index++) {
+          if (job.abort.signal.aborted) return;
+          const plugin = matching[index];
+          const meta = pluginEntries[index];
+          const hook = plugin.contributions!.beforeFirstMessage!;
+          job.activePlugin = meta;
+          job.phase = "running";
+
+          const worker = await this.waitForReadyWorker(
+            plugin.id,
+            job.abort.signal,
+          );
+          if (job.abort.signal.aborted) return;
+          if (!worker) {
+            throw new Error(
+              `${plugin.name} worker is starting or unavailable.`,
+            );
+          }
+
+          const rawResult = await this.requestWorker(
+            worker,
+            hook.method,
+            {
+              hookJobId: jobId,
+              threadId,
+              cwd,
+              text: currentText,
+              originalText,
+              model,
+              effort,
+              mode,
+              imageCount,
+              audioCount,
+            },
+            job.abort.signal,
+          );
+          if (job.abort.signal.aborted) return;
+
+          const parsed = this.parseBeforeFirstMessageResult(
+            rawResult,
+            currentText,
+          );
+          currentText = parsed.text;
+          job.completedPlugins.push({
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            changed: parsed.changed,
+            ...(parsed.skipped ? { skipped: true } : {}),
+            ...(parsed.summary ? { summary: parsed.summary } : {}),
+            ...(parsed.appliedItems?.length
+              ? { appliedItems: parsed.appliedItems }
+              : {}),
+          });
+        }
+
+        if (job.abort.signal.aborted) return;
+        job.text = currentText;
+        job.changed = currentText !== originalText;
+        job.activePlugin = null;
+        job.phase = "done";
+        job.done = true;
+      } catch (error) {
+        if (job.canceled || job.abort.signal.aborted) {
+          job.activePlugin = null;
+          job.done = true;
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : "Plugin hook failed.";
+        if (job.activePlugin) {
+          job.completedPlugins.push({
+            pluginId: job.activePlugin.id,
+            pluginName: job.activePlugin.name,
+            changed: false,
+            error: message,
+          });
+        }
+        job.error = job.activePlugin
+          ? `${job.activePlugin.name}: ${message}`
+          : message;
+        job.activePlugin = null;
+        job.phase = "error";
+        job.done = true;
+      }
+    })();
+
+    return this.formatBeforeFirstMessageJob(job);
+  }
+
+  async readBeforeFirstMessageHook(
+    jobId: string,
+  ): Promise<DeckPluginBeforeFirstMessageJobStatus> {
+    const job = this.hookJobs.get(jobId);
+    if (!job || job.expiresAt < Date.now()) {
+      throw new DeckPluginError(
+        "Plugin hook job expired or was not found.",
+        404,
+      );
+    }
+    return this.formatBeforeFirstMessageJob(job);
+  }
+
+  async cancelBeforeFirstMessageHook(
+    jobId: string,
+  ): Promise<DeckPluginBeforeFirstMessageJobStatus> {
+    const job = this.hookJobs.get(jobId);
+    if (!job || job.expiresAt < Date.now()) {
+      return {
+        jobId,
+        done: true,
+        canceled: true,
+        plugins: [],
+        activePlugin: null,
+        phase: "canceled",
+        startedAt: Date.now(),
+        completedPlugins: [],
+      };
+    }
+    if (!job.done) {
+      const activeId = job.activePlugin?.id;
+      job.canceled = true;
+      job.done = true;
+      job.phase = "canceled";
+      job.activePlugin = null;
+      if (activeId) {
+        this.sendTo(activeId, {
+          type: "hook_canceled",
+          hookJobId: job.jobId,
+          threadId: job.threadId,
+        });
+      }
+      job.abort.abort(new Error("Plugin hook canceled."));
+    }
+    return this.formatBeforeFirstMessageJob(job);
+  }
+
+  private async formatBeforeFirstMessageJob(job: {
+    jobId: string;
+    threadId: string;
+    startedAt: number;
+    done: boolean;
+    canceled: boolean;
+    plugins: Array<{ id: string; name: string; waitingLabel: string }>;
+    activePlugin: { id: string; name: string; waitingLabel: string } | null;
+    phase: string;
+    completedPlugins: DeckPluginBeforeFirstMessagePluginResult[];
+    originalText: string;
+    text: string;
+    changed: boolean;
+    error?: string;
+  }): Promise<DeckPluginBeforeFirstMessageJobStatus> {
+    let phase = job.phase;
+    let detail: string | undefined;
+    if (!job.done && job.activePlugin) {
+      const ui = await this.storage
+        .read(job.activePlugin.id, "ui", emptyUi())
+        .catch(() => emptyUi());
+      const status = ui.statuses[job.threadId];
+      if (status && status.updatedAt >= job.startedAt - 2000) {
+        if (status.phase) phase = status.phase;
+        if (status.reason) detail = status.reason;
+      }
+    }
+    return {
+      jobId: job.jobId,
+      done: job.done,
+      ...(job.canceled ? { canceled: true } : {}),
+      plugins: job.plugins,
+      activePlugin: job.activePlugin,
+      phase,
+      ...(detail ? { detail } : {}),
+      startedAt: job.startedAt,
+      completedPlugins: job.completedPlugins,
+      ...(job.done
+        ? {
+            text: job.text,
+            originalText: job.originalText,
+            changed: job.changed,
+            ...(job.error ? { error: job.error } : {}),
+          }
+        : {}),
+    };
+  }
+
+  private parseBeforeFirstMessageResult(
+    value: unknown,
+    fallbackText: string,
+  ): {
+    text: string;
+    changed: boolean;
+    skipped: boolean;
+    summary?: string;
+    appliedItems?: DeckPluginAppliedPromptSummary[];
+  } {
+    if (value === null || value === undefined) {
+      return { text: fallbackText, changed: false, skipped: true };
+    }
+    const record = object(value);
+    let nextText = fallbackText;
+    if (record.text !== undefined) {
+      if (
+        typeof record.text !== "string" ||
+        !record.text.trim() ||
+        Buffer.byteLength(record.text, "utf8") > 512 * 1024
+      ) {
+        throw new Error("Plugin returned invalid transformed message text.");
+      }
+      nextText = record.text;
+    }
+    const summary =
+      typeof record.summary === "string" && record.summary.trim()
+        ? record.summary.trim().slice(0, 400)
+        : undefined;
+    let appliedItems: DeckPluginAppliedPromptSummary[] | undefined;
+    if (Array.isArray(record.appliedItems)) {
+      appliedItems = record.appliedItems
+        .slice(0, 32)
+        .flatMap((entry): DeckPluginAppliedPromptSummary[] => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return [];
+          }
+          const item = entry as Record<string, unknown>;
+          const itemId =
+            typeof item.id === "string" ? item.id.trim().slice(0, 120) : "";
+          const name =
+            typeof item.name === "string" ? item.name.trim().slice(0, 120) : "";
+          const mode =
+            typeof item.mode === "string" ? item.mode.trim().slice(0, 40) : "";
+          if (!itemId || !name || !mode) return [];
+          const reason =
+            typeof item.reason === "string" && item.reason.trim()
+              ? item.reason.trim().slice(0, 400)
+              : undefined;
+          return [{ id: itemId, name, mode, ...(reason ? { reason } : {}) }];
+        });
+    }
+    return {
+      text: nextText,
+      changed:
+        typeof record.changed === "boolean"
+          ? record.changed
+          : nextText !== fallbackText,
+      skipped: record.skipped === true,
+      ...(summary ? { summary } : {}),
+      ...(appliedItems?.length ? { appliedItems } : {}),
+    };
+  }
+
+  private async waitForReadyWorker(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<Worker | null> {
+    const start = Date.now();
+    while (Date.now() - start < 5000) {
+      if (signal?.aborted) return null;
+      const worker = this.workers.get(id);
+      if (worker?.ready && !worker.stopping) return worker;
+      if (worker?.stopping) return null;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 25);
+        signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    }
+    const worker = this.workers.get(id);
+    return worker?.ready && !worker.stopping ? worker : null;
+  }
+
   async request(id: string, method: string, params: unknown): Promise<unknown> {
     const runtime = await this.store.getRuntime(id);
     if (!runtime.manifest.capabilities.includes("worker.request"))
       throw new DeckPluginError("worker.request is not granted.", 400);
-    const worker = this.workers.get(id);
-    if (worker && !worker.ready)
-      await new Promise<void>((resolve) => {
-        const start = Date.now();
-        const check = () => {
-          if (worker.ready || worker.stopping || Date.now() - start >= 5000)
-            resolve();
-          else setTimeout(check, 25);
-        };
-        check();
-      });
+    const worker = await this.waitForReadyWorker(id);
     if (!worker?.ready || worker.stopping)
       throw new DeckPluginError(
         "Backend worker is starting or unavailable.",
@@ -946,6 +1371,7 @@ export class DeckPluginWorkers {
     worker: Worker,
     method: string,
     params: unknown,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     if (
       !worker.ready ||
@@ -953,13 +1379,45 @@ export class DeckPluginWorkers {
       this.workers.get(worker.plugin.id) !== worker
     )
       return Promise.reject(new Error("Backend worker is unavailable."));
+    if (signal?.aborted) {
+      return Promise.reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : new Error("Plugin request canceled."),
+      );
+    }
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        if (!worker.pending.delete(requestId)) return;
+        cleanup();
+        reject(
+          signal?.reason instanceof Error
+            ? signal.reason
+            : new Error("Plugin request canceled."),
+        );
+      };
       const timer = setTimeout(() => {
-        worker.pending.delete(requestId);
+        if (!worker.pending.delete(requestId)) return;
+        cleanup();
         reject(new Error("Plugin request timed out."));
       }, 125_000);
-      worker.pending.set(requestId, { resolve, reject, timer });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      worker.pending.set(requestId, {
+        resolve: (value) => {
+          cleanup();
+          resolve(value);
+        },
+        reject: (error) => {
+          cleanup();
+          reject(error);
+        },
+        timer,
+      });
       this.send(worker, { type: "request", requestId, method, params });
     });
   }

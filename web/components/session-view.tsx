@@ -23,6 +23,10 @@ import type {
   CodexUserInputResponsePayload,
 } from "@codex-deck/api";
 import MessageBlock, { type PlanProposalAction } from "./message-block";
+import {
+  PluginHookWaitingBanner,
+  type PluginHookWaitBannerProps,
+} from "./deck-plugin-contributions";
 import { PendingElicitations } from "./pending-elicitations";
 import { PendingUserInputRequests } from "./pending-user-input-requests";
 import { PendingApprovalRequests } from "./pending-approval-requests";
@@ -265,6 +269,7 @@ interface SessionViewProps {
   suppliedHoverSettings?: ReturnType<typeof useConversationHoverSettings>;
   projectPath?: string | null;
   pendingUserMessages?: PendingUserMessage[];
+  pluginHookWait?: Omit<PluginHookWaitBannerProps, "variant"> | null;
   onForceSendPendingUserMessage?: (
     sessionId: string,
     pendingId: string,
@@ -776,6 +781,7 @@ const SessionView = memo(
         sessionId,
         projectPath,
         pendingUserMessages = [],
+        pluginHookWait = null,
         onForceSendPendingUserMessage,
         onCancelPendingUserMessage,
         onEditPendingUserMessage,
@@ -3698,6 +3704,12 @@ const SessionView = memo(
                 ))}
               </div>
               <div ref={pendingUserInputRef}>
+                {pluginHookWait ? (
+                  <PluginHookWaitingBanner
+                    {...pluginHookWait}
+                    variant="inline"
+                  />
+                ) : null}
                 <PendingApprovalRequests
                   requests={pendingApprovalRequests}
                   submittingRequestIds={submittingApprovalRequestIds}

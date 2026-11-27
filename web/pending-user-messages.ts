@@ -72,6 +72,39 @@ export function updatePendingUserMessageStatus(
   };
 }
 
+export function updatePendingUserMessageText(
+  previous: PendingUserMessagesBySession,
+  sessionId: string,
+  pendingId: string,
+  text: string,
+): PendingUserMessagesBySession {
+  const current = previous[sessionId];
+  if (!Array.isArray(current) || current.length === 0) {
+    return previous;
+  }
+
+  let changed = false;
+  const next = current.map((entry) => {
+    if (entry.pendingId !== pendingId || entry.text === text) {
+      return entry;
+    }
+    changed = true;
+    return {
+      ...entry,
+      text,
+    };
+  });
+
+  if (!changed) {
+    return previous;
+  }
+
+  return {
+    ...previous,
+    [sessionId]: next,
+  };
+}
+
 export function markPendingUserMessageSteered(
   previous: PendingUserMessagesBySession,
   sessionId: string,

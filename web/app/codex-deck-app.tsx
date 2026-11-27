@@ -4,11 +4,18 @@ import { DeckPluginSlot } from "../plugins/slot";
 import { Puzzle } from "lucide-react";
 import { PaneNavigation } from "../plugins/pane-navigation";
 import DeckPluginRuntime from "../components/deck-plugin-runtime";
-import { requestDeckPluginWorker } from "../deck-plugins-api";
+import {
+  cancelBeforeFirstMessageHooks,
+  readBeforeFirstMessageHooks,
+  requestDeckPluginWorker,
+  startBeforeFirstMessageHooks,
+} from "../deck-plugins-api";
 import { useDeckPluginContributions } from "../hooks/use-deck-plugin-contributions";
 import {
   DeckPluginSessionTips,
   DeckPluginSessionToggles,
+  PluginHookWaitingBanner,
+  type PluginHookWaitBannerProps,
 } from "../components/deck-plugin-contributions";
 import type { PlanProposalAction } from "../components/message-block";
 import PermissionsPanel from "../components/permissions-panel";
@@ -347,6 +354,7 @@ import {
   markPendingUserMessageSteered,
   removePendingUserMessage,
   updatePendingUserMessageStatus,
+  updatePendingUserMessageText,
   type PendingUserMessage,
   type PendingUserMessagesBySession,
 } from "../pending-user-messages";
@@ -1462,6 +1470,22 @@ export default function CodexDeckApp() {
   const [newSessionCwdState, setNewSessionCwdState] =
     useState<NewSessionCwdState>(EMPTY_NEW_SESSION_CWD_STATE);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [firstMessageHookWaitBySession, setFirstMessageHookWaitBySession] =
+    useState<
+      Record<
+        string,
+        {
+          jobId: string | null;
+          homeId: string;
+          pluginName: string;
+          waitingLabel: string;
+          detail?: string;
+          startedAt: number;
+          plugins: Array<{ id: string; name: string; waitingLabel: string }>;
+          completedCount: number;
+        }
+      >
+    >({});
   const [stoppingTurn, setStoppingTurn] = useState(false);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
   const [trackedSessionStatuses, setTrackedSessionStatuses] =
@@ -1851,6 +1875,19 @@ export default function CodexDeckApp() {
   >(new Map());
   const queueAutosendSuppressSessionsRef = useRef<Set<string>>(new Set());
   const queueDrainInFlightSessionsRef = useRef<Set<string>>(new Set());
+  const freshSessionIdsRef = useRef<Set<string>>(new Set());
+  const firstMessageHookDoneSessionsRef = useRef<Set<string>>(new Set());
+  const firstMessageHookControlBySessionRef = useRef<
+    Map<
+      string,
+      {
+        action: "skip" | "cancel" | null;
+        jobId: string | null;
+        homeId: string;
+        wake: () => void;
+      }
+    >
+  >(new Map());
   const ignoredPendingConfirmationCountBySessionRef = useRef<
     Record<string, number>
   >({});
@@ -2070,6 +2107,19 @@ export default function CodexDeckApp() {
     setNewSessionCwdState(EMPTY_NEW_SESSION_CWD_STATE);
     setPendingUserMessagesBySession({});
     pendingUserMessagesBySessionRef.current = {};
+    for (const control of firstMessageHookControlBySessionRef.current.values()) {
+      control.action = "cancel";
+      if (control.jobId) {
+        void cancelBeforeFirstMessageHooks(control.jobId, control.homeId).catch(
+          () => {},
+        );
+      }
+      control.wake();
+    }
+    firstMessageHookControlBySessionRef.current.clear();
+    freshSessionIdsRef.current.clear();
+    firstMessageHookDoneSessionsRef.current.clear();
+    setFirstMessageHookWaitBySession({});
     setSendingMessage(false);
     setStoppingTurn(false);
     setCreatingSession(false);
@@ -5994,6 +6044,8 @@ export default function CodexDeckApp() {
         // A brand-new thread may not have a materialized rollout yet.
         // Suppress wait-state polling until the first user message is sent.
         waitSuppressSessionsRef.current.add(created.threadId);
+        freshSessionIdsRef.current.add(created.threadId);
+        firstMessageHookDoneSessionsRef.current.delete(created.threadId);
         if (initialDraft) requestComposerDraft(created.threadId, initialDraft);
         setSelectedSession(created.threadId);
         setCenterView("session");
@@ -7732,6 +7784,43 @@ export default function CodexDeckApp() {
     [],
   );
 
+  const requestFirstMessageHookControl = useCallback(
+    (sessionId: string, action: "skip" | "cancel") => {
+      const control =
+        firstMessageHookControlBySessionRef.current.get(sessionId);
+      if (!control || control.action) return;
+      control.action = action;
+      if (control.jobId) {
+        void cancelBeforeFirstMessageHooks(control.jobId, control.homeId).catch(
+          () => {},
+        );
+      }
+      control.wake();
+    },
+    [],
+  );
+
+  const getPluginHookWaitForSession = useCallback(
+    (
+      sessionId: string | null,
+    ): Omit<PluginHookWaitBannerProps, "variant"> | null => {
+      if (!sessionId) return null;
+      const wait = firstMessageHookWaitBySession[sessionId];
+      if (!wait) return null;
+      return {
+        pluginName: wait.pluginName,
+        waitingLabel: wait.waitingLabel,
+        detail: wait.detail,
+        startedAt: wait.startedAt,
+        plugins: wait.plugins,
+        completedCount: wait.completedCount,
+        onSkip: () => requestFirstMessageHookControl(sessionId, "skip"),
+        onCancel: () => requestFirstMessageHookControl(sessionId, "cancel"),
+      };
+    },
+    [firstMessageHookWaitBySession, requestFirstMessageHookControl],
+  );
+
   const sendMessageText = useCallback(
     async (
       payload: MessageComposerSubmitPayload,
@@ -7912,8 +8001,220 @@ export default function CodexDeckApp() {
             : (sessionsWithThreadNames.find(
                 (session) => session.id === sessionId,
               )?.project ?? null));
+        let finalInput = input;
+        const enabledHookPlugins = (pluginContributions.snapshot?.plugins ?? [])
+          .filter(
+            (plugin) =>
+              Boolean(plugin.contributions.beforeFirstMessage) &&
+              !plugin.workerError,
+          )
+          .sort(
+            (left, right) =>
+              (left.contributions.beforeFirstMessage?.order ?? 0) -
+                (right.contributions.beforeFirstMessage?.order ?? 0) ||
+              left.id.localeCompare(right.id),
+          );
+        const targetSessionData =
+          sessionId === activeComposerSessionId
+            ? activeComposerSessionData
+            : (sessionsWithThreadNames.find(
+                (session) => session.id === sessionId,
+              ) ?? null);
+        const confirmedUserCount =
+          confirmedComposerUserMessageCountBySessionRef.current[sessionId] ?? 0;
+        const isFirstMessageOfNewSession =
+          !steerRunningTurn &&
+          !options?.pendingIdOverride &&
+          !options?.bypassQueue &&
+          normalizedText.length > 0 &&
+          !firstMessageHookDoneSessionsRef.current.has(sessionId) &&
+          (freshSessionIdsRef.current.has(sessionId) ||
+            (confirmedUserCount === 0 &&
+              targetSessionData?.display === "(new session)"));
+        const shouldRunFirstMessageHooks =
+          isFirstMessageOfNewSession &&
+          (pluginContributions.snapshot === null ||
+            enabledHookPlugins.length > 0);
+
+        if (shouldRunFirstMessageHooks) {
+          const hookHomeId = selectedCodexHomeId;
+          const hookGeneration = codexHomeGenerationRef.current;
+          const control = {
+            action: null as "skip" | "cancel" | null,
+            jobId: null as string | null,
+            homeId: hookHomeId,
+            wake: () => {},
+          };
+          firstMessageHookControlBySessionRef.current.set(sessionId, control);
+          const clearHookWait = () => {
+            firstMessageHookControlBySessionRef.current.delete(sessionId);
+            setFirstMessageHookWaitBySession((current) => {
+              if (!current[sessionId]) return current;
+              const next = { ...current };
+              delete next[sessionId];
+              return next;
+            });
+          };
+          try {
+            if (enabledHookPlugins.length > 0) {
+              const firstPlugin = enabledHookPlugins[0];
+              setFirstMessageHookWaitBySession((current) => ({
+                ...current,
+                [sessionId]: {
+                  jobId: null,
+                  homeId: hookHomeId,
+                  pluginName: firstPlugin.name,
+                  waitingLabel:
+                    firstPlugin.contributions.beforeFirstMessage
+                      ?.waitingLabel ?? `Waiting for ${firstPlugin.name}…`,
+                  startedAt: Date.now(),
+                  plugins: enabledHookPlugins.map((plugin) => ({
+                    id: plugin.id,
+                    name: plugin.name,
+                    waitingLabel:
+                      plugin.contributions.beforeFirstMessage?.waitingLabel ??
+                      `Waiting for ${plugin.name}…`,
+                  })),
+                  completedCount: 0,
+                },
+              }));
+            }
+            const imageCount = normalizedImages.filter(
+              (url) => !isAudioDataUrl(url),
+            ).length;
+            const audioCount = normalizedImages.length - imageCount;
+            let hookStatus = await startBeforeFirstMessageHooks(
+              {
+                threadId: sessionId,
+                cwd: cwd ?? null,
+                text: normalizedText,
+                model: effectiveModelIdForRequest ?? null,
+                effort: effectiveReasoningEffortForRequest ?? null,
+                mode: modeToUse,
+                imageCount,
+                audioCount,
+              },
+              hookHomeId,
+            );
+            if (hookStatus.jobId) {
+              control.jobId = hookStatus.jobId;
+              if (control.action) {
+                void cancelBeforeFirstMessageHooks(
+                  hookStatus.jobId,
+                  hookHomeId,
+                ).catch(() => {});
+              }
+            }
+            const deadline = Date.now() + 135_000;
+            while (
+              !hookStatus.done &&
+              hookStatus.jobId &&
+              !control.action &&
+              codexHomeGenerationRef.current === hookGeneration &&
+              Date.now() < deadline
+            ) {
+              const active =
+                hookStatus.activePlugin ?? hookStatus.plugins[0] ?? null;
+              if (active) {
+                setFirstMessageHookWaitBySession((current) => ({
+                  ...current,
+                  [sessionId]: {
+                    jobId: hookStatus.jobId,
+                    homeId: hookHomeId,
+                    pluginName: active.name,
+                    waitingLabel: active.waitingLabel,
+                    detail: hookStatus.detail,
+                    startedAt:
+                      current[sessionId]?.startedAt ?? hookStatus.startedAt,
+                    plugins: hookStatus.plugins,
+                    completedCount: hookStatus.completedPlugins.length,
+                  },
+                }));
+              }
+              await new Promise<void>((resolve) => {
+                const timer = window.setTimeout(() => {
+                  control.wake = () => {};
+                  resolve();
+                }, 250);
+                control.wake = () => {
+                  window.clearTimeout(timer);
+                  control.wake = () => {};
+                  resolve();
+                };
+              });
+              if (
+                control.action ||
+                codexHomeGenerationRef.current !== hookGeneration
+              ) {
+                break;
+              }
+              hookStatus = await readBeforeFirstMessageHooks(
+                hookStatus.jobId,
+                hookHomeId,
+              );
+            }
+
+            if (codexHomeGenerationRef.current !== hookGeneration) {
+              pendingSendOptionsByIdRef.current.delete(pendingId);
+              removePendingUserMessageById(sessionId, pendingId);
+              return false;
+            }
+            if (control.action === "cancel") {
+              pendingSendOptionsByIdRef.current.delete(pendingId);
+              removePendingUserMessageById(sessionId, pendingId);
+              requestComposerDraft(sessionId, payload.text);
+              return false;
+            }
+            if (control.action !== "skip") {
+              if (!hookStatus.done) {
+                if (hookStatus.jobId) {
+                  void cancelBeforeFirstMessageHooks(
+                    hookStatus.jobId,
+                    hookHomeId,
+                  ).catch(() => {});
+                }
+                pendingSendOptionsByIdRef.current.delete(pendingId);
+                removePendingUserMessageById(sessionId, pendingId);
+                requestComposerDraft(sessionId, payload.text);
+                setInteractionError(
+                  "Timed out waiting for plugin prompt preparation.",
+                );
+                return false;
+              }
+              if (hookStatus.error) {
+                pendingSendOptionsByIdRef.current.delete(pendingId);
+                removePendingUserMessageById(sessionId, pendingId);
+                requestComposerDraft(sessionId, payload.text);
+                setInteractionError(hookStatus.error);
+                return false;
+              }
+              if (
+                hookStatus.changed &&
+                typeof hookStatus.text === "string" &&
+                hookStatus.text.trim()
+              ) {
+                const transformedText = hookStatus.text;
+                finalInput = [
+                  { type: "text", text: transformedText },
+                  ...input.filter((item) => item.type !== "text"),
+                ];
+                setPendingUserMessagesBySession((current) =>
+                  updatePendingUserMessageText(
+                    current,
+                    sessionId,
+                    pendingId,
+                    transformedText,
+                  ),
+                );
+              }
+            }
+          } finally {
+            clearHookWait();
+          }
+        }
+
         const response = await sendCodexMessage(sessionId, {
-          input,
+          input: finalInput,
           ...(cwd ? { cwd } : {}),
           ...(effectiveModelIdForRequest
             ? { model: effectiveModelIdForRequest }
@@ -7940,6 +8241,8 @@ export default function CodexDeckApp() {
         ideContext.handleSendResult(response.ideContext);
 
         markSessionUserMessagedAt(sessionId, Date.now());
+        freshSessionIdsRef.current.delete(sessionId);
+        firstMessageHookDoneSessionsRef.current.add(sessionId);
         setSessionMode(sessionId, modeToUse);
         pendingSendOptionsByIdRef.current.delete(pendingId);
         // A steered message joins a turn that already has a confirmed user
@@ -8006,16 +8309,18 @@ export default function CodexDeckApp() {
       }
     },
     [
-      activeComposerSessionData?.project,
+      activeComposerSessionData,
       activeComposerSessionId,
       clearConnectionFailureNoticeForSession,
       collaborationModes,
       configDefaults,
       getSessionMode,
       models,
+      pluginContributions.snapshot,
       sendingMessage,
       normalizeModeKey,
       notifySessionUnavailable,
+      selectedCodexHomeId,
       selectedModelId,
       serviceTierInput,
       selectedEffort,
@@ -11679,6 +11984,12 @@ export default function CodexDeckApp() {
         }
       />
       <div className="composer-card relative mx-auto w-full max-w-4xl">
+        {(() => {
+          const hookWait = getPluginHookWaitForSession(input.sessionId);
+          return hookWait && !input.composerDisabledReason ? (
+            <PluginHookWaitingBanner {...hookWait} variant="composer" />
+          ) : null;
+        })()}
         {ideContext.enabled && !input.composerDisabledReason ? (
           <IdeContextIndicator
             summary={ideContext.summary}
@@ -14120,6 +14431,7 @@ export default function CodexDeckApp() {
                   sessionId={selectedSession}
                   projectPath={selectedSessionData?.project ?? null}
                   pendingUserMessages={selectedSessionPendingUserMessages}
+                  pluginHookWait={getPluginHookWaitForSession(selectedSession)}
                   onForceSendPendingUserMessage={forceSendPendingUserMessage}
                   onCancelPendingUserMessage={cancelPendingUserMessage}
                   onEditPendingUserMessage={editPendingUserMessage}

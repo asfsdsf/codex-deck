@@ -52,6 +52,7 @@ Capabilities are checked at each host operation:
 | `worker.request`                | Send UI requests to this plugin's worker                                             |
 | `sessions.events`               | Receive thread lifecycle, interaction and manual-action events                       |
 | `sessions.read`                 | Read current thread history and live state                                           |
+| `sessions.transform`            | Transform the first user message of a new session before it is sent to Codex         |
 | `codex.homes.read`              | List configured Codex homes, including paths and availability                        |
 | `codex.sessions.manage`         | Create and manage persistent plugin-owned, read-only Codex sessions in a chosen home |
 | `data.read`, `data.write`       | Private persistent worker data, at most 4 MiB                                        |
@@ -144,6 +145,24 @@ Everything is scoped to the selected Codex home:
 Internal session lifecycle checkpoints use the reserved `codex-deck.lifecycle` private namespace. Updates preserve plugin state and secrets; uninstall removes the plugin's private data as well as package and browser state.
 
 `GET /api/deck/plugins/contributions` returns the full contribution snapshot and `serverTime`. Registry, toggle and worker status changes broadcast `native_state_changed` with scope `deck-plugins` through existing local SSE and encrypted remote session deltas. Browsers fetch fresh snapshots on notifications and every reconnect, including returning from a hidden tab. Worker UI calls start with `POST /api/deck/plugins/:id/worker` returning a `requestId`, then poll `GET /api/deck/plugins/:id/worker/:requestId` for `{ done, result?, error? }`. Jobs expire after five minutes; short polling keeps long connection tests within existing remote relay timeouts. Browser bridge requests pin their original Codex home even if the user switches homes while a call is pending. Local and remote modes use the same plugin endpoints; no new unencrypted remote payload or direct browser-to-cli connection is introduced.
+
+### First-message transform hooks
+
+Backend plugins with `sessions.transform` can declare `contributions.beforeFirstMessage`:
+
+```json
+{
+  "contributions": {
+    "beforeFirstMessage": {
+      "method": "session.beforeFirstMessage",
+      "waitingLabel": "Selecting and injecting relevant prompts…",
+      "order": 10
+    }
+  }
+}
+```
+
+When a user sends the first message of a new Codex session, the browser starts `POST /api/deck/plugins/hooks/before-first-message` and polls `GET /api/deck/plugins/hooks/before-first-message/:jobId` (with `POST .../cancel` to skip or cancel). Enabled hook plugins run sequentially by `order`, then `id`. Each worker receives `{ hookJobId, threadId, cwd, text, originalText, model, effort, mode, imageCount, audioCount }` and returns `{ text, changed?, skipped?, summary?, appliedItems? }`. While running, the worker may publish progress via `status.set` and listen for `{ type: "hook_canceled", hookJobId, threadId }` events to abort in-flight work.
 
 ## Services, commands and slots
 

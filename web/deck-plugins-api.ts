@@ -1,4 +1,5 @@
 import type {
+  DeckPluginBeforeFirstMessageJobStatus,
   DeckPluginInstallInput,
   DeckPluginRuntimeResponse,
   DeckPluginSourceResponse,
@@ -193,6 +194,58 @@ export function setDeckPluginSecrets(
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(secrets),
+    },
+    homeId,
+  );
+}
+
+export interface BeforeFirstMessageHookInput {
+  threadId: string;
+  cwd?: string | null;
+  text: string;
+  model?: string | null;
+  effort?: string | null;
+  mode?: string | null;
+  imageCount?: number;
+  audioCount?: number;
+}
+
+export function startBeforeFirstMessageHooks(
+  input: BeforeFirstMessageHookInput,
+  homeId = getActiveCodexHomeId(),
+): Promise<DeckPluginBeforeFirstMessageJobStatus> {
+  return scopedRequest(
+    `${base}/hooks/before-first-message`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    homeId,
+  );
+}
+
+export function readBeforeFirstMessageHooks(
+  jobId: string,
+  homeId = getActiveCodexHomeId(),
+): Promise<DeckPluginBeforeFirstMessageJobStatus> {
+  return scopedRequest(
+    `${base}/hooks/before-first-message/${encodeURIComponent(jobId)}`,
+    undefined,
+    homeId,
+  );
+}
+
+export function cancelBeforeFirstMessageHooks(
+  jobId: string,
+  homeId = getActiveCodexHomeId(),
+): Promise<DeckPluginBeforeFirstMessageJobStatus> {
+  return scopedRequest(
+    `${base}/hooks/before-first-message/${encodeURIComponent(jobId)}/cancel`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
     },
     homeId,
   );

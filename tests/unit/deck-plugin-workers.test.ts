@@ -561,3 +561,176 @@ test("worker UI jobs return immediately and expose only their own completed resu
     404,
   );
 });
+
+test("beforeFirstMessage hooks validate manifest, transform messages sequentially, surface live detail, and support cancel", async (t) => {
+  assert.throws(
+    () =>
+      parseDeckPluginManifest({
+        schemaVersion: 1,
+        id: "example.hook-invalid",
+        name: "Invalid Hook",
+        version: "1.0.0",
+        description: "Missing capability",
+        capabilities: ["backend.execute"],
+        entrypoints: { backend: "worker.mjs" },
+        contributions: {
+          beforeFirstMessage: { method: "transform" },
+        },
+      }),
+    /sessions\.transform/,
+  );
+
+  const root = await mkdtemp(join(tmpdir(), "deck-plugin-hook-"));
+  let manager: DeckPluginWorkers;
+  const store = new DeckPluginStore(root, () => {
+    void manager?.reconcile();
+  }, []);
+  const makeHookPkg = (id: string, order: number, source: string) =>
+    Object.entries({
+      "plugin.json": JSON.stringify({
+        schemaVersion: 1,
+        id,
+        name: id,
+        version: "1.0.0",
+        description: "Hook fixture",
+        capabilities: [
+          "backend.execute",
+          "sessions.transform",
+          "status.write",
+          "sessions.events",
+        ],
+        entrypoints: { backend: "worker.mjs" },
+        contributions: {
+          sessionTip: true,
+          beforeFirstMessage: {
+            method: "hook.run",
+            waitingLabel: `Running ${id}…`,
+            order,
+          },
+        },
+      }),
+      "worker.mjs": source,
+    }).map(([path, content]) => ({
+      path,
+      contentBase64: Buffer.from(content).toString("base64"),
+    }));
+
+  const firstWorker = `
+    let n = 0;
+    const pending = new Map();
+    const rpc = (method, params) => new Promise((resolve, reject) => {
+      const requestId = String(++n);
+      pending.set(requestId, { resolve, reject });
+      process.send({ type: 'request', requestId, method, params });
+    });
+    process.on('message', async (msg) => {
+      if (msg.type === 'initialize') process.send({ type: 'ready' });
+      if (msg.type === 'response') { const p = pending.get(msg.requestId); if (p) { pending.delete(msg.requestId); msg.error ? p.reject(new Error(msg.error)) : p.resolve(msg.result); } }
+      if (msg.type === 'request' && msg.method === 'host.shutdown') { process.send({ type: 'response', requestId: msg.requestId, result: null }); return; }
+      if (msg.type === 'request' && msg.method === 'hook.run') {
+        await rpc('status.set', { threadId: msg.params.threadId, status: { phase: 'evaluating', reason: 'Checking rules' } });
+        if (msg.params.text === 'SLOW') {
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+        process.send({
+          type: 'response',
+          requestId: msg.requestId,
+          result: {
+            text: '[PRE] ' + msg.params.text,
+            changed: true,
+            summary: 'Prepended tag',
+            appliedItems: [{ id: 'r1', name: 'Prefix', mode: 'prepend', reason: 'matched' }],
+          },
+        });
+      }
+    });
+    process.on('disconnect', () => process.exit(0));
+  `;
+  const secondWorker = `
+    process.on('message', (msg) => {
+      if (msg.type === 'initialize') process.send({ type: 'ready' });
+      if (msg.type === 'request' && msg.method === 'host.shutdown') { process.send({ type: 'response', requestId: msg.requestId, result: null }); return; }
+      if (msg.type === 'request' && msg.method === 'hook.run') {
+        process.send({
+          type: 'response',
+          requestId: msg.requestId,
+          result: { text: msg.params.text + ' [POST]', changed: true, summary: 'Appended tag' },
+        });
+      }
+    });
+    process.on('disconnect', () => process.exit(0));
+  `;
+
+  await store.installPackage(
+    makeHookPkg("hook.first", 1, firstWorker),
+    undefined,
+  );
+  await store.installPackage(
+    makeHookPkg("hook.second", 2, secondWorker),
+    undefined,
+  );
+
+  manager = new DeckPluginWorkers(store, {
+    readSession: async () => session(),
+    sendMessage: async () => ({ turnId: "t" }),
+    changed: () => {},
+  });
+  await manager.start();
+  t.after(async () => {
+    await manager.stop();
+    await rm(root, { recursive: true, force: true });
+  });
+  const app = new Hono();
+  registerDeckPluginRoutes(app, store, manager);
+
+  const started = await (
+    await app.request("/api/deck/plugins/hooks/before-first-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: "new-thread-1",
+        cwd: "/tmp/demo",
+        text: "Build feature X",
+      }),
+    })
+  ).json();
+  assert.ok(started.jobId);
+  assert.equal(started.plugins.length, 2);
+
+  let state = started;
+  for (let i = 0; i < 100 && !state.done; i++) {
+    state = await (
+      await app.request(
+        `/api/deck/plugins/hooks/before-first-message/${started.jobId}`,
+      )
+    ).json();
+    if (!state.done) await new Promise((r) => setTimeout(r, 15));
+  }
+  assert.equal(state.done, true);
+  assert.equal(state.changed, true);
+  assert.equal(state.text, "[PRE] Build feature X [POST]");
+  assert.equal(state.completedPlugins.length, 2);
+  assert.equal(state.completedPlugins[0].appliedItems[0].mode, "prepend");
+
+  // Cancellation aborts an in-flight slow hook immediately.
+  const slow = await (
+    await app.request("/api/deck/plugins/hooks/before-first-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "new-thread-2", text: "SLOW" }),
+    })
+  ).json();
+  assert.ok(slow.jobId);
+  const canceled = await (
+    await app.request(
+      `/api/deck/plugins/hooks/before-first-message/${slow.jobId}/cancel`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    )
+  ).json();
+  assert.equal(canceled.done, true);
+  assert.equal(canceled.canceled, true);
+});

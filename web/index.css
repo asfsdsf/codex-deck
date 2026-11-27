@@ -875,3 +875,45 @@ select option {
 .workflow-create-waiting-content {
   animation: workflow-create-waiting-fade 1.2s ease-in-out infinite;
 }
+
+@keyframes plugin-hook-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.plugin-hook-shimmer-bar {
+  position: relative;
+  height: 2px;
+  width: 100%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-cyan-500) 18%, transparent);
+}
+
+.plugin-hook-shimmer-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-cyan-400),
+    transparent
+  );
+  animation: plugin-hook-shimmer 1.6s ease-in-out infinite;
+}
+
+.plugin-hook-ping {
+  animation: thinking-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-hook-shimmer-bar::after,
+  .plugin-hook-ping {
+    animation: none;
+  }
+}

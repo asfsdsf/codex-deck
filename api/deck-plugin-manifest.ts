@@ -11,6 +11,7 @@ export const DECK_PLUGIN_CAPABILITIES = [
   "sessions.read",
   "sessions.events",
   "sessions.submit",
+  "sessions.transform",
   "codex.homes.read",
   "codex.sessions.manage",
   "data.read",
@@ -58,10 +59,17 @@ export interface DeckPluginCommand {
   action: { view: string } | { method: string };
 }
 
+export interface DeckPluginBeforeFirstMessageHook {
+  method: string;
+  waitingLabel?: string;
+  order?: number;
+}
+
 export interface DeckPluginContributions {
   settings?: { title: string };
   sessionToggle?: { label: string };
   sessionTip?: boolean;
+  beforeFirstMessage?: DeckPluginBeforeFirstMessageHook;
   views?: DeckPluginView[];
   commands?: DeckPluginCommand[];
 }
@@ -245,6 +253,41 @@ export function parseDeckPluginManifest(
       if (typeof input.sessionTip !== "boolean")
         throw new DeckPluginManifestError("sessionTip must be a boolean.");
       contributions.sessionTip = input.sessionTip;
+    }
+    if (input.beforeFirstMessage !== undefined) {
+      const hook = readObject(
+        input.beforeFirstMessage,
+        "contributions.beforeFirstMessage",
+      );
+      if (
+        !entries.backend ||
+        !capabilitiesValue.includes("sessions.transform")
+      ) {
+        throw new DeckPluginManifestError(
+          "beforeFirstMessage hooks require a backend and sessions.transform.",
+        );
+      }
+      if (
+        hook.order !== undefined &&
+        (typeof hook.order !== "number" || !Number.isFinite(hook.order))
+      ) {
+        throw new DeckPluginManifestError(
+          "beforeFirstMessage.order must be finite.",
+        );
+      }
+      contributions.beforeFirstMessage = {
+        method: readText(hook.method, "beforeFirstMessage.method", 80),
+        ...(hook.waitingLabel === undefined
+          ? {}
+          : {
+              waitingLabel: readText(
+                hook.waitingLabel,
+                "beforeFirstMessage.waitingLabel",
+                120,
+              ),
+            }),
+        ...(hook.order === undefined ? {} : { order: hook.order as number }),
+      };
     }
     if (input.views !== undefined) {
       if (!Array.isArray(input.views) || input.views.length > 32)
@@ -531,4 +574,37 @@ export interface DeckPluginContributionsSnapshot {
     statuses: Record<string, DeckPluginStatus>;
     workerError?: string;
   }>;
+}
+
+export interface DeckPluginAppliedPromptSummary {
+  id: string;
+  name: string;
+  mode: string;
+  reason?: string;
+}
+
+export interface DeckPluginBeforeFirstMessagePluginResult {
+  pluginId: string;
+  pluginName: string;
+  changed: boolean;
+  skipped?: boolean;
+  summary?: string;
+  appliedItems?: DeckPluginAppliedPromptSummary[];
+  error?: string;
+}
+
+export interface DeckPluginBeforeFirstMessageJobStatus {
+  jobId: string | null;
+  done: boolean;
+  canceled?: boolean;
+  plugins: Array<{ id: string; name: string; waitingLabel: string }>;
+  activePlugin: { id: string; name: string; waitingLabel: string } | null;
+  phase: string;
+  detail?: string;
+  startedAt: number;
+  completedPlugins: DeckPluginBeforeFirstMessagePluginResult[];
+  text?: string;
+  originalText?: string;
+  changed?: boolean;
+  error?: string;
 }
