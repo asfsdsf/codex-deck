@@ -3716,12 +3716,16 @@ const SessionView = memo(
                   errors={approvalErrors}
                   onRespond={submitApprovalResponse}
                 />
-                <AutoReviewActivity key={sessionId} sessionId={sessionId} />
-                <PendingElicitations
-                  key={sessionId}
-                  sessionId={sessionId}
-                  revision={elicitationRevision}
-                />
+                {isCodexSession && (
+                  <>
+                    <AutoReviewActivity key={sessionId} sessionId={sessionId} />
+                    <PendingElicitations
+                      key={sessionId}
+                      sessionId={sessionId}
+                      revision={elicitationRevision}
+                    />
+                  </>
+                )}
                 <PendingUserInputRequests
                   requests={unattachedUserInputRequests}
                   selectedAnswers={selectedUserInputAnswers}

@@ -248,7 +248,7 @@ export function LlmWorkspace({
             role: "assistant",
             model: turn.model,
             reasoningEffort: turn.reasoningEffort,
-            content: [{ type: "thinking", thinking: turn.thinking }],
+            content: [{ type: "reasoning", text: turn.thinking }],
           },
         });
       if (turn.assistant || turn.error)
