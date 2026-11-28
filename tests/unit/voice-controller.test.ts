@@ -12,16 +12,32 @@ import type {
 import {
   audioAttachmentMimeType,
   audioAttachmentUnavailableReason,
+  classifyMicrophoneError,
+  classifyVoiceServiceError,
+  deriveVoiceActivity,
   describeEndedVoiceSession,
+  describeVoiceActivity,
+  describeVoiceError,
   describeVoiceToggle,
   describeMicrophoneError,
+  formatVoiceDuration,
   getRealtimeDelegationDisplayText,
   isAudioDataUrl,
+  isVoiceMuteShortcut,
   parseVoiceCommandArgs,
+  voiceMuteShortcutLabel,
   voiceSessionRelation,
   voiceUnavailableReason,
   withAudioMimeType,
+  type VoiceActivityInput,
 } from "../../web/voice/voice-support";
+import {
+  VOICE_SPEAKER_HOLD_MS,
+  VoiceImpulseHistory,
+  voiceMeterIntensity,
+  voiceMeterLevel,
+} from "../../web/voice/voice-impulse";
+import { mergeVoiceHistory } from "../../web/voice/voice-history";
 import { sanitizeText } from "../../web/utils";
 
 function view(
@@ -73,6 +89,9 @@ function harness(
         },
         setMuted(muted) {
           media.muted = muted;
+        },
+        levels() {
+          return { input: 0.2, output: 0 };
         },
         async resumePlayback() {
           return true;
@@ -180,6 +199,8 @@ test("controller negotiates, mutes, and stops the owned session", async () => {
   assert.equal(controller.getState().status, "negotiating");
   connect();
   assert.equal(controller.getState().status, "connected");
+  assert.equal(typeof controller.getState().connectedAt, "number");
+  assert.deepEqual(controller.levels(), { input: 0.2, output: 0 });
   assert.equal(controller.toggleMute(), true);
   assert.equal(media.muted, true);
   assert.equal(controller.getState().muted, true);
@@ -187,6 +208,8 @@ test("controller negotiates, mutes, and stops the owned session", async () => {
   assert.ok(calls.includes("stop:t1"));
   assert.equal(media.closed, true);
   assert.equal(controller.getState().status, "idle");
+  assert.equal(controller.getState().connectedAt, null);
+  assert.deepEqual(controller.levels(), { input: 0, output: 0 });
   assert.equal(controller.toggleMute(), false);
 });
 
@@ -210,12 +233,14 @@ test("microphone denial and unavailable environments surface errors without a ba
   await denied.controller.start("t1");
   assert.equal(denied.controller.getState().status, "idle");
   assert.match(denied.controller.getState().error ?? "", /denied/);
+  assert.equal(denied.controller.getState().errorKind, "permission");
   assert.equal(denied.controller.getState().errorThreadId, "t1");
   assert.ok(!denied.calls.some((call) => call.startsWith("start:")));
 
   const insecure = harness({ env: { isSecureContext: false } });
   await insecure.controller.start("t1");
   assert.match(insecure.controller.getState().error ?? "", /HTTPS/);
+  assert.equal(insecure.controller.getState().errorKind, "unsupported");
   assert.deepEqual(insecure.calls, []);
 });
 
@@ -246,6 +271,7 @@ test("a stop from another device or a lost connection tears media down", async (
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(lost.controller.getState().status, "idle");
   assert.ok(lost.calls.some((call) => call.startsWith("stop:t1:")));
+  assert.equal(lost.controller.getState().errorKind, "connection");
 });
 
 test("only one voice call runs per page", async () => {
@@ -334,13 +360,247 @@ test("audio attachments accept upstream formats and require an audio-capable mod
 });
 
 test("the composer voice button toggles like /voice for any model", () => {
-  assert.deepEqual(describeVoiceToggle("idle"), {
-    active: false,
-    label: "Start voice conversation",
-  });
-  for (const status of ["preparing", "negotiating", "connected", "stopping"])
-    assert.deepEqual(describeVoiceToggle(status), {
+  assert.deepEqual(
+    describeVoiceToggle({ status: "idle", threadId: null }, "t1"),
+    {
+      active: false,
+      busy: false,
+      elsewhere: false,
+      label: "Start voice conversation",
+    },
+  );
+  assert.deepEqual(
+    describeVoiceToggle({ status: "connected", threadId: "t1" }, "t1"),
+    {
       active: true,
-      label: "Stop voice conversation",
-    });
+      busy: false,
+      elsewhere: false,
+      label: "End voice conversation",
+    },
+  );
+  for (const status of ["preparing", "negotiating"])
+    assert.equal(
+      describeVoiceToggle({ status, threadId: "t1" }, "t1").label,
+      "Cancel voice connection",
+    );
+  assert.equal(
+    describeVoiceToggle({ status: "stopping", threadId: "t1" }, "t1").busy,
+    true,
+  );
+  // Like /voice, pressing it in another conversation ends this page's call,
+  // so it says so.
+  assert.deepEqual(
+    describeVoiceToggle({ status: "connected", threadId: "t1" }, "t2"),
+    {
+      active: true,
+      busy: false,
+      elsewhere: true,
+      label: "End voice in the other conversation",
+    },
+  );
+});
+
+test("voice impulse uses the TUI meter calibration", () => {
+  // i16 peaks: 512 is the noise floor, 8192 is full scale.
+  assert.equal(voiceMeterIntensity(0), 0);
+  assert.equal(voiceMeterIntensity(512 / 32768), 0);
+  assert.equal(voiceMeterIntensity(8192 / 32768), 1);
+  assert.equal(voiceMeterIntensity(1), 1);
+  assert.equal(voiceMeterLevel(600 / 32768), 1);
+  assert.equal(voiceMeterLevel(8192 / 32768), 5);
+
+  const history = new VoiceImpulseHistory(4);
+  let activity = history.push(0.1, 0, false, 1_000);
+  assert.equal(activity.userSpeaking, true);
+  assert.equal(activity.codexSpeaking, false);
+  activity = history.push(0, 0.2, false, 1_100);
+  // Speech is held briefly so the headline does not flicker between words.
+  assert.equal(activity.userSpeaking, true);
+  assert.equal(activity.codexSpeaking, true);
+  activity = history.push(0, 0, false, 1_100 + VOICE_SPEAKER_HOLD_MS);
+  assert.equal(activity.userSpeaking, false);
+  assert.equal(activity.codexSpeaking, false);
+  assert.equal(history.mic.length, 4);
+  assert.ok(history.mic[1] > 0);
+
+  // Muted: the mic line is flat, but talking is noticed for the hint.
+  activity = history.push(0.1, 0, true, 5_000);
+  assert.equal(history.mic.at(-1), 0);
+  assert.equal(activity.userSpeaking, false);
+  assert.equal(activity.mutedSpeech, true);
+});
+
+test("voice activity names one headline state", () => {
+  const base: VoiceActivityInput = {
+    status: "connected",
+    muted: false,
+    userSpeaking: false,
+    codexSpeaking: false,
+    transcript: [],
+    working: false,
+    lastEntryAgeMs: null,
+  };
+  const entry = (role: string, final: boolean) => ({
+    id: role,
+    role,
+    text: "hi",
+    final,
+    at: 1,
+  });
+  assert.equal(deriveVoiceActivity(base), "listening");
+  assert.equal(
+    deriveVoiceActivity({ ...base, status: "preparing" }),
+    "requesting-microphone",
+  );
+  assert.equal(
+    deriveVoiceActivity({ ...base, status: "negotiating" }),
+    "connecting",
+  );
+  assert.equal(
+    deriveVoiceActivity({ ...base, muted: true, codexSpeaking: true }),
+    "muted",
+  );
+  assert.equal(
+    deriveVoiceActivity({ ...base, userSpeaking: true, codexSpeaking: true }),
+    "hearing-you",
+  );
+  assert.equal(
+    deriveVoiceActivity({ ...base, codexSpeaking: true }),
+    "speaking",
+  );
+  // Other devices have no levels; partial captions stand in for them.
+  assert.equal(
+    deriveVoiceActivity({
+      ...base,
+      status: "remote",
+      transcript: [entry("assistant", false)],
+    }),
+    "speaking",
+  );
+  assert.equal(deriveVoiceActivity({ ...base, working: true }), "working");
+  assert.equal(
+    deriveVoiceActivity({
+      ...base,
+      transcript: [entry("user", true)],
+      lastEntryAgeMs: 1_000,
+    }),
+    "thinking",
+  );
+  assert.equal(
+    deriveVoiceActivity({
+      ...base,
+      transcript: [entry("user", true)],
+      lastEntryAgeMs: 60_000,
+    }),
+    "listening",
+  );
+  assert.match(
+    describeVoiceActivity("muted", { shortcut: "⌥M" }).hint,
+    /⌥M to unmute/,
+  );
+  assert.match(
+    describeVoiceActivity("muted", { shortcut: "⌥M", mutedSpeech: true }).hint,
+    /You're muted/,
+  );
+});
+
+test("voice errors say what to do next", () => {
+  const named = (name: string) => Object.assign(new Error("x"), { name });
+  assert.equal(classifyMicrophoneError(named("NotAllowedError")), "permission");
+  assert.equal(
+    classifyMicrophoneError(named("NotFoundError")),
+    "no-microphone",
+  );
+  assert.equal(
+    classifyMicrophoneError(named("NotReadableError")),
+    "microphone-busy",
+  );
+  assert.equal(
+    classifyVoiceServiceError(
+      "This Codex version does not support realtime voice.",
+    ),
+    "unsupported",
+  );
+  assert.equal(
+    classifyVoiceServiceError(
+      "A voice session is already active for this conversation on another device.",
+    ),
+    "conflict",
+  );
+  assert.equal(classifyVoiceServiceError("boom"), "service");
+  assert.deepEqual(describeVoiceError("no-microphone"), {
+    title: "No microphone found",
+    retry: true,
+    chooseMicrophone: true,
+  });
+  assert.equal(describeVoiceError("unsupported").retry, false);
+  assert.doesNotMatch(
+    describeMicrophoneError(named("NotAllowedError")),
+    /\/voice/,
+  );
+});
+
+test("voice mute shortcut matches the TUI's F9 and Alt/Option+M", () => {
+  const key = (patch: Partial<Parameters<typeof isVoiceMuteShortcut>[0]>) => ({
+    key: "",
+    code: "",
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    ...patch,
+  });
+  assert.equal(isVoiceMuteShortcut(key({ key: "F9", code: "F9" })), true);
+  assert.equal(
+    isVoiceMuteShortcut(key({ key: "µ", code: "KeyM", altKey: true })),
+    true,
+  );
+  assert.equal(isVoiceMuteShortcut(key({ key: "m", code: "KeyM" })), false);
+  assert.equal(
+    isVoiceMuteShortcut(
+      key({ key: "m", code: "KeyM", altKey: true, metaKey: true }),
+    ),
+    false,
+  );
+  assert.equal(
+    isVoiceMuteShortcut(key({ key: "F9", code: "F9", isComposing: true })),
+    false,
+  );
+  assert.equal(voiceMuteShortcutLabel("MacIntel"), "⌥M");
+  assert.equal(voiceMuteShortcutLabel("Win32"), "Alt+M");
+  assert.equal(formatVoiceDuration(83_400), "1:23");
+  assert.equal(formatVoiceDuration(3_723_000), "1:02:03");
+});
+
+test("voice history merges saved and live captions with speaker roles", () => {
+  const merged = mergeVoiceHistory(
+    [
+      {
+        realtimeSessionId: "r1",
+        eventId: "e2",
+        observedAtMs: 20,
+        kind: "handoff",
+        mode: "start",
+        text: "fix the tests",
+      } as never,
+    ],
+    [
+      {
+        id: "live-1",
+        eventId: "e1",
+        realtimeSessionId: "r1",
+        role: "user",
+        text: "please fix the tests",
+        final: false,
+        at: 10,
+      },
+    ],
+  );
+  assert.deepEqual(
+    merged.map((entry) => [entry.role, entry.label, entry.pending]),
+    [
+      ["user", "You", true],
+      ["note", "Started a turn", false],
+    ],
+  );
 });

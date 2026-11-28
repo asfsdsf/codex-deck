@@ -140,30 +140,47 @@ function pickRecorderMimeType(): string | undefined {
  * behaves exactly like typing the command: starts voice with any
  * conversation model, or stops the call running on this page.
  */
-export function VoiceToggleButton({ onToggle }: { onToggle: () => void }) {
+export function VoiceToggleButton({
+  threadId,
+  onToggle,
+}: {
+  threadId: string | null;
+  onToggle: () => void;
+}) {
   const controller = getVoiceController();
   const state = useSyncExternalStore(
     controller.subscribe,
     controller.getState,
     controller.getState,
   );
-  const toggle = describeVoiceToggle(state.status);
+  const toggle = describeVoiceToggle(state, threadId);
+  const liveHere = toggle.active && !toggle.elsewhere;
   return (
     <button
       type="button"
       onClick={onToggle}
-      aria-pressed={toggle.active}
-      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-zinc-800 ${
-        toggle.active
-          ? "text-red-300 hover:text-red-200"
-          : "text-zinc-400 hover:text-zinc-100"
+      aria-pressed={liveHere}
+      className={`relative flex h-8 w-8 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60 ${
+        liveHere
+          ? "bg-red-500/15 text-red-300 hover:bg-red-500/25"
+          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
       }`}
       title={`${toggle.label} (/voice)`}
       aria-label={toggle.label}
     >
-      <AudioLines
-        className={`h-[18px] w-[18px] ${toggle.active ? "animate-pulse" : ""}`}
-      />
+      <AudioLines className="h-[18px] w-[18px]" />
+      {toggle.busy && !toggle.elsewhere && (
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 animate-spin rounded-full border-2 border-cyan-400/70 border-t-transparent motion-reduce:animate-none"
+        />
+      )}
+      {toggle.elsewhere && (
+        <span
+          aria-hidden="true"
+          className="absolute right-1 top-1 h-2 w-2 rounded-full border border-[color:var(--app-surface-composer)] bg-red-500"
+        />
+      )}
     </button>
   );
 }

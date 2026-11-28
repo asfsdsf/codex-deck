@@ -12030,9 +12030,16 @@ export default function CodexDeckApp() {
     <div className="composer-shell shrink-0 bg-zinc-950 px-3 pb-3 pt-1 md:px-5">
       <VoiceSessionBar
         threadId={input.sessionId}
+        working={input.isGeneratingForSession}
         onOpenSettings={(threadId) =>
           setNativeDialog({ kind: "voice-settings", threadId })
         }
+        onStartVoice={() => void input.onRunSlashCommand("/voice", "")}
+        describeThread={(threadId) =>
+          sessionsWithThreadNames.find((entry) => entry.id === threadId)
+            ?.display ?? null
+        }
+        onOpenThread={handleSelectSession}
       />
       <div className="composer-card relative mx-auto w-full max-w-4xl">
         {(() => {

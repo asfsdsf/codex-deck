@@ -11,16 +11,21 @@ import {
 import {
   browserVoiceMediaFactory,
   readPreferredMicrophone,
+  SILENT_LEVELS,
+  type VoiceLevels,
   type VoiceMediaFactory,
   type VoiceMediaSession,
 } from "./voice-media";
 import {
+  classifyMicrophoneError,
+  classifyVoiceServiceError,
   describeEndedVoiceSession,
   describeMicrophoneError,
   isLiveVoicePhase,
   readVoiceEnvironment,
   voiceUnavailableReason,
   type VoiceEnvironment,
+  type VoiceErrorKind,
 } from "./voice-support";
 
 export type VoiceLocalStatus =
@@ -36,7 +41,11 @@ export interface VoiceLocalState {
   status: VoiceLocalStatus;
   muted: boolean;
   playbackBlocked: boolean;
+  /** When the call connected on this page (local clock), for the timer. */
+  connectedAt: number | null;
   error: string | null;
+  /** What went wrong, so the UI can offer the matching fix. */
+  errorKind: VoiceErrorKind | null;
   errorThreadId: string | null;
 }
 
@@ -62,7 +71,9 @@ const IDLE: VoiceLocalState = {
   status: "idle",
   muted: false,
   playbackBlocked: false,
+  connectedAt: null,
   error: null,
+  errorKind: null,
   errorThreadId: null,
 };
 
@@ -117,7 +128,13 @@ export class VoiceController {
   }
 
   public clearError() {
-    if (this.state.error) this.setState({ error: null, errorThreadId: null });
+    if (this.state.error)
+      this.setState({ error: null, errorKind: null, errorThreadId: null });
+  }
+
+  /** Live microphone and Codex voice levels for this page's call. */
+  public levels(): VoiceLevels {
+    return this.media?.levels() ?? SILENT_LEVELS;
   }
 
   /** `/voice`: stop when this page runs voice, otherwise start for threadId. */
@@ -137,12 +154,13 @@ export class VoiceController {
           ? "Voice is already running for this conversation."
           : "Voice is running in another conversation. Stop it first.",
         false,
+        "conflict",
       );
       return;
     }
     const unavailable = this.unavailableReason();
     if (unavailable) {
-      this.fail(threadId, unavailable, false);
+      this.fail(threadId, unavailable, false, "unsupported");
       return;
     }
     const generation = ++this.generation;
@@ -159,12 +177,15 @@ export class VoiceController {
           onConnectionState: (connection) => {
             if (generation !== this.generation) return;
             if (connection === "connected")
-              this.setState({ status: "connected" });
+              this.setState({
+                status: "connected",
+                connectedAt: this.state.connectedAt ?? Date.now(),
+              });
             else if (connection === "failed" || connection === "closed")
               void this.abandon(
                 generation,
                 connection === "failed"
-                  ? "The voice connection failed. Check your network and try /voice again."
+                  ? "The voice connection failed. Check your network, then try again."
                   : "The voice connection closed.",
               );
           },
@@ -176,7 +197,12 @@ export class VoiceController {
       );
     } catch (error) {
       if (generation === this.generation)
-        this.fail(threadId, describeMicrophoneError(error));
+        this.fail(
+          threadId,
+          describeMicrophoneError(error),
+          true,
+          classifyMicrophoneError(error),
+        );
       return;
     }
     if (generation !== this.generation) {
@@ -192,7 +218,13 @@ export class VoiceController {
         sdp: media.offerSdp,
       });
     } catch (error) {
-      if (generation === this.generation) this.fail(threadId, message(error));
+      if (generation === this.generation)
+        this.fail(
+          threadId,
+          message(error),
+          true,
+          classifyVoiceServiceError(message(error)),
+        );
       return;
     }
     if (generation !== this.generation) return;
@@ -205,6 +237,8 @@ export class VoiceController {
         this.fail(
           threadId,
           describeEndedVoiceSession(snapshot.session, this.deps.clientId),
+          true,
+          "ended",
         );
         return;
       }
@@ -258,7 +292,7 @@ export class VoiceController {
     try {
       await this.deps.api.stop(threadId, this.deps.clientId);
     } catch (error) {
-      this.fail(threadId, message(error), false);
+      this.fail(threadId, message(error), false, "service");
     }
   }
 
@@ -286,7 +320,7 @@ export class VoiceController {
     if (!session || !this.voiceSessionId) return;
     if (session.voiceSessionId !== this.voiceSessionId) {
       if (isLiveVoicePhase(session.phase))
-        this.fail(threadId, "Voice moved to another device.");
+        this.fail(threadId, "Voice moved to another device.", true, "conflict");
       return;
     }
     if (isLiveVoicePhase(session.phase)) return;
@@ -295,7 +329,12 @@ export class VoiceController {
       this.teardown();
       return;
     }
-    this.fail(threadId, describeEndedVoiceSession(session, this.deps.clientId));
+    this.fail(
+      threadId,
+      describeEndedVoiceSession(session, this.deps.clientId),
+      true,
+      "ended",
+    );
   }
 
   private startHeartbeat(threadId: string, generation: number) {
@@ -307,7 +346,12 @@ export class VoiceController {
         .then((snapshot) => this.observe(threadId, snapshot.session))
         .catch((error) => {
           if (/does not own/i.test(message(error)))
-            this.fail(threadId, "Voice moved to another device.");
+            this.fail(
+              threadId,
+              "Voice moved to another device.",
+              true,
+              "conflict",
+            );
         });
     }, this.deps.heartbeatMs);
     (this.heartbeat as { unref?: () => void }).unref?.();
@@ -322,16 +366,21 @@ export class VoiceController {
   private async abandon(generation: number, error: string) {
     if (generation !== this.generation || this.state.status === "idle") return;
     const threadId = this.state.threadId;
-    this.fail(threadId, error);
+    this.fail(threadId, error, true, "connection");
     if (threadId)
       await this.deps.api
         .stop(threadId, this.deps.clientId, error)
         .catch(() => {});
   }
 
-  private fail(threadId: string | null, error: string, teardown = true) {
+  private fail(
+    threadId: string | null,
+    error: string,
+    teardown = true,
+    kind: VoiceErrorKind = "service",
+  ) {
     if (teardown) this.teardown();
-    this.setState({ error, errorThreadId: threadId });
+    this.setState({ error, errorKind: kind, errorThreadId: threadId });
   }
 
   private teardown() {
@@ -345,6 +394,7 @@ export class VoiceController {
       status: "idle",
       muted: false,
       playbackBlocked: false,
+      connectedAt: null,
     });
   }
 }

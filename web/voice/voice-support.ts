@@ -1,4 +1,5 @@
 import type {
+  RealtimeTranscriptEntry,
   RealtimeVoicePhase,
   RealtimeVoiceSessionView,
 } from "@codex-deck/api";
@@ -62,18 +63,259 @@ export function describeMicrophoneError(error: unknown): string {
     case "NotAllowedError":
     case "PermissionDeniedError":
     case "SecurityError":
-      return "Microphone access was denied. Allow microphone access for this site in your browser settings, then run /voice again.";
+      return "Microphone access was denied for this site. Allow it from the site settings next to the address bar (on iPhone: Settings › Safari › Microphone), then try again.";
     case "NotFoundError":
     case "DevicesNotFoundError":
     case "OverconstrainedError":
-      return "No usable microphone was found. Connect a microphone or choose another one in /voice settings.";
+      return "No usable microphone was found. Connect one, or choose another microphone, then try again.";
     case "NotReadableError":
     case "TrackStartError":
     case "AbortError":
-      return "The microphone could not be started. It may be in use by another app.";
+      return "The microphone could not be started. Close other apps that may be using it, then try again.";
     default:
       return `Could not start the microphone: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+/** What went wrong with voice, so the UI can offer the matching fix. */
+export type VoiceErrorKind =
+  | "permission"
+  | "no-microphone"
+  | "microphone-busy"
+  | "unsupported"
+  | "connection"
+  | "conflict"
+  | "service"
+  | "ended";
+
+function errorName(error: unknown): string {
+  return error && typeof error === "object" && "name" in error
+    ? String((error as { name?: unknown }).name)
+    : "";
+}
+
+export function classifyMicrophoneError(error: unknown): VoiceErrorKind {
+  switch (errorName(error)) {
+    case "NotAllowedError":
+    case "PermissionDeniedError":
+    case "SecurityError":
+      return "permission";
+    case "NotFoundError":
+    case "DevicesNotFoundError":
+    case "OverconstrainedError":
+      return "no-microphone";
+    case "NotReadableError":
+    case "TrackStartError":
+    case "AbortError":
+      return "microphone-busy";
+    default:
+      return "service";
+  }
+}
+
+/** Classify an error message returned by the voice routes. */
+export function classifyVoiceServiceError(message: string): VoiceErrorKind {
+  if (/does not support realtime voice|voice is unavailable/i.test(message))
+    return "unsupported";
+  if (/already|another device|another conversation|does not own/i.test(message))
+    return "conflict";
+  return "service";
+}
+
+export interface VoiceErrorPresentation {
+  title: string;
+  /** Starting voice again can succeed (after the user fixes the cause). */
+  retry: boolean;
+  /** Picking another microphone may fix it. */
+  chooseMicrophone: boolean;
+}
+
+export function describeVoiceError(
+  kind: VoiceErrorKind | null,
+): VoiceErrorPresentation {
+  switch (kind) {
+    case "permission":
+      return {
+        title: "Microphone access is blocked",
+        retry: true,
+        chooseMicrophone: false,
+      };
+    case "no-microphone":
+      return {
+        title: "No microphone found",
+        retry: true,
+        chooseMicrophone: true,
+      };
+    case "microphone-busy":
+      return {
+        title: "The microphone is busy",
+        retry: true,
+        chooseMicrophone: true,
+      };
+    case "unsupported":
+      return {
+        title: "Voice isn't available here",
+        retry: false,
+        chooseMicrophone: false,
+      };
+    case "connection":
+      return {
+        title: "Voice couldn't connect",
+        retry: true,
+        chooseMicrophone: false,
+      };
+    case "conflict":
+      return {
+        title: "Voice is already in use",
+        retry: false,
+        chooseMicrophone: false,
+      };
+    case "ended":
+      return {
+        title: "Voice conversation ended",
+        retry: true,
+        chooseMicrophone: false,
+      };
+    default:
+      return {
+        title: "Voice stopped",
+        retry: true,
+        chooseMicrophone: false,
+      };
+  }
+}
+
+export type VoiceActivity =
+  | "requesting-microphone"
+  | "connecting"
+  | "listening"
+  | "hearing-you"
+  | "speaking"
+  | "thinking"
+  | "working"
+  | "muted"
+  | "stopping";
+
+export interface VoiceActivityInput {
+  /** This page's call status, or "remote" for a call owned elsewhere. */
+  status: string;
+  muted: boolean;
+  /** From the live microphone impulse (this page only). */
+  userSpeaking: boolean;
+  /** From Codex's live voice impulse (this page only). */
+  codexSpeaking: boolean;
+  transcript: readonly RealtimeTranscriptEntry[];
+  /** A turn is running in the conversation (voice delegated work). */
+  working: boolean;
+  /** How long ago this page first saw the latest transcript entry. */
+  lastEntryAgeMs: number | null;
+}
+
+const THINKING_WINDOW_MS = 8_000;
+
+/**
+ * One headline state for the call. Order follows the TUI (connecting, muted,
+ * heard, speaking, listening), plus Deck's working/thinking cues.
+ */
+export function deriveVoiceActivity(input: VoiceActivityInput): VoiceActivity {
+  if (input.status === "preparing") return "requesting-microphone";
+  if (input.status === "negotiating") return "connecting";
+  if (input.status === "stopping") return "stopping";
+  if (input.muted) return "muted";
+  const last = input.transcript.at(-1);
+  const partial = last && !last.final ? last.role : null;
+  if (input.userSpeaking || partial === "user") return "hearing-you";
+  if (input.codexSpeaking || (partial && partial !== "user")) return "speaking";
+  if (input.working) return "working";
+  if (
+    last?.role === "user" &&
+    last.final &&
+    input.lastEntryAgeMs !== null &&
+    input.lastEntryAgeMs < THINKING_WINDOW_MS
+  )
+    return "thinking";
+  return "listening";
+}
+
+export function describeVoiceActivity(
+  activity: VoiceActivity,
+  options: { shortcut: string; mutedSpeech?: boolean; remote?: boolean },
+): { label: string; hint: string } {
+  switch (activity) {
+    case "requesting-microphone":
+      return {
+        label: "Requesting microphone",
+        hint: "Allow microphone access if your browser asks.",
+      };
+    case "connecting":
+      return { label: "Connecting", hint: "Setting up the voice call…" };
+    case "stopping":
+      return { label: "Ending call", hint: "Hanging up…" };
+    case "muted":
+      return {
+        label: "Muted",
+        hint: options.mutedSpeech
+          ? `You're muted — press ${options.shortcut} to talk.`
+          : `Codex can't hear you. Press ${options.shortcut} to unmute.`,
+      };
+    case "hearing-you":
+      return {
+        label: options.remote ? "Hearing the speaker" : "Hearing you",
+        hint: "Pause when you're done.",
+      };
+    case "speaking":
+      return {
+        label: "Codex is speaking",
+        hint: options.remote ? "Live on another device." : "Talk to interrupt.",
+      };
+    case "working":
+      return {
+        label: "Working on it",
+        hint: "Progress appears in the conversation.",
+      };
+    case "thinking":
+      return { label: "Thinking", hint: "Codex heard you." };
+    default:
+      return {
+        label: "Listening",
+        hint: options.remote
+          ? "Live on another device."
+          : "Go ahead — speak naturally.",
+      };
+  }
+}
+
+export interface VoiceShortcutEvent {
+  key: string;
+  code: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  isComposing?: boolean;
+}
+
+/** F9 mirrors the TUI's default mute key; Alt/Option+M works on laptops. */
+export function isVoiceMuteShortcut(event: VoiceShortcutEvent): boolean {
+  if (event.isComposing || event.ctrlKey || event.metaKey || event.shiftKey)
+    return false;
+  if (event.key === "F9") return !event.altKey;
+  return event.altKey && event.code === "KeyM";
+}
+
+export function voiceMuteShortcutLabel(platform: string): string {
+  return /mac|iphone|ipad|ipod/i.test(platform) ? "⌥M" : "Alt+M";
+}
+
+/** Format a call duration as m:ss (or h:mm:ss). */
+export function formatVoiceDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
+    : `${minutes}:${seconds}`;
 }
 
 export function isLiveVoicePhase(
@@ -186,17 +428,43 @@ export function audioAttachmentUnavailableReason(
   return null;
 }
 
+export interface VoiceToggleDescription {
+  /** This page runs a call (pressing the button ends it, like /voice). */
+  active: boolean;
+  /** The call is connecting or hanging up. */
+  busy: boolean;
+  /** The call belongs to another conversation on this page. */
+  elsewhere: boolean;
+  label: string;
+}
+
 /**
  * The composer's voice button runs /voice, so like the CLI it works with any
  * conversation model (realtime voice uses its own realtime model).
  */
-export function describeVoiceToggle(status: string): {
-  active: boolean;
-  label: string;
-} {
-  const active = status !== "idle";
+export function describeVoiceToggle(
+  state: { status: string; threadId: string | null },
+  threadId: string | null,
+): VoiceToggleDescription {
+  if (state.status === "idle")
+    return {
+      active: false,
+      busy: false,
+      elsewhere: false,
+      label: "Start voice conversation",
+    };
+  const elsewhere = state.threadId !== threadId;
+  const busy = state.status !== "connected";
   return {
-    active,
-    label: active ? "Stop voice conversation" : "Start voice conversation",
+    active: true,
+    busy,
+    elsewhere,
+    label: elsewhere
+      ? "End voice in the other conversation"
+      : state.status === "stopping"
+        ? "Ending voice conversation"
+        : busy
+          ? "Cancel voice connection"
+          : "End voice conversation",
   };
 }

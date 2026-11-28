@@ -10,20 +10,20 @@ export function realtimeEventKey(entry: {
   return JSON.stringify([entry.realtimeSessionId, entry.eventId]);
 }
 
+export interface MergedVoiceHistoryEntry {
+  key: string;
+  at: number | null;
+  role: "user" | "assistant" | "note";
+  label: string;
+  text: string;
+  pending: boolean;
+}
+
 export function mergeVoiceHistory(
   saved: readonly RealtimeVoiceHistoryEntry[],
   live: readonly RealtimeTranscriptEntry[],
-) {
-  const events = new Map<
-    string,
-    {
-      key: string;
-      at: number | null;
-      label: string;
-      text: string;
-      pending: boolean;
-    }
-  >();
+): MergedVoiceHistoryEntry[] {
+  const events = new Map<string, MergedVoiceHistoryEntry>();
   for (const entry of live) {
     if (!entry.text.trim()) continue;
     const key =
@@ -36,6 +36,7 @@ export function mergeVoiceHistory(
     events.set(key, {
       key,
       at: entry.at,
+      role: entry.role === "user" ? "user" : "assistant",
       label: entry.role === "user" ? "You" : "Codex",
       text: entry.text,
       pending: !entry.final,
@@ -56,6 +57,12 @@ export function mergeVoiceHistory(
     events.set(key, {
       key,
       at: entry.observedAtMs,
+      role:
+        entry.kind === "saved" || entry.kind === "handoff"
+          ? "note"
+          : entry.role === "user"
+            ? "user"
+            : "assistant",
       label,
       text: entry.text,
       pending: false,

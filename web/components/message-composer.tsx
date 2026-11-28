@@ -1665,6 +1665,7 @@ const MessageComposer = memo(function MessageComposer(
         >
           {audioInput && (
             <VoiceToggleButton
+              threadId={sessionId}
               onToggle={() => void onRunSlashCommand?.("/voice", "")}
             />
           )}

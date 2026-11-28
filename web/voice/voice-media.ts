@@ -10,10 +10,25 @@ export type VoiceMediaConnectionState =
   | "failed"
   | "closed";
 
+/**
+ * Peak sample amplitude (0..1 of full scale) since the previous read, like
+ * the Codex TUI's microphone/speaker peaks.
+ */
+export interface VoiceLevels {
+  /** Microphone peak, measured even while muted (to warn "you are muted"). */
+  input: number;
+  /** Peak of Codex's voice coming back from the call. */
+  output: number;
+}
+
+export const SILENT_LEVELS: VoiceLevels = { input: 0, output: 0 };
+
 export interface VoiceMediaSession {
   readonly offerSdp: string;
   applyAnswer(sdp: string): Promise<void>;
   setMuted(muted: boolean): void;
+  /** Current audio levels; cheap enough to call every animation frame. */
+  levels(): VoiceLevels;
   /** Retry remote playback from a user gesture (iOS/Safari autoplay rules). */
   resumePlayback(): Promise<boolean>;
   close(): void;
@@ -33,6 +48,91 @@ export interface VoiceMediaFactory {
 
 export const REALTIME_EVENTS_CHANNEL = "oai-events";
 const ICE_GATHERING_TIMEOUT_MS = 2_500;
+
+interface LevelMeter {
+  attach(stream: MediaStream): void;
+  read(): number;
+}
+
+/**
+ * Web Audio meters for the microphone and the remote voice. Metering is
+ * best effort: when the browser refuses (old Safari, suspended context), the
+ * levels stay at zero and the UI falls back to transcript-driven activity.
+ */
+function createMeters() {
+  const AudioContextClass: typeof AudioContext | undefined =
+    typeof window === "undefined"
+      ? undefined
+      : (window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext);
+  let context: AudioContext | null = null;
+  try {
+    // Created inside the click that starts voice so iOS lets it run.
+    context = AudioContextClass ? new AudioContextClass() : null;
+    void context?.resume().catch(() => {});
+  } catch {
+    context = null;
+  }
+  const meter = (): LevelMeter => {
+    let analyser: AnalyserNode | null = null;
+    let buffer: Float32Array<ArrayBuffer> | null = null;
+    let attached: { stream: MediaStream; source: AudioNode } | null = null;
+    return {
+      // Follows the stream that is actually playing: a later `track` event
+      // (renegotiation) replaces the metered stream.
+      attach(stream) {
+        if (!context || attached?.stream === stream) return;
+        try {
+          attached?.source.disconnect();
+        } catch {
+          // already disconnected
+        }
+        attached = null;
+        analyser = null;
+        try {
+          const source = context.createMediaStreamSource(stream);
+          const node = context.createAnalyser();
+          // ~43 ms window at 48 kHz, so frame-rate reads see every peak.
+          node.fftSize = 2048;
+          // Some engines only pull analysers that reach the destination;
+          // a zero gain keeps the path silent.
+          const mute = context.createGain();
+          mute.gain.value = 0;
+          source.connect(node);
+          node.connect(mute);
+          mute.connect(context.destination);
+          analyser = node;
+          attached = { stream, source };
+          buffer = new Float32Array(new ArrayBuffer(node.fftSize * 4));
+        } catch {
+          analyser = null;
+        }
+      },
+      read() {
+        if (!analyser || !buffer) return 0;
+        analyser.getFloatTimeDomainData(buffer);
+        let peak = 0;
+        for (const sample of buffer) {
+          const magnitude = Math.abs(sample);
+          if (magnitude > peak) peak = magnitude;
+        }
+        return Math.min(1, peak);
+      },
+    };
+  };
+  return {
+    input: meter(),
+    output: meter(),
+    resume() {
+      if (context?.state === "suspended") void context.resume().catch(() => {});
+    },
+    close() {
+      void context?.close().catch(() => {});
+      context = null;
+    },
+  };
+}
 
 function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
   if (peer.iceGatheringState === "complete") return Promise.resolve();
@@ -62,14 +162,19 @@ export const browserVoiceMediaFactory: VoiceMediaFactory = {
     audio.style.display = "none";
     document.body.appendChild(audio);
     void audio.play().catch(() => {});
+    const meters = createMeters();
 
     let stream: MediaStream | null = null;
+    // Metering uses a clone so it keeps hearing the user while muted.
+    let meterStream: MediaStream | null = null;
     let peer: RTCPeerConnection | null = null;
     let closed = false;
     const close = () => {
       if (closed) return;
       closed = true;
       for (const track of stream?.getTracks() ?? []) track.stop();
+      for (const track of meterStream?.getTracks() ?? []) track.stop();
+      meters.close();
       try {
         peer?.close();
       } catch {
@@ -101,13 +206,21 @@ export const browserVoiceMediaFactory: VoiceMediaFactory = {
           throw error;
         stream = await navigator.mediaDevices.getUserMedia(constraints(null));
       }
+      try {
+        meterStream = stream.clone();
+        meters.input.attach(meterStream);
+      } catch {
+        meterStream = null;
+      }
       peer = new RTCPeerConnection();
       const activePeer = peer;
       for (const track of stream.getAudioTracks())
         activePeer.addTrack(track, stream);
       activePeer.createDataChannel(REALTIME_EVENTS_CHANNEL);
       activePeer.addEventListener("track", (event) => {
-        audio.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+        const remote = event.streams[0] ?? new MediaStream([event.track]);
+        audio.srcObject = remote;
+        meters.output.attach(remote);
         audio
           .play()
           .then(() => callbacks.onPlaybackBlocked(false))
@@ -137,7 +250,11 @@ export const browserVoiceMediaFactory: VoiceMediaFactory = {
           for (const track of microphone.getAudioTracks())
             track.enabled = !muted;
         },
+        levels() {
+          return { input: meters.input.read(), output: meters.output.read() };
+        },
         async resumePlayback() {
+          meters.resume();
           try {
             await audio.play();
             callbacks.onPlaybackBlocked(false);

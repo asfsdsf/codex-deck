@@ -99,6 +99,34 @@ export default function VoiceSettings({
         </p>
       )}
       <section className="space-y-2">
+        <h3 className="font-semibold">Microphone</h3>
+        <p className="text-zinc-400">
+          Remembered on this browser only. Applies to your next voice
+          conversation.
+        </p>
+        <select
+          aria-label="Microphone"
+          value={microphone}
+          onChange={(event) => {
+            setMicrophone(event.target.value);
+            writePreferredMicrophone(event.target.value || null);
+          }}
+          className="h-10 w-full rounded border border-zinc-700 bg-zinc-950 px-2 text-zinc-200"
+        >
+          <option value="">System default</option>
+          {microphones.map((entry) => (
+            <option key={entry.deviceId} value={entry.deviceId}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
+        {unlabeled && (
+          <p className="text-xs text-zinc-400">
+            Device names appear after you allow microphone access once.
+          </p>
+        )}
+      </section>
+      <section className="space-y-2">
         <h3 className="font-semibold">Voice</h3>
         <p className="text-zinc-400">
           Saved to your Codex configuration as <code>realtime.voice</code>.
@@ -154,34 +182,6 @@ export default function VoiceSettings({
         {message && (
           <p role="status" className="break-words text-amber-300">
             {message}
-          </p>
-        )}
-      </section>
-      <section className="space-y-2">
-        <h3 className="font-semibold">Microphone</h3>
-        <p className="text-zinc-400">
-          Remembered on this browser only. Applies to your next voice
-          conversation.
-        </p>
-        <select
-          aria-label="Microphone"
-          value={microphone}
-          onChange={(event) => {
-            setMicrophone(event.target.value);
-            writePreferredMicrophone(event.target.value || null);
-          }}
-          className="h-10 w-full rounded border border-zinc-700 bg-zinc-950 px-2 text-zinc-200"
-        >
-          <option value="">System default</option>
-          {microphones.map((entry) => (
-            <option key={entry.deviceId} value={entry.deviceId}>
-              {entry.label}
-            </option>
-          ))}
-        </select>
-        {unlabeled && (
-          <p className="text-xs text-zinc-400">
-            Device names appear after you allow microphone access once.
           </p>
         )}
       </section>
